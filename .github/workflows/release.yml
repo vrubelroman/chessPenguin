@@ -51,12 +51,13 @@ jobs:
           cp -r packaging/icons packaging/*.desktop examples "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           rm -rf "dist/${name}"
-      - name: deb and rpm
+      - name: deb, rpm and Arch Linux packages
         run: |
           curl -fsSL -o /tmp/nfpm.deb https://github.com/goreleaser/nfpm/releases/download/v2.48.0/nfpm_2.48.0_amd64.deb
           sudo dpkg -i /tmp/nfpm.deb
           nfpm package -f packaging/nfpm.yaml -p deb -t dist/
           nfpm package -f packaging/nfpm.yaml -p rpm -t dist/
+          nfpm package -f packaging/nfpm.yaml -p archlinux -t dist/
       - name: AppImage
         run: packaging/build-appimage.sh dist
       - uses: actions/upload-artifact@v7

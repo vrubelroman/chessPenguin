@@ -46,6 +46,7 @@ Packages for every release are on the [Releases](https://github.com/vrubelroman/
 | --- | --- |
 | Debian / Ubuntu | `sudo apt install ./chesspenguin_<version>_amd64.deb` |
 | Fedora / openSUSE | `sudo dnf install ./chesspenguin-<version>-1.x86_64.rpm` |
+| Arch Linux | `sudo pacman -U ./chesspenguin-<version>-1-x86_64.pkg.tar.zst` |
 | Any distribution | `chmod +x ChessPenguin-<version>-x86_64.AppImage && ./ChessPenguin-<version>-x86_64.AppImage` |
 | Flatpak | `flatpak install --user ChessPenguin-<version>-x86_64.flatpak` |
 | Windows | unzip `ChessPenguin-<version>-windows-x86_64.zip`, run `ChessPenguin.exe` |
