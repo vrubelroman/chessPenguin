@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=ChessPenguin
+GenericName=Chess Database
+GenericName[ru]=Шахматная база
+Comment=View, enter and analyse chess games in PGN
+Comment[ru]=Просмотр, ввод и анализ шахматных партий в PGN
+Exec=chesspenguin %F
+Icon=io.github.vrubelroman.chessPenguin
+Terminal=false
+Categories=Game;BoardGame;
+MimeType=application/x-chess-pgn;application/vnd.chess-pgn;
+Keywords=chess;pgn;uci;stockfish;analysis;шахматы;
+StartupWMClass=io.github.vrubelroman.chessPenguin

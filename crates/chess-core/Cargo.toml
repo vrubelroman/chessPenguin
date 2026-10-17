@@ -1,0 +1,16 @@
+[package]
+name = "chess-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+shakmaty.workspace = true
+encoding_rs.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Independent oracle in corpus tests: the core uses its own lexer (byte offsets,
+# coverage diagnostics), pgn-reader is used only to cross-check move counts.
+pgn-reader.workspace = true

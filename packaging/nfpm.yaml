@@ -1,0 +1,66 @@
+# deb and rpm packages (https://nfpm.goreleaser.com). Run from the repository root:
+#   VERSION=0.1.0 nfpm package -f packaging/nfpm.yaml -p deb -t dist/
+name: chesspenguin
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: games
+priority: optional
+maintainer: vrubelroman <vrubelroman@gmail.com>
+vendor: vrubelroman
+homepage: https://github.com/vrubelroman/chessPenguin
+license: GPL-3.0-or-later
+description: |
+  Chess database for Linux.
+  View, enter and analyse chess games in PGN with any UCI engine
+  (Stockfish and others): variations, comments, multi-line analysis.
+
+contents:
+  - src: target/release/chesspenguin
+    dst: /usr/bin/chesspenguin
+    file_info:
+      mode: 0755
+  - src: packaging/io.github.vrubelroman.chessPenguin.desktop
+    dst: /usr/share/applications/io.github.vrubelroman.chessPenguin.desktop
+  - src: packaging/io.github.vrubelroman.chessPenguin.metainfo.xml
+    dst: /usr/share/metainfo/io.github.vrubelroman.chessPenguin.metainfo.xml
+  # Icons are listed one by one so the package does not own the shared hicolor directories.
+  - src: packaging/icons/hicolor/16x16/apps/io.github.vrubelroman.chessPenguin.png
+    dst: /usr/share/icons/hicolor/16x16/apps/io.github.vrubelroman.chessPenguin.png
+  - src: packaging/icons/hicolor/24x24/apps/io.github.vrubelroman.chessPenguin.png
+    dst: /usr/share/icons/hicolor/24x24/apps/io.github.vrubelroman.chessPenguin.png
+  - src: packaging/icons/hicolor/32x32/apps/io.github.vrubelroman.chessPenguin.png
+    dst: /usr/share/icons/hicolor/32x32/apps/io.github.vrubelroman.chessPenguin.png
+  - src: packaging/icons/hicolor/48x48/apps/io.github.vrubelroman.chessPenguin.png
+    dst: /usr/share/icons/hicolor/48x48/apps/io.github.vrubelroman.chessPenguin.png
+  - src: packaging/icons/hicolor/64x64/apps/io.github.vrubelroman.chessPenguin.png
+    dst: /usr/share/icons/hicolor/64x64/apps/io.github.vrubelroman.chessPenguin.png
+  - src: packaging/icons/hicolor/128x128/apps/io.github.vrubelroman.chessPenguin.png
+    dst: /usr/share/icons/hicolor/128x128/apps/io.github.vrubelroman.chessPenguin.png
+  - src: packaging/icons/hicolor/256x256/apps/io.github.vrubelroman.chessPenguin.png
+    dst: /usr/share/icons/hicolor/256x256/apps/io.github.vrubelroman.chessPenguin.png
+  - src: packaging/icons/hicolor/512x512/apps/io.github.vrubelroman.chessPenguin.png
+    dst: /usr/share/icons/hicolor/512x512/apps/io.github.vrubelroman.chessPenguin.png
+  - src: LICENSE
+    dst: /usr/share/licenses/chesspenguin/LICENSE
+  - src: THIRD_PARTY_NOTICES.md
+    dst: /usr/share/doc/chesspenguin/THIRD_PARTY_NOTICES.md
+  - src: examples/classics.pgn
+    dst: /usr/share/doc/chesspenguin/examples/classics.pgn
+
+overrides:
+  deb:
+    depends:
+      - libc6
+      - libasound2 | libasound2t64
+      - libxkbcommon0
+    recommends:
+      - libvulkan1
+      - libegl1
+  rpm:
+    depends:
+      - alsa-lib
+      - libxkbcommon
+    recommends:
+      - vulkan-loader
+      - mesa-libEGL

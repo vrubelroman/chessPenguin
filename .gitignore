@@ -1,0 +1,7 @@
+/target
+/engines/*
+!/engines/README.md
+/pgnFilesforExample/
+
+# Third-party reference screenshots (kept locally, not published)
+/designExample/

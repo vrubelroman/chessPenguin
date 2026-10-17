@@ -1,0 +1,17 @@
+[package]
+name = "uci"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "UCI chess engine process supervisor (no UI dependencies)"
+
+[dependencies]
+thiserror.workspace = true
+
+# Test helper: deterministic fake UCI engine used by tests/ via CARGO_BIN_EXE_fake_uci.
+[[bin]]
+name = "fake_uci"
+path = "src/bin/fake_uci.rs"
+test = false
+doc = false

@@ -1,0 +1,32 @@
+//! Chess model, game tree and PGN import/export.
+//!
+//! No UI dependencies. See `docs/dev/chess-core.md` for the API overview and
+//! the compatibility policy for real-world PGN.
+
+pub mod comment;
+pub mod database;
+pub mod diagnostic;
+pub mod edit;
+pub mod encoding;
+pub mod game;
+pub mod nag;
+pub mod pgn;
+pub mod repair;
+pub mod start;
+
+pub use comment::{Annotation, CommentPart, ShapeColor, parse_comment};
+pub use database::{OpenError, PgnDatabase, SourceFingerprint};
+pub use diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceLocation};
+pub use edit::{EditError, EditOutcome};
+pub use encoding::{Confidence, EncodingGuess, TextEncoding, detect_encoding};
+pub use game::{EngineHistory, Game, GameMove, GameResult, HistoryKind, MoveKind, Node, NodeId};
+pub use nag::Nag;
+pub use pgn::{
+    Cancelled, EntryFlags, GameEntry, ParseOptions, ParsedGame, ScanProgress, WriteOptions,
+    parse_game, parse_str, scan_games, write_game,
+};
+pub use repair::{LetterRepairCounts, LetterRepairDetection};
+pub use start::{FenError, FenRepair, StartPosition};
+
+/// Re-export of the rules library used in the public API.
+pub use shakmaty;

@@ -1,0 +1,40 @@
+# Flatpak manifest. CI builds a .flatpak bundle with network access during the build
+# (cargo fetches crates). For Flathub, vendored sources (flatpak-cargo-generator) would be needed.
+app-id: io.github.vrubelroman.chessPenguin
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: chesspenguin
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --socket=pulseaudio
+  # PGN files and UCI engine executables live in the user's home.
+  - --filesystem=home
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  build-args:
+    - --share=network
+  env:
+    CARGO_HOME: /run/build/chesspenguin/cargo
+modules:
+  - name: chesspenguin
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --locked -p chesspenguin
+      - install -Dm755 target/release/chesspenguin /app/bin/chesspenguin
+      - install -Dm644 packaging/io.github.vrubelroman.chessPenguin.desktop /app/share/applications/io.github.vrubelroman.chessPenguin.desktop
+      - install -Dm644 packaging/io.github.vrubelroman.chessPenguin.metainfo.xml /app/share/metainfo/io.github.vrubelroman.chessPenguin.metainfo.xml
+      - for s in 16 24 32 48 64 128 256 512; do install -Dm644 packaging/icons/hicolor/${s}x${s}/apps/io.github.vrubelroman.chessPenguin.png /app/share/icons/hicolor/${s}x${s}/apps/io.github.vrubelroman.chessPenguin.png; done
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - .flatpak-builder
+          - pgnFilesforExample
+          - engines

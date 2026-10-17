@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.vrubelroman.chessPenguin</id>
+  <name>ChessPenguin</name>
+  <summary>Chess database: view, enter and analyse PGN games</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.vrubelroman">
+    <name>vrubelroman</name>
+  </developer>
+  <description>
+    <p>
+      ChessPenguin is a native desktop chess database for PGN files. Open annotated books and
+      game collections, browse games with variations and comments, enter your own games and
+      analyse them with any UCI engine such as Stockfish.
+    </p>
+    <ul>
+      <li>Library of PGN databases with a searchable, sortable game list</li>
+      <li>Move tree with nested variations, comments and NAGs</li>
+      <li>Engine analysis with several lines, best-move arrows and an evaluation bar</li>
+      <li>Step through engine lines on the board without changing the game</li>
+      <li>Copy PGN/FEN, save games, undo and redo</li>
+      <li>Legacy encodings of real-world PGN files are detected</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.vrubelroman.chessPenguin.desktop</launchable>
+  <url type="homepage">https://github.com/vrubelroman/chessPenguin</url>
+  <url type="bugtracker">https://github.com/vrubelroman/chessPenguin/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/vrubelroman/chessPenguin/main/docs/screenshots/analysis.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/vrubelroman/chessPenguin/main/docs/screenshots/library.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Game</category>
+    <category>BoardGame</category>
+  </categories>
+  <releases>
+    <release version="0.1.0" date="2026-10-18">
+      <description><p>First public release.</p></description>
+    </release>
+  </releases>
+</component>
