@@ -36,6 +36,8 @@ pub enum NotationCommand {
 
 const ROW_H: f32 = 26.0;
 const NUM_W: f32 = 38.0;
+/// Moves of an engine's better line shown under a marked move.
+const MARK_LINE_MOVES: usize = 6;
 
 impl Notation<'_> {
     pub fn show(self, ui: &mut Ui) -> NotationResponse {
@@ -275,7 +277,9 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
                     return;
                 }
                 ui.label(RichText::new(tr("Best:")).weak());
-                for (i, san) in mark.best_san.iter().enumerate() {
+                // Short by default; grows while the line is stepped through on the board.
+                let visible = MARK_LINE_MOVES.max(shown.unwrap_or(0));
+                for (i, san) in mark.best_san.iter().enumerate().take(visible) {
                     let label = match start {
                         Some((num, turn)) => {
                             let ply = i as u32 + u32::from(turn == Color::Black);
@@ -309,6 +313,9 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
                     if resp.clicked() {
                         out.best = Some((id, i + 1));
                     }
+                }
+                if mark.best_san.len() > visible {
+                    ui.label(RichText::new("…").weak());
                 }
             });
         });

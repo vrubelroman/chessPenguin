@@ -38,9 +38,13 @@
   sounds, dark and light themes.
 - **Languages** — English, Русский, Français, Deutsch, Español, Italiano.
 
-| Library | Variations and engine settings | Boards and pieces |
-| --- | --- | --- |
-| ![Library](docs/screenshots/library.png) | ![Variations](docs/screenshots/variations.png) | ![Settings](docs/screenshots/settings.png) |
+| Game analysis: graph and report | Engine marks and better lines |
+| --- | --- |
+| ![Game analysis](docs/screenshots/review.png) | ![Engine marks](docs/screenshots/marks.png) |
+| **Engine settings in the analysis panel** | **Library** |
+| ![Engine settings](docs/screenshots/engine.png) | ![Library](docs/screenshots/library.png) |
+| **Boards and pieces** | |
+| ![Settings](docs/screenshots/settings.png) | |
 
 ## Install
 

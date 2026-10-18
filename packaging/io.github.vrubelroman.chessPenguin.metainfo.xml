@@ -31,6 +31,9 @@
       <image>https://raw.githubusercontent.com/vrubelroman/chessPenguin/main/docs/screenshots/analysis.png</image>
     </screenshot>
     <screenshot>
+      <image>https://raw.githubusercontent.com/vrubelroman/chessPenguin/main/docs/screenshots/review.png</image>
+    </screenshot>
+    <screenshot>
       <image>https://raw.githubusercontent.com/vrubelroman/chessPenguin/main/docs/screenshots/library.png</image>
     </screenshot>
   </screenshots>
@@ -40,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.2.0" date="2026-10-18">
+      <description>
+        <p>Game analysis with accuracy, mistakes and an evaluation graph; Stockfish 19 included.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-18">
       <description><p>First public release.</p></description>
     </release>

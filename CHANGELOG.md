@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] — 2026-10-18
 
 - Stockfish 19 is bundled with every package (unmodified official "universal" build, which picks
   the right code path for the CPU) and set up on the first start; a system `stockfish` is detected
@@ -13,6 +13,7 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   average centipawn loss and accuracy per game phase; engine marks and better lines in the notation;
   "Write analysis to the game" (NAGs, comments, `[%eval]`, one undo step). Results are cached;
   `[%eval]` comments of a PGN are used without an engine.
+- Screenshots in English and Russian.
 
 ## [0.1.0] — 2026-10-18
 

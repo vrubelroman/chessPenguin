@@ -958,6 +958,14 @@ impl GameView {
         self.engine_settings_open = true;
     }
 
+    /// Shows the Report tab (with the graph) when an analysis is available.
+    pub fn debug_show_report(&mut self) {
+        if self.review.has_data() {
+            self.review.visible = true;
+            self.side_tab = SideTab::Report;
+        }
+    }
+
     /// Opens the better line of the first engine-marked move up to its `shown`-th move.
     pub fn debug_best_line(&mut self, shown: usize) {
         let mark = self

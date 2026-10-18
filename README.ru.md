@@ -5,7 +5,7 @@
 
 [English](README.md) · [Скачать](https://github.com/vrubelroman/chessPenguin/releases/latest)
 
-![Анализ](docs/screenshots/analysis.png)
+![Анализ](docs/screenshots/ru/analysis.png)
 
 ## Возможности
 
@@ -24,6 +24,14 @@
   копирование PGN/FEN, сохранение партии в новый файл.
 - **Оформление** — 14 наборов фигур и 26 досок (цвета и текстуры Lichess), звуки, тёмная и светлая тема.
 - **Языки** — English, Русский, Français, Deutsch, Español, Italiano.
+
+| Анализ партии: график и отчёт | Отметки движка и лучшие варианты |
+| --- | --- |
+| ![Анализ партии](docs/screenshots/ru/review.png) | ![Отметки движка](docs/screenshots/ru/marks.png) |
+| **Настройки движка в панели анализа** | **Библиотека** |
+| ![Настройки движка](docs/screenshots/ru/engine.png) | ![Библиотека](docs/screenshots/ru/library.png) |
+| **Доски и фигуры** | |
+| ![Настройки](docs/screenshots/ru/settings.png) | |
 
 ## Установка
 

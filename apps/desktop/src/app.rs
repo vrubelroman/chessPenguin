@@ -198,6 +198,9 @@ impl App {
             if std::env::var("CP_ENGINE_PANEL").is_ok() {
                 g.debug_open_engine_settings();
             }
+            if std::env::var("CP_REPORT").is_ok() {
+                g.debug_show_report();
+            }
             if let Some(k) = std::env::var("CP_BEST").ok().and_then(|v| v.parse().ok()) {
                 g.debug_best_line(k);
             }
