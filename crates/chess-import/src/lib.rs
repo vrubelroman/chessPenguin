@@ -2,9 +2,10 @@
 //! (`.cbh` with its companion files), ChessBase archives (`.cbv`), and `.zip` /
 //! `.7z` archives holding any of these or PGN files.
 //!
-//! Everything is converted to PGN text in memory and indexed as a
-//! [`PgnDatabase`], so the rest of the application works the same way for every
-//! format. Sources are only read.
+//! Small databases are converted to PGN text in memory and indexed as a
+//! [`PgnDatabase`]. A large ChessBase database (Mega Database: millions of games) is
+//! read in place as a [`chessbase::base::Base`]: its game list comes from the `.cbh`
+//! records and a game is converted to PGN when it is opened. Sources are only read.
 
 mod archive;
 pub mod cbv;
@@ -13,7 +14,11 @@ pub mod chessbase;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use chess_core::{OpenError, PgnDatabase, ScanProgress, TextEncoding, detect_encoding};
+use chess_core::{
+    OpenError, ParsedGame, PgnDatabase, ScanProgress, TextEncoding, detect_encoding, parse_game,
+};
+
+use chessbase::base::Base;
 
 /// File extensions the application can open (lower case).
 pub const EXTENSIONS: [&str; 5] = ["pgn", "cbh", "cbv", "zip", "7z"];
@@ -76,9 +81,94 @@ impl Format {
     }
 }
 
+/// ChessBase databases with at least this many records are read in place
+/// ([`Database::ChessBase`]); smaller ones are converted to PGN.
+pub const LARGE_CHESSBASE: u64 = 20_000;
+
+/// An opened database.
+pub enum Database {
+    Pgn(PgnDatabase),
+    ChessBase(Box<Base>),
+}
+
+impl Database {
+    /// Number of records; an index below it identifies a game (or a deleted record
+    /// of a ChessBase database).
+    pub fn len(&self) -> usize {
+        match self {
+            Database::Pgn(db) => db.len(),
+            Database::ChessBase(b) => b.records(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Fully parses record `index`. A ChessBase game that could only be read in part
+    /// carries the problem as a diagnostic.
+    pub fn load_game(&self, index: usize) -> Option<ParsedGame> {
+        match self {
+            Database::Pgn(db) => db.load_game(index),
+            Database::ChessBase(b) => {
+                let (pgn, problem) = b.pgn(index)?;
+                let mut parsed = parse_game(pgn.as_bytes(), TextEncoding::Utf8);
+                if let Some(p) = problem {
+                    parsed.diagnostics.push(chess_core::Diagnostic {
+                        severity: chess_core::Severity::Warning,
+                        code: chess_core::DiagnosticCode::PartlyConverted,
+                        message: format!("ChessBase: {p}"),
+                        location: None,
+                        node: None,
+                    });
+                }
+                Some(parsed)
+            }
+        }
+    }
+
+    /// Bytes that identify record `index` (its content for PGN, its `.cbh` record for
+    /// ChessBase), for remembering viewed games.
+    pub fn identity(&self, index: usize) -> &[u8] {
+        match self {
+            Database::Pgn(db) => db.raw_bytes(index).unwrap_or_default(),
+            Database::ChessBase(b) => b.record(index),
+        }
+    }
+
+    /// Record `index` as PGN text (the original text of a PGN file).
+    pub fn raw_text(&self, index: usize) -> Option<String> {
+        match self {
+            Database::Pgn(db) => db.raw_text(index),
+            Database::ChessBase(b) => b.pgn(index).map(|(pgn, _)| pgn),
+        }
+    }
+
+    pub fn as_pgn(&self) -> Option<&PgnDatabase> {
+        match self {
+            Database::Pgn(db) => Some(db),
+            Database::ChessBase(_) => None,
+        }
+    }
+
+    pub fn as_chessbase(&self) -> Option<&Base> {
+        match self {
+            Database::ChessBase(b) => Some(b),
+            Database::Pgn(_) => None,
+        }
+    }
+}
+
+/// Number of records of the ChessBase database whose `.cbh` file is `path`, from the
+/// file size (each record and the header take 46 bytes).
+pub fn chessbase_records(path: &Path) -> Option<u64> {
+    let len = std::fs::metadata(path).ok()?.len();
+    Some((len / 46).saturating_sub(1))
+}
+
 /// An opened database with what is worth telling the user about the conversion.
 pub struct Opened {
-    pub db: PgnDatabase,
+    pub db: Database,
     pub format: Format,
     /// Problems and remarks, one line each (empty for a clean import).
     pub notes: Vec<String>,
@@ -109,6 +199,25 @@ pub fn open(
     match ext.as_str() {
         "cbz" => return Err(ImportError::Unsupported(Unsupported::Encrypted)),
         "2cbh" => return Err(ImportError::Unsupported(Unsupported::ChessBase2)),
+        "cbh" if chessbase_records(path).is_some_and(|n| n >= LARGE_CHESSBASE) => {
+            let base = Base::open(
+                path,
+                &mut |done, total| {
+                    progress(ScanProgress {
+                        bytes_done: done as usize,
+                        bytes_total: total as usize,
+                        games: 0,
+                    })
+                },
+                cancel,
+            )?;
+            let notes = base.notes().to_vec();
+            return Ok(Opened {
+                db: Database::ChessBase(Box::new(base)),
+                format: Format::ChessBase,
+                notes,
+            });
+        }
         "cbh" => {
             let files = chessbase::Files::from_dir(path)?;
             let part = convert_chessbase(&files)?;
@@ -148,7 +257,7 @@ pub fn open(
     }
     let db = PgnDatabase::open(path, progress, cancel)?;
     Ok(Opened {
-        db,
+        db: Database::Pgn(db),
         format: Format::Pgn,
         notes: Vec::new(),
     })
@@ -282,5 +391,9 @@ fn finish(
     cancel: &AtomicBool,
 ) -> Result<Opened, ImportError> {
     let db = PgnDatabase::from_bytes(pgn.into_bytes(), Some(TextEncoding::Utf8), progress, cancel)?;
-    Ok(Opened { db, format, notes })
+    Ok(Opened {
+        db: Database::Pgn(db),
+        format,
+        notes,
+    })
 }

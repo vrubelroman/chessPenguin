@@ -2,8 +2,14 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] — 2026-10-19
 
+- Large ChessBase databases (Mega Database: 11.7 million games) open in seconds: read in place from
+  the `.cbh` records, a game is converted when opened. A filter panel on the right (player with
+  suggestions, colour, opponent, tournament, annotator, years, Elo, result, ECO, moves, comments and
+  variations) updates the list as you type; sorting and filtering run in the background.
+- Fixed: a ChessBase game that cannot be read from its first move (e.g. Chess960) crashed the import.
+- Fixed: ChessBase databases mixing UTF-8 and single-byte texts could be decoded as Cyrillic.
 - Removed the in-app ✕ (close) button: the window manager or desktop provides window controls.
 
 ## [0.3.0] — 2026-10-18

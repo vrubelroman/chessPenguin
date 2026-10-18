@@ -5,6 +5,7 @@
 //! from it. Only reading is supported, and the source files are never written.
 
 mod annotations;
+pub mod base;
 mod entities;
 mod headers;
 mod moves;

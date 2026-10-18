@@ -27,6 +27,10 @@ pub struct GameHeader {
     pub white_elo: u16,
     pub black_elo: u16,
     pub eco: u16,
+    /// Annotation flags (variations, comments, symbols, …).
+    pub flags: u32,
+    /// Main-line moves (255: 255 or more).
+    pub moves: u8,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -77,6 +81,8 @@ pub fn read(cbh: &[u8]) -> Result<Vec<Record>, ImportError> {
                 white_elo: u(0x1f, 2) as u16,
                 black_elo: u(0x21, 2) as u16,
                 eco: u(0x23, 2) as u16,
+                flags: u(0x27, 4),
+                moves: rec[0x2d],
             })
         });
     }

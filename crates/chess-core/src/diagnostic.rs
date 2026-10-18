@@ -55,6 +55,9 @@ pub enum DiagnosticCode {
     LettersRestored,
     /// Annotation could not be placed in its original position.
     CommentMoved,
+    /// The game was converted from another format (ChessBase) and could only be
+    /// read in part; details in `message`.
+    PartlyConverted,
 }
 
 /// Position in the source. Offsets are bytes of the original file.

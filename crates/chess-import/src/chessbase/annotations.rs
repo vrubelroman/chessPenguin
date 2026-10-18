@@ -69,13 +69,22 @@ pub fn sample_texts(cba: &[u8], records: &[Record], buf: &mut Vec<u8>) {
     for r in records {
         if let Record::Game(h) = r
             && h.annotations_offset > 0
-            && let Ok((_, items)) = parse(cba, h.annotations_offset)
         {
-            for it in items {
-                if matches!(it.kind, 0x02 | 0x82) && it.data.len() > 2 {
-                    buf.extend_from_slice(&it.data[2..]);
-                    buf.push(b' ');
-                }
+            sample_at(cba, h.annotations_offset, buf);
+        }
+    }
+}
+
+/// Adds the text bytes of one annotation record (starting at byte 0) to `buf`.
+pub fn sample_record(record: &[u8], buf: &mut Vec<u8>) {
+    sample_at(record, 0, buf);
+}
+
+fn sample_at(cba: &[u8], offset: u32, buf: &mut Vec<u8>) {
+    if let Ok((_, items)) = parse(cba, offset) {
+        for it in items {
+            if matches!(it.kind, 0x02 | 0x82) && it.data.len() > 2 {
+                super::text::add_sample(buf, &it.data[2..]);
             }
         }
     }

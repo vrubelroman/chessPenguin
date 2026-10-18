@@ -71,11 +71,14 @@ pub fn read(bytes: Option<&[u8]>, kind: Kind) -> Entities {
 }
 
 impl Entities {
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
     pub fn sample(&self, buf: &mut Vec<u8>) {
         for rec in &self.records {
             for f in rec {
-                buf.extend_from_slice(f);
-                buf.push(b' ');
+                super::text::add_sample(buf, f);
             }
         }
     }

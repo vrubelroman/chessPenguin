@@ -8,6 +8,7 @@ mod board;
 mod engines;
 mod game_view;
 mod i18n;
+mod large_db;
 mod library;
 mod notation;
 mod report;

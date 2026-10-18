@@ -23,6 +23,16 @@ const FIGURINES_SINGLE: [&str; 6] = ["K", "Q", "N", "B", "R", ""];
 /// Piece figurines in UTF-8 texts: U+E024-U+E029 stand for K Q R B N and a pawn.
 const FIGURINES_UTF8: [&str; 6] = ["K", "Q", "R", "B", "N", ""];
 
+/// Adds a text to a code page detection sample. UTF-8 texts are decoded as such one
+/// by one (see [`Decoder`]) and would only mislead the detection of the single-byte
+/// code page, so they are left out, as is plain ASCII.
+pub fn add_sample(buf: &mut Vec<u8>, text: &[u8]) {
+    if !text.is_ascii() && std::str::from_utf8(text).is_err() {
+        buf.extend_from_slice(text);
+        buf.push(b' ');
+    }
+}
+
 pub fn detect(sample: &[u8]) -> TextEncoding {
     match detect_encoding(sample).encoding {
         // All ASCII or UTF-8: single-byte texts (if any) are most likely Western.
@@ -38,6 +48,10 @@ pub struct Decoder {
 impl Decoder {
     pub fn new(single_byte: TextEncoding) -> Decoder {
         Decoder { single_byte }
+    }
+
+    pub fn single_byte(&self) -> TextEncoding {
+        self.single_byte
     }
 
     /// A comment or a guiding text. Control characters are dropped, apart from line

@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.4.0" date="2026-10-19">
+      <description>
+        <p>Large ChessBase databases (Mega Database, millions of games) open in seconds, with a filter panel: player with suggestions, opponent, tournament, years, Elo, result, ECO, moves, annotations.</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-10-18">
       <description>
         <p>Opens ChessBase databases (.cbh, .cbv) and zip/7z archives; move badges and refutation arrows; viewed games marked; more piece sets, boards and sounds.</p>

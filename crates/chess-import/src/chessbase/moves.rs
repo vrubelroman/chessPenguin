@@ -36,6 +36,16 @@ pub struct Node {
     pub children: Vec<usize>,
 }
 
+impl Tree {
+    /// The start node alone: a game without moves.
+    pub fn start() -> Tree {
+        Tree {
+            nodes: vec![Node::default()],
+            ..Tree::default()
+        }
+    }
+}
+
 /// A game that could only be read in part.
 pub struct DecodeError {
     pub partial: Tree,
@@ -56,7 +66,8 @@ enum Modifier {
 
 pub fn decode(cbg: &[u8], offset: u32) -> Result<Tree, DecodeError> {
     let fail = |reason: &str| DecodeError {
-        partial: Tree::default(),
+        // The game is kept with its tags and no moves.
+        partial: Tree::start(),
         reason: reason.into(),
     };
     let at = offset as usize;
@@ -744,6 +755,17 @@ mod tests {
         assert_eq!(line_step(7, &QUEEN_DIRS), (1, 0));
         assert_eq!(line_step(13, &QUEEN_DIRS), (7, 0));
         assert_eq!(line_step(27, &QUEEN_DIRS), (7, -7));
+    }
+
+    #[test]
+    fn unreadable_game_keeps_the_start_node() {
+        // A Chess960 record (mode 10) of 4 bytes: rejected before any move, as in Mega 2026.
+        let err = decode(&[10, 0, 0, 4], 0).expect_err("Chess960 is not supported");
+        assert_eq!(err.partial.nodes.len(), 1);
+        let mut out = String::new();
+        let notes = super::super::annotations::Annotations::default();
+        super::super::writer::game(&mut out, &Vec::new(), &err.partial, &notes, "*");
+        assert_eq!(out.trim(), "*");
     }
 
     #[test]

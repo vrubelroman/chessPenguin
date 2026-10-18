@@ -8,10 +8,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 
-use chess_core::{GameEntry, PgnDatabase, ScanProgress};
-use chess_import::{Format, ImportError, Opened, Unsupported};
+use chess_core::{GameEntry, ScanProgress};
+use chess_import::{Database, Format, ImportError, Opened, Unsupported};
 use egui::{Color32, RichText, Sense, Stroke, Ui, vec2};
 
+use crate::large_db::{self, LargeView};
 use crate::viewed::{self, Viewed};
 use egui_extras::{Column, TableBuilder};
 
@@ -21,7 +22,7 @@ enum Slot {
         cancel: Arc<AtomicBool>,
         rx: Receiver<Result<Opened, ImportError>>,
     },
-    Ready(Arc<PgnDatabase>),
+    Ready(Arc<Database>),
     Failed(String),
 }
 
@@ -56,9 +57,10 @@ struct ImportInfo {
 
 pub struct Library {
     slots: HashMap<PathBuf, Slot>,
-    /// Games the user has opened (by content), and the content key of each game per database.
+    /// Games the user has opened (by content).
     viewed: Viewed,
-    keys: HashMap<PathBuf, Vec<u64>>,
+    /// Filters and game list of each large ChessBase database (for the session).
+    large: HashMap<PathBuf, LargeView>,
     info: HashMap<PathBuf, ImportInfo>,
     /// Database whose import notes are shown.
     notes_open: Option<PathBuf>,
@@ -77,7 +79,7 @@ impl Library {
         Self {
             slots: HashMap::new(),
             viewed: Viewed::load(),
-            keys: HashMap::new(),
+            large: HashMap::new(),
             info: HashMap::new(),
             notes_open: None,
             selected_db: None,
@@ -150,6 +152,9 @@ impl Library {
 
     /// Selects (and scrolls to) a game row, e.g. when returning from a game.
     pub fn reveal(&mut self, path: &Path, index: usize) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.reveal(index);
+        }
         if self.selected_db.as_deref() == Some(path) {
             self.selected_row = Some(index);
             self.scroll_to_selected = true;
@@ -158,7 +163,7 @@ impl Library {
 
     pub fn forget(&mut self, path: &Path) {
         self.info.remove(path);
-        self.keys.remove(path);
+        self.large.remove(path);
         if let Some(Slot::Loading { cancel, .. }) = self.slots.remove(path) {
             cancel.store(true, Ordering::Relaxed);
         }
@@ -170,12 +175,12 @@ impl Library {
 
     /// Remembers that a game was opened (shown with a check mark in the table).
     pub fn mark_viewed(&mut self, path: &Path, index: usize) {
-        if let Some(&k) = self.keys.get(path).and_then(|k| k.get(index)) {
-            self.viewed.set(k, true);
+        if let Some(db) = self.database(path) {
+            self.viewed.set(viewed::key(db.identity(index)), true);
         }
     }
 
-    pub fn database(&self, path: &Path) -> Option<Arc<PgnDatabase>> {
+    pub fn database(&self, path: &Path) -> Option<Arc<Database>> {
         match self.slots.get(path) {
             Some(Slot::Ready(db)) => Some(db.clone()),
             _ => None,
@@ -189,10 +194,11 @@ impl Library {
             {
                 *slot = match res {
                     Ok(o) => {
-                        let keys = (0..o.db.len())
-                            .map(|i| viewed::key(o.db.raw_bytes(i).unwrap_or_default()))
-                            .collect();
-                        self.keys.insert(path.clone(), keys);
+                        if matches!(o.db, Database::ChessBase(_)) {
+                            self.large
+                                .entry(path.clone())
+                                .or_insert_with(LargeView::new);
+                        }
                         self.info.insert(
                             path.clone(),
                             ImportInfo {
@@ -213,6 +219,20 @@ impl Library {
         self.poll();
         let mut actions = Vec::new();
         egui::Panel::top("shelf").show(ui, |ui| self.shelf(ui, databases, &mut actions));
+        // A large database has its filter panel on the right.
+        if let Some(path) = self.selected_db.clone()
+            && let Some(Slot::Ready(db)) = self.slots.get(&path)
+            && db.as_chessbase().is_some()
+            && let Some(view) = self.large.get_mut(&path)
+            && view.panel_open()
+        {
+            let db = db.clone();
+            egui::Panel::right("filters")
+                .resizable(true)
+                .default_size(280.0)
+                .size_range(260.0..=380.0)
+                .show(ui, |ui| view.panel(ui, &db));
+        }
         egui::CentralPanel::default().show(ui, |ui| self.table_area(ui, &mut actions));
         self.notes_window(ui.ctx());
         actions
@@ -309,7 +329,16 @@ impl Library {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let detail = match self.slots.get(path) {
-            Some(Slot::Ready(db)) => trf("{n} games", &[("n", &db.len())]),
+            Some(Slot::Ready(db)) => match db.as_chessbase() {
+                Some(b) => format!(
+                    "{} · 🔒",
+                    trf(
+                        "{n} games",
+                        &[("n", &large_db::short_count(b.games() + b.texts()))],
+                    )
+                ),
+                None => trf("{n} games", &[("n", &db.len())]),
+            },
             Some(Slot::Loading { progress, .. }) => {
                 let p = progress.lock().map(|g| *g).unwrap_or(ScanProgress {
                     bytes_done: 0,
@@ -448,6 +477,21 @@ impl Library {
             }
         };
 
+        if db.as_chessbase().is_some() {
+            let view = self
+                .large
+                .entry(path.clone())
+                .or_insert_with(LargeView::new);
+            let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
+            if view.table(ui, &path, &db, &mut self.viewed, notes, actions) {
+                self.notes_open = Some(path.clone());
+            }
+            return;
+        }
+        let Some(pgn) = db.as_pgn() else {
+            return;
+        };
+
         let mut search_focused = false;
         ui.horizontal(|ui| {
             ui.label(
@@ -472,7 +516,7 @@ impl Library {
                     ));
                 }
                 _ => {
-                    let enc = db.encoding();
+                    let enc = pgn.encoding();
                     ui.label(
                         RichText::new(trf(
                             "· {n} games · encoding {enc}",
@@ -509,7 +553,7 @@ impl Library {
 
         let key = (path.clone(), self.search.clone(), self.sort.0, self.sort.1);
         if self.view_key.as_ref() != Some(&key) {
-            self.view = filtered_sorted(db.entries(), &self.search, self.sort);
+            self.view = filtered_sorted(pgn.entries(), &self.search, self.sort);
             self.view_key = Some(key);
         }
 
@@ -581,8 +625,7 @@ impl Library {
             table = table.scroll_to_row(r, Some(egui::Align::Center));
         }
         let view = &self.view;
-        let entries = db.entries();
-        let keys = self.keys.get(&path);
+        let entries = pgn.entries();
         let viewed = &self.viewed;
         let mut toggle_viewed = None;
         let mut clicked = None;
@@ -617,7 +660,7 @@ impl Library {
                         return;
                     };
                     row.set_selected(self.selected_row == Some(e.index));
-                    let key = keys.and_then(|k| k.get(e.index)).copied();
+                    let key = Some(viewed::key(pgn.raw_bytes(e.index).unwrap_or_default()));
                     let seen = key.is_some_and(|k| viewed.contains(k));
                     let cells: [String; 10] = [
                         (e.index + 1).to_string(),
@@ -708,7 +751,7 @@ impl Library {
 }
 
 /// "2010.??.??" → "2010", "1997.05.??" → "05.1997", full dates as "dd.mm.yyyy".
-fn display_date(raw: &str) -> String {
+pub fn display_date(raw: &str) -> String {
     let parts: Vec<&str> = raw.split('.').collect();
     let known = |s: &&str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
     match parts.as_slice() {
