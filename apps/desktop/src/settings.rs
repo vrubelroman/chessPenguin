@@ -63,6 +63,41 @@ pub struct Settings {
     pub show_best_arrow: bool,
     /// Recently opened PGN files, most recent first.
     pub databases: Vec<PathBuf>,
+    /// Whole-game analysis options.
+    pub review: ReviewSettings,
+}
+
+/// Options of the whole-game analysis (the engine is the active one).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReviewSettings {
+    /// Index into [`REVIEW_QUALITY`].
+    pub quality: usize,
+    pub threads: u32,
+    pub hash_mb: u32,
+}
+
+impl Default for ReviewSettings {
+    fn default() -> Self {
+        Self {
+            quality: 1,
+            threads: default_threads(),
+            hash_mb: default_hash(),
+        }
+    }
+}
+
+/// Search effort per position: (label, nodes).
+pub const REVIEW_QUALITY: [(&str, u64); 3] = [
+    ("Fast", 250_000),
+    ("Normal", 1_000_000),
+    ("Deep", 3_000_000),
+];
+
+impl ReviewSettings {
+    pub fn nodes(&self) -> u64 {
+        REVIEW_QUALITY[self.quality.min(REVIEW_QUALITY.len() - 1)].1
+    }
 }
 
 impl Default for Settings {
@@ -80,6 +115,7 @@ impl Default for Settings {
             active_engine: None,
             show_best_arrow: true,
             databases: Vec::new(),
+            review: ReviewSettings::default(),
         }
     }
 }
@@ -88,6 +124,12 @@ impl Settings {
     pub fn config_dir() -> Option<PathBuf> {
         directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
             .map(|d| d.config_dir().to_path_buf())
+    }
+
+    /// `~/.cache/chesspenguin` (derived data that can be deleted at any time).
+    pub fn cache_dir() -> Option<PathBuf> {
+        directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
+            .map(|d| d.cache_dir().to_path_buf())
     }
 
     fn file() -> Option<PathBuf> {

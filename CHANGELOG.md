@@ -2,6 +2,14 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Game analysis (Shift+A): background evaluation of the whole main line with its own engine process,
+  evaluation graph under the board, report tab with accuracy, inaccuracies, mistakes, blunders,
+  average centipawn loss and accuracy per game phase; engine marks and better lines in the notation;
+  "Write analysis to the game" (NAGs, comments, `[%eval]`, one undo step). Results are cached;
+  `[%eval]` comments of a PGN are used without an engine.
+
 ## [0.1.0] — 2026-10-18
 
 First public release.

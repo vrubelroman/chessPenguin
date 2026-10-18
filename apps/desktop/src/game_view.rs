@@ -14,6 +14,7 @@ use crate::analysis::{self, Analysis, PvLine, Status};
 use crate::assets::Sound;
 use crate::board::{self, Arrow, BoardState, BoardView};
 use crate::notation::{Notation, NotationCommand};
+use crate::review::{DialogAction, ReportAction, Review};
 use crate::settings::Settings;
 
 /// Where an opened game came from (to return to the same library row).
@@ -53,6 +54,14 @@ pub struct GameView {
     scroll_to_cursor: bool,
     show_diagnostics: bool,
     engine_settings_open: bool,
+    review: Review,
+    side_tab: SideTab,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SideTab {
+    Notation,
+    Report,
 }
 
 pub enum GameAction {
@@ -69,11 +78,16 @@ pub enum GameAction {
     OpenSettings,
     Quit,
     Toast(String),
+    /// A whole-game analysis started: pause the live engine (they would share the CPU).
+    PauseLive,
+    /// The whole-game analysis ended: resume the live engine if it was paused.
+    ResumeLive,
 }
 
 impl GameView {
     pub fn new(game: Game, source: Option<GameSource>, diagnostics: Vec<Diagnostic>) -> Self {
         let flipped = false;
+        let review = Review::new(&game);
         Self {
             game,
             source,
@@ -85,6 +99,8 @@ impl GameView {
             scroll_to_cursor: true,
             show_diagnostics: false,
             engine_settings_open: false,
+            review,
+            side_tab: SideTab::Notation,
         }
     }
 
@@ -141,7 +157,19 @@ impl GameView {
         input_enabled: bool,
     ) -> Vec<GameAction> {
         let mut actions = Vec::new();
-        if input_enabled {
+        if self.review.poll() {
+            actions.push(GameAction::ResumeLive);
+            if let Some(e) = &self.review.error {
+                actions.push(GameAction::Toast(e.clone()));
+            }
+        }
+        self.review.refresh(&self.game);
+        if analysis.status == Status::Running
+            && let Some(e) = settings.active_engine()
+        {
+            self.review.note_live_speed(analysis.nps, e.threads);
+        }
+        if input_enabled && !self.review.dialog_open {
             self.keyboard(ui, &mut actions);
         }
 
@@ -162,6 +190,13 @@ impl GameView {
             self.board_area(ui, &*settings, analysis, &mut actions)
         });
         self.sync_analysis(analysis);
+
+        match self.review.dialog(ui.ctx(), settings) {
+            Some(DialogAction::Start) => self.start_review(settings, true, ui.ctx(), &mut actions),
+            Some(DialogAction::EngineSwitch) => actions.push(GameAction::EngineSwitch),
+            Some(DialogAction::OpenEngines) => actions.push(GameAction::OpenEngineSettings),
+            None => {}
+        }
 
         if self.show_diagnostics {
             let mut open = true;
@@ -194,6 +229,64 @@ impl GameView {
         }
         self.scroll_to_cursor = false;
         actions
+    }
+
+    fn start_review(
+        &mut self,
+        settings: &Settings,
+        full: bool,
+        ctx: &egui::Context,
+        actions: &mut Vec<GameAction>,
+    ) {
+        let Some(engine) = settings.active_engine().cloned() else {
+            self.review.dialog_open = true;
+            return;
+        };
+        if self
+            .review
+            .start(&self.game, &engine, &settings.review, full, ctx)
+        {
+            actions.push(GameAction::PauseLive);
+            self.side_tab = SideTab::Report;
+        } else if let Some(e) = &self.review.error {
+            actions.push(GameAction::Toast(e.clone()));
+        } else {
+            actions.push(GameAction::Toast(
+                tr("Every position is already evaluated").into(),
+            ));
+        }
+    }
+
+    /// Header button: start, progress with cancel, or show/hide the report.
+    fn review_button(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+        if let Some((done, total)) = self.review.progress() {
+            if crate::widgets::small_close_button(ui)
+                .on_hover_text(tr("Stop the game analysis"))
+                .clicked()
+            {
+                self.review.cancel();
+                actions.push(GameAction::ResumeLive);
+            }
+            ui.add(
+                egui::ProgressBar::new(done as f32 / total.max(1) as f32)
+                    .desired_width(90.0)
+                    .text(format!("{done}/{total}")),
+            );
+            ui.label(tr("Game analysis"));
+        } else if self.review.has_data() {
+            ui.toggle_value(&mut self.review.visible, tr("📈 Report"))
+                .on_hover_text(tr(
+                    "Show or hide the evaluation graph and the report (Shift+A)",
+                ));
+        } else if ui
+            .button(tr("📈 Analyse game"))
+            .on_hover_text(tr(
+                "Evaluate every move: accuracy, inaccuracies, mistakes, blunders (Shift+A)",
+            ))
+            .clicked()
+        {
+            self.review.dialog_open = true;
+        }
     }
 
     /// Keeps the engine bound to the game cursor (never to the preview). Cheap when unchanged.
@@ -247,6 +340,7 @@ impl GameView {
                 {
                     actions.push(GameAction::OpenSettings);
                 }
+                self.review_button(ui, actions);
                 let warnings = self
                     .diagnostics
                     .iter()
@@ -330,6 +424,20 @@ impl GameView {
                     }
                 }
             }
+            if self.review.visible
+                && let Some(sq) = self
+                    .review
+                    .best_move(self.cursor)
+                    .as_ref()
+                    .and_then(move_squares)
+            {
+                arrows.push(Arrow {
+                    from: sq.0,
+                    to: sq.1,
+                    color: Color32::from_rgba_unmultiplied(0x2a, 0x8a, 0xd8, 170),
+                    weight: 0.9,
+                });
+            }
             if settings.show_best_arrow && analysis.best().is_some() {
                 for (i, line) in analysis.lines.iter().take(3).enumerate() {
                     if let Some(sq) = line.moves.first().and_then(move_squares) {
@@ -350,7 +458,16 @@ impl GameView {
         let show_bar = analysis.is_on();
         let bar_w = if show_bar { 18.0 } else { 0.0 };
         let gap = if show_bar { 8.0 } else { 0.0 };
-        let side = (area.width() - bar_w - gap).min(area.height()).max(120.0);
+        let show_graph = self.review.visible && (self.review.has_data() || self.review.running());
+        let graph_h = if show_graph {
+            (area.height() * 0.14).clamp(80.0, 130.0)
+        } else {
+            0.0
+        };
+        let graph_gap = if show_graph { 8.0 } else { 0.0 };
+        let side = (area.width() - bar_w - gap)
+            .min(area.height() - graph_h - graph_gap)
+            .max(120.0);
         let total = bar_w + gap + side;
         let left = area.left() + ((area.width() - total) / 2.0).max(0.0).floor();
         let group = egui::Rect::from_min_size(egui::pos2(left, area.top()), vec2(total, side));
@@ -427,6 +544,21 @@ impl GameView {
                 }
             });
         });
+        if show_graph {
+            let graph_rect = egui::Rect::from_min_size(
+                egui::pos2(left, area.top() + side + graph_gap),
+                vec2(total, graph_h),
+            );
+            let target = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(graph_rect), |ui| {
+                    self.review
+                        .graph(ui, graph_rect.size(), self.cursor, &self.game)
+                })
+                .inner;
+            if let Some(id) = target {
+                self.goto(id);
+            }
+        }
     }
 
     fn side_panel(
@@ -439,7 +571,40 @@ impl GameView {
         egui::Panel::bottom("game_toolbar").show(ui, |ui| self.toolbar(ui, actions));
         egui::Panel::top("engine_panel")
             .show(ui, |ui| self.engine_panel(ui, settings, analysis, actions));
+        let tabs = self.review.visible && (self.review.has_data() || self.review.running());
+        if !tabs {
+            self.side_tab = SideTab::Notation;
+        }
         egui::CentralPanel::default().show(ui, |ui| {
+            if tabs {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.side_tab, SideTab::Notation, tr("Notation"));
+                    ui.selectable_value(&mut self.side_tab, SideTab::Report, tr("Report"));
+                });
+                ui.separator();
+            }
+            if self.side_tab == SideTab::Report {
+                let action = egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| self.review.report_ui(ui, &self.game))
+                    .inner;
+                match action {
+                    Some(ReportAction::Goto(id)) => self.goto(id),
+                    Some(ReportAction::Write) => {
+                        let n = self.review.write_to_game(&mut self.game);
+                        actions.push(GameAction::Toast(trf(
+                            "Analysis written to the game: {n} marked moves (Ctrl+Z to undo)",
+                            &[("n", &n)],
+                        )));
+                    }
+                    Some(ReportAction::Update) => {
+                        self.start_review(settings, false, ui.ctx(), actions)
+                    }
+                    Some(ReportAction::Reanalyse) => self.review.dialog_open = true,
+                    None => {}
+                }
+                return;
+            }
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| {
@@ -447,10 +612,27 @@ impl GameView {
                         game: &self.game,
                         cursor: self.cursor,
                         scroll_to_cursor: self.scroll_to_cursor,
+                        marks: self.review.visible.then_some(&self.review.marks),
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
                         self.goto(id);
+                    }
+                    if let Some(id) = resp.best
+                        && let Some(mark) = self.review.marks.get(&id)
+                        && let Some(root) = self.game.position(mark.base)
+                        && !mark.best.is_empty()
+                    {
+                        self.cursor = mark.base;
+                        self.scroll_to_cursor = false;
+                        self.board.clear();
+                        self.preview = Some(Preview {
+                            base: mark.base,
+                            root: root.clone(),
+                            moves: mark.best.clone(),
+                            san: mark.best_san.clone(),
+                            shown: 1,
+                        });
                     }
                     if let Some((id, cmd)) = resp.context {
                         let result = match cmd {
@@ -545,7 +727,15 @@ impl GameView {
                     Status::Failed(e) => {
                         ui.label(RichText::new(e).small().color(ui.visuals().error_fg_color));
                     }
-                    Status::Off => {}
+                    Status::Off => {
+                        if self.review.running() {
+                            ui.label(
+                                RichText::new(tr("paused: the game is being analysed"))
+                                    .small()
+                                    .weak(),
+                            );
+                        }
+                    }
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -760,6 +950,14 @@ impl GameView {
         self.engine_settings_open = true;
     }
 
+    pub fn debug_review(&mut self, settings: &Settings, ctx: &egui::Context, start: bool) {
+        if start {
+            self.start_review(settings, false, ctx, &mut Vec::new());
+        } else {
+            self.review.dialog_open = true;
+        }
+    }
+
     pub fn debug_advance(&mut self, plies: usize) {
         for _ in 0..plies {
             match self.game.main_child(self.cursor) {
@@ -838,6 +1036,9 @@ impl GameView {
             if i.consume_shortcut(&ctrl(Key::W)) {
                 cmds.push("back");
             }
+            if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::A)) {
+                cmds.push("review");
+            }
             if i.modifiers.is_none() {
                 for (key, cmd) in [
                     (Key::ArrowLeft, "back1"),
@@ -886,6 +1087,13 @@ impl GameView {
                 }
                 "flip" => self.flipped = !self.flipped,
                 "engine" => actions.push(GameAction::ToggleEngine),
+                "review" => {
+                    if self.review.has_data() || self.review.running() {
+                        self.review.visible = !self.review.visible;
+                    } else {
+                        self.review.dialog_open = true;
+                    }
+                }
                 "esc" => {
                     if self.preview.is_some() {
                         self.preview = None;
@@ -1007,11 +1215,7 @@ fn engine_settings(ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<GameA
                     ui.label(tr("Memory"));
                     settled |= index_slider(ui, &mut h, hash_steps.len());
                     e.hash_mb = hash_steps[h];
-                    ui.label(if e.hash_mb >= 1024 {
-                        trf("{n} GB", &[("n", &(e.hash_mb / 1024))])
-                    } else {
-                        trf("{n} MB", &[("n", &e.hash_mb)])
-                    });
+                    ui.label(format_mb(e.hash_mb));
                     ui.end_row();
                 });
             if settled {
@@ -1021,14 +1225,22 @@ fn engine_settings(ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<GameA
 }
 
 /// Slider over `0..len`; returns true when the user finished changing it.
-fn index_slider(ui: &mut Ui, idx: &mut usize, len: usize) -> bool {
+pub(crate) fn index_slider(ui: &mut Ui, idx: &mut usize, len: usize) -> bool {
     let before = *idx;
     let r = ui.add(egui::Slider::new(idx, 0..=len.saturating_sub(1)).show_value(false));
     r.drag_stopped() || (*idx != before && !r.dragged())
 }
 
+pub(crate) fn format_mb(mb: u32) -> String {
+    if mb >= 1024 {
+        trf("{n} GB", &[("n", &(mb / 1024))])
+    } else {
+        trf("{n} MB", &[("n", &mb)])
+    }
+}
+
 /// Hash sizes from 16 MB up to half of physical memory (powers of two).
-fn hash_steps() -> Vec<u32> {
+pub(crate) fn hash_steps() -> Vec<u32> {
     let total_mb = std::fs::read_to_string("/proc/meminfo")
         .ok()
         .and_then(|s| {

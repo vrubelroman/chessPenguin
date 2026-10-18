@@ -251,16 +251,7 @@ impl Analysis {
                     self.engine = None;
                     self.current = None;
                     self.lines.clear();
-                    self.status = Status::Failed(match reason {
-                        TerminationReason::Hung { .. } => {
-                            tr("The engine hung and was stopped").into()
-                        }
-                        TerminationReason::Exited { status }
-                        | TerminationReason::Quit { status } => match status {
-                            Some(s) => trf("The engine exited ({s})", &[("s", &s)]),
-                            None => tr("The engine exited").into(),
-                        },
-                    });
+                    self.status = Status::Failed(termination_message(&reason));
                     return;
                 }
                 _ => {}
@@ -281,6 +272,17 @@ impl Analysis {
 impl Drop for Analysis {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// Human-readable reason of an engine process ending.
+pub fn termination_message(reason: &TerminationReason) -> String {
+    match reason {
+        TerminationReason::Hung { .. } => tr("The engine hung and was stopped").into(),
+        TerminationReason::Exited { status } | TerminationReason::Quit { status } => match status {
+            Some(s) => trf("The engine exited ({s})", &[("s", s)]),
+            None => tr("The engine exited").into(),
+        },
     }
 }
 

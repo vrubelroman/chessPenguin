@@ -38,6 +38,8 @@ pub struct App {
     library: Library,
     game: Option<GameView>,
     analysis: Analysis,
+    /// The live engine was stopped for a whole-game analysis and resumes after it.
+    live_paused: bool,
     settings_ui: SettingsWindow,
     toast: Option<(String, f64)>,
     tx: Sender<Async>,
@@ -52,7 +54,8 @@ pub struct App {
 
 /// Dev-only startup automation for screenshots/manual QA (see docs/dev/desktop.md):
 /// `CP_OPEN=<game index>` opens a game from the first database, `CP_PLY=<n>` steps
-/// along the main line, `CP_ANALYZE=1` starts the engine, `CP_SETTINGS=1` opens settings.
+/// along the main line, `CP_ANALYZE=1` starts the engine, `CP_SETTINGS=1` opens settings,
+/// `CP_REVIEW=1` starts the whole-game analysis (`=dialog` only opens its dialog).
 #[derive(Default)]
 struct DebugStartup {
     open: Option<usize>,
@@ -113,6 +116,7 @@ impl App {
             library,
             game: None,
             analysis: Analysis::new(),
+            live_paused: false,
             settings_ui: SettingsWindow::new(),
             toast: None,
             tx,
@@ -190,6 +194,10 @@ impl App {
             g.debug_advance(self.debug.ply);
             if std::env::var("CP_ENGINE_PANEL").is_ok() {
                 g.debug_open_engine_settings();
+            }
+            // CP_REVIEW=dialog opens the game-analysis dialog, any other value starts the analysis.
+            if let Ok(v) = std::env::var("CP_REVIEW") {
+                g.debug_review(&self.settings, ctx, v != "dialog");
             }
         }
         if self.debug.analyze {
@@ -385,6 +393,7 @@ impl App {
 
     fn finish_close(&mut self, ctx: &egui::Context, intent: CloseIntent) {
         self.analysis.stop();
+        self.live_paused = false;
         if let Some(g) = self.game.take()
             && let Some(src) = g.source
         {
@@ -397,6 +406,7 @@ impl App {
     }
 
     fn toggle_engine(&mut self, ctx: &egui::Context) {
+        self.live_paused = false;
         if self.analysis.is_on() {
             self.analysis.stop();
             return;
@@ -557,6 +567,19 @@ impl eframe::App for App {
                     GameAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                     GameAction::OpenSettings => self.settings_ui.open = !self.settings_ui.open,
                     GameAction::Toast(m) => self.toast(&ctx, m),
+                    GameAction::PauseLive => {
+                        if self.analysis.is_on() {
+                            self.analysis.stop();
+                            self.live_paused = true;
+                        }
+                    }
+                    GameAction::ResumeLive => {
+                        if std::mem::take(&mut self.live_paused)
+                            && let Some(cfg) = self.settings.active_engine().cloned()
+                        {
+                            self.analysis.start(&cfg, &ctx);
+                        }
+                    }
                 }
             }
         } else {

@@ -26,6 +26,9 @@
   mouse and keyboard navigation.
 - **Engine analysis** — any UCI engine, up to 5 lines, best-move arrows, evaluation bar;
   search time, threads and memory are set right in the analysis panel.
+- **Game analysis** — evaluate the whole game in the background: evaluation graph under the board,
+  accuracy, inaccuracies, mistakes and blunders per player and per game phase (Lichess method),
+  better moves in the notation; write it into the game as NAGs, comments and `[%eval]` (undoable).
 - **Engine lines on the board** — step through a line without touching the game, add it as a
   variation with one click (undoable).
 - **Editing** — enter moves and variations, promote or delete lines, undo/redo,
@@ -69,7 +72,7 @@ cargo run --release -p chesspenguin -- examples/classics.pgn
 | Where | Keys |
 | --- | --- |
 | Library | ↑/↓ select · Enter open · Ctrl+O add PGN · Ctrl+N new game · Ctrl+F search |
-| Game | ←/→ move · ↑/↓ switch variation · Home/End · F flip · L engine · Esc leave preview |
+| Game | ←/→ move · ↑/↓ switch variation · Home/End · F flip · L engine · Shift+A game analysis · Esc leave preview |
 | Editing | Ctrl+Z / Ctrl+Y undo/redo · Ctrl+Shift+C copy PGN · Ctrl+S save as · Ctrl+W back to library |
 
 ## Project layout

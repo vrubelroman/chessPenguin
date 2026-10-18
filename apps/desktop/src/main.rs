@@ -9,6 +9,8 @@ mod game_view;
 mod i18n;
 mod library;
 mod notation;
+mod report;
+mod review;
 mod settings;
 mod settings_ui;
 mod sound;

@@ -191,6 +191,8 @@ pub struct Game {
     pub(crate) saved_depth: Option<usize>,
     /// Changes outside the undo history (tags, result) since the last save.
     pub(crate) unsaved_meta: bool,
+    /// Commands collected by an open [`Game::edit_group`].
+    pub(crate) group: Option<Vec<Command>>,
 }
 
 impl Default for Game {
@@ -254,6 +256,7 @@ impl Game {
             revision: 0,
             saved_depth: Some(0),
             unsaved_meta: false,
+            group: None,
         }
     }
 

@@ -7,6 +7,14 @@
 use shakmaty::{CastlingMode, Move, Position, san::SanPlus, uci::UciMove};
 
 use crate::game::{Game, GameMove, MoveKind, NodeId};
+use crate::nag::Nag;
+
+/// NAGs and trailing comments of a node (what annotation edits change).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Annotations {
+    nags: Vec<Nag>,
+    comments_after: Vec<String>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -25,12 +33,19 @@ pub(crate) enum Command {
         from: usize,
         to: usize,
     },
+    Annotate {
+        node: NodeId,
+        old: Annotations,
+        new: Annotations,
+    },
+    /// Several commands undone and redone as one step.
+    Group(Vec<Command>),
 }
 
 impl Command {
     fn inverse(&self) -> Command {
-        match *self {
-            Command::Attach {
+        match self {
+            &Command::Attach {
                 parent,
                 child,
                 index,
@@ -39,7 +54,7 @@ impl Command {
                 child,
                 index,
             },
-            Command::Detach {
+            &Command::Detach {
                 parent,
                 child,
                 index,
@@ -48,22 +63,32 @@ impl Command {
                 child,
                 index,
             },
-            Command::Reorder { parent, from, to } => Command::Reorder {
+            &Command::Reorder { parent, from, to } => Command::Reorder {
                 parent,
                 from: to,
                 to: from,
             },
+            Command::Annotate { node, old, new } => Command::Annotate {
+                node: *node,
+                old: new.clone(),
+                new: old.clone(),
+            },
+            Command::Group(cmds) => {
+                Command::Group(cmds.iter().rev().map(Command::inverse).collect())
+            }
         }
     }
 
     /// Node the UI should select after this command has been applied.
     fn cursor(&self, game: &Game) -> NodeId {
-        match *self {
-            Command::Attach { child, .. } => child,
-            Command::Detach { parent, .. } => parent,
-            Command::Reorder { parent, to, .. } => {
+        match self {
+            &Command::Attach { child, .. } => child,
+            &Command::Detach { parent, .. } => parent,
+            &Command::Reorder { parent, to, .. } => {
                 game.children(parent).get(to).copied().unwrap_or(parent)
             }
+            Command::Annotate { node, .. } => *node,
+            Command::Group(cmds) => cmds.first().map_or(NodeId::ROOT, |c| c.cursor(game)),
         }
     }
 }
@@ -227,6 +252,43 @@ impl Game {
         Ok(())
     }
 
+    /// Replaces the NAGs and trailing comments of `id`. Undoable; no-op if unchanged.
+    pub fn annotate(
+        &mut self,
+        id: NodeId,
+        nags: Vec<Nag>,
+        comments_after: Vec<String>,
+    ) -> Result<(), EditError> {
+        self.check_attached(id)?;
+        let node = self.node(id).ok_or(EditError::UnknownNode)?;
+        let old = Annotations {
+            nags: node.nags.clone(),
+            comments_after: node.comments_after.clone(),
+        };
+        let new = Annotations {
+            nags,
+            comments_after,
+        };
+        if old != new {
+            self.record(Command::Annotate { node: id, old, new });
+        }
+        Ok(())
+    }
+
+    /// Runs `f` so that all its edits form a single undo step.
+    pub fn edit_group<R>(&mut self, f: impl FnOnce(&mut Game) -> R) -> R {
+        let outer = self.group.replace(Vec::new());
+        let result = f(self);
+        let cmds = std::mem::replace(&mut self.group, outer).unwrap_or_default();
+        if !cmds.is_empty() {
+            match &mut self.group {
+                Some(parent) => parent.push(Command::Group(cmds)),
+                None => self.push_undo(Command::Group(cmds)),
+            }
+        }
+        result
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo_stack.is_empty()
     }
@@ -260,6 +322,15 @@ impl Game {
         if !matches!(cmd, Command::Attach { .. }) {
             self.apply(&cmd);
         }
+        if let Some(group) = &mut self.group {
+            group.push(cmd);
+            self.touch();
+            return;
+        }
+        self.push_undo(cmd);
+    }
+
+    fn push_undo(&mut self, cmd: Command) {
         if self.saved_depth.is_some_and(|d| d > self.undo_stack.len()) {
             // The saved state lived in the redo stack, which is discarded now.
             self.saved_depth = None;
@@ -270,6 +341,22 @@ impl Game {
     }
 
     fn apply(&mut self, cmd: &Command) {
+        match cmd {
+            Command::Annotate { node, new, .. } => {
+                if let Some(n) = self.node_mut(*node) {
+                    n.nags.clone_from(&new.nags);
+                    n.comments_after.clone_from(&new.comments_after);
+                }
+                return;
+            }
+            Command::Group(cmds) => {
+                for c in cmds {
+                    self.apply(c);
+                }
+                return;
+            }
+            _ => {}
+        }
         match *cmd {
             Command::Attach {
                 parent,
@@ -299,6 +386,7 @@ impl Game {
                     p.children.insert(to, c);
                 }
             }
+            Command::Annotate { .. } | Command::Group(_) => {}
         }
     }
 
@@ -425,5 +513,61 @@ mod tests {
             g.delete_variation(g.root()),
             Err(EditError::RootNotRemovable)
         );
+    }
+
+    #[test]
+    fn annotate_is_undoable() {
+        let mut g = Game::new();
+        let e4 = g.add_uci_line(g.root(), &["e2e4"]).expect("e4");
+        g.mark_saved();
+        g.annotate(e4, vec![Nag::GOOD_MOVE], vec!["[%eval 0.3]".into()])
+            .expect("annotate");
+        assert_eq!(
+            g.node(e4).map(|n| n.nags().to_vec()),
+            Some(vec![Nag::GOOD_MOVE])
+        );
+        assert!(g.is_modified());
+        // Unchanged annotations do not create an undo step.
+        let depth = g.undo_stack.len();
+        g.annotate(e4, vec![Nag::GOOD_MOVE], vec!["[%eval 0.3]".into()])
+            .expect("same");
+        assert_eq!(g.undo_stack.len(), depth);
+        assert_eq!(g.undo().map(|o| o.cursor), Some(e4));
+        assert!(
+            g.node(e4)
+                .is_some_and(|n| n.nags().is_empty() && n.comments_after().is_empty())
+        );
+        assert!(!g.is_modified());
+        g.redo();
+        assert_eq!(g.node(e4).map(|n| n.comments_after().len()), Some(1));
+    }
+
+    #[test]
+    fn edit_group_is_one_undo_step() {
+        let mut g = Game::new();
+        let end = g
+            .add_uci_line(g.root(), &["e2e4", "e7e5", "g1f3"])
+            .expect("line");
+        let e4 = g.main_child(g.root()).expect("e4");
+        let e5 = g.main_child(e4).expect("e5");
+        let before = g.canonical_tree();
+        let steps = g.undo_stack.len();
+        g.edit_group(|g| {
+            g.annotate(e5, vec![Nag::MISTAKE], vec!["better c5".into()])
+                .expect("annotate");
+            g.add_uci_line(e4, &["c7c5", "g1f3"]).expect("variation");
+            g.edit_group(|g| g.annotate(end, vec![Nag::DUBIOUS_MOVE], Vec::new()))
+                .expect("nested");
+        });
+        assert_eq!(g.undo_stack.len(), steps + 1);
+        assert_eq!(g.children(e4).len(), 2);
+        let after = g.canonical_tree();
+        g.undo();
+        assert_eq!(g.canonical_tree(), before);
+        g.redo();
+        assert_eq!(g.canonical_tree(), after);
+        // An empty group records nothing.
+        g.edit_group(|_| ());
+        assert_eq!(g.undo_stack.len(), steps + 1);
     }
 }

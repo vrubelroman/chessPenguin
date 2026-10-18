@@ -1,7 +1,10 @@
 //! Move list: main line as a two-column table (Lichess style), comments and variations
 //! as full-width blocks between rows; nested variations inline in parentheses.
 
+use std::collections::HashMap;
+
 use crate::i18n::tr;
+use crate::review::{Mark, judgement_color, judgement_name, judgement_symbol};
 use chess_core::shakmaty::Color;
 use chess_core::{CommentPart, Game, Nag, NodeId, parse_comment};
 use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, Ui, vec2};
@@ -10,6 +13,8 @@ pub struct Notation<'a> {
     pub game: &'a Game,
     pub cursor: NodeId,
     pub scroll_to_cursor: bool,
+    /// Engine assessments of main-line moves (whole-game analysis), shown apart from NAGs.
+    pub marks: Option<&'a HashMap<NodeId, Mark>>,
 }
 
 /// Result of a frame of the notation panel.
@@ -17,6 +22,8 @@ pub struct Notation<'a> {
 pub struct NotationResponse {
     pub clicked: Option<NodeId>,
     pub context: Option<(NodeId, NotationCommand)>,
+    /// The better line of this marked move was clicked.
+    pub best: Option<NodeId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -63,9 +70,14 @@ impl Notation<'_> {
             }
             let after = comment_text(n.comments_after());
             let vars = game.variations(node);
-            let interrupted = !after.is_empty() || !vars.is_empty() || !n.unparsed().is_empty();
+            let mark = self.marks.and_then(|m| m.get(&child));
+            let interrupted =
+                !after.is_empty() || !vars.is_empty() || !n.unparsed().is_empty() || mark.is_some();
             if interrupted || color == Color::Black {
                 row.flush(ui, &self, &mut out);
+                if let Some(mark) = mark {
+                    mark_block(ui, child, mark, &mut out);
+                }
                 if !after.is_empty() {
                     comment_block(ui, &after);
                 }
@@ -126,6 +138,9 @@ impl Row {
                 Some(id) => {
                     let resp = ui.interact(cell, ui.id().with(("mv", id.index())), Sense::click());
                     paint_move_cell(ui, cell, n.game, id, id == n.cursor, resp.hovered());
+                    if let Some(mark) = n.marks.and_then(|m| m.get(&id)) {
+                        paint_badge(ui, cell, mark);
+                    }
                     handle_move_response(ui, &resp, n, id, out);
                 }
                 None => {
@@ -203,6 +218,72 @@ fn paint_move_cell(
         FontId::proportional(16.0),
         text_color,
     );
+}
+
+/// Engine verdict at the right edge of a move cell: a filled pill, unlike the author's NAGs.
+fn paint_badge(ui: &Ui, cell: egui::Rect, mark: &Mark) {
+    let color = judgement_color(mark.judgement);
+    let font = FontId::proportional(12.0);
+    let galley = ui.painter().layout_no_wrap(
+        judgement_symbol(mark.judgement).to_string(),
+        font,
+        Color32::WHITE,
+    );
+    let size = vec2(galley.size().x + 10.0, 16.0);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(cell.right() - size.x - 6.0, cell.center().y - size.y / 2.0),
+        size,
+    );
+    ui.painter().rect_filled(rect, 8.0, color);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
+}
+
+/// "Mistake. Best: 23…Nf6 24.Nd5 …" under a marked main-line move; the line opens as a preview.
+fn mark_block(ui: &mut Ui, id: NodeId, mark: &Mark, out: &mut NotationResponse) {
+    let color = judgement_color(mark.judgement);
+    egui::Frame::new()
+        .fill(ui.visuals().extreme_bg_color)
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 10,
+            top: 3,
+            bottom: 3,
+        })
+        .stroke(Stroke::new(1.0, color.gamma_multiply(0.6)))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                ui.label(
+                    RichText::new(format!("{}.", judgement_name(mark.judgement)))
+                        .color(color)
+                        .strong(),
+                );
+                let Some(first) = &mark.best_label else {
+                    return;
+                };
+                ui.label(RichText::new(tr("Best:")).weak());
+                let mut line = first.clone();
+                for san in mark.best_san.iter().skip(1).take(4) {
+                    line.push(' ');
+                    line.push_str(san);
+                }
+                if mark.best_san.len() > 5 {
+                    line.push_str(" …");
+                }
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new(line).size(14.5))
+                            .frame_when_inactive(false),
+                    )
+                    .on_hover_text(tr("Show this line on the board"))
+                    .clicked()
+                {
+                    out.best = Some(id);
+                }
+            });
+        });
 }
 
 /// Move-assessment glyph (`!`, `?`, …) with its color, plus position assessments.
