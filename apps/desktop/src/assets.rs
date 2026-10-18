@@ -41,10 +41,13 @@ pub enum PieceSet {
     Pixel,
     Letter,
     Pirouetti,
+    Governor,
+    Kosal,
+    Metaltops,
 }
 
 impl PieceSet {
-    pub const ALL: [PieceSet; 14] = [
+    pub const ALL: [PieceSet; 17] = [
         PieceSet::Cburnett,
         PieceSet::Merida,
         PieceSet::Mpchess,
@@ -59,6 +62,9 @@ impl PieceSet {
         PieceSet::Pixel,
         PieceSet::Letter,
         PieceSet::Pirouetti,
+        PieceSet::Governor,
+        PieceSet::Kosal,
+        PieceSet::Metaltops,
     ];
 
     pub fn name(self) -> &'static str {
@@ -77,6 +83,9 @@ impl PieceSet {
             PieceSet::Pixel => "pixel",
             PieceSet::Letter => "letter",
             PieceSet::Pirouetti => "pirouetti",
+            PieceSet::Governor => "governor",
+            PieceSet::Kosal => "kosal",
+            PieceSet::Metaltops => "metaltops",
         }
     }
 
@@ -96,6 +105,9 @@ impl PieceSet {
             PieceSet::Pixel => piece_set!("pixel"),
             PieceSet::Letter => piece_set!("letter"),
             PieceSet::Pirouetti => piece_set!("pirouetti"),
+            PieceSet::Governor => piece_set!("governor"),
+            PieceSet::Kosal => piece_set!("kosal"),
+            PieceSet::Metaltops => piece_set!("metaltops"),
         }
     }
 
@@ -148,6 +160,16 @@ pub enum BoardThemeId {
     Coral,
     Grey,
     Purple,
+    Ic,
+    Ncf,
+    Ice,
+    Navy,
+    Mint,
+    Emerald,
+    Orange,
+    Rose,
+    Dusk,
+    Night,
     Wood,
     Wood2,
     Wood3,
@@ -166,6 +188,7 @@ pub enum BoardThemeId {
     GreenPlastic,
     PurpleDiag,
     PinkPyramid,
+    Horsey,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -217,10 +240,11 @@ const TEXTURES: &[(&str, &[u8])] = &[
         "pink-pyramid.png",
         include_bytes!("../assets/boards/pink-pyramid.png"),
     ),
+    ("horsey.jpg", include_bytes!("../assets/boards/horsey.jpg")),
 ];
 
 impl BoardThemeId {
-    pub const ALL: [BoardThemeId; 26] = [
+    pub const ALL: [BoardThemeId; 37] = [
         BoardThemeId::Brown,
         BoardThemeId::Blue,
         BoardThemeId::Green,
@@ -229,6 +253,16 @@ impl BoardThemeId {
         BoardThemeId::Coral,
         BoardThemeId::Grey,
         BoardThemeId::Purple,
+        BoardThemeId::Ic,
+        BoardThemeId::Ncf,
+        BoardThemeId::Ice,
+        BoardThemeId::Navy,
+        BoardThemeId::Mint,
+        BoardThemeId::Emerald,
+        BoardThemeId::Orange,
+        BoardThemeId::Rose,
+        BoardThemeId::Dusk,
+        BoardThemeId::Night,
         BoardThemeId::Wood,
         BoardThemeId::Wood2,
         BoardThemeId::Wood3,
@@ -247,6 +281,7 @@ impl BoardThemeId {
         BoardThemeId::GreenPlastic,
         BoardThemeId::PurpleDiag,
         BoardThemeId::PinkPyramid,
+        BoardThemeId::Horsey,
     ];
 
     pub fn label(self) -> String {
@@ -259,6 +294,16 @@ impl BoardThemeId {
             BoardThemeId::Coral => ("Coral", None),
             BoardThemeId::Grey => ("Grey", None),
             BoardThemeId::Purple => ("Purple", None),
+            BoardThemeId::Ic => ("IC", None),
+            BoardThemeId::Ncf => ("NCF", None),
+            BoardThemeId::Ice => ("Ice", None),
+            BoardThemeId::Navy => ("Navy", None),
+            BoardThemeId::Mint => ("Mint", None),
+            BoardThemeId::Emerald => ("Emerald", None),
+            BoardThemeId::Orange => ("Orange", None),
+            BoardThemeId::Rose => ("Rose", None),
+            BoardThemeId::Dusk => ("Dusk", None),
+            BoardThemeId::Night => ("Night", None),
             BoardThemeId::Wood => ("Wood", None),
             BoardThemeId::Wood2 => ("Wood", Some("2")),
             BoardThemeId::Wood3 => ("Wood", Some("3")),
@@ -277,6 +322,7 @@ impl BoardThemeId {
             BoardThemeId::GreenPlastic => ("Green plastic", None),
             BoardThemeId::PurpleDiag => ("Purple diagonal", None),
             BoardThemeId::PinkPyramid => ("Pink pyramid", None),
+            BoardThemeId::Horsey => ("Sketch", None),
         };
         match n {
             Some(n) => format!("{} {n}", tr(key)),
@@ -295,6 +341,17 @@ impl BoardThemeId {
             BoardThemeId::Coral => (rgb((177, 228, 185)), rgb((112, 162, 163)), None),
             BoardThemeId::Grey => (rgb((217, 217, 217)), rgb((154, 154, 154)), None),
             BoardThemeId::Purple => (rgb((232, 224, 240)), rgb((159, 144, 176)), None),
+            // The colours of the Lichess "ic" and "ncf-board" boards.
+            BoardThemeId::Ic => (rgb((236, 236, 236)), rgb((193, 193, 142)), None),
+            BoardThemeId::Ncf => (rgb((187, 207, 255)), rgb((84, 119, 202)), None),
+            BoardThemeId::Ice => (rgb((222, 234, 240)), rgb((122, 157, 178)), None),
+            BoardThemeId::Navy => (rgb((220, 226, 236)), rgb((70, 96, 140)), None),
+            BoardThemeId::Mint => (rgb((222, 241, 230)), rgb((118, 178, 148)), None),
+            BoardThemeId::Emerald => (rgb((226, 236, 218)), rgb((74, 132, 100)), None),
+            BoardThemeId::Orange => (rgb((250, 228, 196)), rgb((208, 139, 72)), None),
+            BoardThemeId::Rose => (rgb((242, 220, 220)), rgb((190, 126, 138)), None),
+            BoardThemeId::Dusk => (rgb((204, 186, 176)), rgb((112, 102, 122)), None),
+            BoardThemeId::Night => (rgb((128, 136, 146)), rgb((68, 74, 84)), None),
             BoardThemeId::Wood => (
                 rgb((215, 161, 91)),
                 rgb((154, 88, 35)),
@@ -385,6 +442,11 @@ impl BoardThemeId {
                 rgb((242, 117, 117)),
                 Some("bytes://boards/pink-pyramid.png"),
             ),
+            BoardThemeId::Horsey => (
+                rgb((239, 222, 198)),
+                rgb((151, 112, 81)),
+                Some("bytes://boards/horsey.jpg"),
+            ),
         };
         BoardTheme {
             light,
@@ -402,15 +464,33 @@ pub enum SoundSet {
     #[default]
     Sfx,
     Piano,
+    Futuristic,
+    Nes,
+    Wood,
+    Glass,
+    Clicks,
 }
 
 impl SoundSet {
-    pub const ALL: [SoundSet; 2] = [SoundSet::Sfx, SoundSet::Piano];
+    pub const ALL: [SoundSet; 7] = [
+        SoundSet::Sfx,
+        SoundSet::Piano,
+        SoundSet::Futuristic,
+        SoundSet::Nes,
+        SoundSet::Wood,
+        SoundSet::Glass,
+        SoundSet::Clicks,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             SoundSet::Sfx => "SFX",
             SoundSet::Piano => tr("Piano"),
+            SoundSet::Futuristic => tr("Futuristic"),
+            SoundSet::Nes => "NES",
+            SoundSet::Wood => tr("Wood"),
+            SoundSet::Glass => tr("Glass"),
+            SoundSet::Clicks => tr("Clicks"),
         }
     }
 }
@@ -429,14 +509,57 @@ pub fn sound_bytes(set: SoundSet, sound: Sound) -> &'static [u8] {
             include_bytes!(concat!("../assets/sounds/", $set, "/", $f, ".ogg")).as_slice()
         };
     }
+    // The Lichess sets have no checkmate sound of their own (it is the check sound there).
     match (set, sound) {
         (SoundSet::Sfx, Sound::Move) => s!("sfx", "Move"),
         (SoundSet::Sfx, Sound::Capture) => s!("sfx", "Capture"),
-        (SoundSet::Sfx, Sound::Check) => s!("sfx", "Check"),
-        (SoundSet::Sfx, Sound::Checkmate) => s!("sfx", "Checkmate"),
+        (SoundSet::Sfx, Sound::Check | Sound::Checkmate) => s!("sfx", "Check"),
         (SoundSet::Piano, Sound::Move) => s!("piano", "Move"),
         (SoundSet::Piano, Sound::Capture) => s!("piano", "Capture"),
-        (SoundSet::Piano, Sound::Check) => s!("piano", "Check"),
-        (SoundSet::Piano, Sound::Checkmate) => s!("piano", "Checkmate"),
+        (SoundSet::Piano, Sound::Check | Sound::Checkmate) => s!("piano", "Check"),
+        (SoundSet::Futuristic, Sound::Move) => s!("futuristic", "Move"),
+        (SoundSet::Futuristic, Sound::Capture) => s!("futuristic", "Capture"),
+        (SoundSet::Futuristic, Sound::Check | Sound::Checkmate) => s!("futuristic", "Check"),
+        (SoundSet::Nes, Sound::Move) => s!("nes", "Move"),
+        (SoundSet::Nes, Sound::Capture) => s!("nes", "Capture"),
+        (SoundSet::Nes, Sound::Check | Sound::Checkmate) => s!("nes", "Check"),
+        (SoundSet::Wood, Sound::Move) => s!("wood", "Move"),
+        (SoundSet::Wood, Sound::Capture) => s!("wood", "Capture"),
+        (SoundSet::Wood, Sound::Check) => s!("wood", "Check"),
+        (SoundSet::Wood, Sound::Checkmate) => s!("wood", "Checkmate"),
+        (SoundSet::Glass, Sound::Move) => s!("glass", "Move"),
+        (SoundSet::Glass, Sound::Capture) => s!("glass", "Capture"),
+        (SoundSet::Glass, Sound::Check) => s!("glass", "Check"),
+        (SoundSet::Glass, Sound::Checkmate) => s!("glass", "Checkmate"),
+        (SoundSet::Clicks, Sound::Move) => s!("clicks", "Move"),
+        (SoundSet::Clicks, Sound::Capture) => s!("clicks", "Capture"),
+        (SoundSet::Clicks, Sound::Check) => s!("clicks", "Check"),
+        (SoundSet::Clicks, Sound::Checkmate) => s!("clicks", "Checkmate"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_sound_is_a_real_ogg_file() {
+        // Lichess keeps some sounds as git symlinks; a copied link is a few bytes of text.
+        for set in SoundSet::ALL {
+            for s in [Sound::Move, Sound::Capture, Sound::Check, Sound::Checkmate] {
+                let b = sound_bytes(set, s);
+                assert!(b.starts_with(b"OggS") && b.len() > 1000, "{set:?} {s:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_piece_file_is_an_svg() {
+        for set in PieceSet::ALL {
+            for f in set.files() {
+                let head = String::from_utf8_lossy(&f[..f.len().min(400)]);
+                assert!(head.contains("<svg") || head.contains("<?xml"), "{set:?}");
+            }
+        }
     }
 }

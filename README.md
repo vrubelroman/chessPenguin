@@ -37,8 +37,8 @@
   variation with one click (undoable).
 - **Editing** — enter moves and variations, promote or delete lines, undo/redo,
   copy PGN/FEN, save a game to a new file.
-- **Looks** — 14 piece sets and 26 boards (flat colours and textures from Lichess),
-  sounds, dark and light themes.
+- **Looks** — 17 piece sets, 37 boards (flat colours and textures), 7 sound sets,
+  dark and light themes.
 - **Languages** — English, Русский, Français, Deutsch, Español, Italiano.
 
 | Game analysis: graph and report | Engine marks and better lines |

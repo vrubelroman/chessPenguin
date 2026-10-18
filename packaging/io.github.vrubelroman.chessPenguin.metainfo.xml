@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.3.0" date="2026-10-18">
+      <description>
+        <p>Opens ChessBase databases (.cbh, .cbv) and zip/7z archives; move badges and refutation arrows; viewed games marked; more piece sets, boards and sounds.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-18">
       <description>
         <p>Game analysis with accuracy, mistakes and an evaluation graph; Stockfish 19 included.</p>

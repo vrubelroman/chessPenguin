@@ -27,8 +27,39 @@ https://github.com/lichess-org/lila at revision `cd2656d2787a766ba743da8da1dd3b2
 | `apps/desktop/assets/boards/*` | `public/images/board/*` (wood, wood2–4, maple, maple2, leather, marble, blue-marble, blue2, blue3, canvas2, metal, olive, grey, green-plastic, purple-diag, pink-pyramid) | the lila authors and pirouetti | AGPLv3+ |
 | `apps/desktop/assets/sounds/sfx` | `public/sound/sfx` | Enigmahack | AGPLv3+ |
 | `apps/desktop/assets/sounds/piano` | `public/sound/piano` | Enigmahack | AGPLv3+ |
+| `apps/desktop/assets/sounds/futuristic` | `public/sound/futuristic` | Enigmahack | AGPLv3+ |
+| `apps/desktop/assets/sounds/nes` | `public/sound/nes` | Enigmahack | AGPLv3+ |
+| `apps/desktop/assets/boards/horsey.jpg` | `public/images/board/horsey.jpg` | the lila authors | AGPLv3+ |
+
+The flat "IC" and "NCF" boards reproduce the two colours of `public/images/board/ic.png` and
+`ncf-board.png`; the other flat boards are ChessPenguin's own colour pairs.
+
+### From PyChess
+
+Downloaded unmodified (files renamed `wk.svg` → `wK.svg`) from https://github.com/pychess/pychess
+(`pieces/`, 2026-10-18), with the license file of each set:
+
+| Path in this repo | Author / origin | License |
+| --- | --- | --- |
+| `apps/desktop/assets/pieces/governor` | the lila authors (Lichess "governor") | AGPLv3+ |
+| `apps/desktop/assets/pieces/kosal` | Kosal Sen (philatype.com) | CC BY 4.0 |
+| `apps/desktop/assets/pieces/metaltops` | PyChess (`license.txt`: "published under the GPL") | GPL |
+
+### Kenney sounds
+
+`apps/desktop/assets/sounds/wood`, `glass` and `clicks` are made from Kenney's "Impact Sounds" and
+"Interface Sounds" (https://kenney.nl, CC0 1.0): leading silence trimmed, loudness matched to the
+other sets, re-encoded as Ogg Vorbis.
+
+| Set | Move | Capture | Check | Checkmate |
+| --- | --- | --- | --- | --- |
+| wood | impactWood_light_002 | impactWood_heavy_002 | impactPlank_medium_002 | impactBell_heavy_001 |
+| glass | impactGlass_light_001 | impactGlass_heavy_001 | glass_002 | impactBell_heavy_000 |
+| clicks | click_002 | drop_002 | confirmation_001 | maximize_006 |
 
 Notes:
+- Lichess keeps a set's checkmate sound as a link to its check sound; ChessPenguin plays the check
+  sound for checkmate in the Lichess sets.
 - Lichess "standard" sounds are listed as non-free in `COPYING.md` and are intentionally not used.
 - Piece sets and boards under CC BY-NC-SA (e.g. california, staunty, maestro, horsey) are not bundled: non-commercial terms are incompatible with the GPL.
 - AGPLv3+ sound, piece and board files are combined with this GPLv3+ program under GPLv3 §13.

@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] — 2026-10-18
 
 - Open ChessBase databases (`.cbh` with companion files) and ChessBase archives (`.cbv`), and
   `.zip` / `.7z` archives holding PGN, `.cbh` or `.cbv` files. Games, variations, comments (with the
@@ -10,6 +10,13 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   book chapters are converted to PGN in memory; sources are read-only. Problems are listed under
   "Import notes" in the library.
 - Comments keep paragraph breaks (a blank line starts a new paragraph).
+- Game screen: the result next to the players; Lichess-style badges on the moved piece (engine
+  judgement or the author's symbol); on a marked move, arrows show the refutation and the best
+  answer; all engine arrows blue, only the live engine's while it runs.
+- Library: games opened before are marked with a check (context menu to change).
+- More looks: piece sets governor, kosal, metaltops; boards IC, NCF, Ice, Navy, Mint, Emerald,
+  Orange, Rose, Dusk, Night and Sketch; sound sets Futuristic, NES, Wood, Glass, Clicks.
+- Fixed: the checkmate sound was silent (a copied link instead of a sound file).
 - Library: "+ Add database"; long database names are shortened on the cards.
 
 ## [0.2.0] — 2026-10-18
