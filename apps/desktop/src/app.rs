@@ -195,6 +195,9 @@ impl App {
             if std::env::var("CP_ENGINE_PANEL").is_ok() {
                 g.debug_open_engine_settings();
             }
+            if let Some(k) = std::env::var("CP_BEST").ok().and_then(|v| v.parse().ok()) {
+                g.debug_best_line(k);
+            }
             // CP_REVIEW=dialog opens the game-analysis dialog, any other value starts the analysis.
             if let Ok(v) = std::env::var("CP_REVIEW") {
                 g.debug_review(&self.settings, ctx, v != "dialog");

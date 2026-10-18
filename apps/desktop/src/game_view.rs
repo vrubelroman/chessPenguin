@@ -613,12 +613,16 @@ impl GameView {
                         cursor: self.cursor,
                         scroll_to_cursor: self.scroll_to_cursor,
                         marks: self.review.visible.then_some(&self.review.marks),
+                        preview: self
+                            .preview
+                            .as_ref()
+                            .map(|p| (p.base, p.san.as_slice(), p.shown)),
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
                         self.goto(id);
                     }
-                    if let Some(id) = resp.best
+                    if let Some((id, shown)) = resp.best
                         && let Some(mark) = self.review.marks.get(&id)
                         && let Some(root) = self.game.position(mark.base)
                         && !mark.best.is_empty()
@@ -631,7 +635,7 @@ impl GameView {
                             root: root.clone(),
                             moves: mark.best.clone(),
                             san: mark.best_san.clone(),
-                            shown: 1,
+                            shown: shown.min(mark.best.len()),
                         });
                     }
                     if let Some((id, cmd)) = resp.context {
@@ -954,6 +958,28 @@ impl GameView {
         self.engine_settings_open = true;
     }
 
+    /// Opens the better line of the first engine-marked move up to its `shown`-th move.
+    pub fn debug_best_line(&mut self, shown: usize) {
+        let mark = self
+            .game
+            .mainline()
+            .into_iter()
+            .find_map(|id| self.review.marks.get(&id).cloned());
+        if let Some(mark) = mark
+            && let Some(root) = self.game.position(mark.base)
+            && !mark.best.is_empty()
+        {
+            self.cursor = mark.base;
+            self.preview = Some(Preview {
+                base: mark.base,
+                root: root.clone(),
+                shown: shown.clamp(1, mark.best.len()),
+                moves: mark.best,
+                san: mark.best_san,
+            });
+        }
+    }
+
     pub fn debug_review(&mut self, settings: &Settings, ctx: &egui::Context, start: bool) {
         if start {
             self.start_review(settings, false, ctx, &mut Vec::new());
@@ -978,6 +1004,7 @@ impl GameView {
 
     fn step_back(&mut self) {
         if let Some(p) = &mut self.preview {
+            self.scroll_to_cursor = true;
             p.shown = p.shown.saturating_sub(1);
             if p.shown == 0 {
                 self.preview = None;
@@ -992,6 +1019,7 @@ impl GameView {
     fn step_forward(&mut self, actions: &mut Vec<GameAction>) {
         if let Some(p) = &mut self.preview {
             if p.shown < p.moves.len() {
+                self.scroll_to_cursor = true;
                 p.shown += 1;
                 actions.push(GameAction::Sound(Sound::Move));
             }

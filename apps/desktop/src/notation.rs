@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::i18n::tr;
 use crate::review::{Mark, judgement_color, judgement_name, judgement_symbol};
-use chess_core::shakmaty::Color;
+use chess_core::shakmaty::{Color, Position};
 use chess_core::{CommentPart, Game, Nag, NodeId, parse_comment};
 use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, Ui, vec2};
 
@@ -15,6 +15,8 @@ pub struct Notation<'a> {
     pub scroll_to_cursor: bool,
     /// Engine assessments of main-line moves (whole-game analysis), shown apart from NAGs.
     pub marks: Option<&'a HashMap<NodeId, Mark>>,
+    /// Engine line shown on the board: (start node, SAN moves, moves played so far).
+    pub preview: Option<(NodeId, &'a [String], usize)>,
 }
 
 /// Result of a frame of the notation panel.
@@ -22,8 +24,8 @@ pub struct Notation<'a> {
 pub struct NotationResponse {
     pub clicked: Option<NodeId>,
     pub context: Option<(NodeId, NotationCommand)>,
-    /// The better line of this marked move was clicked.
-    pub best: Option<NodeId>,
+    /// A move of the better line of this marked move was clicked: (marked node, moves to show).
+    pub best: Option<(NodeId, usize)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -76,7 +78,7 @@ impl Notation<'_> {
             if interrupted || color == Color::Black {
                 row.flush(ui, &self, &mut out);
                 if let Some(mark) = mark {
-                    mark_block(ui, child, mark, &mut out);
+                    mark_block(ui, &self, child, mark, &mut out);
                 }
                 if !after.is_empty() {
                     comment_block(ui, &after);
@@ -239,9 +241,18 @@ fn paint_badge(ui: &Ui, cell: egui::Rect, mark: &Mark) {
         .galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
 }
 
-/// "Mistake. Best: 23…Nf6 24.Nd5 …" under a marked main-line move; the line opens as a preview.
-fn mark_block(ui: &mut Ui, id: NodeId, mark: &Mark, out: &mut NotationResponse) {
+/// "Mistake. Best: 23…Nf6 24.Nd5 …" under a marked main-line move. Each move opens the line
+/// on the board up to it; the move shown on the board is highlighted like the game cursor.
+fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut NotationResponse) {
     let color = judgement_color(mark.judgement);
+    let start = n
+        .game
+        .position(mark.base)
+        .map(|p| (p.fullmoves().get(), p.turn()));
+    let shown = n
+        .preview
+        .filter(|(base, san, _)| *base == mark.base && *san == mark.best_san.as_slice())
+        .map(|(_, _, shown)| shown);
     egui::Frame::new()
         .fill(ui.visuals().extreme_bg_color)
         .inner_margin(egui::Margin {
@@ -254,33 +265,50 @@ fn mark_block(ui: &mut Ui, id: NodeId, mark: &Mark, out: &mut NotationResponse) 
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 5.0;
+                ui.spacing_mut().item_spacing = vec2(3.0, 2.0);
                 ui.label(
                     RichText::new(format!("{}.", judgement_name(mark.judgement)))
                         .color(color)
                         .strong(),
                 );
-                let Some(first) = &mark.best_label else {
+                if mark.best_san.is_empty() {
                     return;
-                };
+                }
                 ui.label(RichText::new(tr("Best:")).weak());
-                let mut line = first.clone();
-                for san in mark.best_san.iter().skip(1).take(4) {
-                    line.push(' ');
-                    line.push_str(san);
-                }
-                if mark.best_san.len() > 5 {
-                    line.push_str(" …");
-                }
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new(line).size(14.5))
-                            .frame_when_inactive(false),
-                    )
-                    .on_hover_text(tr("Show this line on the board"))
-                    .clicked()
-                {
-                    out.best = Some(id);
+                for (i, san) in mark.best_san.iter().enumerate() {
+                    let label = match start {
+                        Some((num, turn)) => {
+                            let ply = i as u32 + u32::from(turn == Color::Black);
+                            let num = num + ply / 2;
+                            if ply.is_multiple_of(2) {
+                                format!("{num}.{san}")
+                            } else if i == 0 {
+                                format!("{num}…{san}")
+                            } else {
+                                san.clone()
+                            }
+                        }
+                        None => san.clone(),
+                    };
+                    let text = RichText::new(label).size(14.5);
+                    let current = shown == Some(i + 1);
+                    let button = if current {
+                        let sel = ui.visuals().selection;
+                        egui::Button::new(text.color(sel.stroke.color).strong())
+                            .fill(sel.bg_fill)
+                            .stroke(Stroke::new(1.0, sel.stroke.color))
+                    } else {
+                        egui::Button::new(text).frame_when_inactive(false)
+                    };
+                    let resp = ui
+                        .add(button)
+                        .on_hover_text(tr("Show this line on the board"));
+                    if current && n.scroll_to_cursor {
+                        resp.scroll_to_me(Some(egui::Align::Center));
+                    }
+                    if resp.clicked() {
+                        out.best = Some((id, i + 1));
+                    }
                 }
             });
         });
