@@ -30,11 +30,11 @@
 Пакеты каждого релиза — на странице [Releases](https://github.com/vrubelroman/chessPenguin/releases):
 `.deb`, `.rpm`, AppImage, Flatpak и архив для Windows. Команды установки — в [README.md](README.md#install).
 
-Движок в комплект не входит: установите Stockfish (`sudo apt install stockfish` или
-[stockfishchess.org](https://stockfishchess.org/download/)) и добавьте его в **Настройки → Движки**.
+**Stockfish 19 входит в комплект** и настраивается при первом запуске: установил и анализируешь.
+Системный `stockfish` тоже находится автоматически, другие UCI-движки добавляются в **Настройки → Движки**.
 
 Сборка из исходников: Rust 1.97+, затем `cargo run --release -p chesspenguin`
-или `./scripts/install.sh` для установки в `~/.local`.
+или `./scripts/install.sh` для установки в `~/.local` вместе со Stockfish (`--no-stockfish` — без него).
 
 ## Лицензия
 

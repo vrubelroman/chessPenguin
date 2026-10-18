@@ -1,6 +1,6 @@
 //! Settings window: engines, board & pieces, sound, interface.
 
-use crate::i18n::{Lang, tr};
+use crate::i18n::{Lang, tr, trf};
 use egui::{RichText, Sense, Ui, vec2};
 use shakmaty::{Color, Piece, Role};
 
@@ -136,11 +136,19 @@ impl SettingsWindow {
                         }
                     });
                 });
-                ui.label(
-                    RichText::new(s.engines[i].path.display().to_string())
-                        .small()
-                        .weak(),
-                );
+                let e = &s.engines[i];
+                let location = if e.builtin {
+                    match crate::engines::bundled_stockfish() {
+                        Some(p) => trf(
+                            "Shipped with ChessPenguin: {path}",
+                            &[("path", &p.display())],
+                        ),
+                        None => tr("Shipped with ChessPenguin: not part of this build").into(),
+                    }
+                } else {
+                    e.path.display().to_string()
+                };
+                ui.label(RichText::new(location).small().weak());
             });
         }
         if let Some(i) = remove {
@@ -152,6 +160,26 @@ impl SettingsWindow {
             };
             *changed = true;
             actions.push(SettingsAction::EngineChanged);
+        }
+        let found = crate::engines::suggestions(s);
+        if !found.is_empty() {
+            ui.add_space(6.0);
+            ui.label(RichText::new(tr("Found on this computer:")).strong());
+            for cfg in found {
+                ui.horizontal(|ui| {
+                    let path = cfg.executable().unwrap_or_default();
+                    ui.label(&cfg.name)
+                        .on_hover_text(path.display().to_string());
+                    if ui.button(tr("Add")).clicked() {
+                        s.engines.push(cfg);
+                        if s.active_engine.is_none() {
+                            s.active_engine = Some(s.engines.len() - 1);
+                            actions.push(SettingsAction::EngineChanged);
+                        }
+                        *changed = true;
+                    }
+                });
+            }
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {

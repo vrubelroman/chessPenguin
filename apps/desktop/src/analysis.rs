@@ -86,6 +86,11 @@ impl Analysis {
     /// Starts the engine in a background thread (handshake blocks for up to ~20 s).
     pub fn start(&mut self, cfg: &EngineConfig, ctx: &egui::Context) {
         self.stop();
+        let Some(path) = cfg.executable() else {
+            self.status =
+                Status::Failed(tr("The built-in engine is not part of this build").into());
+            return;
+        };
         let (tx, rx) = channel();
         let ctx_w = ctx.clone();
         let ctx_done = ctx.clone();
@@ -93,12 +98,12 @@ impl Analysis {
         self.engine_name = cfg.name.clone();
         self.multipv = cfg.multipv.max(1);
         self.limit = cfg.search_secs;
-        self.engine_path = Some(cfg.path.clone());
+        self.engine_path = Some(path.clone());
         let spawned = std::thread::Builder::new()
             .name("engine-spawn".into())
             .spawn(move || {
                 let res = uci::Engine::spawn_with(
-                    uci::EngineConfig::new(&cfg.path),
+                    uci::EngineConfig::new(&path),
                     Box::new(move || ctx_w.request_repaint()),
                 )
                 .inspect(|h| {
@@ -139,7 +144,7 @@ impl Analysis {
 
     /// Applies Threads/Hash/MultiPV/time of the running engine and restarts the current search.
     pub fn reconfigure(&mut self, cfg: &EngineConfig, ctx: &egui::Context) {
-        if self.engine_path.as_deref() != Some(cfg.path.as_path()) || self.spawning.is_some() {
+        if self.engine_path != cfg.executable() || self.spawning.is_some() {
             self.start(cfg, ctx);
             return;
         }

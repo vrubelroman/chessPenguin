@@ -91,6 +91,9 @@ impl App {
     pub fn new(ctx: &egui::Context) -> Self {
         let mut settings = Settings::load();
         crate::i18n::set_lang(settings.language);
+        if crate::engines::first_run_setup(&mut settings) {
+            let _ = settings.save();
+        }
         // PGN files passed on the command line (e.g. "Open with…") join the library, first one selected.
         let args: Vec<PathBuf> = std::env::args_os()
             .skip(1)

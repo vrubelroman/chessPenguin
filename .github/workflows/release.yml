@@ -43,12 +43,14 @@ jobs:
       - name: System libraries
         run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev libwayland-dev libfuse2
       - run: cargo build --release --locked -p chesspenguin
+      - name: Stockfish
+        run: packaging/stockfish.sh linux build/stockfish
       - name: Tarball
         run: |
           name="ChessPenguin-${VERSION}-linux-x86_64"
           mkdir -p "dist/${name}"
           cp target/release/chesspenguin LICENSE README.md THIRD_PARTY_NOTICES.md "dist/${name}/"
-          cp -r packaging/icons packaging/*.desktop examples "dist/${name}/"
+          cp -r packaging/icons packaging/*.desktop examples build/stockfish "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           rm -rf "dist/${name}"
       - name: deb, rpm and Arch Linux packages
@@ -94,6 +96,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p chesspenguin
+      - name: Stockfish
+        shell: bash
+        run: packaging/stockfish.sh windows build/stockfish
       - name: Zip
         shell: pwsh
         run: |
@@ -101,7 +106,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item target/release/chesspenguin.exe "dist/$name/ChessPenguin.exe"
           Copy-Item LICENSE, README.md, THIRD_PARTY_NOTICES.md "dist/$name/"
-          Copy-Item -Recurse examples "dist/$name/"
+          Copy-Item -Recurse examples, build/stockfish "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           Remove-Item -Recurse "dist/$name"
       - uses: actions/upload-artifact@v7
@@ -114,10 +119,13 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+      - name: Stockfish source (GPL-3.0 source offer for the bundled engine)
+        run: packaging/stockfish.sh source dist
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt
       - uses: softprops/action-gh-release@v3

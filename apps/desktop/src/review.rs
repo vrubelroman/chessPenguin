@@ -262,6 +262,10 @@ impl Review {
     ) -> bool {
         self.job = None;
         self.error = None;
+        let Some(path) = engine.executable() else {
+            self.error = Some(tr("The built-in engine is not part of this build").into());
+            return false;
+        };
         if full {
             self.evals.clear();
             self.dirty = true;
@@ -288,12 +292,7 @@ impl Review {
         let (tx, rx) = channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let total = targets.len();
-        let (path, threads, hash, nodes) = (
-            engine.path.clone(),
-            rs.threads.max(1),
-            rs.hash_mb,
-            rs.nodes(),
-        );
+        let (path, threads, hash, nodes) = (path, rs.threads.max(1), rs.hash_mb, rs.nodes());
         let (cancel_w, ctx_w) = (cancel.clone(), ctx.clone());
         let spawned = std::thread::Builder::new()
             .name("game-review".into())

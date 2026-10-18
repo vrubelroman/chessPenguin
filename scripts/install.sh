@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Installs ChessPenguin for the current user (~/.local), or removes it with --uninstall.
+# Stockfish is downloaded into ~/.local/lib/chesspenguin once (skip with --no-stockfish).
 set -euo pipefail
 
 app_id="io.github.vrubelroman.chessPenguin"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 bin_dir="${HOME}/.local/bin"
+lib_dir="${HOME}/.local/lib/chesspenguin"
 data_dir="${XDG_DATA_HOME:-${HOME}/.local/share}"
 apps_dir="${data_dir}/applications"
 icons_dir="${data_dir}/icons/hicolor"
@@ -26,6 +28,7 @@ remove_files() {
 
 if [[ "${1:-}" == "--uninstall" ]]; then
     remove_files
+    rm -rf "${lib_dir}"
     refresh_caches
     echo "ChessPenguin removed (settings in ~/.config/chesspenguin are kept)."
     exit 0
@@ -41,5 +44,8 @@ for s in "${sizes[@]}"; do
     install -Dm644 "${root}/packaging/icons/hicolor/${s}x${s}/apps/${app_id}.png" \
         "${icons_dir}/${s}x${s}/apps/${app_id}.png"
 done
+if [[ "${1:-}" != "--no-stockfish" && ! -x "${lib_dir}/stockfish" ]]; then
+    "${root}/packaging/stockfish.sh" linux "${lib_dir}"
+fi
 refresh_caches
 echo "Installed: ${bin_dir}/chesspenguin (launcher entry «ChessPenguin»)."

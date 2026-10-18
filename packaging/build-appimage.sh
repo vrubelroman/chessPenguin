@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds ChessPenguin-<version>-x86_64.AppImage from target/release/chesspenguin.
+# Builds ChessPenguin-<version>-x86_64.AppImage from target/release/chesspenguin and the
+# Stockfish fetched by `packaging/stockfish.sh linux build/stockfish`.
 # Usage (repository root): VERSION=0.1.0 packaging/build-appimage.sh dist/
 set -euo pipefail
 
@@ -11,7 +12,9 @@ trap 'rm -rf "${work}"' EXIT
 
 curl -fsSL -o "${work}/linuxdeploy" \
     https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-chmod +x "${work}/linuxdeploy"
+curl -fsSL -o "${work}/appimagetool" \
+    https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+chmod +x "${work}/linuxdeploy" "${work}/appimagetool"
 
 appdir="${work}/AppDir"
 install -Dm755 target/release/chesspenguin "${appdir}/usr/bin/chesspenguin"
@@ -21,12 +24,20 @@ for size in 16 24 32 48 64 128 256 512; do
         "${appdir}/usr/share/icons/hicolor/${size}x${size}/apps/${app_id}.png"
 done
 
-mkdir -p "${out_dir}"
-export LINUXDEPLOY_OUTPUT_VERSION="${version}"
-export OUTPUT="${out_dir}/ChessPenguin-${version}-x86_64.AppImage"
+# 1. linuxdeploy fills the AppDir (dependencies, AppRun, desktop entry, icon).
 APPIMAGE_EXTRACT_AND_RUN=1 "${work}/linuxdeploy" \
     --appdir "${appdir}" \
     --desktop-file "packaging/${app_id}.desktop" \
-    --icon-file "packaging/icons/hicolor/256x256/apps/${app_id}.png" \
-    --output appimage
-echo "Built ${OUTPUT}"
+    --icon-file "packaging/icons/hicolor/256x256/apps/${app_id}.png"
+
+# 2. Stockfish is added afterwards: linuxdeploy would rewrite its RUNPATH, and the bundled
+#    engine must stay the unmodified official binary.
+install -Dm755 build/stockfish/stockfish "${appdir}/usr/lib/chesspenguin/stockfish"
+install -Dm644 build/stockfish/Copying.txt "${appdir}/usr/share/licenses/chesspenguin/stockfish-Copying.txt"
+
+# 3. appimagetool packs the AppDir as is.
+mkdir -p "${out_dir}"
+output="${out_dir}/ChessPenguin-${version}-x86_64.AppImage"
+ARCH=x86_64 VERSION="${version}" APPIMAGE_EXTRACT_AND_RUN=1 \
+    "${work}/appimagetool" --no-appstream "${appdir}" "${output}"
+echo "Built ${output}"

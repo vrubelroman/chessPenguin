@@ -1,4 +1,5 @@
-# deb and rpm packages (https://nfpm.goreleaser.com). Run from the repository root:
+# deb, rpm and Arch packages (https://nfpm.goreleaser.com). Run from the repository root:
+#   packaging/stockfish.sh linux build/stockfish
 #   VERSION=0.1.0 nfpm package -f packaging/nfpm.yaml -p deb -t dist/   (deb, rpm, archlinux)
 name: chesspenguin
 arch: amd64
@@ -12,8 +13,9 @@ homepage: https://github.com/vrubelroman/chessPenguin
 license: GPL-3.0-or-later
 description: |
   Chess database for Linux.
-  View, enter and analyse chess games in PGN with any UCI engine
-  (Stockfish and others): variations, comments, multi-line analysis.
+  View, enter and analyse chess games in PGN: variations, comments,
+  multi-line engine analysis and whole-game review. Stockfish is included;
+  any other UCI engine can be added.
 
 contents:
   - src: target/release/chesspenguin
@@ -47,6 +49,15 @@ contents:
     dst: /usr/share/doc/chesspenguin/THIRD_PARTY_NOTICES.md
   - src: examples/classics.pgn
     dst: /usr/share/doc/chesspenguin/examples/classics.pgn
+  # Bundled Stockfish (GPL-3.0); the application looks for it in ../lib/chesspenguin.
+  - src: build/stockfish/stockfish
+    dst: /usr/lib/chesspenguin/stockfish
+    file_info:
+      mode: 0755
+  - src: build/stockfish/Copying.txt
+    dst: /usr/share/licenses/chesspenguin/stockfish-Copying.txt
+  - src: build/stockfish/AUTHORS
+    dst: /usr/share/doc/chesspenguin/stockfish-AUTHORS
 
 overrides:
   deb:

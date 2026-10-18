@@ -22,6 +22,16 @@ build-options:
   env:
     CARGO_HOME: /run/build/chesspenguin/cargo
 modules:
+  # Bundled Stockfish (GPL-3.0). Keep in sync with packaging/stockfish.sh.
+  - name: stockfish
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 stockfish-linux-x86-64-universal /app/lib/chesspenguin/stockfish
+      - install -Dm644 Copying.txt /app/share/licenses/chesspenguin/stockfish-Copying.txt
+    sources:
+      - type: archive
+        url: https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz
+        sha256: 9defc0d4e55d49c65a6d042f3e571a39fcea499ade6dbe741b53b8c65e03611f
   - name: chesspenguin
     buildsystem: simple
     build-commands:
@@ -38,3 +48,4 @@ modules:
           - .flatpak-builder
           - pgnFilesforExample
           - engines
+          - build

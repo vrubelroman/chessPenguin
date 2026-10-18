@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Stockfish 19 is bundled with every package (unmodified official "universal" build, which picks
+  the right code path for the CPU) and set up on the first start; a system `stockfish` is detected
+  too. Settings → Engines offers engines found on the computer. Packages grow to about 95 MB.
+
 - Game analysis (Shift+A): background evaluation of the whole main line with its own engine process,
   evaluation graph under the board, report tab with accuracy, inaccuracies, mistakes, blunders,
   average centipawn loss and accuracy per game phase; engine marks and better lines in the notation;

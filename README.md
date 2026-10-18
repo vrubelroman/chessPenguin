@@ -24,6 +24,7 @@
   Source files are never modified.
 - **Notation** — main line as a two-column table, comments and variations as blocks,
   mouse and keyboard navigation.
+- **Stockfish included** — analysis works right after installation; other UCI engines can be added.
 - **Engine analysis** — any UCI engine, up to 5 lines, best-move arrows, evaluation bar;
   search time, threads and memory are set right in the analysis panel.
 - **Game analysis** — evaluate the whole game in the background: evaluation graph under the board,
@@ -54,9 +55,8 @@ Packages for every release are on the [Releases](https://github.com/vrubelroman/
 | Flatpak | `flatpak install --user ChessPenguin-<version>-x86_64.flatpak` |
 | Windows | unzip `ChessPenguin-<version>-windows-x86_64.zip`, run `ChessPenguin.exe` |
 
-The engine is not bundled. Install Stockfish from your distribution
-(`sudo apt install stockfish`) or download it from [stockfishchess.org](https://stockfishchess.org/download/),
-then add it in **Settings → Engines**.
+**Stockfish 19 is included** and set up on the first start: install and analyse. A `stockfish`
+from your distribution is found too, and any other UCI engine can be added in **Settings → Engines**.
 
 ### Build from source
 
@@ -64,7 +64,7 @@ Rust 1.97 or newer. On Debian/Ubuntu: `sudo apt install pkg-config libasound2-de
 
 ```sh
 cargo run --release -p chesspenguin -- examples/classics.pgn
-./scripts/install.sh              # install for the current user (~/.local), --uninstall to remove
+./scripts/install.sh              # install for the current user (~/.local) with Stockfish; --no-stockfish, --uninstall
 ```
 
 ## Keyboard

@@ -33,6 +33,23 @@ Notes:
 - Piece sets and boards under CC BY-NC-SA (e.g. california, staunty, maestro, horsey) are not bundled: non-commercial terms are incompatible with the GPL.
 - AGPLv3+ sound, piece and board files are combined with this GPLv3+ program under GPLv3 §13.
 
+## Stockfish (bundled engine)
+
+Release packages include **Stockfish 19** (tag `sf_19`), the unmodified official
+`stockfish-*-x86-64-universal` binaries from
+https://github.com/official-stockfish/Stockfish/releases/tag/sf_19 (SHA-256 pinned in
+`packaging/stockfish.sh`).
+
+- License: GNU General Public License version 3 (`Copying.txt`, installed as
+  `stockfish-Copying.txt` next to this application's license); authors: the Stockfish
+  developers (`AUTHORS`, installed alongside).
+- Source code: https://github.com/official-stockfish/Stockfish/tree/sf_19 ; every GitHub release of
+  ChessPenguin also carries `stockfish-sf_19-source.tar.gz`. The neural networks embedded in the
+  binary are published by the Stockfish project (see its `README.md` and `src/evaluate.h`).
+- Stockfish's networks are trained on data provided by the Leela Chess Zero project under the
+  Open Database License (ODbL).
+- ChessPenguin runs Stockfish as a separate process over the UCI protocol.
+
 ## Rust crates
 
 Dependency licenses are recorded by `Cargo.lock`; key ones: shakmaty / pgn-reader (GPL-3.0-or-later),

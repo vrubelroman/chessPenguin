@@ -1,4 +1,6 @@
 /target
+# Downloaded Stockfish for packaging (packaging/stockfish.sh)
+/build/
 /engines/*
 !/engines/README.md
 /pgnFilesforExample/

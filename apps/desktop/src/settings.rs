@@ -20,6 +20,9 @@ pub struct EngineConfig {
     /// Search time per position in seconds; `None` = infinite.
     #[serde(default)]
     pub search_secs: Option<u32>,
+    /// The Stockfish shipped with ChessPenguin; `path` is unused and resolved at start.
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 fn default_threads() -> u32 {
@@ -43,6 +46,16 @@ impl EngineConfig {
             hash_mb: default_hash(),
             multipv: default_multipv(),
             search_secs: None,
+            builtin: false,
+        }
+    }
+
+    /// Executable to start; `None` if the built-in engine is missing (e.g. a source build).
+    pub fn executable(&self) -> Option<PathBuf> {
+        if self.builtin {
+            crate::engines::bundled_stockfish()
+        } else {
+            Some(self.path.clone())
         }
     }
 }
@@ -65,6 +78,8 @@ pub struct Settings {
     pub databases: Vec<PathBuf>,
     /// Whole-game analysis options.
     pub review: ReviewSettings,
+    /// The first-start engine discovery has run (see `engines::first_run_setup`).
+    pub engines_discovered: bool,
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -116,6 +131,7 @@ impl Default for Settings {
             show_best_arrow: true,
             databases: Vec::new(),
             review: ReviewSettings::default(),
+            engines_discovered: false,
         }
     }
 }
