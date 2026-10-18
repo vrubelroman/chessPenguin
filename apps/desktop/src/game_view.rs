@@ -257,9 +257,16 @@ impl GameView {
         }
     }
 
-    /// Header button: start, progress with cancel, or show/hide the report.
+    /// Toolbar button: start, progress with cancel, or show/hide the report.
     fn review_button(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+        let big = |s: &str| RichText::new(s).size(18.0);
         if let Some((done, total)) = self.review.progress() {
+            ui.add(
+                egui::ProgressBar::new(done as f32 / total.max(1) as f32)
+                    .desired_width(70.0)
+                    .text(format!("{done}/{total}")),
+            )
+            .on_hover_text(tr("Game analysis"));
             if crate::widgets::small_close_button(ui)
                 .on_hover_text(tr("Stop the game analysis"))
                 .clicked()
@@ -267,21 +274,15 @@ impl GameView {
                 self.review.cancel();
                 actions.push(GameAction::ResumeLive);
             }
-            ui.add(
-                egui::ProgressBar::new(done as f32 / total.max(1) as f32)
-                    .desired_width(90.0)
-                    .text(format!("{done}/{total}")),
-            );
-            ui.label(tr("Game analysis"));
         } else if self.review.has_data() {
-            ui.toggle_value(&mut self.review.visible, tr("📈 Report"))
+            ui.toggle_value(&mut self.review.visible, big("📈"))
                 .on_hover_text(tr(
-                    "Show or hide the evaluation graph and the report (Shift+A)",
+                    "Report: show or hide the evaluation graph and the report (Shift+A)",
                 ));
         } else if ui
-            .button(tr("📈 Analyse game"))
+            .button(big("📈"))
             .on_hover_text(tr(
-                "Evaluate every move: accuracy, inaccuracies, mistakes, blunders (Shift+A)",
+                "Analyse game: accuracy, inaccuracies, mistakes, blunders (Shift+A)",
             ))
             .clicked()
         {
@@ -340,7 +341,6 @@ impl GameView {
                 {
                     actions.push(GameAction::OpenSettings);
                 }
-                self.review_button(ui, actions);
                 let warnings = self
                     .diagnostics
                     .iter()
@@ -864,7 +864,9 @@ impl GameView {
 
     fn toolbar(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
+        // Wraps onto a second row when the side panel is narrow.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
             let big = |s: &str| RichText::new(s).size(18.0);
             if ui
                 .button(big("⏮"))
@@ -941,6 +943,8 @@ impl GameView {
             {
                 actions.push(GameAction::CopyText(self.game.to_pgn(), tr("PGN copied")));
             }
+            ui.separator();
+            self.review_button(ui, actions);
         });
         ui.add_space(4.0);
     }
