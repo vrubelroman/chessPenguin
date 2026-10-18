@@ -580,7 +580,6 @@ impl eframe::App for App {
                         self.settings_ui.open = true;
                         self.settings_ui.tab = Tab::Engines;
                     }
-                    GameAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                     GameAction::OpenSettings => self.settings_ui.open = !self.settings_ui.open,
                     GameAction::Toast(m) => self.toast(&ctx, m),
                     GameAction::PauseLive => {
@@ -614,7 +613,6 @@ impl eframe::App for App {
                         self.settings_dirty = true;
                     }
                     LibraryAction::OpenSettings => self.settings_ui.open = true,
-                    LibraryAction::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 }
             }
         }

@@ -76,7 +76,6 @@ pub enum GameAction {
     EngineSwitch,
     OpenEngineSettings,
     OpenSettings,
-    Quit,
     Toast(String),
     /// A whole-game analysis started: pause the live engine (they would share the CPU).
     PauseLive,
@@ -377,9 +376,6 @@ impl GameView {
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::widgets::close_button(ui).clicked() {
-                    actions.push(GameAction::Quit);
-                }
                 if ui
                     .button(tr("⚙ Settings"))
                     .on_hover_text("Ctrl+,")

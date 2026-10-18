@@ -46,7 +46,6 @@ pub enum LibraryAction {
     AddDatabases,
     RemoveDatabase(PathBuf),
     OpenSettings,
-    Quit,
 }
 
 /// How a database was imported, and what is worth knowing about it.
@@ -255,9 +254,6 @@ impl Library {
         ui.horizontal(|ui| {
             ui.heading(tr("Databases"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::widgets::close_button(ui).clicked() {
-                    actions.push(LibraryAction::Quit);
-                }
                 if ui.button(tr("⚙ Settings")).clicked() {
                     actions.push(LibraryAction::OpenSettings);
                 }

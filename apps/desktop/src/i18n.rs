@@ -132,14 +132,6 @@ const ROWS: &[[&str; 6]] = &[
     ],
     // --- common / window ---
     [
-        "Close the application",
-        "Закрыть программу",
-        "Fermer l'application",
-        "Programm schließen",
-        "Cerrar la aplicación",
-        "Chiudi l'applicazione",
-    ],
-    [
         "Cancel",
         "Отмена",
         "Annuler",

@@ -2,6 +2,10 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Removed the in-app ✕ (close) button: the window manager or desktop provides window controls.
+
 ## [0.3.0] — 2026-10-18
 
 - Open ChessBase databases (`.cbh` with companion files) and ChessBase archives (`.cbv`), and

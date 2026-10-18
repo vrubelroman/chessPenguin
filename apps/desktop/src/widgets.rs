@@ -1,12 +1,6 @@
 //! Small shared widgets.
 
-use crate::i18n::tr;
 use egui::{Color32, Sense, Stroke, Ui, vec2};
-
-/// Window close button (the app runs undecorated under tiling compositors).
-pub fn close_button(ui: &mut Ui) -> egui::Response {
-    x_button(ui, vec2(32.0, 28.0), 6.0).on_hover_text(tr("Close the application"))
-}
 
 /// Compact ✕ (e.g. to cancel a running task); the caller adds the tooltip.
 pub fn small_close_button(ui: &mut Ui) -> egui::Response {
