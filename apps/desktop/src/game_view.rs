@@ -107,6 +107,10 @@ impl GameView {
     pub fn title(&self) -> String {
         let g = &self.game;
         let white = g.tag("White").filter(|s| *s != "?").unwrap_or(tr("White"));
+        // A book chapter imported from ChessBase: its title is in White, Black is empty.
+        if g.tag("Black") == Some("") {
+            return white.to_string();
+        }
         let black = g.tag("Black").filter(|s| *s != "?").unwrap_or(tr("Black"));
         format!("{white} — {black}")
     }

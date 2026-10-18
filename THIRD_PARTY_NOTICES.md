@@ -50,7 +50,16 @@ https://github.com/official-stockfish/Stockfish/releases/tag/sf_19 (SHA-256 pinn
   Open Database License (ODbL).
 - ChessPenguin runs Stockfish as a separate process over the UCI protocol.
 
+## ChessBase formats
+
+- `crates/chess-import/src/cbv.rs` reads ChessBase archives following uncbv
+  (https://github.com/antoyo/uncbv, Antoni Boucher, GPL-3.0-or-later); the code is a rewrite.
+- The ChessBase database layout (`crates/chess-import/src/chessbase/`) follows the public format
+  description in https://github.com/Yarin78/morphy (`format/v1`), used as a source of facts; no code
+  is taken from that project.
+- ChessBase is a trademark of ChessBase GmbH; ChessPenguin is not affiliated with it.
+
 ## Rust crates
 
 Dependency licenses are recorded by `Cargo.lock`; key ones: shakmaty / pgn-reader (GPL-3.0-or-later),
-egui / eframe (MIT OR Apache-2.0).
+egui / eframe (MIT OR Apache-2.0), zip (MIT), sevenz-rust2 (Apache-2.0).

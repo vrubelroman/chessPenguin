@@ -1,0 +1,15 @@
+[package]
+name = "chess-import"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Opens chess databases other than plain PGN: ChessBase (.cbh, .cbv) and zip/7z archives"
+
+[dependencies]
+chess-core.workspace = true
+shakmaty.workspace = true
+encoding_rs.workspace = true
+thiserror.workspace = true
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "bzip2"] }
+sevenz-rust2 = { version = "0.24.1", default-features = false, features = ["bzip2", "ppmd", "deflate"] }

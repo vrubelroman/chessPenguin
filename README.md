@@ -19,6 +19,9 @@
 ## Features
 
 - **PGN library** — keep several databases at hand, search and sort games, reopen where you left off.
+- **ChessBase and archives** — open ChessBase databases (`.cbh`) and archives (`.cbv`), and `.zip` /
+  `.7z` files with PGN or ChessBase inside: games, variations, comments, symbols, arrows and the book
+  chapters, read-only (export to PGN by saving a game).
 - **Real-world PGN** — nested variations, comments, NAGs, games from a FEN position, legacy
   encodings (windows-1251, windows-1252, KOI8-R, CP866) and teaching null moves (`--`).
   Source files are never modified.

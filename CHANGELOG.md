@@ -2,6 +2,16 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Open ChessBase databases (`.cbh` with companion files) and ChessBase archives (`.cbv`), and
+  `.zip` / `.7z` archives holding PGN, `.cbh` or `.cbv` files. Games, variations, comments (with the
+  right code page, including Cyrillic), symbols, coloured squares and arrows, set-up positions and
+  book chapters are converted to PGN in memory; sources are read-only. Problems are listed under
+  "Import notes" in the library.
+- Comments keep paragraph breaks (a blank line starts a new paragraph).
+- Library: "+ Add database"; long database names are shortened on the cards.
+
 ## [0.2.0] — 2026-10-18
 
 - Stockfish 19 is bundled with every package (unmodified official "universal" build, which picks

@@ -1,4 +1,5 @@
-//! Library screen: shelf of PGN databases + searchable, sortable game table.
+//! Library screen: shelf of databases (PGN, ChessBase, archives) + searchable,
+//! sortable game table.
 
 use crate::i18n::{tr, trf};
 use std::collections::HashMap;
@@ -7,7 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 
-use chess_core::{GameEntry, OpenError, PgnDatabase, ScanProgress};
+use chess_core::{GameEntry, PgnDatabase, ScanProgress};
+use chess_import::{Format, ImportError, Opened, Unsupported};
 use egui::{Color32, RichText, Sense, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
 
@@ -15,7 +17,7 @@ enum Slot {
     Loading {
         progress: Arc<Mutex<ScanProgress>>,
         cancel: Arc<AtomicBool>,
-        rx: Receiver<Result<PgnDatabase, OpenError>>,
+        rx: Receiver<Result<Opened, ImportError>>,
     },
     Ready(Arc<PgnDatabase>),
     Failed(String),
@@ -45,8 +47,17 @@ pub enum LibraryAction {
     Quit,
 }
 
+/// How a database was imported, and what is worth knowing about it.
+struct ImportInfo {
+    format: Format,
+    notes: Vec<String>,
+}
+
 pub struct Library {
     slots: HashMap<PathBuf, Slot>,
+    info: HashMap<PathBuf, ImportInfo>,
+    /// Database whose import notes are shown.
+    notes_open: Option<PathBuf>,
     pub selected_db: Option<PathBuf>,
     search: String,
     selected_row: Option<usize>,
@@ -61,6 +72,8 @@ impl Library {
     pub fn new() -> Self {
         Self {
             slots: HashMap::new(),
+            info: HashMap::new(),
+            notes_open: None,
             selected_db: None,
             search: String::new(),
             selected_row: None,
@@ -93,9 +106,9 @@ impl Library {
             ctx.clone(),
         );
         let spawned = std::thread::Builder::new()
-            .name("pgn-scan".into())
+            .name("db-open".into())
             .spawn(move || {
-                let res = PgnDatabase::open(
+                let res = chess_import::open(
                     &path_owned,
                     &mut |sp| {
                         if let Ok(mut g) = p.lock() {
@@ -138,6 +151,7 @@ impl Library {
     }
 
     pub fn forget(&mut self, path: &Path) {
+        self.info.remove(path);
         if let Some(Slot::Loading { cancel, .. }) = self.slots.remove(path) {
             cancel.store(true, Ordering::Relaxed);
         }
@@ -155,14 +169,22 @@ impl Library {
     }
 
     fn poll(&mut self) {
-        for slot in self.slots.values_mut() {
+        for (path, slot) in self.slots.iter_mut() {
             if let Slot::Loading { rx, .. } = slot
                 && let Ok(res) = rx.try_recv()
             {
                 *slot = match res {
-                    Ok(db) => Slot::Ready(Arc::new(db)),
-                    Err(OpenError::Cancelled) => Slot::Failed(tr("Loading cancelled").into()),
-                    Err(e) => Slot::Failed(e.to_string()),
+                    Ok(o) => {
+                        self.info.insert(
+                            path.clone(),
+                            ImportInfo {
+                                format: o.format,
+                                notes: o.notes,
+                            },
+                        );
+                        Slot::Ready(Arc::new(o.db))
+                    }
+                    Err(e) => Slot::Failed(import_error(&e)),
                 };
                 self.view_key = None;
             }
@@ -174,7 +196,39 @@ impl Library {
         let mut actions = Vec::new();
         egui::Panel::top("shelf").show(ui, |ui| self.shelf(ui, databases, &mut actions));
         egui::CentralPanel::default().show(ui, |ui| self.table_area(ui, &mut actions));
+        self.notes_window(ui.ctx());
         actions
+    }
+
+    fn notes_window(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.notes_open.clone() else {
+            return;
+        };
+        let Some(info) = self.info.get(&path) else {
+            self.notes_open = None;
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(tr("Import notes"))
+            .open(&mut open)
+            .default_width(560.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(tr(
+                        "Everything else was read. Games listed here are shown as far as they could be decoded.",
+                    ))
+                    .weak(),
+                );
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                    for n in &info.notes {
+                        ui.label(RichText::new(format!("⚠ {n}")).color(ui.visuals().warn_fg_color));
+                    }
+                });
+            });
+        if !open {
+            self.notes_open = None;
+        }
     }
 
     fn shelf(&mut self, ui: &mut Ui, databases: &[PathBuf], actions: &mut Vec<LibraryAction>) {
@@ -217,11 +271,16 @@ impl Library {
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                tr("+ Add PGN"),
+                tr("+ Add database"),
                 egui::FontId::proportional(15.0),
                 visuals.text_color(),
             );
-            if resp.on_hover_text(tr("Open a PGN file (Ctrl+O)")).clicked() {
+            if resp
+                .on_hover_text(tr(
+                    "Open PGN, ChessBase (.cbh, .cbv) or an archive (.zip, .7z) (Ctrl+O)",
+                ))
+                .clicked()
+            {
                 actions.push(LibraryAction::AddDatabases);
             }
         });
@@ -270,12 +329,17 @@ impl Library {
             egui::FontId::proportional(22.0),
             text_color,
         );
-        let galley = ui.painter().layout(
+        // Long names (book titles) are cut to two lines so the detail line stays readable.
+        let mut job = egui::text::LayoutJob::simple(
             name,
             egui::FontId::proportional(14.0),
             text_color,
             rect.width() - 52.0,
         );
+        job.wrap.max_rows = 2;
+        job.wrap.break_anywhere = false;
+        job.wrap.overflow_character = Some('…');
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
         ui.painter()
             .galley(rect.left_top() + vec2(44.0, 9.0), galley, text_color);
         ui.painter().text(
@@ -379,14 +443,41 @@ impl Library {
                 )
                 .strong(),
             );
-            let enc = db.encoding();
-            ui.label(
-                RichText::new(trf(
-                    "· {n} games · encoding {enc}",
-                    &[("n", &db.len()), ("enc", &enc.label())],
-                ))
-                .weak(),
-            );
+            match self.info.get(&path) {
+                Some(info) if info.format != Format::Pgn => {
+                    ui.label(
+                        RichText::new(trf(
+                            "· {n} games · {format}, read-only",
+                            &[("n", &db.len()), ("format", &info.format.label())],
+                        ))
+                        .weak(),
+                    )
+                    .on_hover_text(tr(
+                        "Converted to PGN when opened; the original files are not changed. Save a game to keep your edits.",
+                    ));
+                }
+                _ => {
+                    let enc = db.encoding();
+                    ui.label(
+                        RichText::new(trf(
+                            "· {n} games · encoding {enc}",
+                            &[("n", &db.len()), ("enc", &enc.label())],
+                        ))
+                        .weak(),
+                    );
+                }
+            }
+            let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
+            if notes > 0
+                && ui
+                    .button(
+                        RichText::new(format!("⚠ {notes}")).color(ui.visuals().warn_fg_color),
+                    )
+                    .on_hover_text(tr("Import notes"))
+                    .clicked()
+            {
+                self.notes_open = Some(path.clone());
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut self.search)
@@ -625,4 +716,20 @@ fn filtered_sorted(entries: &[GameEntry], search: &str, (key, asc): (SortKey, bo
         if asc { ord } else { ord.reverse() }
     });
     v
+}
+
+/// User-facing text of an import failure.
+fn import_error(e: &ImportError) -> String {
+    match e {
+        ImportError::Cancelled => tr("Loading cancelled").into(),
+        ImportError::Empty => tr("No PGN or ChessBase database in the archive").into(),
+        ImportError::Unsupported(Unsupported::Encrypted) => {
+            tr("Password-protected archives (.cbz, encrypted zip/7z) are not supported").into()
+        }
+        ImportError::Unsupported(Unsupported::ChessBase2) => tr(
+            "The ChessBase 2CBH format is not supported: export the database from ChessBase as CBH or PGN",
+        )
+        .into(),
+        e => e.to_string(),
+    }
 }

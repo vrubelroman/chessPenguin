@@ -354,12 +354,24 @@ fn comment_text(comments: &[String]) -> String {
     for c in comments {
         for part in parse_comment(c) {
             if let CommentPart::Text(t) = part {
-                // Source line breaks are formatting, not content: reflow to the panel width.
-                for word in t.split_whitespace() {
-                    if !out.is_empty() {
-                        out.push(' ');
+                // Single line breaks are formatting, not content: reflow to the panel width.
+                // A blank line starts a new paragraph (book chapters imported from ChessBase).
+                let mut blank = false;
+                for line in t.lines() {
+                    if line.trim().is_empty() {
+                        blank = true;
+                        continue;
                     }
-                    out.push_str(word);
+                    if blank && !out.is_empty() {
+                        out.push_str("\n\n");
+                    }
+                    blank = false;
+                    for word in line.split_whitespace() {
+                        if !out.is_empty() && !out.ends_with('\n') {
+                            out.push(' ');
+                        }
+                        out.push_str(word);
+                    }
                 }
             }
         }

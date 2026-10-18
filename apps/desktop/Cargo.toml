@@ -11,6 +11,7 @@ license.workspace = true
 
 [dependencies]
 chess-core.workspace = true
+chess-import.workspace = true
 shakmaty.workspace = true
 uci.workspace = true
 egui.workspace = true

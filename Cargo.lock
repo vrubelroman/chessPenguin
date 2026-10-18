@@ -536,6 +536,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "bzip2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
+dependencies = [
+ "libbz2-rs-sys",
+]
+
+[[package]]
 name = "calloop"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -646,11 +655,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "chess-import"
+version = "0.2.0"
+dependencies = [
+ "chess-core",
+ "encoding_rs",
+ "sevenz-rust2",
+ "shakmaty",
+ "thiserror 2.0.21",
+ "zip",
+]
+
+[[package]]
 name = "chesspenguin"
 version = "0.2.0"
 dependencies = [
  "arboard",
  "chess-core",
+ "chess-import",
  "directories",
  "eframe",
  "egui",
@@ -850,6 +872,12 @@ name = "data-url"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
+
+[[package]]
+name = "deflate64"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac6b926516df9c60bfa16e107b21086399f8285a44ca9711344b9e553c5146e2"
 
 [[package]]
 name = "directories"
@@ -1796,6 +1824,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
+name = "libbz2-rs-sys"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34b357333733e8260735ba5894eb928c02ecc69c78715f01a8019e7fa7f2db4c"
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1867,6 +1901,12 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "lzma-rust2"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1c46f3fcd2e888afdb01a07efc071cb21300e07c68d32c3e8b01b5c8cb1fcaa"
 
 [[package]]
 name = "mach2"
@@ -2021,6 +2061,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -2813,6 +2865,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ppmd-rust"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "196a7c80b9a7652aba7cc070827516c2abe4ccdf53d128e1944003cf5726cff1"
+
+[[package]]
 name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3229,6 +3287,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "sevenz-rust2"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f0c68c0e8289bfd09e49ef433e8de02c7c464afc1d7f5a275c99749a880e301"
+dependencies = [
+ "bzip2",
+ "crc32fast",
+ "flate2",
+ "js-sys",
+ "lzma-rust2",
+ "ppmd-rust",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3816,6 +3889,12 @@ checksum = "cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90"
 dependencies = [
  "rustc-hash 2.1.3",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
 
 [[package]]
 name = "uci"
@@ -4913,6 +4992,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
+dependencies = [
+ "bzip2",
+ "crc32fast",
+ "deflate64",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "nix",
+ "typed-path",
 ]
 
 [[package]]

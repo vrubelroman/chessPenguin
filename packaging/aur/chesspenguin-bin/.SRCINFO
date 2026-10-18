@@ -1,22 +1,22 @@
 pkgbase = chesspenguin-bin
-	pkgdesc = Chess database: view, enter and analyse PGN games with UCI engines
-	pkgver = 0.1.0
+	pkgdesc = Chess database: view, enter and analyse PGN games; Stockfish included
+	pkgver = 0.2.0
 	pkgrel = 1
 	url = https://github.com/vrubelroman/chessPenguin
 	arch = x86_64
 	license = GPL-3.0-or-later
+	license = GPL-3.0-only
 	depends = glibc
 	depends = gcc-libs
 	depends = alsa-lib
 	depends = libxkbcommon
 	depends = dbus
 	depends = hicolor-icon-theme
-	optdepends = stockfish: chess engine for analysis
 	optdepends = vulkan-icd-loader: GPU rendering via Vulkan
 	provides = chesspenguin
 	conflicts = chesspenguin
 	options = !debug
-	source = https://github.com/vrubelroman/chessPenguin/releases/download/v0.1.0/ChessPenguin-0.1.0-linux-x86_64.tar.gz
-	sha256sums = 4d702fbe42cafad61166fc8eab9e76712b8c315bd3c6eca338b013b69cf71a29
+	source = https://github.com/vrubelroman/chessPenguin/releases/download/v0.2.0/ChessPenguin-0.2.0-linux-x86_64.tar.gz
+	sha256sums = ce3ded091758152be7180f38179df47e33178afa651d622e47dc03e33b5d43c3
 
 pkgname = chesspenguin-bin

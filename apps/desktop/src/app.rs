@@ -245,7 +245,13 @@ impl App {
     fn pick_databases(&self, ctx: &egui::Context) {
         self.spawn_dialog(ctx, || {
             rfd::FileDialog::new()
-                .set_title(tr("Open PGN"))
+                .set_title(tr("Open database"))
+                .add_filter(
+                    tr("Chess databases"),
+                    &[
+                        "pgn", "PGN", "cbh", "CBH", "cbv", "CBV", "zip", "ZIP", "7z", "7Z",
+                    ],
+                )
                 .add_filter("PGN", &["pgn", "PGN"])
                 .add_filter(tr("All files"), &["*"])
                 .pick_files()
