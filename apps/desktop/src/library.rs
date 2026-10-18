@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 
 use chess_core::{GameEntry, PgnDatabase, ScanProgress};
 use chess_import::{Format, ImportError, Opened, Unsupported};
-use egui::{Color32, RichText, Sense, Ui, vec2};
+use egui::{Color32, RichText, Sense, Stroke, Ui, vec2};
+
+use crate::viewed::{self, Viewed};
 use egui_extras::{Column, TableBuilder};
 
 enum Slot {
@@ -55,6 +57,9 @@ struct ImportInfo {
 
 pub struct Library {
     slots: HashMap<PathBuf, Slot>,
+    /// Games the user has opened (by content), and the content key of each game per database.
+    viewed: Viewed,
+    keys: HashMap<PathBuf, Vec<u64>>,
     info: HashMap<PathBuf, ImportInfo>,
     /// Database whose import notes are shown.
     notes_open: Option<PathBuf>,
@@ -72,6 +77,8 @@ impl Library {
     pub fn new() -> Self {
         Self {
             slots: HashMap::new(),
+            viewed: Viewed::load(),
+            keys: HashMap::new(),
             info: HashMap::new(),
             notes_open: None,
             selected_db: None,
@@ -152,12 +159,20 @@ impl Library {
 
     pub fn forget(&mut self, path: &Path) {
         self.info.remove(path);
+        self.keys.remove(path);
         if let Some(Slot::Loading { cancel, .. }) = self.slots.remove(path) {
             cancel.store(true, Ordering::Relaxed);
         }
         if self.selected_db.as_deref() == Some(path) {
             self.selected_db = None;
             self.view_key = None;
+        }
+    }
+
+    /// Remembers that a game was opened (shown with a check mark in the table).
+    pub fn mark_viewed(&mut self, path: &Path, index: usize) {
+        if let Some(&k) = self.keys.get(path).and_then(|k| k.get(index)) {
+            self.viewed.set(k, true);
         }
     }
 
@@ -175,6 +190,10 @@ impl Library {
             {
                 *slot = match res {
                     Ok(o) => {
+                        let keys = (0..o.db.len())
+                            .map(|i| viewed::key(o.db.raw_bytes(i).unwrap_or_default()))
+                            .collect();
+                        self.keys.insert(path.clone(), keys);
                         self.info.insert(
                             path.clone(),
                             ImportInfo {
@@ -567,6 +586,9 @@ impl Library {
         }
         let view = &self.view;
         let entries = db.entries();
+        let keys = self.keys.get(&path);
+        let viewed = &self.viewed;
+        let mut toggle_viewed = None;
         let mut clicked = None;
         let mut opened = None;
         let mut sort_click = None;
@@ -599,6 +621,8 @@ impl Library {
                         return;
                     };
                     row.set_selected(self.selected_row == Some(e.index));
+                    let key = keys.and_then(|k| k.get(e.index)).copied();
+                    let seen = key.is_some_and(|k| viewed.contains(k));
                     let cells: [String; 10] = [
                         (e.index + 1).to_string(),
                         e.white().unwrap_or("").to_string(),
@@ -615,6 +639,22 @@ impl Library {
                     ];
                     for (i, text) in cells.into_iter().enumerate() {
                         row.col(|ui| {
+                            if i == 0 && seen {
+                                // A check mark before the number: the game was opened before.
+                                let c = ui.max_rect().left_center() + vec2(7.0, 0.0);
+                                let stroke = Stroke::new(2.0, Color32::from_rgb(0x62, 0x9c, 0x2e));
+                                ui.painter().line_segment(
+                                    [c + vec2(-4.0, 0.0), c + vec2(-1.0, 3.5)],
+                                    stroke,
+                                );
+                                ui.painter().line_segment(
+                                    [c + vec2(-1.0, 3.5), c + vec2(5.0, -4.0)],
+                                    stroke,
+                                );
+                            }
+                            if i == 0 {
+                                ui.add_space(14.0);
+                            }
                             let mut t = RichText::new(text);
                             if i == 0 {
                                 t = t.weak();
@@ -630,6 +670,19 @@ impl Library {
                         });
                     }
                     let resp = row.response();
+                    if let Some(k) = key {
+                        resp.context_menu(|ui| {
+                            let label = if seen {
+                                tr("Mark as not viewed")
+                            } else {
+                                tr("Mark as viewed")
+                            };
+                            if ui.button(label).clicked() {
+                                toggle_viewed = Some((k, !seen));
+                                ui.close();
+                            }
+                        });
+                    }
                     if resp.clicked() {
                         clicked = Some(e.index);
                     }
@@ -638,6 +691,9 @@ impl Library {
                     }
                 });
             });
+        if let Some((k, v)) = toggle_viewed {
+            self.viewed.set(k, v);
+        }
         if let Some(k) = sort_click {
             self.sort = if self.sort.0 == k {
                 (k, !self.sort.1)

@@ -391,6 +391,7 @@ impl App {
                     }),
                     parsed.diagnostics,
                 ));
+                self.library.mark_viewed(&path, index);
                 self.settings.touch_database(&path);
                 self.settings_dirty = true;
             }

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use chess_core::shakmaty::{Chess, Color, Move, Position, Square};
 use chess_core::{
-    Annotation, CommentPart, Diagnostic, Game, MoveKind, NodeId, Severity, ShapeColor,
+    Annotation, CommentPart, Diagnostic, Game, GameResult, MoveKind, NodeId, Severity, ShapeColor,
     parse_comment,
 };
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Ui, vec2};
@@ -136,6 +136,37 @@ impl GameView {
             self.scroll_to_cursor = true;
         }
         self.preview = None;
+    }
+
+    /// Assessment of the move that led to the current position, for the board: the
+    /// engine's judgement when the game analysis is shown, otherwise the author's
+    /// `!`/`?` symbol.
+    fn badge(&self) -> Option<board::Badge> {
+        let square = match self.game.game_move(self.cursor)?.kind {
+            MoveKind::Normal(m) => move_squares(&m)?.1,
+            MoveKind::Null => return None,
+        };
+        if self.review.visible
+            && let Some(mark) = self.review.marks.get(&self.cursor)
+        {
+            return Some(board::Badge {
+                square,
+                text: crate::review::judgement_symbol(mark.judgement),
+                color: crate::review::judgement_color(mark.judgement),
+            });
+        }
+        let nag = self
+            .game
+            .node(self.cursor)?
+            .nags()
+            .iter()
+            .copied()
+            .find(|n| n.is_move_assessment())?;
+        Some(board::Badge {
+            square,
+            text: nag.symbol()?,
+            color: crate::notation::assessment_color(nag)?,
+        })
     }
 
     fn sound_for(&self, id: NodeId) -> Option<Sound> {
@@ -324,11 +355,22 @@ impl GameView {
             ui.separator();
             ui.vertical(|ui| {
                 let modified = if self.game.is_modified() { " •" } else { "" };
-                ui.label(
-                    RichText::new(format!("{}{modified}", self.title()))
-                        .strong()
-                        .size(16.0),
-                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("{}{modified}", self.title()))
+                            .strong()
+                            .size(16.0),
+                    );
+                    if let Some(result) = result_label(self.game.result()) {
+                        ui.label(
+                            RichText::new(format!(" {result} "))
+                                .strong()
+                                .size(15.0)
+                                .background_color(ui.visuals().widgets.inactive.weak_bg_fill),
+                        )
+                        .on_hover_text(result_hint(self.game.result()));
+                    }
+                });
                 let sub = self.subtitle();
                 if !sub.is_empty() {
                     ui.label(RichText::new(sub).weak());
@@ -428,30 +470,27 @@ impl GameView {
                     }
                 }
             }
-            if self.review.visible
-                && let Some(sq) = self
-                    .review
-                    .best_move(self.cursor)
-                    .as_ref()
-                    .and_then(move_squares)
-            {
-                arrows.push(Arrow {
-                    from: sq.0,
-                    to: sq.1,
-                    color: Color32::from_rgba_unmultiplied(0x2a, 0x8a, 0xd8, 170),
-                    weight: 0.9,
-                });
+            // With the live engine on, only its arrows are drawn: two sources of engine
+            // arrows on one board would overlap and compete.
+            if self.review.visible && !analysis.is_on() {
+                // The opponent's best reply to a marked move (strong) and the best answer to it.
+                let line = self.review.refutation(self.cursor, &self.game);
+                for (k, m) in line.iter().enumerate() {
+                    if let Some(sq) = move_squares(m) {
+                        engine_arrow(
+                            &mut arrows,
+                            sq,
+                            if k == 0 { 200 } else { 100 },
+                            if k == 0 { 1.0 } else { 0.75 },
+                        );
+                    }
+                }
             }
             if settings.show_best_arrow && analysis.best().is_some() {
                 for (i, line) in analysis.lines.iter().take(3).enumerate() {
                     if let Some(sq) = line.moves.first().and_then(move_squares) {
-                        let alpha = if i == 0 { 170 } else { 90 };
-                        arrows.push(Arrow {
-                            from: sq.0,
-                            to: sq.1,
-                            color: Color32::from_rgba_unmultiplied(21, 120, 27, alpha),
-                            weight: if i == 0 { 1.0 } else { 0.7 },
-                        });
+                        let alpha = if i == 0 { 200 } else { 100 };
+                        engine_arrow(&mut arrows, sq, alpha, if i == 0 { 1.0 } else { 0.7 });
                     }
                 }
             }
@@ -529,6 +568,11 @@ impl GameView {
                     last_move,
                     arrows: &arrows,
                     circles: &circles,
+                    badge: if self.preview.is_none() {
+                        self.badge()
+                    } else {
+                        None
+                    },
                     interactive: self.preview.is_none(),
                     show_coords: settings.show_coords,
                     theme: settings.board_theme.theme(),
@@ -1330,6 +1374,43 @@ fn game_over(pos: &Chess) -> Option<GameOver> {
         Some(GameOver::Draw(tr("Insufficient material")))
     } else {
         None
+    }
+}
+
+/// Engine arrows (live analysis and game analysis) are all blue; a move both suggest
+/// is drawn once, with the stronger of the two looks.
+fn engine_arrow(arrows: &mut Vec<Arrow>, (from, to): (Square, Square), alpha: u8, weight: f32) {
+    let color = Color32::from_rgba_unmultiplied(0, 48, 136, alpha);
+    if let Some(a) = arrows.iter_mut().find(|a| a.from == from && a.to == to) {
+        if a.color.a() < color.a() {
+            a.color = color;
+        }
+        a.weight = a.weight.max(weight);
+        return;
+    }
+    arrows.push(Arrow {
+        from,
+        to,
+        color,
+        weight,
+    });
+}
+
+/// "1-0", "0-1", "½-½"; `None` for an unfinished game.
+fn result_label(r: GameResult) -> Option<&'static str> {
+    match r {
+        GameResult::WhiteWins => Some("1-0"),
+        GameResult::BlackWins => Some("0-1"),
+        GameResult::Draw => Some("½-½"),
+        GameResult::Unknown => None,
+    }
+}
+
+fn result_hint(r: GameResult) -> &'static str {
+    match r {
+        GameResult::WhiteWins => tr("White won"),
+        GameResult::BlackWins => tr("Black won"),
+        _ => tr("Draw"),
     }
 }
 

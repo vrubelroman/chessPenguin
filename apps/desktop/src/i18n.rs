@@ -1477,6 +1477,41 @@ const ROWS: &[[&str; 6]] = &[
         "· {n} partidas · {format}, solo lectura",
         "· {n} partite · {format}, sola lettura",
     ],
+    // Game result
+    [
+        "White won",
+        "Победили белые",
+        "Les Blancs ont gagné",
+        "Weiß hat gewonnen",
+        "Ganaron las blancas",
+        "Hanno vinto i bianchi",
+    ],
+    [
+        "Black won",
+        "Победили чёрные",
+        "Les Noirs ont gagné",
+        "Schwarz hat gewonnen",
+        "Ganaron las negras",
+        "Hanno vinto i neri",
+    ],
+    ["Draw", "Ничья", "Nulle", "Remis", "Tablas", "Patta"],
+    // Viewed games
+    [
+        "Mark as viewed",
+        "Отметить как просмотренную",
+        "Marquer comme vue",
+        "Als angesehen markieren",
+        "Marcar como vista",
+        "Segna come vista",
+    ],
+    [
+        "Mark as not viewed",
+        "Снять отметку «просмотрена»",
+        "Marquer comme non vue",
+        "Als nicht angesehen markieren",
+        "Marcar como no vista",
+        "Segna come non vista",
+    ],
 ];
 
 #[cfg(test)]

@@ -14,6 +14,14 @@ pub struct Arrow {
     pub weight: f32,
 }
 
+/// A round label in the top right corner of a square, as on Lichess.
+#[derive(Clone, Copy, Debug)]
+pub struct Badge {
+    pub square: Square,
+    pub text: &'static str,
+    pub color: Color32,
+}
+
 /// Interaction state that lives across frames (per board instance).
 #[derive(Default)]
 pub struct BoardState {
@@ -35,6 +43,8 @@ pub struct BoardView<'a> {
     pub arrows: &'a [Arrow],
     /// Circled squares (from `[%csl]` comment annotations).
     pub circles: &'a [(Square, Color32)],
+    /// Move assessment shown on the destination square of the last move ("??" in red, …).
+    pub badge: Option<Badge>,
     pub interactive: bool,
     pub show_coords: bool,
     pub theme: BoardTheme,
@@ -169,6 +179,33 @@ impl BoardView<'_> {
         }
         for a in self.arrows {
             draw_arrow(&painter, &geo, a);
+        }
+        if let Some(b) = self.badge {
+            let r = geo.square_rect(b.square);
+            let radius = sq_size * 0.19;
+            // Over the corner of the square, kept inside the board.
+            let c = egui::pos2(
+                (r.right() - radius * 0.35).min(rect.right() - radius - 1.0),
+                (r.top() + radius * 0.35).max(rect.top() + radius + 1.0),
+            );
+            painter.circle_filled(
+                c + vec2(0.0, sq_size * 0.015),
+                radius,
+                Color32::from_black_alpha(90),
+            );
+            painter.circle(
+                c,
+                radius,
+                b.color,
+                Stroke::new(sq_size * 0.02, Color32::WHITE),
+            );
+            painter.text(
+                c,
+                egui::Align2::CENTER_CENTER,
+                b.text,
+                egui::FontId::proportional(radius * 1.05),
+                Color32::WHITE,
+            );
         }
 
         // dragged piece follows the cursor

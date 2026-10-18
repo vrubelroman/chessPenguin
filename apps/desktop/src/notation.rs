@@ -321,6 +321,19 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
         });
 }
 
+/// Colour of a move-assessment NAG ($1-$6), the Lichess palette.
+pub fn assessment_color(nag: Nag) -> Option<Color32> {
+    Some(match nag.0 {
+        1 => Color32::from_rgb(0x62, 0x9c, 0x2e),
+        2 => Color32::from_rgb(0xe6, 0x8f, 0x00),
+        3 => Color32::from_rgb(0x22, 0xac, 0x9a),
+        4 => Color32::from_rgb(0xdf, 0x53, 0x53),
+        5 => Color32::from_rgb(0xea, 0x45, 0xd8),
+        6 => Color32::from_rgb(0x56, 0xb4, 0xe9),
+        _ => return None,
+    })
+}
+
 /// Move-assessment glyph (`!`, `?`, …) with its color, plus position assessments.
 fn move_glyph(nags: &[Nag]) -> (String, Option<Color32>) {
     let mut s = String::new();
@@ -331,15 +344,10 @@ fn move_glyph(nags: &[Nag]) -> (String, Option<Color32>) {
             continue;
         };
         if nag.is_move_assessment() {
-            color = Some(match nag.0 {
-                1 => Color32::from_rgb(0x62, 0x9c, 0x2e),
-                2 => Color32::from_rgb(0xe6, 0x8f, 0x00),
-                3 => Color32::from_rgb(0x22, 0xac, 0x9a),
-                4 => Color32::from_rgb(0xdf, 0x53, 0x53),
-                5 => Color32::from_rgb(0xea, 0x45, 0xd8),
-                6 => Color32::from_rgb(0x56, 0xb4, 0xe9),
-                _ => continue,
-            });
+            let Some(c) = assessment_color(*nag) else {
+                continue;
+            };
+            color = Some(c);
             s.push_str(sym);
         } else {
             s.push(' ');

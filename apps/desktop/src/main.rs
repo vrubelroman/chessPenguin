@@ -15,6 +15,7 @@ mod review;
 mod settings;
 mod settings_ui;
 mod sound;
+mod viewed;
 mod widgets;
 
 fn main() -> eframe::Result {

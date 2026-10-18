@@ -368,9 +368,25 @@ impl Review {
         }
     }
 
-    /// The engine's better move for a marked node (an arrow on the board).
-    pub fn best_move(&self, node: NodeId) -> Option<Move> {
-        self.marks.get(&node).and_then(|m| m.best.first().copied())
+    /// After an inaccuracy, mistake or blunder: how the opponent punishes it and how
+    /// the player best answers, the first two moves of the engine line from the position
+    /// after the move (shown as arrows, as on Lichess).
+    pub fn refutation(&self, node: NodeId, game: &Game) -> Vec<Move> {
+        if !self.marks.contains_key(&node) {
+            return Vec::new();
+        }
+        let (Some(i), Some(pos)) = (
+            self.line.iter().position(|n| *n == node),
+            game.position(node),
+        ) else {
+            return Vec::new();
+        };
+        let Some(e) = self.keys.get(i).and_then(|k| self.evals.get(k)) else {
+            return Vec::new();
+        };
+        let (mut moves, _) = parse_pv(pos, &e.pv);
+        moves.truncate(2);
+        moves
     }
 
     // ----- cache -----------------------------------------------------------------
