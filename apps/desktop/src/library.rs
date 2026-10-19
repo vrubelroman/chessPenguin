@@ -58,6 +58,10 @@ pub enum LibraryAction {
     NewGame,
     PastePgn,
     AddDatabases,
+    /// The window for downloading games from Lichess and Chess.com.
+    OnlineGames,
+    /// Fetch the new games of an online database.
+    UpdateOnline(PathBuf),
     RemoveDatabase(PathBuf),
     OpenSettings,
 }
@@ -197,6 +201,10 @@ pub struct Library {
     view: Vec<usize>,
     view_key: Option<(PathBuf, String, SortKey, bool)>,
     scroll_to_selected: bool,
+    /// Lichess or Chess.com answered at start (the online games are offered).
+    pub online: bool,
+    /// Online databases being downloaded or updated.
+    pub online_busy: Vec<PathBuf>,
 }
 
 impl Library {
@@ -216,6 +224,8 @@ impl Library {
             view: Vec::new(),
             view_key: None,
             scroll_to_selected: false,
+            online: false,
+            online_busy: Vec::new(),
         }
     }
 
@@ -285,6 +295,18 @@ impl Library {
         if self.selected_db.as_deref() == Some(path) {
             self.selected_row = Some(index);
             self.scroll_to_selected = true;
+        }
+    }
+
+    /// Reads a database again (its file changed), keeping it selected if it was.
+    pub fn reload(&mut self, path: &Path, ctx: &egui::Context) {
+        let selected = self.selected_db.as_deref() == Some(path);
+        self.forget(path);
+        self.small.remove(path);
+        if selected {
+            self.select_db(path, ctx);
+        } else {
+            self.load(path, ctx);
         }
     }
 
@@ -566,6 +588,14 @@ impl Library {
             {
                 actions.push(LibraryAction::AddDatabases);
             }
+            if self.online
+                && ui
+                    .button("🌐")
+                    .on_hover_text(tr("Download your online games by nickname into a database"))
+                    .clicked()
+            {
+                actions.push(LibraryAction::OnlineGames);
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(tr("⚙ Settings")).clicked() {
                     actions.push(LibraryAction::OpenSettings);
@@ -628,6 +658,27 @@ impl Library {
                 .clicked()
             {
                 actions.push(LibraryAction::AddDatabases);
+            }
+            if self.online {
+                let (rect, resp) = ui.allocate_exact_size(vec2(150.0, 64.0), Sense::click());
+                let visuals = ui.style().interact(&resp);
+                ui.painter()
+                    .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
+                for (dy, text) in [(-9.0, tr("Games from")), (9.0, "Lichess · Chess.com")] {
+                    ui.painter().text(
+                        rect.center() + vec2(0.0, dy),
+                        egui::Align2::CENTER_CENTER,
+                        text,
+                        egui::FontId::proportional(14.0),
+                        visuals.text_color(),
+                    );
+                }
+                if resp
+                    .on_hover_text(tr("Download your online games by nickname into a database"))
+                    .clicked()
+                {
+                    actions.push(LibraryAction::OnlineGames);
+                }
             }
         });
         ui.add_space(8.0);
@@ -840,6 +891,19 @@ impl Library {
             let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
             if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
                 self.notes_open = Some(path.clone());
+            }
+            if crate::online::is_online(&path) {
+                if self.online_busy.contains(&path) {
+                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.label(RichText::new(tr("updating…")).weak());
+                } else if self.online
+                    && ui
+                        .small_button(tr("⟳ Update"))
+                        .on_hover_text(tr("Fetch the games played since the last download"))
+                        .clicked()
+                {
+                    actions.push(LibraryAction::UpdateOnline(path.clone()));
+                }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let small = self

@@ -2,6 +2,14 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Your games from Lichess and Chess.com: enter the nickname (another one for Chess.com if it
+  differs), see what was found, download the games into a database of their own and update
+  it later with one click; an interrupted download continues where it stopped. Only standard
+  chess is kept. The feature is offered only when the sites answer: ChessPenguin asks each
+  for a public profile at start (no data of yours is sent), so offline it stays hidden.
+
 ## [0.6.3] — 2026-10-19
 
 - Import notes (for example, Chess960 games shown without moves) are a quiet grey "ℹ" now

@@ -890,6 +890,11 @@ impl<T: Send + 'static> Background<T> {
     pub fn progress(&self) -> usize {
         self.progress.load(Ordering::Relaxed)
     }
+
+    /// Asks the work to stop; its result still arrives.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 impl<T> Drop for Background<T> {

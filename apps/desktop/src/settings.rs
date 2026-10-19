@@ -84,6 +84,10 @@ pub struct Settings {
     pub engines_discovered: bool,
     /// The sample databases were put on the shelf (see `examples::first_run_setup`).
     pub examples_added: bool,
+    /// The nickname last looked up on Lichess / Chess.com, and a different one for
+    /// Chess.com.
+    pub online_nick: String,
+    pub online_nick_chesscom: Option<String>,
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -137,6 +141,8 @@ impl Default for Settings {
             review: ReviewSettings::default(),
             engines_discovered: false,
             examples_added: false,
+            online_nick: String::new(),
+            online_nick_chesscom: None,
         }
     }
 }

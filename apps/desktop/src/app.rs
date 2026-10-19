@@ -50,6 +50,9 @@ pub struct App {
     /// The offer to download Stockfish when an action needs an engine.
     engine_offer: crate::engine_offer::EngineOffer,
     offer_hook_done: bool,
+    /// Lichess / Chess.com: which answered at start, and the download window.
+    online_probe: crate::online::Probe,
+    online: crate::online_ui::OnlineDialog,
     /// A position to find in a database once the game is closed.
     find_after_close: Option<(PathBuf, shakmaty::Chess, Vec<shakmaty::Move>, bool)>,
     allow_quit: bool,
@@ -137,6 +140,8 @@ impl App {
             find_after_close: None,
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
+            online_probe: crate::online::Probe::start(ctx),
+            online: crate::online_ui::OnlineDialog::from_env(),
             allow_quit: false,
             applied_dark: None,
             debug: DebugStartup::from_env(),
@@ -725,6 +730,9 @@ impl eframe::App for App {
             }
         } else {
             let dbs = self.settings.databases.clone();
+            self.online_probe.poll();
+            self.library.online = self.online_probe.any();
+            self.library.online_busy = self.online.busy();
             for a in self.library.show(ui, &dbs, &self.settings) {
                 match a {
                     LibraryAction::OpenGame { path, index, at } => {
@@ -741,6 +749,8 @@ impl eframe::App for App {
                     }
                     LibraryAction::PastePgn => self.paste_pgn(&ctx),
                     LibraryAction::AddDatabases => self.pick_databases(&ctx),
+                    LibraryAction::OnlineGames => self.online.open_with(&self.settings),
+                    LibraryAction::UpdateOnline(p) => self.online.update(&p, &ctx),
                     LibraryAction::RemoveDatabase(p) => {
                         self.settings.databases.retain(|d| *d != p);
                         self.library.forget(&p);
@@ -748,6 +758,25 @@ impl eframe::App for App {
                     }
                     LibraryAction::OpenSettings => self.settings_ui.open = true,
                 }
+            }
+        }
+
+        let (events, changed) = self
+            .online
+            .show(&ctx, &self.online_probe, &mut self.settings);
+        self.settings_dirty |= changed;
+        for e in events {
+            match e {
+                crate::online_ui::OnlineEvent::Added(p) => {
+                    let known = self.settings.databases.contains(&p);
+                    self.settings.touch_database(&p);
+                    if known {
+                        self.library.reload(&p, &ctx);
+                    }
+                    self.library.select_db(&p, &ctx);
+                    self.settings_dirty = true;
+                }
+                crate::online_ui::OnlineEvent::Updated(p) => self.library.reload(&p, &ctx),
             }
         }
 

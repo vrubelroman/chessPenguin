@@ -39,6 +39,7 @@
   copy PGN/FEN, save a game to a new file.
 - **Looks** — 17 piece sets, 37 boards (flat colours and textures), 7 sound sets,
   dark and light themes.
+- **Your online games** — download your games from Lichess and Chess.com by nickname (no login) into a database and update it with one click.
 - **Languages** — English, Русский, Français, Deutsch, Español, Italiano.
 
 | Game analysis: graph and report | Engine marks and better lines |
