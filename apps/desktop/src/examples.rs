@@ -10,8 +10,14 @@ use crate::settings::Settings;
 
 fn files() -> [(&'static str, &'static str); 2] {
     [
-        (tr("Classic games"), include_str!("../../../examples/classics.pgn")),
-        (tr("Alekhine"), include_str!("../../../examples/alekhine.pgn")),
+        (
+            tr("Classic games"),
+            include_str!("../../../examples/classics.pgn"),
+        ),
+        (
+            tr("Alekhine"),
+            include_str!("../../../examples/alekhine.pgn"),
+        ),
     ]
 }
 
@@ -69,7 +75,12 @@ mod tests {
             assert!(db.len() >= 30, "{name}: {} games", db.len());
             for i in 0..db.len() {
                 let parsed = db.load_game(i).unwrap();
-                assert!(parsed.diagnostics.is_empty(), "{name} #{}: {:?}", i + 1, parsed.diagnostics);
+                assert!(
+                    parsed.diagnostics.is_empty(),
+                    "{name} #{}: {:?}",
+                    i + 1,
+                    parsed.diagnostics
+                );
             }
             let _ = std::fs::remove_dir_all(&dir);
         }

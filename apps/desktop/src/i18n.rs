@@ -44,7 +44,11 @@ impl Lang {
             .into_iter()
             .find_map(|l| {
                 // "ru-RU", "ru_RU.UTF-8", "de-CH", "es-419", "fr".
-                let code = l.as_ref().split(['-', '_', '.', '@']).next()?.to_ascii_lowercase();
+                let code = l
+                    .as_ref()
+                    .split(['-', '_', '.', '@'])
+                    .next()?
+                    .to_ascii_lowercase();
                 match code.as_str() {
                     "en" => Some(Lang::En),
                     "ru" => Some(Lang::Ru),
@@ -2680,7 +2684,14 @@ const ROWS: &[[&str; 6]] = &[
         "Partidas clásicas",
         "Partite classiche",
     ],
-    ["Alekhine", "Алехин", "Alekhine", "Aljechin", "Alekhine", "Aljechin"],
+    [
+        "Alekhine",
+        "Алехин",
+        "Alekhine",
+        "Aljechin",
+        "Alekhine",
+        "Aljechin",
+    ],
 ];
 
 #[cfg(test)]

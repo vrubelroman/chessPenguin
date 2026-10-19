@@ -266,7 +266,9 @@ impl LargeView {
         // `CP_FILTER="player=carlsen;years=2015-2026;elo=2600"` (screenshots).
         if let Ok(spec) = std::env::var("CP_FILTER") {
             for part in spec.split(';') {
-                let Some((k, v)) = part.split_once('=') else { continue };
+                let Some((k, v)) = part.split_once('=') else {
+                    continue;
+                };
                 match k.trim() {
                     "player" => form.player.text = v.to_string(),
                     "years" => {

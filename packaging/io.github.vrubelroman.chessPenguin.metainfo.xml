@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.6.1" date="2026-10-19">
+      <description>
+        <p>Sample databases at the first start (38 classic games, 267 games of Alekhine); the first start uses the system language.</p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-10-19">
       <description>
         <p>Stockfish is downloaded on request (smaller packages; the Flatpak keeps it inside); macOS builds for Apple Silicon; position search fixes and narrow-window layout.</p>

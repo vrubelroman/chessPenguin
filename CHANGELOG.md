@@ -2,6 +2,15 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] — 2026-10-19
+
+- The library is no longer empty at the first start: two sample databases are on the shelf —
+  classic games (38 famous games from Anderssen and Morphy to Kasparov and Carlsen, each with a
+  short introduction; four with full comments, variations and arrows) and Alekhine's games (267
+  games, moves only). Remove them from the shelf like any database; they do not come back.
+- The first start uses the system language when it is one of the six (English, Russian, French,
+  German, Spanish, Italian), otherwise English. A language chosen in the settings is kept.
+
 ## [0.6.0] — 2026-10-19
 
 - Stockfish is no longer inside the packages (they shrink from about 95 MB to about 14 MB): the
