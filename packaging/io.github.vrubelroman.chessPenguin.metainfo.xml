@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.6.2" date="2026-10-19">
+      <description>
+        <p>Settings → About: the version, links to the website, the release notes and the source code, and the support contacts.</p>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-10-19">
       <description>
         <p>Sample databases at the first start (38 classic games, 267 games of Alekhine); the first start uses the system language.</p>

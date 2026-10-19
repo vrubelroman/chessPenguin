@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.6.2] — not released yet
+## [0.6.2] — 2026-10-19
 
 - Settings → About: the version, links to the website (in the interface language), the release
   notes and the source code, and the support contacts. Links open in the browser.
