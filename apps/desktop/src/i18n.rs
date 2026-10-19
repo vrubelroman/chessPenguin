@@ -1550,6 +1550,22 @@ const ROWS: &[[&str; 6]] = &[
         "+ Aggiungi motore…",
     ],
     [
+        "Preparing fast position search… {p} %",
+        "Подготовка быстрого поиска по позиции… {p} %",
+        "Préparation de la recherche rapide par position… {p} %",
+        "Schnelle Stellungssuche wird vorbereitet… {p} %",
+        "Preparando la búsqueda rápida por posición… {p} %",
+        "Preparazione della ricerca rapida per posizione… {p} %",
+    ],
+    [
+        "The base has no usable search index (.cbb); one is built once and kept in the cache.",
+        "У базы нет пригодного индекса поиска (.cbb); он строится один раз и хранится в кэше.",
+        "La base n'a pas d'index de recherche utilisable (.cbb) ; il est construit une fois et conservé dans le cache.",
+        "Die Datenbank hat keinen brauchbaren Suchindex (.cbb); er wird einmal erstellt und im Cache behalten.",
+        "La base no tiene un índice de búsqueda utilizable (.cbb); se construye una vez y se guarda en la caché.",
+        "La base non ha un indice di ricerca utilizzabile (.cbb); viene costruito una volta e tenuto nella cache.",
+    ],
+    [
         "Checking engine…",
         "Проверка движка…",
         "Vérification du moteur…",

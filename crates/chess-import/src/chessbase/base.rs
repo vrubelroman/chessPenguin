@@ -50,6 +50,10 @@ pub struct Base {
     file_records: usize,
     /// The `.cbb` search booster, when present and consistent (checked on first use).
     cbb: OnceLock<Option<PathBuf>>,
+    /// Where our own booster is kept when `.cbb` cannot be used (set by the
+    /// application), and that booster once found or built.
+    booster_dir: OnceLock<PathBuf>,
+    own_booster: OnceLock<PathBuf>,
     cba: Option<Mutex<File>>,
     /// Titles of guiding texts read so far (they are stored with the text).
     text_titles: Mutex<HashMap<usize, String>>,
@@ -432,6 +436,8 @@ impl Base {
             cbg: Mutex::new(cbg),
             file_records,
             cbb: OnceLock::new(),
+            booster_dir: OnceLock::new(),
+            own_booster: OnceLock::new(),
             cba: cba.map(Mutex::new),
             text_titles: Mutex::new(HashMap::new()),
             notes: Vec::new(),
@@ -548,25 +554,88 @@ impl Base {
         be(self.record(index), 1, 4).unwrap_or(0)
     }
 
-    /// The `.cbb` search booster if it can be trusted: its record count is that of
-    /// the `.cbh` file plus one, it holds that many 52-byte records and it is not
-    /// older than `.cbg` (a program that does not maintain it may have changed the
-    /// games since).
+    /// The search booster to use: `.cbb` if it can be trusted (its record count is
+    /// that of the `.cbh` file plus one, it holds that many 52-byte records and it is
+    /// not older than `.cbg`: a program that does not maintain it may have changed the
+    /// games since), else our own one (see [`Base::build_booster`]).
     pub(super) fn cbb_path(&self) -> Option<&Path> {
         self.cbb
             .get_or_init(|| {
                 let path = find_companion(&self.path, "cbb")?;
-                let mut f = File::open(&path).ok()?;
-                let mut head = [0u8; 4];
-                f.read_exact(&mut head).ok()?;
-                let count = u32::from_be_bytes(head) as u64;
-                let meta = f.metadata().ok()?;
                 let cbg_time = std::fs::metadata(&self.cbg_path).ok()?.modified().ok()?;
-                let fresh = meta.modified().ok()? >= cbg_time;
-                (count == self.file_records as u64 + 1 && meta.len() >= 52 * count && fresh)
-                    .then_some(path)
+                let fresh = std::fs::metadata(&path).ok()?.modified().ok()? >= cbg_time;
+                (fresh && booster_consistent(&path, self.file_records)).then_some(path)
             })
             .as_deref()
+            .or_else(|| self.own_booster.get().map(PathBuf::as_path))
+    }
+
+    /// Records in the `.cbh` file, trailing empty ones included.
+    pub(super) fn file_records(&self) -> usize {
+        self.file_records
+    }
+
+    /// Tells where our own booster lives (a cache directory), and takes the one
+    /// built earlier for this database if it is there.
+    pub fn set_booster_dir(&self, dir: &Path) {
+        let _ = self.booster_dir.set(dir.to_owned());
+        if let Some(p) = self.own_booster_path()
+            && booster_consistent(&p, self.file_records)
+        {
+            let _ = self.own_booster.set(p);
+        }
+    }
+
+    /// Our booster's file: named after the database and the size and date of its
+    /// games, so a changed database gets a new one.
+    fn own_booster_path(&self) -> Option<PathBuf> {
+        let dir = self.booster_dir.get()?;
+        let path = std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
+        let meta = std::fs::metadata(&self.cbg_path).ok()?;
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos());
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in path
+            .to_string_lossy()
+            .bytes()
+            .chain(meta.len().to_le_bytes())
+            .chain(modified.to_le_bytes())
+            .chain((self.file_records as u64).to_le_bytes())
+        {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        Some(dir.join(format!("{h:016x}.cbb")))
+    }
+
+    /// Position searches have a booster (ChessBase's or ours).
+    pub fn booster_ready(&self) -> bool {
+        self.cbb_path().is_some()
+    }
+
+    /// A booster of our own would help and can be built ([`Base::set_booster_dir`]).
+    pub fn booster_wanted(&self) -> bool {
+        !self.booster_ready() && self.booster_dir.get().is_some()
+    }
+
+    /// Builds our own booster (one pass over all the games; `progress` counts the
+    /// records done) and uses it from then on. `Ok(false)` when cancelled.
+    pub fn build_booster(
+        &self,
+        progress: &AtomicUsize,
+        cancel: &AtomicBool,
+    ) -> std::io::Result<bool> {
+        let Some(path) = self.own_booster_path() else {
+            return Err(std::io::Error::other("no booster directory"));
+        };
+        if !super::booster::build(self, &path, progress, cancel)? {
+            return Ok(false);
+        }
+        let _ = self.own_booster.set(path);
+        Ok(true)
     }
 
     /// Number of records (games, texts and deleted records); a record's index is its
@@ -1015,6 +1084,19 @@ fn name_table(names: &Names, f: &NameFilter) -> Option<Vec<bool>> {
         return Some(t);
     }
     (!words(&f.text).is_empty()).then(|| names.matching(&f.text))
+}
+
+/// A booster file holds a record per `.cbh` record (plus its header) and says so.
+fn booster_consistent(path: &Path, file_records: usize) -> bool {
+    let Ok(mut f) = File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 4];
+    if f.read_exact(&mut head).is_err() {
+        return false;
+    }
+    let count = u32::from_be_bytes(head) as u64;
+    count == file_records as u64 + 1 && f.metadata().is_ok_and(|m| m.len() >= 52 * count)
 }
 
 /// ECO code number 0 (A00) … 499 (E99) of a `.cbh` ECO field.

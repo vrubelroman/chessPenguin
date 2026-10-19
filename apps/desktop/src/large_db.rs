@@ -236,6 +236,10 @@ pub struct LargeView {
     in_order: Option<(usize, usize)>,
     cache: OutcomeCache,
     job: Option<Job>,
+    /// Building our own search booster (a base without a usable `.cbb`), once the
+    /// board is used; `booster_failed` keeps a failure from being retried.
+    booster: Option<Background<bool>>,
+    booster_failed: bool,
     board: SearchBoard,
     only_order: bool,
     /// Next move of the game under the pointer in the table (an arrow on the board).
@@ -304,6 +308,8 @@ impl LargeView {
             in_order: None,
             cache: HashMap::new(),
             job: None,
+            booster: None,
+            booster_failed: false,
             board,
             only_order: false,
             table_hover: None,
@@ -445,9 +451,40 @@ impl LargeView {
                 highlighted: None,
             });
         }
-        if self.job.is_some() || self.suggest_job.is_some() {
+        self.update_booster(db, now, ctx);
+        if self.job.is_some() || self.suggest_job.is_some() || self.booster.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+    }
+
+    /// Builds our own booster in the background when the board is in use and the
+    /// base has no usable `.cbb`; searches meanwhile run without it.
+    fn update_booster(&mut self, db: &Arc<Database>, now: f64, ctx: &egui::Context) {
+        if let Some(b) = &self.booster
+            && let Some(result) = b.poll()
+        {
+            self.booster = None;
+            self.booster_failed = result != Some(true);
+        }
+        let wanted = self.pane == Pane::Board || self.board.is_set();
+        if !wanted
+            || self.booster.is_some()
+            || self.booster_failed
+            || !db.as_chessbase().is_some_and(|b| b.booster_wanted())
+        {
+            return;
+        }
+        let db = db.clone();
+        self.booster = Background::spawn(ctx, now, move |progress, cancel| {
+            match db.as_chessbase()?.build_booster(progress, cancel) {
+                Ok(true) => Some(true),
+                Ok(false) => None,
+                Err(e) => {
+                    eprintln!("search booster: {e}");
+                    Some(false)
+                }
+            }
+        });
     }
 
     fn start(&mut self, db: &Arc<Database>, request: Request, now: f64, ctx: &egui::Context) {
@@ -552,6 +589,22 @@ impl LargeView {
             .job
             .as_ref()
             .map(|j| (j.work.progress() as f32 / total.max(1) as f32).min(1.0));
+        if let Some(b) = &self.booster {
+            let p = (b.progress() as f32 / total.max(1) as f32).min(1.0);
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(14.0));
+                ui.label(
+                    RichText::new(trf(
+                        "Preparing fast position search… {p} %",
+                        &[("p", &format!("{:.0}", p * 100.0))],
+                    ))
+                    .weak(),
+                )
+                .on_hover_text(tr(
+                    "The base has no usable search index (.cbb); one is built once and kept in the cache.",
+                ));
+            });
+        }
         let outcome = self.board_outcome().cloned();
         let mut events = Vec::new();
         self.board.keys(ui.ctx(), outcome.as_ref(), &mut events);

@@ -324,6 +324,13 @@ impl Library {
                                 notes: o.notes,
                             },
                         );
+                        // Position searches without a usable `.cbb` get our own
+                        // booster, kept in the cache directory.
+                        if let Database::ChessBase(b) = &o.db
+                            && let Some(dir) = Settings::cache_dir()
+                        {
+                            b.set_booster_dir(&dir.join("boosters"));
+                        }
                         Slot::Ready(Arc::new(o.db))
                     }
                     Err(e) => Slot::Failed(import_error(&e)),

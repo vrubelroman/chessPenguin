@@ -5,6 +5,7 @@
 //! Research and measurements: `docs/research/position-index.md`.
 
 use std::fs::File;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use shakmaty::uci::UciMove;
@@ -18,7 +19,7 @@ use crate::position::{
 };
 
 /// Candidates handed to a thread at a time; cancellation is checked between blocks.
-const BLOCK: usize = 2048;
+pub(super) const BLOCK: usize = 2048;
 /// Games whose moves lie closer than this are read with one `pread`.
 const GAP: u32 = 64 << 10;
 /// Longest span of `.cbg` read at once.
@@ -26,7 +27,10 @@ const SPAN: u32 = 4 << 20;
 /// Read past the last record start of a span (most records are shorter).
 const TAIL: u32 = 4096;
 /// Size of a `.cbb` record (the file starts with a header of the same size).
-const CBB_RECORD: usize = 52;
+pub(super) const CBB_RECORD: usize = 52;
+/// Booster records sampled before a search; when most of them admit the target the
+/// booster is left out (it would read its whole file to rule out almost nothing).
+const SAMPLE: usize = 4096;
 
 /// Games among `candidates` (record indices in ascending order; `None`: all records)
 /// whose main line reaches the position. `scanned` counts the candidates looked at.
@@ -40,7 +44,9 @@ pub fn search(
 ) -> Option<PositionOutcome> {
     let total = candidates.map_or(base.records(), <[u32]>::len);
     let target = Target::new(query);
-    let cbb = base.cbb_path();
+    let cbb = base
+        .cbb_path()
+        .filter(|p| booster_helps(p, &target.signature));
     let next = AtomicUsize::new(0);
     let threads = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
@@ -304,41 +310,21 @@ impl Worker<'_> {
             }
         }
         self.booster();
-        let mut start = 0;
-        while start < self.games.len() {
-            // A run of games whose moves lie close together, in file order.
-            let lo = self.games[start].1;
-            let mut end = start + 1;
-            while let Some(&(_, off)) = self.games.get(end) {
-                let prev = self.games[end - 1].1;
-                if off < prev || off - prev > GAP || off - lo > SPAN {
-                    break;
-                }
-                end += 1;
+        let Worker {
+            base,
+            target,
+            cbg,
+            games,
+            span,
+            single,
+            out,
+            ..
+        } = self;
+        read_games(cbg, games, span, single, |index, data, rel| {
+            if let Some(h) = find(target, data, rel) {
+                add(base, out, index, h);
             }
-            let hi = self.games[end - 1].1;
-            let len = (hi - lo) as usize + TAIL as usize;
-            read_span(&self.cbg, u64::from(lo), &mut self.span, len);
-            for k in start..end {
-                let (index, off) = self.games[k];
-                let rel = off - lo;
-                let size = be(&self.span, rel as usize + 1, 3).unwrap_or(u32::MAX) as usize;
-                let hit = if rel as usize + size <= self.span.len() {
-                    find(self.target, &self.span, rel)
-                } else {
-                    // A record running past the span: read it alone.
-                    let size = read_record(&self.cbg, off, &mut self.single);
-                    if size == 0 {
-                        continue;
-                    }
-                    find(self.target, &self.single, 0)
-                };
-                if let Some(h) = hit {
-                    self.add(index, h);
-                }
-            }
-            start = end;
-        }
+        });
     }
 
     /// Drops the games of the block that the `.cbb` booster rules out.
@@ -366,32 +352,93 @@ impl Worker<'_> {
                 .retain(|&(i, _)| read_exact_at(cbb, &mut rec, at(i)).is_err() || sig.admits(&rec));
         }
     }
+}
 
-    fn add(&mut self, index: u32, hit: Hit) {
-        let r = self.base.record(index as usize);
-        let u = |at, n| be(r, at, n).unwrap_or(0);
-        let result = match r.get(0x1b) {
-            Some(2 | 6) => GameResult::WhiteWins,
-            Some(1 | 5) => GameResult::Draw,
-            Some(0 | 4) => GameResult::BlackWins,
-            _ => GameResult::Unknown,
-        };
-        let year = ((u(0x18, 3) >> 9) & 0xfff) as u16;
-        self.out.add(
-            Match {
-                index,
-                ply: hit.ply,
-                same_order: hit.same_order,
-                in_variation: false,
-                next: None,
-            },
-            hit.next,
-            result,
-            u(0x1f, 2) as u16,
-            u(0x21, 2) as u16,
-            year,
-        );
+/// Records the game `index` that reached the target as `hit`.
+fn add(base: &Base, out: &mut Collector, index: u32, hit: Hit) {
+    let r = base.record(index as usize);
+    let u = |at, n| be(r, at, n).unwrap_or(0);
+    let result = match r.get(0x1b) {
+        Some(2 | 6) => GameResult::WhiteWins,
+        Some(1 | 5) => GameResult::Draw,
+        Some(0 | 4) => GameResult::BlackWins,
+        _ => GameResult::Unknown,
+    };
+    let year = ((u(0x18, 3) >> 9) & 0xfff) as u16;
+    out.add(
+        Match {
+            index,
+            ply: hit.ply,
+            same_order: hit.same_order,
+            in_variation: false,
+            next: None,
+        },
+        hit.next,
+        result,
+        u(0x1f, 2) as u16,
+        u(0x21, 2) as u16,
+        year,
+    );
+}
+
+/// Calls `f(index, data, offset)` with the moves of every game of `games` (record
+/// index and `.cbg` offset, in file order within a run): games whose records lie
+/// close together are read with one `pread` into `span`, a record running past the
+/// span is read alone into `single`.
+pub(super) fn read_games(
+    cbg: &File,
+    games: &[(u32, u32)],
+    span: &mut Vec<u8>,
+    single: &mut Vec<u8>,
+    mut f: impl FnMut(u32, &[u8], u32),
+) {
+    let mut start = 0;
+    while start < games.len() {
+        // A run of games whose moves lie close together, in file order.
+        let lo = games[start].1;
+        let mut end = start + 1;
+        while let Some(&(_, off)) = games.get(end) {
+            let prev = games[end - 1].1;
+            if off < prev || off - prev > GAP || off - lo > SPAN {
+                break;
+            }
+            end += 1;
+        }
+        let hi = games[end - 1].1;
+        let len = (hi - lo) as usize + TAIL as usize;
+        read_span(cbg, u64::from(lo), span, len);
+        for &(index, off) in &games[start..end] {
+            let rel = off - lo;
+            let size = be(span, rel as usize + 1, 3).unwrap_or(u32::MAX) as usize;
+            if rel as usize + size <= span.len() {
+                f(index, span, rel);
+            } else {
+                // A record running past the span: read it alone.
+                if read_record(cbg, off, single) == 0 {
+                    continue;
+                }
+                f(index, single, 0);
+            }
+        }
+        start = end;
     }
+}
+
+/// Whether the booster at `path` rules out a worthwhile share of games for `sig`,
+/// judged on its first records: early positions (the start, 1.e4) pass nearly every
+/// game, and reading the file for them only costs time.
+fn booster_helps(path: &Path, sig: &Signature) -> bool {
+    let Ok(f) = File::open(path) else {
+        return false;
+    };
+    let mut buf = Vec::new();
+    read_span(&f, CBB_RECORD as u64, &mut buf, SAMPLE * CBB_RECORD);
+    let records = buf.as_chunks::<CBB_RECORD>().0;
+    if records.is_empty() {
+        return false;
+    }
+    let admitted = records.iter().filter(|r| sig.admits(*r)).count();
+    admitted * 2 < records.len()
 }
 
 /// The fast walk, and the checked one when the fast one stumbles (damaged moves).
@@ -800,6 +847,178 @@ mod tests {
             .find(|l| l.starts_with("VmHWM"))
             .map(|l| l.trim_start_matches("VmHWM:").trim().to_owned())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn own_booster_when_cbb_is_missing() {
+        let Some(sample) = Sample::unpack("Anand 01-14.cbv") else {
+            return;
+        };
+        let base = sample.open();
+        assert!(base.cbb_path().is_none() && !base.booster_wanted());
+        let lines: Vec<_> = (0..base.records()).map(|i| oracle_line(&base, i)).collect();
+        let targets = targets(&lines);
+        let without: Vec<_> = targets
+            .iter()
+            .map(|t| summary(&run(&base, None, &PositionQuery::new(t.clone(), None))))
+            .collect();
+
+        let dir = sample.dir.join("cache");
+        base.set_booster_dir(&dir);
+        assert!(base.booster_wanted() && !base.booster_ready());
+        // Cancelled: nothing is left behind.
+        let cancelled = AtomicBool::new(true);
+        assert!(
+            !base
+                .build_booster(&AtomicUsize::new(0), &cancelled)
+                .expect("builds")
+        );
+        assert!(std::fs::read_dir(&dir).map_or(true, |d| d.count() == 0));
+        let progress = AtomicUsize::new(0);
+        assert!(
+            base.build_booster(&progress, &AtomicBool::new(false))
+                .expect("builds")
+        );
+        assert_eq!(progress.load(Ordering::Relaxed), base.records());
+        let path = base.cbb_path().expect("our booster").to_owned();
+        assert!(path.starts_with(&dir) && !base.booster_wanted());
+        let cbb = std::fs::read(&path).expect("file");
+        assert_eq!(cbb.len(), (base.records() + 1) * CBB_RECORD);
+        assert_eq!(be(&cbb, 0, 4), Some(base.records() as u32 + 1));
+        // Our record holds everything the search may require of a game's record.
+        for (i, line) in lines.iter().enumerate() {
+            let rec = &cbb[(i + 1) * CBB_RECORD..(i + 2) * CBB_RECORD];
+            match line {
+                Some(l) => {
+                    let want = own_cbb(l);
+                    assert!(
+                        rec.iter().zip(want).all(|(r, w)| r & w == w),
+                        "game {}",
+                        i + 1
+                    );
+                    assert_eq!(rec[3] & 0x77, want[3] & 0x77, "game {}", i + 1);
+                }
+                None => assert!(rec.iter().all(|b| *b == 0), "record {}", i + 1),
+            }
+        }
+        for (t, want) in targets.iter().zip(&without) {
+            let got = summary(&run(&base, None, &PositionQuery::new(t.clone(), None)));
+            assert_eq!(&got, want);
+        }
+        // Opened again, the booster is found and not built anew.
+        let again = sample.open();
+        again.set_booster_dir(&dir);
+        assert_eq!(again.cbb_path(), Some(path.as_path()));
+        // A `.cbb` that can be trusted comes first.
+        let cbb_path = sample.cbh.with_extension("cbb");
+        std::fs::write(&cbb_path, &cbb).expect("write");
+        let with_cbb = sample.open();
+        with_cbb.set_booster_dir(&dir);
+        assert_eq!(with_cbb.cbb_path(), Some(cbb_path.as_path()));
+    }
+
+    /// Mega Database 2026 (not in the repository): our booster record equals
+    /// ChessBase's byte for byte. Run with
+    /// `cargo test --release -p chess-import mega_own_booster -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn mega_own_booster() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../pgnFilesforExample/Mega2026/Mega Database 2026.cbh");
+        if !path.exists() {
+            eprintln!("skipped: no Mega");
+            return;
+        }
+        let base = Base::open(&path, &mut |_, _| {}, &AtomicBool::new(false)).expect("opens");
+        let cbb = File::open(base.cbb_path().expect(".cbb")).expect("open");
+        let cbg = File::open(base.cbg_path()).expect("open");
+        let (mut buf, mut rec) = (Vec::new(), [0u8; CBB_RECORD]);
+        let (mut checked, mut differ, mut unreadable, mut chess960) = (0, 0, 0, 0);
+        for i in (0..base.records()).step_by(97) {
+            read_exact_at(&cbb, &mut rec, ((i + 1) * CBB_RECORD) as u64).expect("read");
+            if base.kind(i) == RecordKind::Game
+                && be(base.record(i), 0x23, 2).is_some_and(|eco| eco >= 64576)
+            {
+                // Chess960: no search reads these games, their record does not matter.
+                chess960 += 1;
+                continue;
+            }
+            let ours = if base.kind(i) == RecordKind::Game
+                && read_record(&cbg, base.moves_offset(i), &mut buf) > 0
+            {
+                match super::super::booster::record_of(&buf, 0) {
+                    Some(r) => r,
+                    None => {
+                        // A game our decoder does not read: no search finds it, and
+                        // its record does not matter.
+                        let why = moves::main_line(&buf, 0, false, |_, _| true)
+                            .err()
+                            .map(|e| e.reason().to_owned());
+                        unreadable += 1;
+                        if unreadable <= 5 {
+                            eprintln!("game {}: unreadable ({why:?})", i + 1);
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                [0; CBB_RECORD]
+            };
+            checked += 1;
+            if ours != rec {
+                differ += 1;
+                if differ <= 5 {
+                    eprintln!("game {}: ours {ours:02x?}\n  cbb {rec:02x?}", i + 1);
+                }
+            }
+        }
+        eprintln!(
+            "{checked} records checked, {differ} differ; skipped: {unreadable} unreadable, {chess960} Chess960"
+        );
+        assert_eq!(differ, 0);
+    }
+
+    /// Mega Database 2026 (not in the repository): builds our booster for the whole
+    /// base into a temporary directory and times it, then searches with it. Run with
+    /// `cargo test --release -p chess-import mega_build_booster -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn mega_build_booster() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../pgnFilesforExample/Mega2026/Mega Database 2026.cbh");
+        if !path.exists() {
+            eprintln!("skipped: no Mega");
+            return;
+        }
+        let base = Base::open(&path, &mut |_, _| {}, &AtomicBool::new(false)).expect("opens");
+        base.without_booster();
+        let dir = std::env::temp_dir().join(format!("chess-import-booster-{}", std::process::id()));
+        base.set_booster_dir(&dir);
+        assert!(base.booster_wanted());
+        let t = std::time::Instant::now();
+        let progress = AtomicUsize::new(0);
+        assert!(
+            base.build_booster(&progress, &AtomicBool::new(false))
+                .expect("builds")
+        );
+        let built = t.elapsed();
+        let own = base.cbb_path().expect("ours").to_owned();
+        let size = std::fs::metadata(&own).expect("file").len();
+        eprintln!(
+            "built in {built:.2?}: {} ({size} bytes), peak memory {}",
+            own.display(),
+            peak_memory()
+        );
+        let (pos, line) = san_line("e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6");
+        let t = std::time::Instant::now();
+        let out = run(&base, None, &PositionQuery::new(pos, Some(line)));
+        eprintln!(
+            "Najdorf with our booster: {} games in {:.1?}",
+            out.matches.len(),
+            t.elapsed()
+        );
+        assert_eq!(out.matches.len(), 291_273);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Mega Database 2026 (not in the repository): the counts of the research

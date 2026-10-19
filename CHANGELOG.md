@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Position search in a large ChessBase database without a usable `.cbb` search index: the
+  program builds its own once (in the background, kept in the cache) and deep positions are
+  then found in milliseconds instead of a pass over every game. Searches for the start
+  position and other early positions got about twice as fast.
 - Settings → About: clicking the email address copies it instead of opening a mail app,
   which does nothing useful when none is installed.
 

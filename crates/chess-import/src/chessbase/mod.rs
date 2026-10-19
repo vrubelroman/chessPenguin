@@ -6,6 +6,7 @@
 
 mod annotations;
 pub mod base;
+mod booster;
 mod entities;
 mod headers;
 mod moves;
