@@ -36,6 +36,32 @@ impl Lang {
     fn column(self) -> usize {
         self as usize
     }
+
+    /// The first supported language among the system's preferred ones ("uk-UA, ru-RU"
+    /// gives Russian), or English.
+    pub fn from_locales<S: AsRef<str>>(locales: impl IntoIterator<Item = S>) -> Lang {
+        locales
+            .into_iter()
+            .find_map(|l| {
+                // "ru-RU", "ru_RU.UTF-8", "de-CH", "es-419", "fr".
+                let code = l.as_ref().split(['-', '_', '.', '@']).next()?.to_ascii_lowercase();
+                match code.as_str() {
+                    "en" => Some(Lang::En),
+                    "ru" => Some(Lang::Ru),
+                    "fr" => Some(Lang::Fr),
+                    "de" => Some(Lang::De),
+                    "es" => Some(Lang::Es),
+                    "it" => Some(Lang::It),
+                    _ => None,
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    /// The language of this system (see [`Lang::from_locales`]).
+    pub fn system() -> Lang {
+        Lang::from_locales(sys_locale::get_locales())
+    }
 }
 
 static CURRENT: AtomicU8 = AtomicU8::new(0);
@@ -2645,11 +2671,36 @@ const ROWS: &[[&str; 6]] = &[
         "Boceto",
         "Schizzo",
     ],
+    // Names of the sample databases (examples.rs).
+    [
+        "Classic games",
+        "Классические партии",
+        "Parties classiques",
+        "Klassische Partien",
+        "Partidas clásicas",
+        "Partite classiche",
+    ],
+    ["Alekhine", "Алехин", "Alekhine", "Aljechin", "Alekhine", "Aljechin"],
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_language() {
+        assert_eq!(Lang::from_locales(["ru-RU"]), Lang::Ru);
+        assert_eq!(Lang::from_locales(["ru_RU.UTF-8"]), Lang::Ru);
+        assert_eq!(Lang::from_locales(["uk-UA", "ru-RU", "en-US"]), Lang::Ru);
+        assert_eq!(Lang::from_locales(["de-CH"]), Lang::De);
+        assert_eq!(Lang::from_locales(["es-419"]), Lang::Es);
+        assert_eq!(Lang::from_locales(["fr"]), Lang::Fr);
+        assert_eq!(Lang::from_locales(["it_IT@euro"]), Lang::It);
+        assert_eq!(Lang::from_locales(["en-GB", "ru-RU"]), Lang::En);
+        assert_eq!(Lang::from_locales(["ja-JP", "pt-BR"]), Lang::En);
+        assert_eq!(Lang::from_locales(["C"]), Lang::En);
+        assert_eq!(Lang::from_locales(Vec::<String>::new()), Lang::En);
+    }
 
     /// Every `tr("…")` / `trf("…"` key used in the sources must have a translation row.
     #[test]
@@ -2666,6 +2717,7 @@ mod tests {
             include_str!("notation.rs"),
             include_str!("review.rs"),
             include_str!("engines.rs"),
+            include_str!("examples.rs"),
             include_str!("settings.rs"),
             include_str!("settings_ui.rs"),
             include_str!("widgets.rs"),

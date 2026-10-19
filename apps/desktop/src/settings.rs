@@ -159,7 +159,7 @@ impl Settings {
 
     pub fn load() -> Self {
         let Some(path) = Self::file() else {
-            return Self::default();
+            return Self::first_start();
         };
         migrate_legacy_config(&path);
         match std::fs::read(&path) {
@@ -170,7 +170,17 @@ impl Settings {
                 );
                 Self::default()
             }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::first_start(),
             Err(_) => Self::default(),
+        }
+    }
+
+    /// Settings of the very first start: the defaults in the system's language (if it
+    /// is one of ours, otherwise English).
+    fn first_start() -> Self {
+        Self {
+            language: Lang::system(),
+            ..Self::default()
         }
     }
 

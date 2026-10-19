@@ -95,6 +95,7 @@ impl DebugStartup {
 impl App {
     pub fn new(ctx: &egui::Context) -> Self {
         let mut settings = Settings::load();
+        // Before the samples, which are named in this language.
         crate::i18n::set_lang(settings.language);
         crate::engine_download::clean_leftovers();
         let engines_found = crate::engines::first_run_setup(&mut settings);

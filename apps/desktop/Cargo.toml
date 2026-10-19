@@ -31,5 +31,8 @@ tar = "0.4"
 sha2 = "0.11"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+# The system language for the first start.
+sys-locale = "0.3"
+
 [build-dependencies]
 winresource = "0.1"
