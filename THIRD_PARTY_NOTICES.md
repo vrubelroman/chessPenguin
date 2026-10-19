@@ -94,4 +94,5 @@ platform into the user's data directory and checks its SHA-256 (pinned in
 ## Rust crates
 
 Dependency licenses are recorded by `Cargo.lock`; key ones: shakmaty / pgn-reader (GPL-3.0-or-later),
-egui / eframe (MIT OR Apache-2.0), zip (MIT), sevenz-rust2 (Apache-2.0).
+egui / eframe (MIT OR Apache-2.0), zip (MIT), sevenz-rust2 (Apache-2.0), sysinfo (MIT),
+sys-locale (MIT OR Apache-2.0).

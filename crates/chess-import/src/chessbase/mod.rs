@@ -10,6 +10,7 @@ mod booster;
 mod entities;
 mod headers;
 mod moves;
+pub mod openings;
 pub mod search;
 mod text;
 mod writer;

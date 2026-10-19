@@ -119,6 +119,11 @@ impl PgnDatabase {
         &self.entries
     }
 
+    /// Size of the PGN text, in bytes.
+    pub fn byte_len(&self) -> usize {
+        self.bytes.len()
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

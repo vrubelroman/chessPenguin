@@ -236,8 +236,9 @@ pub struct LargeView {
     in_order: Option<(usize, usize)>,
     cache: OutcomeCache,
     job: Option<Job>,
-    /// Building our own search booster (a base without a usable `.cbb`), once the
-    /// board is used; `booster_failed` keeps a failure from being retried.
+    /// Building the search index of the base (our booster when `.cbb` cannot be used,
+    /// the opening positions), once the board is used; `booster_failed` keeps a
+    /// failure from being retried.
     booster: Option<Background<bool>>,
     booster_failed: bool,
     board: SearchBoard,
@@ -457,8 +458,8 @@ impl LargeView {
         }
     }
 
-    /// Builds our own booster in the background when the board is in use and the
-    /// base has no usable `.cbb`; searches meanwhile run without it.
+    /// Builds the search index in the background when the board is in use and the
+    /// base lacks something (`Base::prepare`); searches meanwhile run without it.
     fn update_booster(&mut self, db: &Arc<Database>, now: f64, ctx: &egui::Context) {
         if let Some(b) = &self.booster
             && let Some(result) = b.poll()
@@ -470,17 +471,17 @@ impl LargeView {
         if !wanted
             || self.booster.is_some()
             || self.booster_failed
-            || !db.as_chessbase().is_some_and(|b| b.booster_wanted())
+            || !db.as_chessbase().is_some_and(|b| b.prepare_wanted())
         {
             return;
         }
         let db = db.clone();
         self.booster = Background::spawn(ctx, now, move |progress, cancel| {
-            match db.as_chessbase()?.build_booster(progress, cancel) {
+            match db.as_chessbase()?.prepare(progress, cancel) {
                 Ok(true) => Some(true),
                 Ok(false) => None,
                 Err(e) => {
-                    eprintln!("search booster: {e}");
+                    eprintln!("search index: {e}");
                     Some(false)
                 }
             }
@@ -590,7 +591,8 @@ impl LargeView {
             .as_ref()
             .map(|j| (j.work.progress() as f32 / total.max(1) as f32).min(1.0));
         if let Some(b) = &self.booster {
-            let p = (b.progress() as f32 / total.max(1) as f32).min(1.0);
+            // The pass over the records, then the sort of the index.
+            let p = (b.progress() as f32 / (2 * total).max(1) as f32).min(1.0);
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(14.0));
                 ui.label(
@@ -601,7 +603,7 @@ impl LargeView {
                     .weak(),
                 )
                 .on_hover_text(tr(
-                    "The base has no usable search index (.cbb); one is built once and kept in the cache.",
+                    "The search index of the base is built once and kept in the cache.",
                 ));
             });
         }

@@ -5,6 +5,9 @@
 //! date of `.cbg`), so a changed database gets a new file. The format is that of
 //! `.cbb`, header included, so the search reads both the same way; our record matched
 //! ChessBase's byte for byte on Mega (`docs/research/position-index.md`, section 1.1).
+//!
+//! The same pass over the main lines also collects the opening index (`openings.rs`)
+//! when it is wanted: [`build`] makes either or both.
 
 use std::fs::File;
 use std::io;
@@ -17,6 +20,7 @@ use shakmaty::{Board, Chess, Color, Position, Role};
 use super::base::{Base, RecordKind};
 use super::be;
 use super::moves::{self, Step, WalkError};
+use super::openings::{self, GameEntry};
 use super::search::{BLOCK, CBB_RECORD, read_games};
 
 /// Marks in `r` what stands on `b`: the layout of a `.cbb` record.
@@ -66,9 +70,18 @@ fn mark(b: &Board, r: &mut [u8; CBB_RECORD]) {
     }
 }
 
-fn walk(cbg: &[u8], offset: u32, fast: bool) -> Result<[u8; CBB_RECORD], WalkError> {
+/// What one walk of a game's main line yields.
+pub(super) struct GameData {
+    pub record: [u8; CBB_RECORD],
+    /// The opening entries, when asked for; `None` for a game from a set-up position.
+    pub opening: Option<GameEntry>,
+}
+
+fn walk(cbg: &[u8], offset: u32, fast: bool, opening: Option<u32>) -> Result<GameData, WalkError> {
     let mut r = [0u8; CBB_RECORD];
     let mut end_pawns = 0u8;
+    let mut entry = opening.map(GameEntry::new);
+    let mut ply = 0usize;
     moves::main_line(cbg, offset, fast, |pos: &Chess, step| {
         let b = pos.board();
         mark(b, &mut r);
@@ -76,21 +89,35 @@ fn walk(cbg: &[u8], offset: u32, fast: bool) -> Result<[u8; CBB_RECORD], WalkErr
             let pawns = |c: Color| (b.by_color(c) & b.pawns()).count().min(7) as u8;
             end_pawns = pawns(Color::White) | (pawns(Color::Black) << 4);
         }
+        if let Some(e) = entry.as_mut() {
+            e.visit(pos, ply, &step);
+        }
+        ply += 1;
         true
     })?;
     r[0x03] |= end_pawns;
-    Ok(r)
+    Ok(GameData {
+        record: r,
+        opening: entry.filter(|e| e.standard),
+    })
 }
 
-/// The booster record of the game at `offset` in `cbg`: the fast walk, and the
-/// checked one when the fast one stumbles. `None` when the game cannot be read (a
-/// position search cannot find it either).
-pub(super) fn record_of(cbg: &[u8], offset: u32) -> Option<[u8; CBB_RECORD]> {
-    match walk(cbg, offset, true) {
-        Ok(r) => Some(r),
-        Err(WalkError::Moves(_)) => walk(cbg, offset, false).ok(),
+/// The booster record of the game at `offset` in `cbg` (and its opening entries when
+/// `opening` names the game): the fast walk, and the checked one when the fast one
+/// stumbles. `None` when the game cannot be read (a position search cannot find it
+/// either).
+pub(super) fn game_data(cbg: &[u8], offset: u32, opening: Option<u32>) -> Option<GameData> {
+    match walk(cbg, offset, true, opening) {
+        Ok(d) => Some(d),
+        Err(WalkError::Moves(_)) => walk(cbg, offset, false, opening).ok(),
         Err(WalkError::Unsupported(_)) => None,
     }
+}
+
+/// The booster record alone.
+#[cfg(test)]
+pub(super) fn record_of(cbg: &[u8], offset: u32) -> Option<[u8; CBB_RECORD]> {
+    game_data(cbg, offset, None).map(|d| d.record)
 }
 
 fn write_all_at(f: &File, buf: &[u8], at: u64) -> io::Result<()> {
@@ -114,22 +141,31 @@ fn write_all_at(f: &File, buf: &[u8], at: u64) -> io::Result<()> {
     }
 }
 
-/// Writes the booster of `base` to `out` (a `.part` file next to it first, renamed
-/// when complete): one pass over the main lines, in parallel. `progress` counts the
-/// records done. `Ok(false)` when cancelled; then nothing is left behind.
+/// One pass over the main lines of `base`, in parallel, writing the booster to
+/// `booster` and the opening index to `openings` (each when given; `.part` files
+/// first, renamed when complete). `progress` counts the records done, then the
+/// records again while the index is sorted. `Ok(false)` when cancelled; then nothing
+/// is left behind.
 pub(super) fn build(
     base: &Base,
-    out: &Path,
+    booster: Option<&Path>,
+    openings: Option<&Path>,
     progress: &AtomicUsize,
     cancel: &AtomicBool,
 ) -> io::Result<bool> {
-    if let Some(dir) = out.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let part = out.with_extension("part");
-    let count = base.file_records() + 1;
-    File::create(&part)?.set_len((count * CBB_RECORD) as u64)?;
     let total = base.records();
+    let count = base.file_records() + 1;
+    let part = booster.map(|p| p.with_extension("part"));
+    if let (Some(out), Some(part)) = (booster, &part) {
+        if let Some(dir) = out.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        File::create(part)?.set_len((count * CBB_RECORD) as u64)?;
+    }
+    let sink = match openings {
+        Some(out) => Some(openings::Sink::new(&out.with_extension("build"), total)?),
+        None => None,
+    };
     let next = AtomicUsize::new(0);
     let threads = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
@@ -141,10 +177,14 @@ pub(super) fn build(
             s.spawn(|| {
                 let run = || -> io::Result<()> {
                     let cbg = File::open(base.cbg_path())?;
-                    let file = File::options().write(true).open(&part)?;
+                    let file = part
+                        .as_ref()
+                        .map(|p| File::options().write(true).open(p))
+                        .transpose()?;
                     let mut games: Vec<(u32, u32)> = Vec::new();
                     let (mut span, mut single) = (Vec::new(), Vec::new());
                     let mut block = vec![0u8; BLOCK * CBB_RECORD];
+                    let mut entries: Vec<GameEntry> = Vec::new();
                     loop {
                         if cancel.load(Ordering::Relaxed) {
                             return Ok(());
@@ -156,6 +196,7 @@ pub(super) fn build(
                         let to = (from + BLOCK).min(total);
                         let bytes = &mut block[..(to - from) * CBB_RECORD];
                         bytes.fill(0);
+                        entries.clear();
                         games.clear();
                         for i in from..to {
                             // Texts and Chess960 games (ECO field ≥ 64576) have no
@@ -167,12 +208,19 @@ pub(super) fn build(
                             }
                         }
                         read_games(&cbg, &games, &mut span, &mut single, |index, data, rel| {
-                            if let Some(r) = record_of(data, rel) {
+                            let opening = sink.is_some().then_some(index);
+                            if let Some(d) = game_data(data, rel, opening) {
                                 let at = (index as usize - from) * CBB_RECORD;
-                                bytes[at..at + CBB_RECORD].copy_from_slice(&r);
+                                bytes[at..at + CBB_RECORD].copy_from_slice(&d.record);
+                                entries.extend(d.opening);
                             }
                         });
-                        write_all_at(&file, bytes, ((from + 1) * CBB_RECORD) as u64)?;
+                        if let Some(f) = &file {
+                            write_all_at(f, bytes, ((from + 1) * CBB_RECORD) as u64)?;
+                        }
+                        if let Some(sink) = &sink {
+                            sink.add(&entries)?;
+                        }
                         progress.fetch_add(to - from, Ordering::Relaxed);
                     }
                 };
@@ -185,21 +233,37 @@ pub(super) fn build(
             });
         }
     });
+    let clean = || {
+        if let Some(p) = &part {
+            let _ = std::fs::remove_file(p);
+        }
+    };
     if let Some(e) = failure.into_inner().unwrap_or(None) {
-        let _ = std::fs::remove_file(&part);
+        clean();
+        if let Some(s) = sink {
+            let _ = s.discard();
+        }
         return Err(e);
     }
     if cancel.load(Ordering::Relaxed) {
-        let _ = std::fs::remove_file(&part);
+        clean();
+        if let Some(s) = sink {
+            let _ = s.discard();
+        }
         return Ok(false);
     }
-    // The header last: a file without the count is never taken for a booster.
-    let mut header = [0u8; CBB_RECORD];
-    header[..4].copy_from_slice(&(count as u32).to_be_bytes());
-    let file = File::options().write(true).open(&part)?;
-    write_all_at(&file, &header, 0)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&part, out)?;
+    if let (Some(out), Some(part)) = (booster, &part) {
+        // The header last: a file without the count is never taken for a booster.
+        let mut header = [0u8; CBB_RECORD];
+        header[..4].copy_from_slice(&(count as u32).to_be_bytes());
+        let file = File::options().write(true).open(part)?;
+        write_all_at(&file, &header, 0)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(part, out)?;
+    }
+    if let (Some(out), Some(sink)) = (openings, sink) {
+        return sink.finish(out, total, progress, cancel);
+    }
     Ok(true)
 }

@@ -81,6 +81,8 @@ struct SmallBoard {
     table_hover: Option<UciMove>,
     /// Most games have no result: a book; continuations count chapters.
     books: bool,
+    /// The position table cannot be built: memory it would need (bytes).
+    blocked: Option<u64>,
 }
 
 impl SmallBoard {
@@ -98,6 +100,7 @@ impl SmallBoard {
             shown: None,
             table_hover: None,
             books: decided * 2 < db.len(),
+            blocked: None,
         }
     }
 
@@ -131,6 +134,12 @@ impl SmallBoard {
             .map(|(r, ..)| r)
             .or(self.shown.as_ref().map(|(r, ..)| r));
         if current != Some(&wanted) {
+            // No memory for the table: say so instead of starting a search that
+            // cannot answer.
+            self.blocked = db.positions_blocked();
+            if self.blocked.is_some() {
+                return;
+            }
             let (db, query, text) = (db.clone(), self.board.query(), wanted.search.clone());
             let pos = query.position.clone();
             let now = ctx.input(|i| i.time);
@@ -450,6 +459,15 @@ impl Library {
                     let counting = small.job.as_ref().map(|_| 0.0);
                     let mut events = Vec::new();
                     small.board.keys(ui.ctx(), outcome.as_ref(), &mut events);
+                    if let Some(need) = small.blocked {
+                        ui.label(
+                            egui::RichText::new(trf(
+                                "Position search needs about {n} MB of free memory for this database.",
+                                &[("n", &((need + (256 << 20)) / 1_000_000))],
+                            ))
+                            .color(ui.visuals().warn_fg_color),
+                        );
+                    }
                     events.extend(small.board.panel(
                         ui,
                         settings,

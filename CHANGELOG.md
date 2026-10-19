@@ -6,8 +6,15 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 - Position search in a large ChessBase database without a usable `.cbb` search index: the
   program builds its own once (in the background, kept in the cache) and deep positions are
-  then found in milliseconds instead of a pass over every game. Searches for the start
-  position and other early positions got about twice as fast.
+  then found in milliseconds instead of a pass over every game.
+- Opening positions (the start, 1.e4, …) in a large ChessBase database: an index of the
+  first ten moves of every game, built with the booster and kept in the cache, answers them
+  four to eight times faster. It is held in memory only when the machine has room for it
+  (about 600 MB for Mega Database); otherwise the search works as before.
+- A big PGN file whose position table would not fit in memory now says so on the search
+  board instead of running out of memory.
+- `chesspenguin --bench <database>` prints timings of opening, filtering and position
+  search for comparing machines.
 - Settings → About: clicking the email address copies it instead of opening a mail app,
   which does nothing useful when none is installed.
 

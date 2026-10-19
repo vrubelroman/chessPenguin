@@ -43,6 +43,16 @@ pub fn search(
     cancel: &AtomicBool,
 ) -> Option<PositionOutcome> {
     let total = candidates.map_or(base.records(), <[u32]>::len);
+    // A position of the opening: the index knows its games.
+    if let Some(index) = base.openings()
+        && index.answers(query, candidates)
+    {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        scanned.fetch_add(total, Ordering::Relaxed);
+        return Some(index.search(base, candidates, query));
+    }
     let target = Target::new(query);
     let cbb = base
         .cbb_path()
@@ -512,10 +522,10 @@ fn read_record(f: &File, offset: u32, buf: &mut Vec<u8>) -> usize {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use super::*;
+    use crate::position::Tally;
     use shakmaty::san::SanPlus;
     use shakmaty::{CastlingMode, EnPassantMode, FromSetup, Move, fen::Fen};
-
-    use super::*;
 
     /// A sample `.cbv` unpacked into a fresh temporary directory (removed on drop).
     struct Sample {
@@ -976,6 +986,211 @@ mod tests {
             "{checked} records checked, {differ} differ; skipped: {unreadable} unreadable, {chess960} Chess960"
         );
         assert_eq!(differ, 0);
+    }
+
+    /// Everything of an outcome that the index must reproduce.
+    fn full(out: &PositionOutcome) -> (Vec<Match>, Vec<(UciMove, Tally)>, Tally) {
+        (
+            out.matches.clone(),
+            out.moves.iter().map(|m| (m.uci, m.tally.clone())).collect(),
+            out.ended.clone(),
+        )
+    }
+
+    #[test]
+    fn opening_index_matches_the_pass() {
+        let Some(sample) = Sample::unpack("Anand 01-14.cbv") else {
+            return;
+        };
+        let base = sample.open();
+        let dir = sample.dir.join("cache");
+        base.set_booster_dir(&dir);
+        assert!(base.prepare_wanted());
+        let progress = AtomicUsize::new(0);
+        assert!(
+            base.prepare(&progress, &AtomicBool::new(false))
+                .expect("prepares")
+        );
+        assert!(progress.load(Ordering::Relaxed) >= base.records());
+        let Some(index) = base.openings() else {
+            eprintln!("skipped: no memory for the index");
+            return;
+        };
+        assert!(index.positions() > 0 && !base.prepare_wanted());
+        let plain = sample.open();
+        assert!(plain.openings().is_none());
+        let lines: Vec<_> = (0..base.records()).map(|i| oracle_line(&base, i)).collect();
+        let every_third: Vec<u32> = (0..base.records() as u32).step_by(3).collect();
+        let mut checked = 0;
+        for line in lines.iter().flatten().step_by(23) {
+            for ply in [0, 1, 3, 6, super::super::openings::PLIES] {
+                let Some((pos, _)) = line.get(ply) else {
+                    continue;
+                };
+                let moves: Vec<Move> = line[..ply]
+                    .iter()
+                    .scan(Chess::default(), |p, (_, m)| {
+                        let m = m.as_ref()?.to_move(p).ok()?;
+                        p.play_unchecked(m);
+                        Some(m)
+                    })
+                    .collect();
+                if moves.len() != ply {
+                    continue;
+                }
+                let query = PositionQuery::new(pos.clone(), Some(moves));
+                assert!(index.answers(&query, None));
+                for cands in [None, Some(every_third.as_slice())] {
+                    let fast = run(&base, cands, &query);
+                    let slow = run(&plain, cands, &query);
+                    assert_eq!(full(&fast), full(&slow), "ply {ply}");
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 10, "{checked} queries");
+        // Deeper than the index: the pass answers.
+        let line = lines
+            .iter()
+            .flatten()
+            .find(|l| l.len() > 20)
+            .expect("a game");
+        let deep = PositionQuery::new(line[15].0.clone(), None);
+        assert!(!index.answers(&deep, None));
+        // Opened again: the index on disk is loaded without a build.
+        let again = sample.open();
+        again.set_booster_dir(&dir);
+        let progress = AtomicUsize::new(0);
+        assert!(
+            again
+                .prepare(&progress, &AtomicBool::new(false))
+                .expect("loads")
+        );
+        assert_eq!(progress.load(Ordering::Relaxed), 0);
+        assert!(again.openings().is_some());
+    }
+
+    /// Mega Database 2026 (not in the repository): the opening index against the
+    /// pass, with timings. Run with
+    /// `cargo test --release -p chess-import mega_openings -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn mega_openings() {
+        use super::super::base::{Filter, NameFilter, OpeningsStatus, SortKey};
+        use std::time::Instant;
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../pgnFilesforExample/Mega2026/Mega Database 2026.cbh");
+        if !path.exists() {
+            eprintln!("skipped: no Mega");
+            return;
+        }
+        let base = Base::open(&path, &mut |_, _| {}, &AtomicBool::new(false)).expect("opens");
+        let dir =
+            std::env::temp_dir().join(format!("chess-import-openings-{}", std::process::id()));
+        base.set_booster_dir(&dir);
+        let t = Instant::now();
+        let progress = AtomicUsize::new(0);
+        assert!(
+            base.prepare(&progress, &AtomicBool::new(false))
+                .expect("prepares")
+        );
+        eprintln!(
+            "prepared in {:.2?}: {:?}, peak memory {}",
+            t.elapsed(),
+            base.openings_status(),
+            peak_memory()
+        );
+        let index = base.openings().expect("loaded");
+        eprintln!(
+            "{} positions, {} MB",
+            index.positions(),
+            index.memory() / 1_000_000
+        );
+        let plain = Base::open(&path, &mut |_, _| {}, &AtomicBool::new(false)).expect("opens");
+        let never = AtomicBool::new(false);
+        let carlsen = plain
+            .query(
+                &Filter {
+                    player: NameFilter {
+                        text: "carlsen, magnus".into(),
+                        ..NameFilter::default()
+                    },
+                    ..Filter::default()
+                },
+                SortKey::Number,
+                true,
+                &AtomicUsize::new(0),
+                &never,
+            )
+            .expect("query");
+        for (name, line) in [
+            ("start", ""),
+            ("1.e4", "e4"),
+            ("1.d4 Nf6 2.c4 e6", "d4 Nf6 c4 e6"),
+            ("Najdorf", "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6"),
+        ] {
+            let (pos, moves) = san_line(line);
+            let query = PositionQuery::new(pos, Some(moves));
+            for cands in [None, Some(carlsen.as_slice())] {
+                let t = Instant::now();
+                let fast = run(&base, cands, &query);
+                let fast_ms = t.elapsed().as_secs_f64() * 1e3;
+                let t = Instant::now();
+                let slow = run(&plain, cands, &query);
+                let slow_ms = t.elapsed().as_secs_f64() * 1e3;
+                let same = |o: &PositionOutcome| o.matches.iter().filter(|m| m.same_order).count();
+                eprintln!(
+                    "{name:18} {:8}: index {:9} games ({:9} same order) {fast_ms:8.1} ms · pass {:9} games ({:9} same order) {slow_ms:8.1} ms · ended {} / {}",
+                    if cands.is_some() { "Carlsen" } else { "all" },
+                    fast.matches.len(),
+                    same(&fast),
+                    slow.matches.len(),
+                    same(&slow),
+                    fast.ended.games,
+                    slow.ended.games
+                );
+                // Both lists are in record order: one merge tells the differences.
+                let (mut missing, mut extra) = (0, 0);
+                let (mut i, mut j) = (0, 0);
+                while i < slow.matches.len() || j < fast.matches.len() {
+                    match (slow.matches.get(i), fast.matches.get(j)) {
+                        (Some(a), Some(b)) if a == b => {
+                            i += 1;
+                            j += 1;
+                        }
+                        (Some(a), Some(b)) if a.index < b.index => {
+                            missing += 1;
+                            i += 1;
+                        }
+                        (Some(a), Some(b)) if a.index > b.index => {
+                            extra += 1;
+                            j += 1;
+                        }
+                        (Some(_), Some(_)) => {
+                            // Same game, different details.
+                            missing += 1;
+                            extra += 1;
+                            i += 1;
+                            j += 1;
+                        }
+                        (Some(_), None) => {
+                            missing += 1;
+                            i += 1;
+                        }
+                        (None, _) => {
+                            extra += 1;
+                            j += 1;
+                        }
+                    }
+                }
+                if missing + extra > 0 {
+                    eprintln!("  differ: {missing} only in the pass, {extra} only in the index");
+                }
+                assert!(matches!(base.openings_status(), OpeningsStatus::Loaded(_)));
+            }
+        }
+        eprintln!("peak memory {}", peak_memory());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Mega Database 2026 (not in the repository): builds our booster for the whole

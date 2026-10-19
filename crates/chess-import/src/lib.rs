@@ -105,7 +105,26 @@ impl PgnDb {
         }
     }
 
-    /// The position table, built on first use. `None` when cancelled.
+    /// Memory the position table would need, built: about 20 bytes per position
+    /// and, while it is built, two to three times that (`docs/dev/import.md`),
+    /// estimated from the size of the PGN text (a move is some six bytes of it).
+    pub fn positions_estimate(&self) -> u64 {
+        self.db.byte_len() as u64 * 10
+    }
+
+    /// Why the position table cannot be built now: the memory it would need
+    /// ([`PgnDb::positions_estimate`]) is not there. `None` once it is built.
+    pub fn positions_blocked(&self) -> Option<u64> {
+        if self.positions.lock().ok()?.is_some() {
+            return None;
+        }
+        let need = self.positions_estimate();
+        let room = memory::available().is_some_and(|free| free >= need + (256 << 20));
+        (!room).then_some(need)
+    }
+
+    /// The position table, built on first use. `None` when cancelled, or when the
+    /// machine has no memory for it ([`PgnDb::positions_blocked`]).
     pub(crate) fn positions(
         &self,
         progress: &AtomicUsize,
@@ -113,6 +132,9 @@ impl PgnDb {
     ) -> Option<Arc<pgn_positions::PositionTable>> {
         if let Some(t) = self.positions.lock().ok()?.as_ref() {
             return Some(t.clone());
+        }
+        if self.positions_blocked().is_some() {
+            return None;
         }
         let table = Arc::new(pgn_positions::PositionTable::build(
             &self.db, progress, cancel,
@@ -217,6 +239,15 @@ impl Database {
             Database::ChessBase(b) => {
                 chessbase::search::search(b, candidates, query, progress, cancel)
             }
+        }
+    }
+
+    /// Memory a position search would need first and does not have (a PGN
+    /// database's table, see [`PgnDb::positions_blocked`]).
+    pub fn positions_blocked(&self) -> Option<u64> {
+        match self {
+            Database::Pgn(db) => db.positions_blocked(),
+            Database::ChessBase(_) => None,
         }
     }
 

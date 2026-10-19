@@ -8,12 +8,12 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::entities::{self, Entities, Kind};
 use super::headers::{self, GameHeader, Record};
 use super::text::{self, Decoder};
-use super::{annotations, be, moves, writer};
+use super::{annotations, be, booster, moves, openings, writer};
 use crate::ImportError;
 
 const RECORD: usize = 46;
@@ -54,6 +54,8 @@ pub struct Base {
     /// application), and that booster once found or built.
     booster_dir: OnceLock<PathBuf>,
     own_booster: OnceLock<PathBuf>,
+    /// The opening index, once loaded (`openings.rs`; kept in the same directory).
+    openings: Mutex<Option<Arc<openings::Index>>>,
     cba: Option<Mutex<File>>,
     /// Titles of guiding texts read so far (they are stored with the text).
     text_titles: Mutex<HashMap<usize, String>>,
@@ -438,6 +440,7 @@ impl Base {
             cbb: OnceLock::new(),
             booster_dir: OnceLock::new(),
             own_booster: OnceLock::new(),
+            openings: Mutex::new(None),
             cba: cba.map(Mutex::new),
             text_titles: Mutex::new(HashMap::new()),
             notes: Vec::new(),
@@ -586,9 +589,10 @@ impl Base {
         }
     }
 
-    /// Our booster's file: named after the database and the size and date of its
-    /// games, so a changed database gets a new one.
-    fn own_booster_path(&self) -> Option<PathBuf> {
+    /// Where the files of this database go in the cache directory, without the
+    /// extension: named after the database and the size and date of its games, so a
+    /// changed database gets new ones.
+    fn cache_stem(&self) -> Option<PathBuf> {
         let dir = self.booster_dir.get()?;
         let path = std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
         let meta = std::fs::metadata(&self.cbg_path).ok()?;
@@ -608,7 +612,97 @@ impl Base {
             h ^= u64::from(b);
             h = h.wrapping_mul(0x0100_0000_01b3);
         }
-        Some(dir.join(format!("{h:016x}.cbb")))
+        Some(dir.join(format!("{h:016x}")))
+    }
+
+    fn own_booster_path(&self) -> Option<PathBuf> {
+        self.cache_stem().map(|p| p.with_extension("cbb"))
+    }
+
+    fn openings_path(&self) -> Option<PathBuf> {
+        self.cache_stem().map(|p| p.with_extension("cpo"))
+    }
+
+    /// The opening index, when it is loaded.
+    pub fn openings(&self) -> Option<Arc<openings::Index>> {
+        self.openings.lock().ok()?.clone()
+    }
+
+    /// Where the opening index stands.
+    pub fn openings_status(&self) -> OpeningsStatus {
+        if let Some(index) = self.openings() {
+            return OpeningsStatus::Loaded(index.memory());
+        }
+        let Some(path) = self.openings_path() else {
+            return OpeningsStatus::NoCache;
+        };
+        match openings::Index::file_size(&path) {
+            Some(bytes) => OpeningsStatus::OnDisk {
+                bytes,
+                room: room_for(bytes),
+            },
+            None => OpeningsStatus::Missing {
+                room: room_for(self.records as u64 * openings::BYTES_PER_GAME),
+            },
+        }
+    }
+
+    /// Something is left to build or load for fast position searches
+    /// ([`Base::prepare`]).
+    pub fn prepare_wanted(&self) -> bool {
+        self.booster_wanted()
+            || matches!(
+                self.openings_status(),
+                OpeningsStatus::Missing { room: true } | OpeningsStatus::OnDisk { room: true, .. }
+            )
+    }
+
+    /// Builds what is missing for fast position searches — our booster when `.cbb`
+    /// cannot be used, the opening index when the machine has room for it — in one
+    /// pass over the games (`progress` counts the records done, and again while the
+    /// index is sorted), then loads the index. `Ok(false)` when cancelled.
+    pub fn prepare(&self, progress: &AtomicUsize, cancel: &AtomicBool) -> std::io::Result<bool> {
+        let Some(stem) = self.cache_stem() else {
+            return Err(std::io::Error::other("no cache directory"));
+        };
+        let booster_path = self.booster_wanted().then(|| stem.with_extension("cbb"));
+        let openings_path = stem.with_extension("cpo");
+        let build_openings = matches!(
+            self.openings_status(),
+            OpeningsStatus::Missing { room: true }
+        );
+        if booster_path.is_some() || build_openings {
+            let built = booster::build(
+                self,
+                booster_path.as_deref(),
+                build_openings.then_some(openings_path.as_path()),
+                progress,
+                cancel,
+            )?;
+            if !built {
+                return Ok(false);
+            }
+            if let Some(p) = booster_path {
+                let _ = self.own_booster.set(p);
+            }
+        }
+        if self.openings().is_none()
+            && let Some(bytes) = openings::Index::file_size(&openings_path)
+            && room_for(bytes)
+        {
+            match openings::Index::load(&openings_path, self.records) {
+                Some(index) => {
+                    if let Ok(mut o) = self.openings.lock() {
+                        *o = Some(Arc::new(index));
+                    }
+                }
+                // Not an index for this database (an older layout): built anew next time.
+                None => {
+                    let _ = std::fs::remove_file(&openings_path);
+                }
+            }
+        }
+        Ok(true)
     }
 
     /// Position searches have a booster (ChessBase's or ours).
@@ -631,7 +725,7 @@ impl Base {
         let Some(path) = self.own_booster_path() else {
             return Err(std::io::Error::other("no booster directory"));
         };
-        if !super::booster::build(self, &path, progress, cancel)? {
+        if !booster::build(self, Some(&path), None, progress, cancel)? {
             return Ok(false);
         }
         let _ = self.own_booster.set(path);
@@ -1084,6 +1178,25 @@ fn name_table(names: &Names, f: &NameFilter) -> Option<Vec<bool>> {
         return Some(t);
     }
     (!words(&f.text).is_empty()).then(|| names.matching(&f.text))
+}
+
+/// Where the opening index of a database stands (see [`Base::openings_status`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpeningsStatus {
+    /// In memory, this many bytes.
+    Loaded(usize),
+    /// Built, but not loaded; `room`: the machine has memory for it now.
+    OnDisk { bytes: u64, room: bool },
+    /// Not built; `room`: the machine has memory to build and hold it.
+    Missing { room: bool },
+    /// No cache directory was given.
+    NoCache,
+}
+
+/// Whether `bytes` more can be held in memory with a gigabyte to spare. Unknown
+/// memory counts as no room.
+fn room_for(bytes: u64) -> bool {
+    crate::memory::available().is_some_and(|free| free >= bytes + (1 << 30))
 }
 
 /// A booster file holds a record per `.cbh` record (plus its header) and says so.

@@ -13,7 +13,7 @@ use std::time::Instant;
 use shakmaty::san::SanPlus;
 use shakmaty::{Chess, Move, Position};
 
-use crate::chessbase::base::{Filter, NameFilter, SortKey};
+use crate::chessbase::base::{Filter, NameFilter, OpeningsStatus, SortKey};
 use crate::position::PositionQuery;
 use crate::{Database, ScanProgress};
 
@@ -94,19 +94,35 @@ pub fn run(path: &Path, booster_dir: Option<&Path>, out: &mut dyn Write) -> io::
             if let Some(dir) = booster_dir {
                 base.set_booster_dir(dir);
             }
-            let booster = if base.booster_ready() {
-                "yes".to_owned()
-            } else if base.booster_wanted() {
+            let mut prepared = String::new();
+            if base.prepare_wanted() {
                 let t = Instant::now();
-                match base.build_booster(&counter, &never) {
-                    Ok(true) => format!("built in {:.1} s", t.elapsed().as_secs_f64()),
-                    Ok(false) => "cancelled".into(),
-                    Err(e) => format!("failed: {e}"),
-                }
-            } else {
-                "none".into()
+                prepared = match base.prepare(&counter, &never) {
+                    Ok(true) => format!(" (prepared in {:.1} s)", t.elapsed().as_secs_f64()),
+                    Ok(false) => " (cancelled)".into(),
+                    Err(e) => format!(" (preparing failed: {e})"),
+                };
+            }
+            let openings = match base.openings_status() {
+                OpeningsStatus::Loaded(bytes) => format!("loaded, {}", mb(bytes as u64)),
+                OpeningsStatus::OnDisk { bytes, room } => format!(
+                    "on disk, {}, not loaded ({})",
+                    mb(bytes),
+                    if room {
+                        "room for it"
+                    } else {
+                        "not enough memory"
+                    }
+                ),
+                OpeningsStatus::Missing { room: true } => "not built".into(),
+                OpeningsStatus::Missing { room: false } => "not built: not enough memory".into(),
+                OpeningsStatus::NoCache => "no cache directory".into(),
             };
-            writeln!(out, "search booster (.cbb or our own): {booster}")?;
+            writeln!(
+                out,
+                "search booster (.cbb or our own): {} · opening index: {openings}{prepared}",
+                if base.booster_ready() { "yes" } else { "no" }
+            )?;
 
             let carlsen = Filter {
                 player: NameFilter {
@@ -168,7 +184,16 @@ pub fn run(path: &Path, booster_dir: Option<&Path>, out: &mut dyn Write) -> io::
             }
         }
         Database::Pgn(pgn) => {
-            writeln!(out, "games: {}", pgn.db.len())?;
+            writeln!(
+                out,
+                "games: {} · position table estimated at {}{}",
+                pgn.db.len(),
+                mb(pgn.positions_estimate()),
+                match pgn.positions_blocked() {
+                    Some(_) => " · not built: not enough memory",
+                    None => "",
+                }
+            )?;
             let t = Instant::now();
             let Some(table) = pgn.positions(&counter, &never) else {
                 return Ok(());
