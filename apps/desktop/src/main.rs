@@ -9,6 +9,7 @@ mod board_search;
 mod engine_download;
 mod engine_offer;
 mod engines;
+mod examples;
 mod game_view;
 mod i18n;
 mod large_db;

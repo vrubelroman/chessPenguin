@@ -82,6 +82,8 @@ pub struct Settings {
     pub review: ReviewSettings,
     /// The first-start engine discovery has run (see `engines::first_run_setup`).
     pub engines_discovered: bool,
+    /// The sample databases were put on the shelf (see `examples::first_run_setup`).
+    pub examples_added: bool,
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -134,6 +136,7 @@ impl Default for Settings {
             databases: Vec::new(),
             review: ReviewSettings::default(),
             engines_discovered: false,
+            examples_added: false,
         }
     }
 }

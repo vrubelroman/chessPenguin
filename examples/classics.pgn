@@ -14,8 +14,13 @@ d6 3. d4 Bg4 $6 {Pinning the knight, but Black will have to give up the bishop
 pair.} 4. dxe5 Bxf3 (4... dxe5 5. Qxd8+ Kxd8 6. Nxe5 {wins a pawn.}) 5. Qxf3
 dxe5 6. Bc4 {Threatening Qxf7#.} Nf6 7. Qb3 $1 {A double attack on f7 and b7.}
 Qe7 8. Nc3 {Morphy prefers development to material.} (8. Qxb7 Qb4+ 9. Qxb4 Bxb4+
-{only trades queens.}) 8... c6 9. Bg5 b5 $2 10. Nxb5 $1 cxb5 11. Bxb5+ Nbd7 12.
-O-O-O Rd8 13. Rxd7 $1 Rxd7 14. Rd1 Qe6 15. Bxd7+ Nxd7 16. Qb8+ $3 Nxb8 17. Rd8#
+{only trades queens.}) 8... c6 9. Bg5 b5 $2 {Black wants to chase the bishop, but opens lines towards his own king.}
+(9... Nbd7 {is the healthy move:} 10. O-O-O {keeps the pressure on d7.} (10. Qxb7 $6 Qb4+
+11. Qxb4 Bxb4 {[%csl Gb4] and Black is fine.}) 10... h6 11. Bh4 $14) 10. Nxb5 $1
+{[%cal Gb5d6,Gc4f7] The knight sacrifice opens the c-file and the a4-e8 diagonal.} cxb5 11.
+Bxb5+ Nbd7 12. O-O-O {[%csl Rd7][%cal Gd1d7,Gb5d7] All of White's pieces aim at d7.} Rd8
+13. Rxd7 $1 Rxd7 14. Rd1 Qe6 15. Bxd7+ Nxd7 16. Qb8+ $3 {[%cal Gb3b8,Gd1d8] The famous
+queen sacrifice.} Nxb8 17. Rd8# {[%csl Re8] A model of rapid development.}
 1-0
 
 [Event "London casual game"]
@@ -69,3 +74,664 @@ gxf6 18. exf6 Rg8 19. Rad1 $3 Qxf3 20. Rxe7+ $1 Nxe7 (20... Kd8 21. Rxd7+ Kc8
 {A starting position from FEN. With the king on the sixth rank in front of
 its pawn, White wins whoever is to move.} 1. Kd6 (1. Kf6 Kf8 2. e6 Ke8 3. e7 Kd7
 4. Kf7 {also wins.}) 1... Kd8 2. e6 Ke8 3. e7 Kf7 4. Kd7 1-0
+
+[Event "London International Masters"]
+[Site "London"]
+[Date "1883.05.05"]
+[Round "6.2"]
+[White "Zukertort, Johannes Hermann"]
+[Black "Blackburne, Joseph Henry"]
+[Result "1-0"]
+[ECO "A13"]
+[PlyCount "65"]
+[Annotator "ChessPenguin sample"]
+
+{London 1883, the tournament Zukertort won ahead of Steinitz. His masterpiece:
+28.Qb4!! offers the queen, which Black cannot take.} 1. c4 e6 2. e3 Nf6 3. Nf3
+b6 4. Be2 Bb7 5. O-O d5 6. d4 Bd6 7. Nc3 O-O 8. b3 Nbd7 9. Bb2 Qe7 10. Nb5 Ne4
+11. Nxd6 cxd6 12. Nd2 Ndf6 13. f3 Nxd2 14. Qxd2 dxc4 15. Bxc4 d5 16. Bd3 Rfc8
+17. Rae1 Rc7 18. e4 Rac8 19. e5 Ne8 20. f4 g6 21. Re3 f5 22. exf6 Nxf6 23. f5
+Ne4 24. Bxe4 dxe4 25. fxg6 Rc2 26. gxh7+ Kh8 27. d5+ e5 28. Qb4 R8c5 29. Rf8+
+Kxh7 30. Qxe4+ Kg7 31. Bxe5+ Kxf8 32. Bg7+ Kg8 33. Qxe7 1-0
+
+[Event "Amsterdam VAS Int-01 Masters"]
+[Site "Amsterdam"]
+[Date "1889.08.26"]
+[Round "1"]
+[White "Lasker, Emanuel"]
+[Black "Bauer, Johann Hermann"]
+[Result "1-0"]
+[ECO "A03"]
+[PlyCount "75"]
+[Annotator "ChessPenguin sample"]
+
+{Amsterdam 1889: the classic double bishop sacrifice. Bxh7+ and Bxg7 strip the
+black king of its pawns.} 1. f4 d5 2. e3 Nf6 3. b3 e6 4. Bb2 Be7 5. Bd3 b6 6.
+Nf3 Bb7 7. Nc3 Nbd7 8. O-O O-O 9. Ne2 c5 10. Ng3 Qc7 11. Ne5 Nxe5 12. Bxe5 Qc6
+13. Qe2 a6 14. Nh5 Nxh5 15. Bxh7+ Kxh7 16. Qxh5+ Kg8 17. Bxg7 Kxg7 18. Qg4+ Kh7
+19. Rf3 e5 20. Rh3+ Qh6 21. Rxh6+ Kxh6 22. Qd7 Bf6 23. Qxb7 Kg7 24. Rf1 Rab8
+25. Qd7 Rfd8 26. Qg4+ Kf8 27. fxe5 Bg7 28. e6 Rb7 29. Qg6 f6 30. Rxf6+ Bxf6 31.
+Qxf6+ Ke8 32. Qh8+ Ke7 33. Qg7+ Kxe6 34. Qxb7 Rd6 35. Qxa6 d4 36. exd4 cxd4 37.
+h4 d3 38. Qxd3 1-0
+
+[Event "Hastings International Masters"]
+[Site "Hastings"]
+[Date "1895.08.17"]
+[Round "10"]
+[White "Steinitz, William"]
+[Black "Von Bardeleben, Curt"]
+[Result "1-0"]
+[ECO "C54"]
+[PlyCount "49"]
+[Annotator "ChessPenguin sample"]
+
+{Hastings 1895. Steinitz keeps Black's king in the centre and finishes with a
+famous combination in which his rook gives check after check. Von Bardeleben is
+said to have left the hall rather than resign.} 1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5
+4. c3 Nf6 5. d4 exd4 6. cxd4 Bb4+ 7. Nc3 d5 8. exd5 Nxd5 9. O-O Be6 10. Bg5 Be7
+11. Bxd5 Bxd5 12. Nxd5 Qxd5 13. Bxe7 Nxe7 14. Re1 f6 15. Qe2 Qd7 16. Rac1 c6
+17. d5 cxd5 18. Nd4 Kf7 19. Ne6 Rhc8 20. Qg4 g6 21. Ng5+ Ke8 22. Rxe7+ Kf8 23.
+Rf7+ Kg8 24. Rg7+ Kh8 25. Rxh7+ 1-0
+
+[Event "St Petersburg Four Masters"]
+[Site "St Petersburg"]
+[Date "1896.01.04"]
+[Round "4.1"]
+[White "Pillsbury, Harry Nelson"]
+[Black "Lasker, Emanuel"]
+[Result "0-1"]
+[ECO "D50"]
+[PlyCount "64"]
+[Annotator "ChessPenguin sample"]
+
+{St Petersburg 1895/96. Lasker answers Pillsbury's attack with the rook
+sacrifice 17...Rxc3!! and hunts the white king.} 1. d4 d5 2. c4 e6 3. Nc3 Nf6
+4. Nf3 c5 5. Bg5 cxd4 6. Qxd4 Nc6 7. Qh4 Be7 8. O-O-O Qa5 9. e3 Bd7 10. Kb1 h6
+11. cxd5 exd5 12. Nd4 O-O 13. Bxf6 Bxf6 14. Qh5 Nxd4 15. exd4 Be6 16. f4 Rac8
+17. f5 Rxc3 18. fxe6 Ra3 19. exf7+ Rxf7 20. bxa3 Qb6+ 21. Bb5 Qxb5+ 22. Ka1 Rc7
+23. Rd2 Rc4 24. Rhd1 Rc3 25. Qf5 Qc4 26. Kb2 Rxa3 27. Qe6+ Kh7 28. Kxa3 Qc3+
+29. Ka4 b5+ 30. Kxb5 Qc4+ 31. Ka5 Bd8+ 32. Qb6 Bxb6# 0-1
+
+[Event "Lodz"]
+[Site "Lodz"]
+[Date "1907.12.26"]
+[Round "?"]
+[White "Rotlewi, Georg A"]
+[Black "Rubinstein, Akiba"]
+[Result "0-1"]
+[ECO "D40"]
+[PlyCount "50"]
+[Annotator "ChessPenguin sample"]
+
+{Lodz 1907, "Rubinstein's Immortal". After 22...Rxc3! and 23...Rd2!! Black's
+queen is left hanging, and the bishops and rooks finish the attack.} 1. d4 d5
+2. Nf3 e6 3. e3 c5 4. c4 Nc6 5. Nc3 Nf6 6. dxc5 Bxc5 7. a3 a6 8. b4 Bd6 9. Bb2
+O-O 10. Qd2 Qe7 11. Bd3 dxc4 12. Bxc4 b5 13. Bd3 Rd8 14. Qe2 Bb7 15. O-O Ne5
+16. Nxe5 Bxe5 17. f4 Bc7 18. e4 Rac8 19. e5 Bb6+ 20. Kh1 Ng4 21. Be4 Qh4 22. g3
+Rxc3 23. gxh4 Rd2 24. Qxd2 Bxe4+ 25. Qg2 Rh3 0-1
+
+[Event "Wien"]
+[Site "Vienna"]
+[Date "1910.??.??"]
+[Round "?"]
+[White "Reti, Richard"]
+[Black "Tartakower, Saviely"]
+[Result "1-0"]
+[ECO "B15"]
+[PlyCount "21"]
+[Annotator "ChessPenguin sample"]
+
+{Vienna 1910, a miniature everyone should know: 9.Qd8+!! Kxd8 10.Bg5++ and mate
+next move.} 1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 Nf6 5. Qd3 e5 6. dxe5 Qa5+ 7.
+Bd2 Qxe5 8. O-O-O Nxe4 9. Qd8+ Kxd8 10. Bg5+ Kc7 11. Bd8# 1-0
+
+[Event "DSB Kongress-18 Meisterturnier-17"]
+[Site "Breslau"]
+[Date "1912.07.20"]
+[Round "6"]
+[White "Levitsky, Stepan Mikhailovich"]
+[Black "Marshall, Frank James"]
+[Result "0-1"]
+[ECO "C10"]
+[PlyCount "46"]
+[Annotator "ChessPenguin sample"]
+
+{Breslau 1912. Legend says the spectators showered the board with gold coins
+after 23...Qg3!!: every capture of the queen loses.} 1. e4 e6 2. d4 d5 3. Nc3
+c5 4. Nf3 Nc6 5. exd5 exd5 6. Be2 Nf6 7. O-O Be7 8. Bg5 O-O 9. dxc5 Be6 10. Nd4
+Bxc5 11. Nxe6 fxe6 12. Bg4 Qd6 13. Bh3 Rae8 14. Qd2 Bb4 15. Bxf6 Rxf6 16. Rad1
+Qc5 17. Qe2 Bxc3 18. bxc3 Qxc3 19. Rxd5 Nd4 20. Qh5 Ref8 21. Re5 Rh6 22. Qg5
+Rxh3 23. Rc5 Qg3 0-1
+
+[Event "London blitz"]
+[Site "London (City of London CC)"]
+[Date "1912.10.29"]
+[Round "?"]
+[White "Lasker, Edward"]
+[Black "Thomas, George Alan"]
+[Result "1-0"]
+[ECO "A83"]
+[PlyCount "35"]
+[Annotator "ChessPenguin sample"]
+
+{London 1912, the most famous king hunt: after the queen sacrifice 11.Qxh7+!!
+the black king is driven from g8 all the way down the board and mated.} 1. d4
+e6 2. Nf3 f5 3. Nc3 Nf6 4. Bg5 Be7 5. Bxf6 Bxf6 6. e4 fxe4 7. Nxe4 b6 8. Ne5
+O-O 9. Bd3 Bb7 10. Qh5 Qe7 11. Qxh7+ Kxh7 12. Nxf6+ Kh6 13. Neg4+ Kg5 14. h4+
+Kf4 15. g3+ Kf3 16. Be2+ Kg2 17. Rh2+ Kg1 18. Kd2# 1-0
+
+[Event "Manhattan CC International"]
+[Site "New York"]
+[Date "1918.??.??"]
+[Round "?"]
+[White "Capablanca, Jose Raul"]
+[Black "Marshall, Frank James"]
+[Result "1-0"]
+[ECO "C89"]
+[PlyCount "71"]
+[Annotator "ChessPenguin sample"]
+
+{New York 1918. Marshall springs his gambit in the Ruy Lopez, 8...d5, kept
+secret for years; Capablanca defends calmly and wins.} 1. e4 e5 2. Nf3 Nc6 3.
+Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 O-O 8. c3 d5 9. exd5 Nxd5 10.
+Nxe5 Nxe5 11. Rxe5 Nf6 12. Re1 Bd6 13. h3 Ng4 14. Qf3 Qh4 15. d4 Nxf2 16. Re2
+Bg4 17. hxg4 Bh2+ 18. Kf1 Bg3 19. Rxf2 Qh1+ 20. Ke2 Bxf2 21. Bd2 Bh4 22. Qh3
+Rae8+ 23. Kd3 Qf1+ 24. Kc2 Bf2 25. Qf3 Qg1 26. Bd5 c5 27. dxc5 Bxc5 28. b4 Bd6
+29. a4 a5 30. axb5 axb4 31. Ra6 bxc3 32. Nxc3 Bb4 33. b6 Bxc3 34. Bxc3 h6 35.
+b7 Re3 36. Bxf7+ 1-0
+
+[Event "New Orleans"]
+[Site "New Orleans"]
+[Date "1920.??.??"]
+[Round "?"]
+[White "Adams, Edwin Ziegler"]
+[Black "Torre Repetto, Carlos"]
+[Result "1-0"]
+[ECO "C62"]
+[PlyCount "45"]
+[Annotator "ChessPenguin sample"]
+
+{New Orleans 1920, the famous "overloading" game: White's queen is offered
+again and again (Qg4!, Qc4!, Qc7!) until Black's defence breaks. Its
+authenticity is debated.} 1. e4 e5 2. Nf3 d6 3. d4 exd4 4. Qxd4 Nc6 5. Bb5 Bd7
+6. Bxc6 Bxc6 7. Nc3 Nf6 8. O-O Be7 9. Nd5 Bxd5 10. exd5 O-O 11. Bg5 c6 12. c4
+cxd5 13. cxd5 Re8 14. Rfe1 a5 15. Re2 Rc8 16. Rae1 Qd7 17. Bxf6 Bxf6 18. Qg4
+Qb5 19. Qc4 Qd7 20. Qc7 Qb5 21. a4 Qxa4 22. Re4 Qb5 23. Qxb7 1-0
+
+[Event "Copenhagen 6 Masters"]
+[Site "Copenhagen"]
+[Date "1923.03.10"]
+[Round "7"]
+[White "Saemisch, Friedrich"]
+[Black "Nimzowitsch, Aron"]
+[Result "0-1"]
+[ECO "E06"]
+[PlyCount "50"]
+[Annotator "ChessPenguin sample"]
+
+{Copenhagen 1923, the "Immortal Zugzwang Game": White resigns with plenty of
+material, because every move he can make loses.} 1. d4 Nf6 2. c4 e6 3. Nf3 b6
+4. g3 Bb7 5. Bg2 Be7 6. Nc3 O-O 7. O-O d5 8. Ne5 c6 9. cxd5 cxd5 10. Bf4 a6 11.
+Rc1 b5 12. Qb3 Nc6 13. Nxc6 Bxc6 14. h3 Qd7 15. Kh2 Nh5 16. Bd2 f5 17. Qd1 b4
+18. Nb1 Bb5 19. Rg1 Bd6 20. e4 fxe4 21. Qxh5 Rxf2 22. Qg5 Raf8 23. Kh1 R8f5 24.
+Qe3 Bd3 25. Rce1 h6 0-1
+
+[Event "New York International Masters-01"]
+[Site "New York"]
+[Date "1924.03.23"]
+[Round "6"]
+[White "Capablanca, Jose Raul"]
+[Black "Tartakower, Saviely"]
+[Result "1-0"]
+[ECO "A85"]
+[PlyCount "103"]
+[Annotator "ChessPenguin sample"]
+
+{New York 1924. A celebrated rook endgame: Capablanca gives up pawns to bring
+his king and rook to the most active squares.} 1. d4 e6 2. Nf3 f5 3. c4 Nf6 4.
+Bg5 Be7 5. Nc3 O-O 6. e3 b6 7. Bd3 Bb7 8. O-O Qe8 9. Qe2 Ne4 10. Bxe7 Nxc3 11.
+bxc3 Qxe7 12. a4 Bxf3 13. Qxf3 Nc6 14. Rfb1 Rae8 15. Qh3 Rf6 16. f4 Na5 17. Qf3
+d6 18. Re1 Qd7 19. e4 fxe4 20. Qxe4 g6 21. g3 Kf8 22. Kg2 Rf7 23. h4 d5 24.
+cxd5 exd5 25. Qxe8+ Qxe8 26. Rxe8+ Kxe8 27. h5 Rf6 28. hxg6 hxg6 29. Rh1 Kf8
+30. Rh7 Rc6 31. g4 Nc4 32. g5 Ne3+ 33. Kf3 Nf5 34. Bxf5 gxf5 35. Kg3 Rxc3+ 36.
+Kh4 Rf3 37. g6 Rxf4+ 38. Kg5 Re4 39. Kf6 Kg8 40. Rg7+ Kh8 41. Rxc7 Re8 42. Kxf5
+Re4 43. Kf6 Rf4+ 44. Ke5 Rg4 45. g7+ Kg8 46. Rxa7 Rg1 47. Kxd5 Rc1 48. Kd6 Rc2
+49. d5 Rc1 50. Rc7 Ra1 51. Kc6 Rxa4 52. d6 1-0
+
+[Event "AVRO"]
+[Site "Netherlands"]
+[Date "1938.11.22"]
+[Round "11"]
+[White "Botvinnik, Mikhail"]
+[Black "Capablanca, Jose Raul"]
+[Result "1-0"]
+[ECO "E49"]
+[PlyCount "81"]
+[Annotator "ChessPenguin sample"]
+
+{AVRO 1938. Botvinnik's best-known combination begins with 30.Ba3!!, deflecting
+the black queen.} 1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 4. e3 d5 5. a3 Bxc3+ 6. bxc3 c5
+7. cxd5 exd5 8. Bd3 O-O 9. Ne2 b6 10. O-O Ba6 11. Bxa6 Nxa6 12. Bb2 Qd7 13. a4
+Rfe8 14. Qd3 c4 15. Qc2 Nb8 16. Rae1 Nc6 17. Ng3 Na5 18. f3 Nb3 19. e4 Qxa4 20.
+e5 Nd7 21. Qf2 g6 22. f4 f5 23. exf6 Nxf6 24. f5 Rxe1 25. Rxe1 Re8 26. Re6 Rxe6
+27. fxe6 Kg7 28. Qf4 Qe8 29. Qe5 Qe7 30. Ba3 Qxa3 31. Nh5+ gxh5 32. Qg5+ Kf8
+33. Qxf6+ Kg8 34. e7 Qc1+ 35. Kf2 Qc2+ 36. Kg3 Qd3+ 37. Kh4 Qe4+ 38. Kxh5 Qe2+
+39. Kh4 Qe4+ 40. g4 Qe1+ 41. Kh5 1-0
+
+[Event "Candidates Tournament"]
+[Site "Zuerich"]
+[Date "1953.08.31"]
+[Round "2"]
+[White "Geller, Efim P"]
+[Black "Euwe, Max"]
+[Result "0-1"]
+[ECO "E28"]
+[PlyCount "52"]
+[Annotator "ChessPenguin sample"]
+
+{Candidates tournament, Zurich 1953. Former world champion Euwe answers
+Geller's kingside attack with a precise counter-attack.} 1. d4 Nf6 2. c4 e6 3.
+Nc3 Bb4 4. e3 c5 5. a3 Bxc3+ 6. bxc3 b6 7. Bd3 Bb7 8. f3 Nc6 9. Ne2 O-O 10. O-O
+Na5 11. e4 Ne8 12. Ng3 cxd4 13. cxd4 Rc8 14. f4 Nxc4 15. f5 f6 16. Rf4 b5 17.
+Rh4 Qb6 18. e5 Nxe5 19. fxe6 Nxd3 20. Qxd3 Qxe6 21. Qxh7+ Kf7 22. Bh6 Rh8 23.
+Qxh8 Rc2 24. Rc1 Rxg2+ 25. Kf1 Qb3 26. Ke1 Qf3 0-1
+
+[Event "Candidates Tournament"]
+[Site "Zuerich"]
+[Date "1953.09.23"]
+[Round "14"]
+[White "Averbakh, Yuri L"]
+[Black "Kotov, Alexander"]
+[Result "0-1"]
+[ECO "A55"]
+[PlyCount "102"]
+[Annotator "ChessPenguin sample"]
+
+{Candidates tournament, Zurich 1953. Kotov's queen sacrifice 30...Qxh3+!!
+drives the white king up the board to its death.} 1. d4 Nf6 2. c4 d6 3. Nf3
+Nbd7 4. Nc3 e5 5. e4 Be7 6. Be2 O-O 7. O-O c6 8. Qc2 Re8 9. Rd1 Bf8 10. Rb1 a5
+11. d5 Nc5 12. Be3 Qc7 13. h3 Bd7 14. Rbc1 g6 15. Nd2 Rab8 16. Nb3 Nxb3 17.
+Qxb3 c5 18. Kh2 Kh8 19. Qc2 Ng8 20. Bg4 Nh6 21. Bxd7 Qxd7 22. Qd2 Ng8 23. g4 f5
+24. f3 Be7 25. Rg1 Rf8 26. Rcf1 Rf7 27. gxf5 gxf5 28. Rg2 f4 29. Bf2 Rf6 30.
+Ne2 Qxh3+ 31. Kxh3 Rh6+ 32. Kg4 Nf6+ 33. Kf5 Nd7 34. Rg5 Rf8+ 35. Kg4 Nf6+ 36.
+Kf5 Ng8+ 37. Kg4 Nf6+ 38. Kf5 Nxd5+ 39. Kg4 Nf6+ 40. Kf5 Ng8+ 41. Kg4 Nf6+ 42.
+Kf5 Ng8+ 43. Kg4 Bxg5 44. Kxg5 Rf7 45. Bh4 Rg6+ 46. Kh5 Rfg7 47. Bg5 Rxg5+ 48.
+Kh4 Nf6 49. Ng3 Rxg3 50. Qxd6 R3g6 51. Qb8+ Rg8 0-1
+
+[Event "New York Rosenwald-03"]
+[Site "New York"]
+[Date "1956.10.17"]
+[Round "8"]
+[White "Byrne, Donald"]
+[Black "Fischer, Robert James"]
+[Result "0-1"]
+[ECO "D92"]
+[PlyCount "82"]
+[Annotator "ChessPenguin sample"]
+
+{New York 1956, "The Game of the Century": 13-year-old Bobby Fischer gives up
+his queen with 17...Be6!! and his pieces mate the white king.} 1. Nf3 Nf6 2. c4
+g6 3. Nc3 Bg7 4. d4 O-O 5. Bf4 d5 6. Qb3 c6 7. Rd1 dxc4 8. Qxc4 Nbd7 9. e4 Nb6
+10. Qc5 Bg4 11. Bg5 Na4 12. Qa3 Nxc3 13. bxc3 Nxe4 14. Bxe7 Qb6 15. Bc4 Nxc3
+16. Bc5 Rfe8+ 17. Kf1 Be6 18. Bxb6 Bxc4+ 19. Kg1 Ne2+ 20. Kf1 Nxd4+ 21. Kg1
+Ne2+ 22. Kf1 Nc3+ 23. Kg1 axb6 24. Qb4 Ra4 25. Qxb6 Nxd1 26. h3 Rxa2 27. Kh2
+Nxf2 28. Re1 Rxe1 29. Qd8+ Bf8 30. Nxe1 Bd5 31. Nf3 Ne4 32. Qb8 b5 33. h4 h5
+34. Ne5 Kg7 35. Kg1 Bc5+ 36. Kf1 Ng3+ 37. Ke1 Bb4+ 38. Kd1 Bb3+ 39. Kc1 Ne2+
+40. Kb1 Nc3+ 41. Kc1 Rc2# 0-1
+
+[Event "RSFSR-ch18"]
+[Site "Sochi"]
+[Date "1958.??.??"]
+[Round "?"]
+[White "Polugaevsky, Lev"]
+[Black "Nezhmetdinov, Rashid"]
+[Result "0-1"]
+[ECO "A53"]
+[PlyCount "66"]
+[Annotator "ChessPenguin sample"]
+
+{Sochi 1958. One of the most admired attacking games: Nezhmetdinov sacrifices
+material again and again around White's king.} 1. d4 Nf6 2. c4 d6 3. Nc3 e5 4.
+e4 exd4 5. Qxd4 Nc6 6. Qd2 g6 7. b3 Bg7 8. Bb2 O-O 9. Bd3 Ng4 10. Nge2 Qh4 11.
+Ng3 Nge5 12. O-O f5 13. f3 Bh6 14. Qd1 f4 15. Nge2 g5 16. Nd5 g4 17. g3 fxg3
+18. hxg3 Qh3 19. f4 Be6 20. Bc2 Rf7 21. Kf2 Qh2+ 22. Ke3 Bxd5 23. cxd5 Nb4 24.
+Rh1 Rxf4 25. Rxh2 Rf3+ 26. Kd4 Bg7 27. a4 c5+ 28. dxc6 bxc6 29. Bd3 Nexd3+ 30.
+Kc4 d5+ 31. exd5 cxd5+ 32. Kb5 Rb8+ 33. Ka5 Nc6+ 0-1
+
+[Event "Candidates Tournament"]
+[Site "Bled/Zagreb/Belgrade"]
+[Date "1959.09.18"]
+[Round "8"]
+[White "Tal, Mihail"]
+[Black "Smyslov, Vassily V"]
+[Result "1-0"]
+[ECO "B10"]
+[PlyCount "51"]
+[Annotator "ChessPenguin sample"]
+
+{Candidates tournament 1959, which Tal went on to win: the magician from Riga
+at his most daring against a former world champion.} 1. e4 c6 2. d3 d5 3. Nd2
+e5 4. Ngf3 Nd7 5. d4 dxe4 6. Nxe4 exd4 7. Qxd4 Ngf6 8. Bg5 Be7 9. O-O-O O-O 10.
+Nd6 Qa5 11. Bc4 b5 12. Bd2 Qa6 13. Nf5 Bd8 14. Qh4 bxc4 15. Qg5 Nh5 16. Nh6+
+Kh8 17. Qxh5 Qxa2 18. Bc3 Nf6 19. Qxf7 Qa1+ 20. Kd2 Rxf7 21. Nxf7+ Kg8 22. Rxa1
+Kxf7 23. Ne5+ Ke6 24. Nxc6 Ne4+ 25. Ke3 Bb6+ 26. Bd4 1-0
+
+[Event "URS-ch27 Final"]
+[Site "Leningrad"]
+[Date "1960.02.20"]
+[Round "16"]
+[White "Spassky, Boris Vasilievich"]
+[Black "Bronstein, David Ionovich"]
+[Result "1-0"]
+[ECO "C36"]
+[PlyCount "45"]
+[Annotator "ChessPenguin sample"]
+
+{USSR Championship 1960. A King's Gambit with a sacrificial attack; the final
+position was used in the James Bond film "From Russia with Love".} 1. e4 e5 2.
+f4 exf4 3. Nf3 d5 4. exd5 Bd6 5. Nc3 Ne7 6. d4 O-O 7. Bd3 Nd7 8. O-O h6 9. Ne4
+Nxd5 10. c4 Ne3 11. Bxe3 fxe3 12. c5 Be7 13. Bc2 Re8 14. Qd3 e2 15. Nd6 Nf8 16.
+Nxf7 exf1=Q+ 17. Rxf1 Bf5 18. Qxf5 Qd7 19. Qf4 Bf6 20. N3e5 Qe7 21. Bb3 Bxe5
+22. Nxe5+ Kh7 23. Qe4+ 1-0
+
+[Event "RSFSR Chigorin Cup"]
+[Site "Rostov on Don"]
+[Date "1962.??.??"]
+[Round "?"]
+[White "Nezhmetdinov, Rashid"]
+[Black "Chernikov, Oleg L"]
+[Result "1-0"]
+[ECO "B35"]
+[PlyCount "65"]
+[Annotator "ChessPenguin sample"]
+
+{Rostov-on-Don 1962. Nezhmetdinov gives up his queen for two minor pieces with
+12.Qxf6!! and attacks for twenty more moves.} 1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4.
+Nxd4 g6 5. Nc3 Bg7 6. Be3 Nf6 7. Bc4 O-O 8. Bb3 Ng4 9. Qxg4 Nxd4 10. Qh4 Qa5
+11. O-O Bf6 12. Qxf6 Ne2+ 13. Nxe2 exf6 14. Nc3 Re8 15. Nd5 Kg7 16. Bd4 Re6 17.
+Rad1 d6 18. Rd3 Bd7 19. Rf3 Bb5 20. Bc3 Qd8 21. Nxf6 Be2 22. Nxh7+ Kg8 23. Rh3
+Re5 24. f4 Bxf1 25. Kxf1 Rc8 26. Bd4 b5 27. Ng5 Rc7 28. Bxf7+ Rxf7 29. Rh8+
+Kxh8 30. Nxf7+ Kh7 31. Nxd8 Rxe4 32. Nc6 Rxf4+ 33. Ke2 1-0
+
+[Event "USA-ch"]
+[Site "New York"]
+[Date "1963.12.18"]
+[Round "3"]
+[White "Byrne, Robert Eugene"]
+[Black "Fischer, Robert James"]
+[Result "0-1"]
+[ECO "D71"]
+[PlyCount "42"]
+[Annotator "ChessPenguin sample"]
+
+{US Championship 1963/64, which Fischer won with 11 out of 11. Here his attack
+is so deep that the commentators in the press room thought Black was lost;
+Byrne resigned first.} 1. d4 Nf6 2. c4 g6 3. g3 c6 4. Bg2 d5 5. cxd5 cxd5 6.
+Nc3 Bg7 7. e3 O-O 8. Nge2 Nc6 9. O-O b6 10. b3 Ba6 11. Ba3 Re8 12. Qd2 e5 13.
+dxe5 Nxe5 14. Rfd1 Nd3 15. Qc2 Nxf2 16. Kxf2 Ng4+ 17. Kg1 Nxe3 18. Qd2 Nxg2 19.
+Kxg2 d4 20. Nxd4 Bb7+ 21. Kf1 Qd7 0-1
+
+[Event "World-ch25 Petrosian-Spassky +4-3=17"]
+[Site "Moscow"]
+[Date "1966.05.02"]
+[Round "10"]
+[White "Petrosian, Tigran V"]
+[Black "Spassky, Boris Vasilievich"]
+[Result "1-0"]
+[ECO "E66"]
+[PlyCount "59"]
+[Annotator "ChessPenguin sample"]
+
+{World Championship 1966, game 10. Petrosian, known for defence, finishes with
+the queen sacrifice 30.Qh8+!!} 1. Nf3 Nf6 2. g3 g6 3. c4 Bg7 4. Bg2 O-O 5. O-O
+Nc6 6. Nc3 d6 7. d4 a6 8. d5 Na5 9. Nd2 c5 10. Qc2 e5 11. b3 Ng4 12. e4 f5 13.
+exf5 gxf5 14. Nd1 b5 15. f3 e4 16. Bb2 exf3 17. Bxf3 Bxb2 18. Qxb2 Ne5 19. Be2
+f4 20. gxf4 Bh3 21. Ne3 Bxf1 22. Rxf1 Ng6 23. Bg4 Nxf4 24. Rxf4 Rxf4 25. Be6+
+Rf7 26. Ne4 Qh4 27. Nxd6 Qg5+ 28. Kh1 Ra7 29. Bxf7+ Rxf7 30. Qh8+ 1-0
+
+[Event "Monaco Grand Prix-02 GM"]
+[Site "Monte Carlo"]
+[Date "1968.04.09"]
+[Round "7"]
+[White "Botvinnik, Mikhail"]
+[Black "Portisch, Lajos"]
+[Result "1-0"]
+[ECO "A29"]
+[PlyCount "51"]
+[Annotator "ChessPenguin sample"]
+
+{Monaco 1968. One of Botvinnik's most celebrated attacks: a series of
+sacrifices opens the black king.} 1. c4 e5 2. Nc3 Nf6 3. g3 d5 4. cxd5 Nxd5 5.
+Bg2 Be6 6. Nf3 Nc6 7. O-O Nb6 8. d3 Be7 9. a3 a5 10. Be3 O-O 11. Na4 Nxa4 12.
+Qxa4 Bd5 13. Rfc1 Re8 14. Rc2 Bf8 15. Rac1 Nb8 16. Rxc7 Bc6 17. R1xc6 bxc6 18.
+Rxf7 h6 19. Rb7 Qc8 20. Qc4+ Kh8 21. Nh4 Qxb7 22. Ng6+ Kh7 23. Be4 Bd6 24.
+Nxe5+ g6 25. Bxg6+ Kg7 26. Bxh6+ 1-0
+
+[Event "Match/Team URS-World 20,5-19,5"]
+[Site "Belgrade"]
+[Date "1970.03.29"]
+[Round "2.1"]
+[White "Larsen, Bent"]
+[Black "Spassky, Boris Vasilievich"]
+[Result "0-1"]
+[WhiteElo "2650"]
+[BlackElo "2670"]
+[ECO "A01"]
+[PlyCount "34"]
+[Annotator "ChessPenguin sample"]
+
+{USSR v Rest of the World, Belgrade 1970. Spassky crushes Larsen in 17 moves;
+14...Rh1!! is the key blow.} 1. b3 e5 2. Bb2 Nc6 3. c4 Nf6 4. Nf3 e4 5. Nd4 Bc5
+6. Nxc6 dxc6 7. e3 Bf5 8. Qc2 Qe7 9. Be2 O-O-O 10. f4 Ng4 11. g3 h5 12. h3 h4
+13. hxg4 hxg3 14. Rg1 Rh1 15. Rxh1 g2 16. Rf1 Qh4+ 17. Kd1 gxf1=Q+ 0-1
+
+[Event "World-ch27 Fischer-Spassky +7-3=11"]
+[Site "Reykjavik"]
+[Date "1972.07.23"]
+[Round "6"]
+[White "Fischer, Robert James"]
+[Black "Spassky, Boris Vasilievich"]
+[Result "1-0"]
+[WhiteElo "2785"]
+[BlackElo "2660"]
+[ECO "D59"]
+[PlyCount "81"]
+[Annotator "ChessPenguin sample"]
+
+{World Championship 1972, game 6. Fischer surprises with 1.c4 and plays a model
+Queen's Gambit; Spassky reportedly joined the audience's applause.} 1. c4 e6 2.
+Nf3 d5 3. d4 Nf6 4. Nc3 Be7 5. Bg5 O-O 6. e3 h6 7. Bh4 b6 8. cxd5 Nxd5 9. Bxe7
+Qxe7 10. Nxd5 exd5 11. Rc1 Be6 12. Qa4 c5 13. Qa3 Rc8 14. Bb5 a6 15. dxc5 bxc5
+16. O-O Ra7 17. Be2 Nd7 18. Nd4 Qf8 19. Nxe6 fxe6 20. e4 d4 21. f4 Qe7 22. e5
+Rb8 23. Bc4 Kh8 24. Qh3 Nf8 25. b3 a5 26. f5 exf5 27. Rxf5 Nh7 28. Rcf1 Qd8 29.
+Qg3 Re7 30. h4 Rbb7 31. e6 Rbc7 32. Qe5 Qe8 33. a4 Qd8 34. R1f2 Qe8 35. R2f3
+Qd8 36. Bd3 Qe8 37. Qe4 Nf6 38. Rxf6 gxf6 39. Rxf6 Kg8 40. Bc4 Kh8 41. Qf4 1-0
+
+[Event "Olympiad-21 Final A"]
+[Site "Nice"]
+[Date "1974.06.17"]
+[Round "3"]
+[White "Karpov, Anatoly"]
+[Black "Unzicker, Wolfgang"]
+[Result "1-0"]
+[ECO "C98"]
+[PlyCount "87"]
+[Annotator "ChessPenguin sample"]
+
+{Nice Olympiad 1974. A model of positional play: Karpov slowly squeezes Black
+until there is nothing left to do.} 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5.
+O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 9. h3 Na5 10. Bc2 c5 11. d4 Qc7 12. Nbd2
+Nc6 13. d5 Nd8 14. a4 Rb8 15. axb5 axb5 16. b4 Nb7 17. Nf1 Bd7 18. Be3 Ra8 19.
+Qd2 Rfc8 20. Bd3 g6 21. Ng3 Bf8 22. Ra2 c4 23. Bb1 Qd8 24. Ba7 Ne8 25. Bc2 Nc7
+26. Rea1 Qe7 27. Bb1 Be8 28. Ne2 Nd8 29. Nh2 Bg7 30. f4 f6 31. f5 g5 32. Bc2
+Bf7 33. Ng3 Nb7 34. Bd1 h6 35. Bh5 Qe8 36. Qd1 Nd8 37. Ra3 Kf8 38. R1a2 Kg8 39.
+Ng4 Kf8 40. Ne3 Kg8 41. Bxf7+ Nxf7 42. Qh5 Nd8 43. Qg6 Kf8 44. Nh5 1-0
+
+[Event "World-ch31-KK2 Kasparov-Karpov +5-3=16"]
+[Site "Moscow"]
+[Date "1985.10.15"]
+[Round "16"]
+[White "Karpov, Anatoly"]
+[Black "Kasparov, Garry"]
+[Result "0-1"]
+[WhiteElo "2720"]
+[BlackElo "2700"]
+[ECO "B44"]
+[PlyCount "80"]
+[Annotator "ChessPenguin sample"]
+
+{World Championship 1985, game 16. Kasparov's knight on d3 paralyses White's
+whole position; he won the title later in the match.} 1. e4 c5 2. Nf3 e6 3. d4
+cxd4 4. Nxd4 Nc6 5. Nb5 d6 6. c4 Nf6 7. N1c3 a6 8. Na3 d5 9. cxd5 exd5 10. exd5
+Nb4 11. Be2 Bc5 12. O-O O-O 13. Bf3 Bf5 14. Bg5 Re8 15. Qd2 b5 16. Rad1 Nd3 17.
+Nab1 h6 18. Bh4 b4 19. Na4 Bd6 20. Bg3 Rc8 21. b3 g5 22. Bxd6 Qxd6 23. g3 Nd7
+24. Bg2 Qf6 25. a3 a5 26. axb4 axb4 27. Qa2 Bg6 28. d6 g4 29. Qd2 Kg7 30. f3
+Qxd6 31. fxg4 Qd4+ 32. Kh1 Nf6 33. Rf4 Ne4 34. Qxd3 Nf2+ 35. Rxf2 Bxd3 36. Rfd2
+Qe3 37. Rxd3 Rc1 38. Nb2 Qf2 39. Nd2 Rxd1+ 40. Nxd1 Re1+ 0-1
+
+[Event "Tilburg"]
+[Site "Tilburg"]
+[Date "1991.10.??"]
+[Round "4"]
+[White "Short, Nigel D"]
+[Black "Timman, Jan H"]
+[Result "1-0"]
+[WhiteElo "2660"]
+[BlackElo "2630"]
+[ECO "B04"]
+[PlyCount "67"]
+[Annotator "ChessPenguin sample"]
+
+{Tilburg 1991. With queens still on the board, Short marches his king
+g1-h2-g3-f4-g5 to support the mating attack, and Black resigns.} 1. e4 Nf6 2.
+e5 Nd5 3. d4 d6 4. Nf3 g6 5. Bc4 Nb6 6. Bb3 Bg7 7. Qe2 Nc6 8. O-O O-O 9. h3 a5
+10. a4 dxe5 11. dxe5 Nd4 12. Nxd4 Qxd4 13. Re1 e6 14. Nd2 Nd5 15. Nf3 Qc5 16.
+Qe4 Qb4 17. Bc4 Nb6 18. b3 Nxc4 19. bxc4 Re8 20. Rd1 Qc5 21. Qh4 b6 22. Be3 Qc6
+23. Bh6 Bh8 24. Rd8 Bb7 25. Rad1 Bg7 26. R8d7 Rf8 27. Bxg7 Kxg7 28. R1d4 Rae8
+29. Qf6+ Kg8 30. h4 h5 31. Kh2 Rc8 32. Kg3 Rce8 33. Kf4 Bc8 34. Kg5 1-0
+
+[Event "New York Man-Machine"]
+[Site "New York"]
+[Date "1997.05.11"]
+[Round "6"]
+[White "Deep Blue (computer)"]
+[Black "Kasparov, Garry"]
+[Result "1-0"]
+[BlackElo "2785"]
+[ECO "B17"]
+[PlyCount "37"]
+[Annotator "ChessPenguin sample"]
+
+{New York 1997, game 6 of the rematch: the first time a computer beat the
+reigning world champion in a match.} 1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 Nd7
+5. Ng5 Ngf6 6. Bd3 e6 7. N1f3 h6 8. Nxe6 Qe7 9. O-O fxe6 10. Bg6+ Kd8 11. Bf4
+b5 12. a4 Bb7 13. Re1 Nd5 14. Bg3 Kc8 15. axb5 cxb5 16. Qd3 Bc6 17. Bf5 exf5
+18. Rxe7 Bxe7 19. c4 1-0
+
+[Event "Hoogovens"]
+[Site "Wijk aan Zee"]
+[Date "1999.01.20"]
+[Round "4"]
+[White "Kasparov, Garry"]
+[Black "Topalov, Veselin"]
+[Result "1-0"]
+[WhiteElo "2812"]
+[BlackElo "2700"]
+[ECO "B07"]
+[PlyCount "87"]
+[Annotator "ChessPenguin sample"]
+
+{Wijk aan Zee 1999, "Kasparov's Immortal": 24.Rxd4!! starts a king hunt across
+the whole board.} 1. e4 d6 2. d4 Nf6 3. Nc3 g6 4. Be3 Bg7 5. Qd2 c6 6. f3 b5 7.
+Nge2 Nbd7 8. Bh6 Bxh6 9. Qxh6 Bb7 10. a3 e5 11. O-O-O Qe7 12. Kb1 a6 13. Nc1
+O-O-O 14. Nb3 exd4 15. Rxd4 c5 16. Rd1 Nb6 17. g3 Kb8 18. Na5 Ba8 19. Bh3 d5
+20. Qf4+ Ka7 21. Rhe1 d4 22. Nd5 Nbxd5 23. exd5 Qd6 24. Rxd4 cxd4 25. Re7+ Kb6
+26. Qxd4+ Kxa5 27. b4+ Ka4 28. Qc3 Qxd5 29. Ra7 Bb7 30. Rxb7 Qc4 31. Qxf6 Kxa3
+32. Qxa6+ Kxb4 33. c3+ Kxc3 34. Qa1+ Kd2 35. Qb2+ Kd1 36. Bf1 Rd2 37. Rd7 Rxd7
+38. Bxc4 bxc4 39. Qxh8 Rd3 40. Qa8 c3 41. Qa4+ Ke1 42. f4 f5 43. Kc1 Rd2 44.
+Qa7 1-0
+
+[Event "World-ch Kramnik-Kasparov +2-0=13"]
+[Site "London"]
+[Date "2000.10.10"]
+[Round "2"]
+[White "Kramnik, Vladimir"]
+[Black "Kasparov, Garry"]
+[Result "1-0"]
+[WhiteElo "2770"]
+[BlackElo "2849"]
+[ECO "D85"]
+[PlyCount "79"]
+[Annotator "ChessPenguin sample"]
+
+{World Championship, London 2000, game 2: Kramnik's first win in the match in
+which he took the title from Kasparov.} 1. d4 Nf6 2. c4 g6 3. Nc3 d5 4. cxd5
+Nxd5 5. e4 Nxc3 6. bxc3 Bg7 7. Nf3 c5 8. Be3 Qa5 9. Qd2 Bg4 10. Rb1 a6 11. Rxb7
+Bxf3 12. gxf3 Nc6 13. Bc4 O-O 14. O-O cxd4 15. cxd4 Bxd4 16. Bd5 Bc3 17. Qc1
+Nd4 18. Bxd4 Bxd4 19. Rxe7 Ra7 20. Rxa7 Bxa7 21. f4 Qd8 22. Qc3 Bb8 23. Qf3 Qh4
+24. e5 g5 25. Re1 Qxf4 26. Qxf4 gxf4 27. e6 fxe6 28. Rxe6 Kg7 29. Rxa6 Rf5 30.
+Be4 Re5 31. f3 Re7 32. a4 Ra7 33. Rb6 Be5 34. Rb4 Rd7 35. Kg2 Rd2+ 36. Kh3 h5
+37. Rb5 Kf6 38. a5 Ra2 39. Rb6+ Ke7 40. Bd5 1-0
+
+[Event "Corus-C"]
+[Site "Wijk aan Zee"]
+[Date "2004.01.24"]
+[Round "12"]
+[White "Carlsen, Magnus"]
+[Black "Ernst, Sipke"]
+[Result "1-0"]
+[WhiteElo "2484"]
+[BlackElo "2474"]
+[ECO "B19"]
+[PlyCount "57"]
+[Annotator "ChessPenguin sample"]
+
+{Wijk aan Zee 2004. Thirteen-year-old Magnus Carlsen wins with a series of
+sacrifices in 29 moves.} 1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 Bf5 5. Ng3 Bg6
+6. h4 h6 7. Nf3 Nd7 8. h5 Bh7 9. Bd3 Bxd3 10. Qxd3 e6 11. Bf4 Ngf6 12. O-O-O
+Be7 13. Ne4 Qa5 14. Kb1 O-O 15. Nxf6+ Nxf6 16. Ne5 Rad8 17. Qe2 c5 18. Ng6 fxg6
+19. Qxe6+ Kh8 20. hxg6 Ng8 21. Bxh6 gxh6 22. Rxh6+ Nxh6 23. Qxe7 Nf7 24. gxf7
+Kg7 25. Rd3 Rd6 26. Rg3+ Rg6 27. Qe5+ Kxf7 28. Qf5+ Rf6 29. Qd7# 1-0
+
+[Event "Tata Steel-A 75th"]
+[Site "Wijk aan Zee"]
+[Date "2013.01.15"]
+[Round "4"]
+[White "Aronian, Levon"]
+[Black "Anand, Viswanathan"]
+[Result "0-1"]
+[WhiteElo "2802"]
+[BlackElo "2772"]
+[ECO "D46"]
+[PlyCount "46"]
+[Annotator "ChessPenguin sample"]
+
+{Wijk aan Zee 2013. Anand, with Black, launches a sacrificial attack and wins
+in 23 moves.} 1. d4 d5 2. c4 c6 3. Nf3 Nf6 4. Nc3 e6 5. e3 Nbd7 6. Bd3 dxc4 7.
+Bxc4 b5 8. Bd3 Bd6 9. O-O O-O 10. Qc2 Bb7 11. a3 Rc8 12. Ng5 c5 13. Nxh7 Ng4
+14. f4 cxd4 15. exd4 Bc5 16. Be2 Nde5 17. Bxg4 Bxd4+ 18. Kh1 Nxg4 19. Nxf8 f5
+20. Ng6 Qf6 21. h3 Qxg6 22. Qe2 Qh5 23. Qd3 Be3 0-1
+
+[Event "World-ch Carlsen-Karjakin Tiebreak"]
+[Site "New York"]
+[Date "2016.11.30"]
+[Round "4"]
+[White "Carlsen, Magnus"]
+[Black "Karjakin, Sergey"]
+[Result "1-0"]
+[WhiteElo "2853"]
+[BlackElo "2772"]
+[ECO "B55"]
+[PlyCount "99"]
+[Annotator "ChessPenguin sample"]
+
+{World Championship 2016, the fourth rapid tie-break game. Carlsen keeps his
+title with the queen sacrifice 50.Qh6+!!} 1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4
+Nf6 5. f3 e5 6. Nb3 Be7 7. c4 a5 8. Be3 a4 9. Nc1 O-O 10. Nc3 Qa5 11. Qd2 Na6
+12. Be2 Nc5 13. O-O Bd7 14. Rb1 Rfc8 15. b4 axb3 16. axb3 Qd8 17. Nd3 Ne6 18.
+Nb4 Bc6 19. Rfd1 h5 20. Bf1 h4 21. Qf2 Nd7 22. g3 Ra3 23. Bh3 Rca8 24. Nc2 R3a6
+25. Nb4 Ra5 26. Nc2 b6 27. Rd2 Qc7 28. Rbd1 Bf8 29. gxh4 Nf4 30. Bxf4 exf4 31.
+Bxd7 Qxd7 32. Nb4 Ra3 33. Nxc6 Qxc6 34. Nb5 Rxb3 35. Nd4 Qxc4 36. Nxb3 Qxb3 37.
+Qe2 Be7 38. Kg2 Qe6 39. h5 Ra3 40. Rd3 Ra2 41. R3d2 Ra3 42. Rd3 Ra7 43. Rd5 Rc7
+44. Qd2 Qf6 45. Rf5 Qh4 46. Rc1 Ra7 47. Qxf4 Ra2+ 48. Kh1 Qf2 49. Rc8+ Kh7 50.
+Qh6+ 1-0

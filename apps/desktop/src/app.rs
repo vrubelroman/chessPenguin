@@ -97,7 +97,8 @@ impl App {
         let mut settings = Settings::load();
         crate::i18n::set_lang(settings.language);
         crate::engine_download::clean_leftovers();
-        if crate::engines::first_run_setup(&mut settings) {
+        let engines_found = crate::engines::first_run_setup(&mut settings);
+        if crate::examples::first_run_setup(&mut settings) || engines_found {
             let _ = settings.save();
         }
         // PGN files passed on the command line (e.g. "Open with…") join the library, first one selected.
