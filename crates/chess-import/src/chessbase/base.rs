@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use super::entities::{self, Entities, Kind};
 use super::headers::{self, GameHeader, Record};
@@ -43,7 +43,13 @@ pub struct Base {
     tournament_entities: Entities,
     player_entities: Entities,
     decoder: Decoder,
+    cbg_path: PathBuf,
     cbg: Mutex<File>,
+    /// Records in the `.cbh` file, trailing empty ones included (the `.cbb` booster
+    /// counts them).
+    file_records: usize,
+    /// The `.cbb` search booster, when present and consistent (checked on first use).
+    cbb: OnceLock<Option<PathBuf>>,
     cba: Option<Mutex<File>>,
     /// Titles of guiding texts read so far (they are stored with the text).
     text_titles: Mutex<HashMap<usize, String>>,
@@ -241,6 +247,9 @@ pub enum SortKey {
     Eco,
     Event,
     Date,
+    /// Average rating of the two players (only when both are known); equal averages
+    /// by date.
+    AverageElo,
 }
 
 /// Which side a player filter applies to.
@@ -378,6 +387,7 @@ impl Base {
         let truncated = (cbh_bytes.len() % RECORD) != 0;
         let mut body = cbh_bytes;
         body.drain(..RECORD);
+        let file_records = body.len() / RECORD;
         // All-zero records lie past the last game; a damaged record in between is
         // treated as deleted (see `kind`), so the records after it stay readable.
         let records = body
@@ -418,7 +428,10 @@ impl Base {
             tournament_entities,
             player_entities,
             decoder: Decoder::new(chess_core::TextEncoding::Windows1252),
+            cbg_path,
             cbg: Mutex::new(cbg),
+            file_records,
+            cbb: OnceLock::new(),
             cba: cba.map(Mutex::new),
             text_titles: Mutex::new(HashMap::new()),
             notes: Vec::new(),
@@ -517,6 +530,43 @@ impl Base {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The `.cbg` file, for readers that open their own handle (position search).
+    pub(super) fn cbg_path(&self) -> &Path {
+        &self.cbg_path
+    }
+
+    /// Makes position searches run without the `.cbb` booster (for measurements).
+    #[cfg(test)]
+    pub(super) fn without_booster(&self) {
+        let _ = self.cbb.set(None);
+    }
+
+    /// Offset of the record's moves in `.cbg` (games and texts).
+    pub(super) fn moves_offset(&self, index: usize) -> u32 {
+        be(self.record(index), 1, 4).unwrap_or(0)
+    }
+
+    /// The `.cbb` search booster if it can be trusted: its record count is that of
+    /// the `.cbh` file plus one, it holds that many 52-byte records and it is not
+    /// older than `.cbg` (a program that does not maintain it may have changed the
+    /// games since).
+    pub(super) fn cbb_path(&self) -> Option<&Path> {
+        self.cbb
+            .get_or_init(|| {
+                let path = find_companion(&self.path, "cbb")?;
+                let mut f = File::open(&path).ok()?;
+                let mut head = [0u8; 4];
+                f.read_exact(&mut head).ok()?;
+                let count = u32::from_be_bytes(head) as u64;
+                let meta = f.metadata().ok()?;
+                let cbg_time = std::fs::metadata(&self.cbg_path).ok()?.modified().ok()?;
+                let fresh = meta.modified().ok()? >= cbg_time;
+                (count == self.file_records as u64 + 1 && meta.len() >= 52 * count && fresh)
+                    .then_some(path)
+            })
+            .as_deref()
     }
 
     /// Number of records (games, texts and deleted records); a record's index is its
@@ -888,52 +938,69 @@ impl Base {
         if cancel.load(Ordering::Relaxed) {
             return None;
         }
+        self.sort_records(&mut out, sort, ascending);
+        Some(out)
+    }
+
+    /// Sorts record indices (in record order on entry) by `sort`; records without a
+    /// value (no rating, no date, a text) stay at the end in both directions.
+    pub fn sort_records(&self, records: &mut Vec<u32>, sort: SortKey, ascending: bool) {
         if sort != SortKey::Number {
-            let mut keyed: Vec<(u32, u32)> = out
+            let mut keyed: Vec<(u64, u32)> = records
                 .iter()
                 .map(|&i| (self.sort_key(i as usize, sort), i))
                 .collect();
             keyed.sort_unstable();
-            out = keyed.into_iter().map(|(_, i)| i).collect();
+            *records = keyed.into_iter().map(|(_, i)| i).collect();
+        } else {
+            records.sort_unstable();
         }
         if !ascending {
-            // Rows without a value stay at the end in both directions.
-            let split = out
+            let split = records
                 .iter()
-                .position(|&i| self.sort_key(i as usize, sort) == u32::MAX)
-                .unwrap_or(out.len());
-            out[..split].reverse();
+                .position(|&i| self.sort_key(i as usize, sort) == u64::MAX)
+                .unwrap_or(records.len());
+            records[..split].reverse();
         }
-        Some(out)
     }
 
-    /// Sort value of a record; `u32::MAX` for no value (no rating, no date, a text).
-    fn sort_key(&self, index: usize, sort: SortKey) -> u32 {
+    /// Sort value of a record; `u64::MAX` for no value (no rating, no date, a text).
+    fn sort_key(&self, index: usize, sort: SortKey) -> u64 {
         let r = self.record(index);
         let u = |at, n| be(r, at, n).unwrap_or(0);
         let text = r.first().is_some_and(|k| k & 0x02 != 0);
         if text && !matches!(sort, SortKey::Number | SortKey::Event) {
-            return u32::MAX;
+            return u64::MAX;
         }
-        let none_if_zero = |v: u32| if v == 0 { u32::MAX } else { v };
+        let none_if_zero = |v: u32| if v == 0 { u64::MAX } else { u64::from(v) };
         match sort {
-            SortKey::Number => index as u32,
-            SortKey::White => self.players.rank(u(0x09, 3)),
-            SortKey::Black => self.players.rank(u(0x0c, 3)),
+            SortKey::Number => index as u64,
+            SortKey::White => self.players.rank(u(0x09, 3)).into(),
+            SortKey::Black => self.players.rank(u(0x0c, 3)).into(),
             SortKey::WhiteElo => none_if_zero(u(0x1f, 2)),
             SortKey::BlackElo => none_if_zero(u(0x21, 2)),
             SortKey::Result => match r.get(0x1b) {
                 Some(2 | 6) => 0,
                 Some(1 | 5) => 1,
                 Some(0 | 4) => 2,
-                _ => u32::MAX,
+                _ => u64::MAX,
             },
             SortKey::Moves => none_if_zero(u32::from(r.get(0x2d).copied().unwrap_or(0))),
-            SortKey::Eco => eco_number(u(0x23, 2) as u16).map_or(u32::MAX, u32::from),
+            SortKey::Eco => eco_number(u(0x23, 2) as u16).map_or(u64::MAX, u64::from),
             SortKey::Event => self
                 .tournaments
-                .rank(if text { u(0x07, 3) } else { u(0x0f, 3) }),
+                .rank(if text { u(0x07, 3) } else { u(0x0f, 3) })
+                .into(),
             SortKey::Date => none_if_zero(u(0x18, 3)),
+            SortKey::AverageElo => {
+                let (w, b) = (u(0x1f, 2), u(0x21, 2));
+                if w == 0 || b == 0 {
+                    u64::MAX
+                } else {
+                    // The average first, then the date.
+                    (u64::from((w + b) / 2) << 32) | u64::from(u(0x18, 3))
+                }
+            }
         }
     }
 }

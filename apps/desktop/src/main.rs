@@ -5,6 +5,7 @@ mod analysis;
 mod app;
 mod assets;
 mod board;
+mod board_search;
 mod engines;
 mod game_view;
 mod i18n;

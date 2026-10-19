@@ -2,6 +2,19 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-10-19
+
+- Find games by position: the "Board" pane next to the game list (Ctrl+B). Play moves and the list
+  shows the games that reach the position by any move order, with the moves played next (games,
+  results bar, average rating, last year); click a move to play it. Works together with the
+  filters, sorts strongest games first, marks games reached by another move order (↪) and offers
+  "only this order". Books and PGN collections are searched in variations too. A game opens at the
+  found position. On the game screen "🔍 Find in database" (Ctrl+Shift+F) searches its position.
+  Mega Database: 0.4 s for the starting position, under 0.1 s deeper in the opening.
+- The game list's "Moves" column is now "Length".
+- Filter fields and the search field have a × to clear them.
+- "Open as a new game" from the search board opens at the last move played on it.
+
 ## [0.4.0] — 2026-10-19
 
 - Large ChessBase databases (Mega Database: 11.7 million games) open in seconds: read in place from

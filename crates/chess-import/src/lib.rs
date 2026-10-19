@@ -10,9 +10,12 @@
 mod archive;
 pub mod cbv;
 pub mod chessbase;
+pub mod pgn_positions;
+pub mod position;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::{Arc, Mutex};
 
 use chess_core::{
     OpenError, ParsedGame, PgnDatabase, ScanProgress, TextEncoding, detect_encoding, parse_game,
@@ -85,9 +88,51 @@ impl Format {
 /// ([`Database::ChessBase`]); smaller ones are converted to PGN.
 pub const LARGE_CHESSBASE: u64 = 20_000;
 
+/// A PGN database and, once a position search asked for it, the positions of its
+/// games.
+pub struct PgnDb {
+    pub db: PgnDatabase,
+    positions: Mutex<Option<Arc<pgn_positions::PositionTable>>>,
+}
+
+impl PgnDb {
+    pub fn new(db: PgnDatabase) -> PgnDb {
+        PgnDb {
+            db,
+            positions: Mutex::new(None),
+        }
+    }
+
+    /// The position table, built on first use. `None` when cancelled.
+    fn positions(
+        &self,
+        progress: &AtomicUsize,
+        cancel: &AtomicBool,
+    ) -> Option<Arc<pgn_positions::PositionTable>> {
+        if let Some(t) = self.positions.lock().ok()?.as_ref() {
+            return Some(t.clone());
+        }
+        let table = Arc::new(pgn_positions::PositionTable::build(
+            &self.db, progress, cancel,
+        )?);
+        if let Ok(mut slot) = self.positions.lock() {
+            *slot = Some(table.clone());
+        }
+        Some(table)
+    }
+}
+
+impl std::ops::Deref for PgnDb {
+    type Target = PgnDatabase;
+
+    fn deref(&self) -> &PgnDatabase {
+        &self.db
+    }
+}
+
 /// An opened database.
 pub enum Database {
-    Pgn(PgnDatabase),
+    Pgn(PgnDb),
     ChessBase(Box<Base>),
 }
 
@@ -146,8 +191,30 @@ impl Database {
 
     pub fn as_pgn(&self) -> Option<&PgnDatabase> {
         match self {
-            Database::Pgn(db) => Some(db),
+            Database::Pgn(db) => Some(&db.db),
             Database::ChessBase(_) => None,
+        }
+    }
+
+    /// Games among `candidates` (record indices in ascending order; `None`: all)
+    /// that reach the position, with what was played next. `progress` counts the
+    /// records looked at (or, the first time for a PGN database, the games prepared).
+    /// `None` when cancelled.
+    pub fn search_position(
+        &self,
+        candidates: Option<&[u32]>,
+        query: &position::PositionQuery,
+        progress: &AtomicUsize,
+        cancel: &AtomicBool,
+    ) -> Option<position::PositionOutcome> {
+        match self {
+            Database::Pgn(db) => {
+                let table = db.positions(progress, cancel)?;
+                table.search(&db.db, candidates, query, cancel)
+            }
+            Database::ChessBase(b) => {
+                chessbase::search::search(b, candidates, query, progress, cancel)
+            }
         }
     }
 
@@ -257,7 +324,7 @@ pub fn open(
     }
     let db = PgnDatabase::open(path, progress, cancel)?;
     Ok(Opened {
-        db: Database::Pgn(db),
+        db: Database::Pgn(PgnDb::new(db)),
         format: Format::Pgn,
         notes: Vec::new(),
     })
@@ -392,7 +459,7 @@ fn finish(
 ) -> Result<Opened, ImportError> {
     let db = PgnDatabase::from_bytes(pgn.into_bytes(), Some(TextEncoding::Utf8), progress, cancel)?;
     Ok(Opened {
-        db: Database::Pgn(db),
+        db: Database::Pgn(PgnDb::new(db)),
         format,
         notes,
     })

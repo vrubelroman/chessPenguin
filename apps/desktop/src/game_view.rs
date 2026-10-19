@@ -81,6 +81,8 @@ pub enum GameAction {
     PauseLive,
     /// The whole-game analysis ended: resume the live engine if it was paused.
     ResumeLive,
+    /// Find the current position in a database (`None`: the last chosen one).
+    FindPosition(Option<std::path::PathBuf>),
 }
 
 impl GameView {
@@ -209,7 +211,8 @@ impl GameView {
 
         // The cursor can change inside any panel; re-bind the engine before each use of its lines.
         self.sync_analysis(analysis);
-        egui::Panel::top("game_header").show(ui, |ui| self.header(ui, &mut actions));
+        let databases = settings.databases.clone();
+        egui::Panel::top("game_header").show(ui, |ui| self.header(ui, &databases, &mut actions));
         // Keep room for the board on narrow windows: the side panel never exceeds 60 %.
         let width = ui.available_width();
         egui::Panel::right("game_side")
@@ -341,7 +344,12 @@ impl GameView {
         }
     }
 
-    fn header(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+    fn header(
+        &mut self,
+        ui: &mut Ui,
+        databases: &[std::path::PathBuf],
+        actions: &mut Vec<GameAction>,
+    ) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             if ui
@@ -383,6 +391,33 @@ impl GameView {
                 {
                     actions.push(GameAction::OpenSettings);
                 }
+                // Find the position in a database: the last chosen one, or another.
+                let searchable = self.search_line().is_some();
+                let why = tr("After a null move (--) this is a teaching scheme, not a position of a game: it is not searched");
+                ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
+                    ui.menu_button("▾", |ui| {
+                        for db in databases {
+                            let name = db
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            if ui.button(name).clicked() {
+                                actions.push(GameAction::FindPosition(Some(db.clone())));
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(tr("Find in another database"));
+                    if ui
+                        .button(tr("🔍 Find in database"))
+                        .on_hover_text(tr("Find this position in a database (Ctrl+Shift+F)"))
+                        .on_disabled_hover_text(if searchable { tr("Add a database first") } else { why })
+                        .clicked()
+                    {
+                        actions.push(GameAction::FindPosition(None));
+                    }
+                });
                 let warnings = self
                     .diagnostics
                     .iter()
@@ -1040,6 +1075,40 @@ impl GameView {
         }
     }
 
+    /// Moves the cursor to the end of the main line.
+    pub fn goto_main_line_end(&mut self) {
+        let end = self.game.line_end(self.game.root());
+        self.goto(end);
+    }
+
+    /// Moves the cursor to the first node showing `target`: the main line first, then
+    /// the variations. Returns false if the game never reaches the position.
+    pub fn goto_position(&mut self, target: &Chess) -> bool {
+        let root = self.game.root();
+        let found = std::iter::once(root)
+            .chain(self.game.mainline())
+            .chain(self.game.attached_nodes())
+            .find(|&id| {
+                self.game
+                    .position(id)
+                    .is_some_and(|p| chess_import::position::same_position(p, target))
+            });
+        match found {
+            Some(id) => {
+                self.goto(id);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The cursor's position as a line of moves from the game's start, for searching
+    /// it in a database; `None` after a null move or in a game that cannot be searched.
+    pub fn search_line(&self) -> Option<(Chess, Vec<shakmaty::Move>, bool)> {
+        let (start, line) = crate::board_search::line_to(&self.game, self.cursor)?;
+        Some((start, line, self.flipped))
+    }
+
     pub fn debug_advance(&mut self, plies: usize) {
         for _ in 0..plies {
             match self.game.main_child(self.cursor) {
@@ -1120,6 +1189,9 @@ impl GameView {
             if i.consume_shortcut(&ctrl(Key::W)) {
                 cmds.push("back");
             }
+            if i.consume_shortcut(&ctrl_shift(Key::F)) {
+                cmds.push("find");
+            }
             if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::A)) {
                 cmds.push("review");
             }
@@ -1148,6 +1220,9 @@ impl GameView {
                 "copy" => actions.push(GameAction::CopyText(self.game.to_pgn(), tr("PGN copied"))),
                 "save" => actions.push(GameAction::SaveAs),
                 "back" => actions.push(GameAction::Back),
+                "find" if self.search_line().is_some() => {
+                    actions.push(GameAction::FindPosition(None))
+                }
                 "back1" => self.step_back(),
                 "fwd1" => self.step_forward(actions),
                 "prev_var" => {

@@ -12,9 +12,13 @@ use chess_core::{GameEntry, ScanProgress};
 use chess_import::{Database, Format, ImportError, Opened, Unsupported};
 use egui::{Color32, RichText, Sense, Stroke, Ui, vec2};
 
-use crate::large_db::{self, LargeView};
+use crate::board_search::{self, Background, BoardEvent, SearchBoard};
+use crate::large_db::{self, LargeView, Pane};
+use crate::settings::Settings;
 use crate::viewed::{self, Viewed};
+use chess_import::position::PositionOutcome;
 use egui_extras::{Column, TableBuilder};
+use shakmaty::uci::UciMove;
 
 enum Slot {
     Loading {
@@ -41,12 +45,118 @@ enum SortKey {
 }
 
 pub enum LibraryAction {
-    OpenGame { path: PathBuf, index: usize },
+    /// Open a game; `at`: show the first position equal to this one.
+    OpenGame {
+        path: PathBuf,
+        index: usize,
+        at: Option<shakmaty::Chess>,
+    },
+    Sound(crate::assets::Sound),
+    CopyText(String, &'static str),
+    /// Open PGN text as a new game.
+    OpenPgn(String),
     NewGame,
     PastePgn,
     AddDatabases,
     RemoveDatabase(PathBuf),
     OpenSettings,
+}
+
+/// What a small database's position search answers: the search text and the position.
+#[derive(Clone, PartialEq)]
+struct SmallRequest {
+    search: String,
+    key: u64,
+    line: Option<Vec<shakmaty::Move>>,
+}
+
+/// The search board of a small database (PGN, books): positions of all games,
+/// variations included, are searched in memory.
+struct SmallBoard {
+    board: SearchBoard,
+    open: bool,
+    job: Option<(SmallRequest, Background<PositionOutcome>)>,
+    shown: Option<(SmallRequest, Arc<PositionOutcome>)>,
+    table_hover: Option<UciMove>,
+    /// Most games have no result: a book; continuations count chapters.
+    books: bool,
+}
+
+impl SmallBoard {
+    fn new(db: &chess_core::PgnDatabase) -> SmallBoard {
+        let decided = db
+            .entries()
+            .iter()
+            .filter(|e| matches!(e.result(), Some("1-0" | "0-1" | "1/2-1/2")))
+            .count();
+        let dev = SearchBoard::from_env();
+        SmallBoard {
+            open: dev.is_some(),
+            board: dev.unwrap_or_else(SearchBoard::new),
+            job: None,
+            shown: None,
+            table_hover: None,
+            books: decided * 2 < db.len(),
+        }
+    }
+
+    fn request(&self, search: &str) -> SmallRequest {
+        let q = self.board.query();
+        SmallRequest {
+            search: search.trim().to_string(),
+            key: self.board.key(),
+            line: q.line,
+        }
+    }
+
+    /// Collects a finished search and starts the one the board and search text ask for.
+    fn update(&mut self, db: &Arc<Database>, search: &str, ctx: &egui::Context) {
+        if let Some((req, job)) = &self.job
+            && let Some(result) = job.poll()
+        {
+            let req = req.clone();
+            self.job = None;
+            if let Some(out) = result {
+                self.shown = Some((req, Arc::new(out)));
+            }
+        }
+        if !self.open && !self.board.is_set() {
+            return;
+        }
+        let wanted = self.request(search);
+        let current = self
+            .job
+            .as_ref()
+            .map(|(r, _)| r)
+            .or(self.shown.as_ref().map(|(r, _)| r));
+        if current != Some(&wanted) {
+            let (db, query, text) = (db.clone(), self.board.query(), wanted.search.clone());
+            let now = ctx.input(|i| i.time);
+            self.job = Background::spawn(ctx, now, move |progress, cancel| {
+                let pgn = db.as_pgn()?;
+                let candidates: Option<Vec<u32>> = (!text.is_empty()).then(|| {
+                    let mut v: Vec<u32> =
+                        filtered_sorted(pgn.entries(), &text, (SortKey::Index, true))
+                            .into_iter()
+                            .map(|i| i as u32)
+                            .collect();
+                    v.sort_unstable();
+                    v
+                });
+                db.search_position(candidates.as_deref(), &query, progress, cancel)
+            })
+            .map(|j| (wanted, j));
+        }
+        if self.job.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// The outcome for the current board and search text, if ready.
+    fn outcome(&self, search: &str) -> Option<&PositionOutcome> {
+        let (req, out) = self.shown.as_ref()?;
+        (*req == self.request(search)).then_some(out.as_ref())
+    }
 }
 
 /// How a database was imported, and what is worth knowing about it.
@@ -61,6 +171,10 @@ pub struct Library {
     viewed: Viewed,
     /// Filters and game list of each large ChessBase database (for the session).
     large: HashMap<PathBuf, LargeView>,
+    /// Search board of each small database (for the session).
+    small: HashMap<PathBuf, SmallBoard>,
+    /// A position from a game to show once its database is open.
+    pending_position: Option<(PathBuf, shakmaty::Chess, Vec<shakmaty::Move>, bool)>,
     info: HashMap<PathBuf, ImportInfo>,
     /// Database whose import notes are shown.
     notes_open: Option<PathBuf>,
@@ -80,6 +194,8 @@ impl Library {
             slots: HashMap::new(),
             viewed: Viewed::load(),
             large: HashMap::new(),
+            small: HashMap::new(),
+            pending_position: None,
             info: HashMap::new(),
             notes_open: None,
             selected_db: None,
@@ -213,27 +329,141 @@ impl Library {
                 self.view_key = None;
             }
         }
+        self.apply_pending_position();
     }
 
-    pub fn show(&mut self, ui: &mut Ui, databases: &[PathBuf]) -> Vec<LibraryAction> {
+    /// Shows the board of the large database `path` with `line` played from `start`
+    /// (a position taken from a game). False if the database is not a large one.
+    pub fn show_position(
+        &mut self,
+        path: &Path,
+        start: shakmaty::Chess,
+        line: Vec<shakmaty::Move>,
+        flipped: bool,
+        ctx: &egui::Context,
+    ) -> bool {
+        self.select_db(path, ctx);
+        self.pending_position = Some((path.to_path_buf(), start, line, flipped));
+        self.apply_pending_position();
+        true
+    }
+
+    /// Shows a requested position once its database is open.
+    fn apply_pending_position(&mut self) {
+        let Some((path, ..)) = &self.pending_position else {
+            return;
+        };
+        let Some(Slot::Ready(db)) = self.slots.get(path) else {
+            return;
+        };
+        let db = db.clone();
+        let (path, start, line, flipped) = self.pending_position.take().expect("pending");
+        match db.as_ref() {
+            Database::ChessBase(_) => {
+                let view = self.large.entry(path).or_insert_with(LargeView::new);
+                view.show_position(start, line, flipped);
+            }
+            Database::Pgn(pgn) => {
+                let small = self
+                    .small
+                    .entry(path)
+                    .or_insert_with(|| SmallBoard::new(pgn));
+                small.board.set(start, line, flipped);
+                small.open = true;
+            }
+        }
+    }
+
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        databases: &[PathBuf],
+        settings: &Settings,
+    ) -> Vec<LibraryAction> {
         self.poll();
         let mut actions = Vec::new();
-        egui::Panel::top("shelf").show(ui, |ui| self.shelf(ui, databases, &mut actions));
-        // A large database has its filter panel on the right.
+        // With the search board open in a low window the shelf folds into one line,
+        // leaving the height to the board.
+        let board_open = self.selected_db.as_ref().is_some_and(|p| {
+            self.large.get(p).is_some_and(|v| v.pane() == Pane::Board)
+                || self.small.get(p).is_some_and(|s| s.open)
+        });
+        let low = ui.ctx().content_rect().height() < 760.0;
+        if board_open && low {
+            egui::Panel::top("shelf_compact")
+                .show(ui, |ui| self.compact_shelf(ui, databases, &mut actions));
+        } else {
+            egui::Panel::top("shelf").show(ui, |ui| self.shelf(ui, databases, &mut actions));
+        }
+        // A large database has its filter panel or its search board on the right.
         if let Some(path) = self.selected_db.clone()
             && let Some(Slot::Ready(db)) = self.slots.get(&path)
             && db.as_chessbase().is_some()
             && let Some(view) = self.large.get_mut(&path)
-            && view.panel_open()
         {
             let db = db.clone();
-            egui::Panel::right("filters")
-                .resizable(true)
-                .default_size(280.0)
-                .size_range(260.0..=380.0)
-                .show(ui, |ui| view.panel(ui, &db));
+            match view.pane() {
+                Pane::Filters => {
+                    egui::Panel::right("filters")
+                        .resizable(true)
+                        .default_size(280.0)
+                        .size_range(260.0..=380.0)
+                        .show(ui, |ui| view.panel(ui, &db));
+                }
+                Pane::Board => {
+                    let width = ui.available_width();
+                    egui::Panel::right("search_board")
+                        .resizable(true)
+                        .default_size((width * 0.5).max(340.0))
+                        .size_range(340.0..=(width - 420.0).max(340.0))
+                        .show(ui, |ui| view.board_panel(ui, &db, settings, &mut actions));
+                }
+                Pane::Hidden => {}
+            }
         }
-        egui::CentralPanel::default().show(ui, |ui| self.table_area(ui, &mut actions));
+        // A small database has its search board on the right when it is open.
+        if let Some(path) = self.selected_db.clone()
+            && let Some(Slot::Ready(db)) = self.slots.get(&path)
+            && db.as_pgn().is_some()
+            && let Some(small) = self.small.get_mut(&path)
+            && small.open
+        {
+            let db = db.clone();
+            let search = self.search.clone();
+            let width = ui.available_width();
+            egui::Panel::right("search_board")
+                .resizable(true)
+                .default_size((width * 0.5).max(340.0))
+                .size_range(340.0..=(width - 420.0).max(340.0))
+                .show(ui, |ui| {
+                    small.update(&db, &search, ui.ctx());
+                    let outcome = small.outcome(&search).cloned();
+                    let counting = small.job.as_ref().map(|_| 0.0);
+                    let mut events = Vec::new();
+                    small.board.keys(ui.ctx(), outcome.as_ref(), &mut events);
+                    events.extend(small.board.panel(
+                        ui,
+                        settings,
+                        outcome.as_ref(),
+                        counting,
+                        small.table_hover,
+                        small.books,
+                    ));
+                    for e in events {
+                        match e {
+                            BoardEvent::Changed => self.scroll_to_selected = false,
+                            BoardEvent::Sound(s) => actions.push(LibraryAction::Sound(s)),
+                            BoardEvent::CopyText(t, m) => {
+                                actions.push(LibraryAction::CopyText(t, m))
+                            }
+                            BoardEvent::OpenAsGame(pgn) => {
+                                actions.push(LibraryAction::OpenPgn(pgn))
+                            }
+                        }
+                    }
+                });
+        }
+        egui::CentralPanel::default().show(ui, |ui| self.table_area(ui, settings, &mut actions));
         self.notes_window(ui.ctx());
         actions
     }
@@ -267,6 +497,60 @@ impl Library {
         if !open {
             self.notes_open = None;
         }
+    }
+
+    /// The shelf as one line: a database picker, "+" and the usual buttons.
+    fn compact_shelf(
+        &mut self,
+        ui: &mut Ui,
+        databases: &[PathBuf],
+        actions: &mut Vec<LibraryAction>,
+    ) {
+        let name = |p: &Path| {
+            p.file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        ui.horizontal(|ui| {
+            let current = self.selected_db.as_deref().map(name).unwrap_or_default();
+            let mut pick = None;
+            egui::ComboBox::from_id_salt("shelf_db")
+                .selected_text(format!("🗄 {current}"))
+                .width(260.0)
+                .show_ui(ui, |ui| {
+                    for p in databases {
+                        if ui
+                            .selectable_label(self.selected_db.as_deref() == Some(p), name(p))
+                            .clicked()
+                        {
+                            pick = Some(p.clone());
+                        }
+                    }
+                });
+            if let Some(p) = pick {
+                self.select_db(&p, ui.ctx());
+            }
+            if ui
+                .button("+")
+                .on_hover_text(tr(
+                    "Open PGN, ChessBase (.cbh, .cbv) or an archive (.zip, .7z) (Ctrl+O)",
+                ))
+                .clicked()
+            {
+                actions.push(LibraryAction::AddDatabases);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tr("⚙ Settings")).clicked() {
+                    actions.push(LibraryAction::OpenSettings);
+                }
+                if ui.button(tr("📋 Paste PGN")).clicked() {
+                    actions.push(LibraryAction::PastePgn);
+                }
+                if ui.button(tr("♟ New game")).clicked() {
+                    actions.push(LibraryAction::NewGame);
+                }
+            });
+        });
     }
 
     fn shelf(&mut self, ui: &mut Ui, databases: &[PathBuf], actions: &mut Vec<LibraryAction>) {
@@ -411,7 +695,7 @@ impl Library {
         });
     }
 
-    fn table_area(&mut self, ui: &mut Ui, actions: &mut Vec<LibraryAction>) {
+    fn table_area(&mut self, ui: &mut Ui, settings: &Settings, actions: &mut Vec<LibraryAction>) {
         let Some(path) = self.selected_db.clone() else {
             ui.centered_and_justified(|ui| {
                 ui.label(
@@ -483,7 +767,7 @@ impl Library {
                 .entry(path.clone())
                 .or_insert_with(LargeView::new);
             let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
-            if view.table(ui, &path, &db, &mut self.viewed, notes, actions) {
+            if view.table(ui, &path, &db, &mut self.viewed, notes, settings, actions) {
                 self.notes_open = Some(path.clone());
             }
             return;
@@ -538,6 +822,30 @@ impl Library {
                 self.notes_open = Some(path.clone());
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let small = self
+                    .small
+                    .entry(path.clone())
+                    .or_insert_with(|| SmallBoard::new(pgn));
+                let label = if small.board.is_set() && !small.open {
+                    format!("{} •", tr("Board"))
+                } else {
+                    tr("Board").to_string()
+                };
+                if ui
+                    .selectable_label(small.open, label)
+                    .on_hover_text(tr("Find games by position: play moves on the board (Ctrl+B)"))
+                    .clicked()
+                    || ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::B))
+                {
+                    small.open = !small.open;
+                }
+                if !self.search.is_empty()
+                    && crate::widgets::small_close_button(ui)
+                        .on_hover_text(tr("Clear"))
+                        .clicked()
+                {
+                    self.search.clear();
+                }
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut self.search)
                         .hint_text(tr("🔍 Search: player, event, ECO, year"))
@@ -556,12 +864,65 @@ impl Library {
             self.view = filtered_sorted(pgn.entries(), &self.search, self.sort);
             self.view_key = Some(key);
         }
+        // With a position on the board: only the games that reach it.
+        let small = self.small.get(&path);
+        let position = small.filter(|s| s.board.is_set());
+        let outcome: Option<Arc<PositionOutcome>> = position.and_then(|s| {
+            s.outcome(&self.search)
+                .map(|_| s.shown.as_ref().expect("shown").1.clone())
+        });
+        let searching = position.is_some() && outcome.is_none();
+        let ordered = position.is_some_and(|s| s.board.query().line.is_some());
+        let at = position.map(|s| s.board.position());
+        if let Some(s) = position {
+            ui.horizontal(|ui| {
+                let text = trf("Position: {line}", &[("line", &s.board.chip_text())]);
+                ui.label(RichText::new(text).size(13.0));
+                if searching {
+                    ui.add(egui::Spinner::new().size(14.0));
+                } else if let Some(out) = &outcome {
+                    let n = large_db::grouped(out.matches.len());
+                    ui.label(
+                        RichText::new(trf(
+                            "· found {n} of {total}",
+                            &[("n", &n), ("total", &large_db::grouped(pgn.len()))],
+                        ))
+                        .weak(),
+                    );
+                }
+            });
+        }
+        let filtered: Vec<usize>;
+        let view: &Vec<usize> = match &outcome {
+            Some(out) => {
+                filtered = self
+                    .view
+                    .iter()
+                    .copied()
+                    .filter(|&i| {
+                        out.matches
+                            .binary_search_by_key(&(i as u32), |m| m.index)
+                            .is_ok()
+                    })
+                    .collect();
+                &filtered
+            }
+            None => &self.view,
+        };
+        let find = |index: usize| {
+            let out = outcome.as_ref()?;
+            let i = out
+                .matches
+                .binary_search_by_key(&(index as u32), |m| m.index)
+                .ok()?;
+            out.matches.get(i).copied()
+        };
 
         // Keyboard: Up/Down move the selection, Enter opens.
         if !ui.ctx().egui_wants_keyboard_input() || search_focused {
             let pos = self
                 .selected_row
-                .and_then(|r| self.view.iter().position(|&i| i == r));
+                .and_then(|r| view.iter().position(|&i| i == r));
             let (up, down, enter) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::ArrowUp),
@@ -572,10 +933,10 @@ impl Library {
             if down || up {
                 let next = match (pos, down) {
                     (None, _) => 0,
-                    (Some(p), true) => (p + 1).min(self.view.len().saturating_sub(1)),
+                    (Some(p), true) => (p + 1).min(view.len().saturating_sub(1)),
                     (Some(p), false) => p.saturating_sub(1),
                 };
-                if let Some(&i) = self.view.get(next) {
+                if let Some(&i) = view.get(next) {
                     self.selected_row = Some(i);
                     self.scroll_to_selected = true;
                 }
@@ -584,13 +945,14 @@ impl Library {
                 actions.push(LibraryAction::OpenGame {
                     path: path.clone(),
                     index,
+                    at: at.clone(),
                 });
             }
         }
 
         let scroll_row = if std::mem::take(&mut self.scroll_to_selected) {
             self.selected_row
-                .and_then(|r| self.view.iter().position(|&i| i == r))
+                .and_then(|r| view.iter().position(|&i| i == r))
         } else {
             None
         };
@@ -601,16 +963,23 @@ impl Library {
             (tr("Black"), SortKey::Black),
             ("Elo", SortKey::BlackElo),
             (tr("Result"), SortKey::Result),
-            (tr("Moves"), SortKey::Moves),
+            (tr("Length"), SortKey::Moves),
             ("ECO", SortKey::Eco),
             (tr("Event"), SortKey::Event),
             (tr("Date"), SortKey::Date),
         ];
+        if searching {
+            ui.set_opacity(0.6);
+        }
         let mut table = TableBuilder::new(ui)
             .striped(true)
             .resizable(true)
             .sense(Sense::click())
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
+        if outcome.is_some() {
+            table = table.column(Column::exact(52.0));
+        }
+        let mut table = table
             .column(Column::exact(52.0))
             .column(Column::initial(170.0).at_least(60.0).clip(true))
             .column(Column::exact(48.0))
@@ -624,8 +993,8 @@ impl Library {
         if let Some(r) = scroll_row {
             table = table.scroll_to_row(r, Some(egui::Align::Center));
         }
-        let view = &self.view;
         let entries = pgn.entries();
+        let mut hovered = None;
         let viewed = &self.viewed;
         let mut toggle_viewed = None;
         let mut clicked = None;
@@ -633,6 +1002,11 @@ impl Library {
         let mut sort_click = None;
         table
             .header(26.0, |mut header| {
+                if outcome.is_some() {
+                    header.col(|ui| {
+                        ui.label(RichText::new(tr("Move")).strong());
+                    });
+                }
                 for (label, key) in headers {
                     header.col(|ui| {
                         let arrow = if self.sort.0 == key {
@@ -676,6 +1050,20 @@ impl Library {
                         e.event().filter(|s| *s != "?").unwrap_or("").to_string(),
                         display_date(e.date().unwrap_or("")),
                     ];
+                    if outcome.is_some() {
+                        row.col(|ui| {
+                            let Some(m) = find(e.index) else { return };
+                            let mut text = board_search::ply_label(m.ply);
+                            if ordered && !m.same_order {
+                                text = format!("↪{text}");
+                            }
+                            if m.in_variation {
+                                text.push_str(" 🔀");
+                            }
+                            ui.add(egui::Label::new(text).selectable(false))
+                                .on_hover_text(tr("The move after which the position arose in the game. ↪ — reached by another move order, 🔀 — in a variation"));
+                        });
+                    }
                     for (i, text) in cells.into_iter().enumerate() {
                         row.col(|ui| {
                             if i == 0 && seen {
@@ -722,6 +1110,9 @@ impl Library {
                             }
                         });
                     }
+                    if resp.hovered() {
+                        hovered = Some(e.index);
+                    }
                     if resp.clicked() {
                         clicked = Some(e.index);
                     }
@@ -730,6 +1121,12 @@ impl Library {
                     }
                 });
             });
+        let next = hovered
+            .zip(outcome.as_deref())
+            .and_then(|(i, out)| board_search::next_move_of(out, i));
+        if let Some(small) = self.small.get_mut(&path) {
+            small.table_hover = next;
+        }
         if let Some((k, v)) = toggle_viewed {
             self.viewed.set(k, v);
         }
@@ -745,7 +1142,7 @@ impl Library {
         }
         if let Some(index) = opened {
             self.selected_row = Some(index);
-            actions.push(LibraryAction::OpenGame { path, index });
+            actions.push(LibraryAction::OpenGame { path, index, at });
         }
     }
 }

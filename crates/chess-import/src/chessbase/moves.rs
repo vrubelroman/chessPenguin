@@ -8,8 +8,8 @@
 use shakmaty::fen::Fen;
 use shakmaty::san::SanPlus;
 use shakmaty::{
-    Bitboard, CastlingMode, Chess, Color, EnPassantMode, File, FromSetup, Move, Piece, Position,
-    Rank, Role, Setup, Square,
+    Bitboard, CastlingMode, CastlingSide, Chess, Color, EnPassantMode, File, FromSetup, Move,
+    Piece, Position, Rank, Role, Setup, Square,
 };
 
 use super::be;
@@ -65,53 +65,27 @@ enum Modifier {
 }
 
 pub fn decode(cbg: &[u8], offset: u32) -> Result<Tree, DecodeError> {
-    let fail = |reason: &str| DecodeError {
+    let r = open_record(cbg, offset).map_err(|e| DecodeError {
         // The game is kept with its tags and no moves.
         partial: Tree::start(),
-        reason: reason.into(),
-    };
-    let at = offset as usize;
-    let (Some(flags), Some(size)) = (cbg.get(at).copied(), be(cbg, at + 1, 3)) else {
-        return Err(fail("moves outside the .cbg file"));
-    };
-    let record = cbg
-        .get(at..at + size as usize)
-        .filter(|r| r.len() >= 4)
-        .ok_or_else(|| fail("moves outside the .cbg file"))?;
-    let mode = flags & 0x3f;
-    let (encoder, modifier, table) = match mode {
-        0 => (Encoder::Compact, Modifier::Pre, &TABLE_0),
-        4 => (Encoder::Compact, Modifier::Post, &TABLE_4),
-        5 => (Encoder::Simple, Modifier::Post, &TABLE_5),
-        10 | 11 => return Err(fail("Chess960 games are not supported")),
-        8 | 9 => return Err(fail("losing chess games are not supported")),
-        m => return Err(fail(&format!("move encoding {m} is not supported"))),
-    };
-    let mut body = &record[4..];
-    let (start, start_fen) = if flags & 0x40 != 0 {
-        let s = body
-            .get(..28)
-            .ok_or_else(|| fail("truncated start position"))?;
-        body = &body[28..];
-        let pos = start_position(s).ok_or_else(|| fail("invalid start position"))?;
-        let fen = Fen::from_position(&pos, EnPassantMode::Legal).to_string();
-        (pos, Some(fen))
-    } else {
-        (Chess::default(), None)
-    };
+        reason: e.reason().to_owned(),
+    })?;
+    let start_fen = r
+        .setup
+        .then(|| Fen::from_position(&r.start, EnPassantMode::Legal).to_string());
     let mut d = Decoder {
         tree: Tree {
             start_fen,
             nodes: vec![Node::default()],
             order: Vec::new(),
         },
-        table,
-        modifier,
+        table: r.table,
+        modifier: r.modifier,
         count: 0,
     };
-    let result = match encoder {
-        Encoder::Compact => d.compact(body, start),
-        Encoder::Simple => d.simple(body, start),
+    let result = match r.encoder {
+        Encoder::Compact => d.compact(r.body, r.start),
+        Encoder::Simple => d.simple(r.body, r.start),
     };
     match result {
         Ok(()) => Ok(d.tree),
@@ -119,6 +93,306 @@ pub fn decode(cbg: &[u8], offset: u32) -> Result<Tree, DecodeError> {
             partial: d.tree,
             reason,
         }),
+    }
+}
+
+/// Why a record's main line could not be walked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WalkError {
+    /// A variant the reader does not support (Chess960, losing chess), or a record
+    /// outside the file: a retry cannot help.
+    Unsupported(String),
+    /// Damaged or untrusted moves.
+    Moves(String),
+}
+
+impl WalkError {
+    pub fn reason(&self) -> &str {
+        match self {
+            WalkError::Unsupported(r) | WalkError::Moves(r) => r,
+        }
+    }
+}
+
+/// A `.cbg` game record with its encoding settled and its start position read.
+struct GameRecord<'a> {
+    encoder: Encoder,
+    modifier: Modifier,
+    table: &'static [u8; 256],
+    /// The move stream.
+    body: &'a [u8],
+    start: Chess,
+    /// The start position is set (flag 0x40), not the usual one.
+    setup: bool,
+}
+
+fn open_record(cbg: &[u8], offset: u32) -> Result<GameRecord<'_>, WalkError> {
+    let unsupported = |reason: &str| WalkError::Unsupported(reason.into());
+    let at = offset as usize;
+    let (Some(flags), Some(size)) = (cbg.get(at).copied(), be(cbg, at + 1, 3)) else {
+        return Err(unsupported("moves outside the .cbg file"));
+    };
+    let record = cbg
+        .get(at..at + size as usize)
+        .filter(|r| r.len() >= 4)
+        .ok_or_else(|| unsupported("moves outside the .cbg file"))?;
+    let mode = flags & 0x3f;
+    let (encoder, modifier, table) = match mode {
+        0 => (Encoder::Compact, Modifier::Pre, &TABLE_0),
+        4 => (Encoder::Compact, Modifier::Post, &TABLE_4),
+        5 => (Encoder::Simple, Modifier::Post, &TABLE_5),
+        10 | 11 => return Err(unsupported("Chess960 games are not supported")),
+        8 | 9 => return Err(unsupported("losing chess games are not supported")),
+        m => return Err(unsupported(&format!("move encoding {m} is not supported"))),
+    };
+    let mut body = &record[4..];
+    let setup = flags & 0x40 != 0;
+    let start = if setup {
+        let s = body
+            .get(..28)
+            .ok_or_else(|| WalkError::Moves("truncated start position".into()))?;
+        body = &body[28..];
+        start_position(s).ok_or_else(|| WalkError::Moves("invalid start position".into()))?
+    } else {
+        Chess::default()
+    };
+    Ok(GameRecord {
+        encoder,
+        modifier,
+        table,
+        body,
+        start,
+        setup,
+    })
+}
+
+/// A step of a main line, as given to the [`main_line`] callback.
+#[derive(Clone, Copy, Debug)]
+pub enum Step<'a> {
+    /// The move played from the position.
+    Move(&'a Move),
+    /// A null move (`--`) played from the position.
+    Null,
+    /// The main line ends in the position.
+    End,
+}
+
+/// Walks the main line of the game record at `offset` without building a tree:
+/// `f(position, step)` is called for the start position and after every move, the
+/// last call with [`Step::End`]; `f` returns false to stop early.
+///
+/// The main line ends at the first end-of-variation marker (all variations are
+/// stored after it), so variations are never read. `fast` builds each move from the
+/// board instead of looking it up among the legal moves (about three times faster);
+/// the data is then trusted beyond basic checks, so a [`WalkError::Moves`] in that
+/// mode is worth a retry without it.
+pub fn main_line<F>(cbg: &[u8], offset: u32, fast: bool, mut f: F) -> Result<(), WalkError>
+where
+    F: FnMut(&Chess, Step<'_>) -> bool,
+{
+    let r = open_record(cbg, offset)?;
+    let mut walk = Walk {
+        table: r.table,
+        modifier: r.modifier,
+        count: 0,
+        fast,
+    };
+    let mut state = State::new(r.start);
+    let end = match r.encoder {
+        Encoder::Compact => walk.compact(r.body, &mut state, &mut f),
+        Encoder::Simple => walk.simple(r.body, &mut state, &mut f),
+    }
+    .map_err(WalkError::Moves)?;
+    if end {
+        f(&state.pos, Step::End);
+    }
+    Ok(())
+}
+
+/// Main-line decoding state: the byte translation and how moves are found.
+struct Walk {
+    table: &'static [u8; 256],
+    modifier: Modifier,
+    count: u32,
+    fast: bool,
+}
+
+impl Walk {
+    /// Ok(true) when the main line was read to its end, Ok(false) when `f` stopped.
+    fn compact<F>(&mut self, data: &[u8], state: &mut State, f: &mut F) -> Result<bool, String>
+    where
+        F: FnMut(&Chess, Step<'_>) -> bool,
+    {
+        let mut i = 0;
+        while i < data.len() {
+            let raw = translate(self.table, self.modifier, self.count, data[i]);
+            i += 1;
+            let code = classify(raw).ok_or_else(|| format!("unknown move code {raw}"))?;
+            let m = match code {
+                // A variation starts after the main line: nothing to save.
+                Code::Push | Code::Ignore => continue,
+                Code::Pop => return Ok(true),
+                Code::Null => None,
+                Code::TwoBytes => {
+                    let (Some(&a), Some(&b)) = (data.get(i), data.get(i + 1)) else {
+                        return Err("truncated move".into());
+                    };
+                    i += 2;
+                    let t = |x| u16::from(translate(self.table, self.modifier, self.count, x));
+                    Some(self.square_move(&state.pos, (t(a) << 8) | t(b))?)
+                }
+                Code::Castle { short } => Some(if self.fast {
+                    fast_castle(&state.pos, short)?
+                } else {
+                    castle(&state.pos, short)?
+                }),
+                Code::Piece(role, index, delta) => {
+                    let from = piece_square(&state.sides[state.pos.turn() as usize], role, index)
+                        .ok_or("move of a piece that is not on the board")?;
+                    Some(self.find(&state.pos, from, displaced(from, delta), None)?)
+                }
+                Code::Pawn(index, kind) => {
+                    let from = state.sides[state.pos.turn() as usize].pawns[index]
+                        .ok_or("move of a pawn that is not on the board")?;
+                    let delta = pawn_step(kind, state.pos.turn());
+                    Some(self.find(&state.pos, from, displaced(from, delta), None)?)
+                }
+            };
+            if !self.play(state, m, f)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn simple<F>(&mut self, data: &[u8], state: &mut State, f: &mut F) -> Result<bool, String>
+    where
+        F: FnMut(&Chess, Step<'_>) -> bool,
+    {
+        for pair in data.as_chunks::<2>().0 {
+            let t = |x| u16::from(translate(self.table, self.modifier, self.count, x));
+            let v = (t(pair[0]) << 8) | t(pair[1]);
+            let m = if (v & 63) == ((v >> 6) & 63) {
+                None
+            } else {
+                Some(self.square_move(&state.pos, v & 0x3fff)?)
+            };
+            if !self.play(state, m, f)? {
+                return Ok(false);
+            }
+            // The move that closes a line is the last of the main line.
+            if v & 0x4000 != 0 {
+                return Ok(true);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Reports the move to `f` and plays it; Ok(false) when `f` stops.
+    fn play<F>(&mut self, state: &mut State, m: Option<Move>, f: &mut F) -> Result<bool, String>
+    where
+        F: FnMut(&Chess, Step<'_>) -> bool,
+    {
+        let step = match &m {
+            Some(m) => Step::Move(m),
+            None => Step::Null,
+        };
+        if !f(&state.pos, step) {
+            return Ok(false);
+        }
+        match m {
+            Some(m) => {
+                state.track(&m);
+                state.pos.play_unchecked(m);
+            }
+            None => state.pos = null_move(&state.pos).ok_or("null move while in check")?,
+        }
+        self.count += 1;
+        Ok(true)
+    }
+
+    fn square_move(&self, pos: &Chess, v: u16) -> Result<Move, String> {
+        let (from, to, promotion) = square_fields(v);
+        self.find(pos, from, to, Some(promotion))
+    }
+
+    fn find(
+        &self,
+        pos: &Chess,
+        from: Square,
+        to: Square,
+        promotion: Option<Role>,
+    ) -> Result<Move, String> {
+        if self.fast {
+            build_move(pos, from, to, promotion)
+        } else {
+            find_move(pos, from, to, promotion)
+        }
+    }
+}
+
+/// The move from `from` to `to` built from the board, without legal move generation:
+/// the piece on `from` must be ours and `to` must not hold one of ours or a king. A
+/// pawn going diagonally to an empty square takes en passant; a pawn reaching the
+/// last rank becomes `promotion` (a queen if not given); a king going two files
+/// castles.
+fn build_move(
+    pos: &Chess,
+    from: Square,
+    to: Square,
+    promotion: Option<Role>,
+) -> Result<Move, String> {
+    let board = pos.board();
+    let us = pos.turn();
+    let piece = board
+        .piece_at(from)
+        .filter(|p| p.color == us)
+        .ok_or("move of a piece that is not on the board")?;
+    let target = board.piece_at(to);
+    if target.is_some_and(|t| t.color == us || t.role == Role::King) {
+        return Err("illegal move".into());
+    }
+    let capture = target.map(|t| t.role);
+    Ok(match piece.role {
+        Role::Pawn if from.file() != to.file() && target.is_none() => Move::EnPassant { from, to },
+        Role::Pawn => {
+            let last = if us == Color::White {
+                Rank::Eighth
+            } else {
+                Rank::First
+            };
+            Move::Normal {
+                role: Role::Pawn,
+                from,
+                capture,
+                to,
+                promotion: (to.rank() == last).then(|| promotion.unwrap_or(Role::Queen)),
+            }
+        }
+        Role::King if from.rank() == to.rank() && from.file().distance(to.file()) == 2 => {
+            fast_castle(pos, to.file() > from.file())?
+        }
+        role => Move::Normal {
+            role,
+            from,
+            capture,
+            to,
+            promotion: None,
+        },
+    })
+}
+
+/// Castling from the castling rights, without legal move generation.
+fn fast_castle(pos: &Chess, short: bool) -> Result<Move, String> {
+    let us = pos.turn();
+    let side = if short {
+        CastlingSide::KingSide
+    } else {
+        CastlingSide::QueenSide
+    };
+    match (pos.castles().rook(us, side), pos.board().king_of(us)) {
+        (Some(rook), Some(king)) => Ok(Move::Castle { king, rook }),
+        _ => Err("illegal castling".into()),
     }
 }
 
@@ -450,13 +724,44 @@ fn classify(code: u8) -> Option<Code> {
     })
 }
 
+/// A byte of the move stream after `count` moves, through the mode's permutation.
+fn translate(table: &[u8; 256], modifier: Modifier, count: u32, byte: u8) -> u8 {
+    let n = (count % 256) as u8;
+    match modifier {
+        Modifier::Pre => table[usize::from(byte.wrapping_sub(n))],
+        Modifier::Post => table[usize::from(byte)].wrapping_sub(n),
+    }
+}
+
+/// Square of the `index`-th piece of a kind.
+fn piece_square(side: &Side, role: Role, index: usize) -> Option<Square> {
+    match role {
+        Role::King => side.king,
+        Role::Queen => side.queens.get(index).copied(),
+        Role::Rook => side.rooks.get(index).copied(),
+        Role::Bishop => side.bishops.get(index).copied(),
+        _ => side.knights.get(index).copied(),
+    }
+}
+
+/// Displacement of a pawn move of the compact encoder: 0 one step, 1 two steps, 2
+/// and 3 captures.
+fn pawn_step(kind: u8, turn: Color) -> (i32, i32) {
+    match (kind, turn == Color::White) {
+        (0, true) => (0, 1),
+        (1, true) => (0, 2),
+        (2, true) => (1, 1),
+        (_, true) => (-1, 1),
+        (0, false) => (0, -1),
+        (1, false) => (0, -2),
+        (2, false) => (-1, -1),
+        (_, false) => (1, -1),
+    }
+}
+
 impl Decoder {
     fn translate(&self, byte: u8) -> u8 {
-        let n = (self.count % 256) as u8;
-        match self.modifier {
-            Modifier::Pre => self.table[usize::from(byte.wrapping_sub(n))],
-            Modifier::Post => self.table[usize::from(byte)].wrapping_sub(n),
-        }
+        translate(self.table, self.modifier, self.count, byte)
     }
 
     fn compact(&mut self, data: &[u8], start: Chess) -> Result<(), String> {
@@ -491,31 +796,14 @@ impl Decoder {
                 }
                 Code::Castle { short } => Some(castle(&state.pos, short)?),
                 Code::Piece(role, index, delta) => {
-                    let side = &state.sides[state.pos.turn() as usize];
-                    let from = match role {
-                        Role::King => side.king,
-                        Role::Queen => side.queens.get(index).copied(),
-                        Role::Rook => side.rooks.get(index).copied(),
-                        Role::Bishop => side.bishops.get(index).copied(),
-                        _ => side.knights.get(index).copied(),
-                    }
-                    .ok_or("move of a piece that is not on the board")?;
+                    let from = piece_square(&state.sides[state.pos.turn() as usize], role, index)
+                        .ok_or("move of a piece that is not on the board")?;
                     Some(find_move(&state.pos, from, displaced(from, delta), None)?)
                 }
                 Code::Pawn(index, kind) => {
                     let from = state.sides[state.pos.turn() as usize].pawns[index]
                         .ok_or("move of a pawn that is not on the board")?;
-                    let white = state.pos.turn() == Color::White;
-                    let delta = match (kind, white) {
-                        (0, true) => (0, 1),
-                        (1, true) => (0, 2),
-                        (2, true) => (1, 1),
-                        (_, true) => (-1, 1),
-                        (0, false) => (0, -1),
-                        (1, false) => (0, -2),
-                        (2, false) => (-1, -1),
-                        (_, false) => (1, -1),
-                    };
+                    let delta = pawn_step(kind, state.pos.turn());
                     Some(find_move(&state.pos, from, displaced(from, delta), None)?)
                 }
             };
@@ -590,11 +878,16 @@ fn displaced(from: Square, (dx, dy): (i32, i32)) -> Square {
 
 /// Move given by squares: bits 0-5 from, 6-11 to, 12-13 promotion piece.
 fn square_move(pos: &Chess, v: u16) -> Result<Move, String> {
+    let (from, to, promotion) = square_fields(v);
+    find_move(pos, from, to, Some(promotion))
+}
+
+fn square_fields(v: u16) -> (Square, Square, Role) {
     let from = cb_square(u32::from(v & 63));
     let to = cb_square(u32::from((v >> 6) & 63));
     let promotion =
         [Role::Queen, Role::Rook, Role::Bishop, Role::Knight][usize::from((v >> 12) & 3)];
-    find_move(pos, from, to, Some(promotion))
+    (from, to, promotion)
 }
 
 /// The legal move from `from` to `to` (the king's destination for castling); a
@@ -779,5 +1072,179 @@ mod tests {
         let b = &s.sides[Color::Black as usize];
         assert_eq!(b.rooks, vec![Square::A8, Square::H8]);
         assert_eq!(b.pawns[0], Some(Square::A7));
+    }
+
+    /// Main line by [`main_line`]: SAN of every move (`--` for a null move) and
+    /// the final position.
+    fn walked(cbg: &[u8], offset: u32, fast: bool) -> Result<(Vec<String>, Chess), WalkError> {
+        let mut sans = Vec::new();
+        let mut end = None;
+        main_line(cbg, offset, fast, |pos, step| {
+            match step {
+                Step::Move(m) => sans.push(SanPlus::from_move(pos.clone(), *m).to_string()),
+                Step::Null => sans.push("--".into()),
+                Step::End => end = Some(pos.clone()),
+            }
+            true
+        })?;
+        Ok((sans, end.expect("the walk reaches the end")))
+    }
+
+    /// Main line of a decoded tree: the first children.
+    fn tree_line(tree: &Tree) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut node = 0;
+        while let Some(&c) = tree.nodes[node].children.first() {
+            out.push(tree.nodes[c].san.clone());
+            node = c;
+        }
+        out
+    }
+
+    /// A simple-encoder (mode 5) record of moves given as (from, to, flags), flags
+    /// being 0x8000 (a variation starts) and 0x4000 (a line ends).
+    fn simple_record(moves: &[(Square, Square, u16)]) -> Vec<u8> {
+        let sq = |s: Square| (s.file() as u16) * 8 + s.rank() as u16;
+        let encode = |value: u8, count: usize| -> u8 {
+            let wanted = value.wrapping_add((count % 256) as u8);
+            TABLE_5.iter().position(|&t| t == wanted).unwrap() as u8
+        };
+        let mut body = Vec::new();
+        for (count, &(from, to, flags)) in moves.iter().enumerate() {
+            let v = sq(from) | (sq(to) << 6) | flags;
+            body.push(encode((v >> 8) as u8, count));
+            body.push(encode(v as u8, count));
+        }
+        let size = (body.len() + 4) as u32;
+        let mut rec = vec![5, (size >> 16) as u8, (size >> 8) as u8, size as u8];
+        rec.extend(body);
+        rec
+    }
+
+    #[test]
+    fn main_line_stops_before_the_variations() {
+        use Square::*;
+        // 1. e4 e5 (1... c5) 2. Nf3 Nc6 3. Bc4 Nf6 4. O-O -- 5. d3, the variation
+        // stored after the main line; a null move is a move from a square to itself.
+        let rec = simple_record(&[
+            (E2, E4, 0),
+            (E7, E5, 0x8000),
+            (G1, F3, 0),
+            (B8, C6, 0),
+            (F1, C4, 0),
+            (G8, F6, 0),
+            (E1, G1, 0),
+            (A1, A1, 0),
+            (D2, D3, 0x4000),
+            (C7, C5, 0x4000),
+        ]);
+        let tree = decode(&rec, 0).ok().expect("decodes");
+        let expected = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6", "O-O", "--", "d3"];
+        assert_eq!(tree_line(&tree), expected);
+        assert_eq!(tree.nodes[1].children.len(), 2, "1... c5 is a variation");
+        for fast in [true, false] {
+            let (sans, end) = walked(&rec, 0, fast).expect("walks");
+            assert_eq!(sans, expected);
+            assert_eq!(end.turn(), Color::Black);
+            assert_eq!(
+                Fen::from_position(&end, EnPassantMode::Legal).to_string(),
+                "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/3P1N2/PPP2PPP/RNBQ1RK1 b kq - 0 5"
+            );
+        }
+        // Stopping early: the callback sees the positions in order.
+        let mut seen = 0;
+        main_line(&rec, 0, true, |_, _| {
+            seen += 1;
+            seen < 3
+        })
+        .expect("walks");
+        assert_eq!(seen, 3);
+    }
+
+    #[test]
+    fn fast_walk_rejects_what_the_board_does_not_allow() {
+        use Square::*;
+        // A move from an empty square, and a capture of an own piece.
+        for bad in [(E3, E4, 0x4000), (D1, D2, 0x4000)] {
+            let rec = simple_record(&[bad]);
+            assert!(matches!(walked(&rec, 0, true), Err(WalkError::Moves(_))));
+            assert!(matches!(walked(&rec, 0, false), Err(WalkError::Moves(_))));
+        }
+        // Chess960 is not a damaged record.
+        assert!(matches!(
+            main_line(&[10, 0, 0, 4], 0, true, |_, _| true),
+            Err(WalkError::Unsupported(_))
+        ));
+        // A game without moves: only the start position, as the end.
+        let (sans, end) = walked(&simple_record(&[]), 0, true).expect("walks");
+        assert!(sans.is_empty());
+        assert_eq!(end, Chess::default());
+    }
+
+    /// Fast and checked walks give the main line of `decode` for every game of a
+    /// database.
+    pub(crate) fn check_walks(cbh: &[u8], cbg: &[u8], step: usize) -> (usize, usize) {
+        let records = super::super::headers::read(cbh).expect("records");
+        let (mut games, mut skipped) = (0, 0);
+        for rec in records.iter().step_by(step.max(1)) {
+            let super::super::headers::Record::Game(h) = rec else {
+                continue;
+            };
+            let Ok(tree) = decode(cbg, h.moves_offset) else {
+                skipped += 1;
+                continue;
+            };
+            let line = tree_line(&tree);
+            for fast in [true, false] {
+                let (sans, _) = walked(cbg, h.moves_offset, fast).expect("a decodable game walks");
+                assert_eq!(sans, line, "game at {} (fast: {fast})", h.moves_offset);
+            }
+            games += 1;
+        }
+        (games, skipped)
+    }
+
+    #[test]
+    fn walks_match_the_decoder_on_sample_databases() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pgnFilesforExample");
+        for name in [
+            "Rubinstein russian.cbv",
+            "Anand 01-14.cbv",
+            "Endgame Manual.cbv",
+        ] {
+            let Ok(bytes) = std::fs::read(dir.join(name)) else {
+                eprintln!("skipped: {name} not found");
+                continue;
+            };
+            let members = crate::cbv::unpack(&bytes).expect("unpacks");
+            let pick = |ext: &str| {
+                members
+                    .iter()
+                    .find(|m| m.name.to_ascii_lowercase().ends_with(ext))
+                    .map(|m| m.data.as_slice())
+                    .expect("member")
+            };
+            let (games, _) = check_walks(pick(".cbh"), pick(".cbg"), 1);
+            assert!(games > 100, "{name}: {games} games");
+        }
+    }
+
+    /// Mega Database 2026 (not in the repository), every 97th game. Run with
+    /// `cargo test --release -p chess-import walks_match_the_decoder_on_mega -- --ignored`.
+    #[test]
+    #[ignore]
+    fn walks_match_the_decoder_on_mega() {
+        let stem = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../pgnFilesforExample/Mega2026/Mega Database 2026");
+        let (Ok(cbh), Ok(cbg)) = (
+            std::fs::read(stem.with_extension("cbh")),
+            std::fs::read(stem.with_extension("cbg")),
+        ) else {
+            eprintln!("skipped: Mega Database 2026 not found");
+            return;
+        };
+        let (games, skipped) = check_walks(&cbh, &cbg, 97);
+        eprintln!("{games} games walked, {skipped} unreadable (Chess960)");
+        assert!(games > 120_000);
     }
 }

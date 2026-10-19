@@ -9,6 +9,7 @@ pub mod base;
 mod entities;
 mod headers;
 mod moves;
+pub mod search;
 mod text;
 mod writer;
 

@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.5.0" date="2026-10-19">
+      <description>
+        <p>Find games by position: play moves on a board next to the game list and see the games that reach the position by any move order, with the moves played next and their results; works with the filters, in books also in variations.</p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-10-19">
       <description>
         <p>Large ChessBase databases (Mega Database, millions of games) open in seconds, with a filter panel: player with suggestions, opponent, tournament, years, Elo, result, ECO, moves, annotations.</p>

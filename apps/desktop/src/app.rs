@@ -47,6 +47,8 @@ pub struct App {
     confirm_close: Option<CloseIntent>,
     /// Close the game once the pending "save as" succeeds.
     close_after_save: Option<CloseIntent>,
+    /// A position to find in a database once the game is closed.
+    find_after_close: Option<(PathBuf, shakmaty::Chess, Vec<shakmaty::Move>, bool)>,
     allow_quit: bool,
     applied_dark: Option<bool>,
     debug: DebugStartup,
@@ -126,6 +128,7 @@ impl App {
             rx,
             confirm_close: None,
             close_after_save: None,
+            find_after_close: None,
             allow_quit: false,
             applied_dark: None,
             debug: DebugStartup::from_env(),
@@ -192,7 +195,7 @@ impl App {
             return;
         }
         self.debug.open = None;
-        self.open_game(ctx, path, index);
+        self.open_game(ctx, path, index, None);
         if let Some(g) = &mut self.game {
             g.debug_advance(self.debug.ply);
             if std::env::var("CP_ENGINE_PANEL").is_ok() {
@@ -377,7 +380,13 @@ impl App {
         }
     }
 
-    fn open_game(&mut self, ctx: &egui::Context, path: PathBuf, index: usize) {
+    fn open_game(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        index: usize,
+        at: Option<shakmaty::Chess>,
+    ) {
         let Some(db) = self.library.database(&path) else {
             return;
         };
@@ -391,6 +400,9 @@ impl App {
                     }),
                     parsed.diagnostics,
                 ));
+                if let (Some(target), Some(g)) = (at, self.game.as_mut()) {
+                    g.goto_position(&target);
+                }
                 self.library.mark_viewed(&path, index);
                 self.settings.touch_database(&path);
                 self.settings_dirty = true;
@@ -415,10 +427,29 @@ impl App {
         {
             self.library.reveal(&src.path, src.index);
         }
+        if let Some((path, start, line, flipped)) = self.find_after_close.take() {
+            self.library.show_position(&path, start, line, flipped, ctx);
+        }
         if intent == CloseIntent::QuitApp {
             self.allow_quit = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+    }
+
+    /// Leaves the game for the library's search board with the game's current position.
+    fn find_position(&mut self, ctx: &egui::Context, db: Option<PathBuf>) {
+        let Some((start, line, flipped)) = self.game.as_ref().and_then(|g| g.search_line()) else {
+            return;
+        };
+        let path = db
+            .or_else(|| self.library.selected_db.clone())
+            .or_else(|| self.settings.databases.first().cloned());
+        let Some(path) = path else {
+            self.toast(ctx, tr("Add a database first"));
+            return;
+        };
+        self.find_after_close = Some((path, start, line, flipped));
+        self.request_close(ctx, CloseIntent::BackToLibrary);
     }
 
     fn toggle_engine(&mut self, ctx: &egui::Context) {
@@ -440,37 +471,46 @@ impl App {
     fn paste_pgn(&mut self, ctx: &egui::Context) {
         let text = arboard::Clipboard::new().and_then(|mut c| c.get_text());
         match text {
-            Ok(t) if !t.trim().is_empty() => {
-                // Split into records first: several games must not be glued into one.
-                let never = AtomicBool::new(false);
-                let db = PgnDatabase::from_bytes(
-                    t.into_bytes(),
-                    Some(TextEncoding::Utf8),
-                    &mut |_| {},
-                    &never,
-                );
-                let (parsed, count) = match db.as_ref().ok().filter(|db| !db.is_empty()) {
-                    Some(db) => (db.load_game(0), db.len()),
-                    None => (None, 0),
-                };
-                let Some(parsed) = parsed else {
-                    self.toast(ctx, tr("The clipboard contains no recognizable PGN game"));
-                    return;
-                };
-                if parsed.game.main_child(parsed.game.root()).is_none()
-                    && parsed.game.tags().len() <= 7
-                    && !parsed.diagnostics.is_empty()
-                {
-                    self.toast(ctx, tr("The clipboard contains no recognizable PGN game"));
-                    return;
-                }
-                if count > 1 {
-                    self.toast(ctx, trf("The clipboard has {count} games — the first one is open. To work with all of them, save them to a .pgn file and add it as a database", &[("count", &count)]));
-                }
-                self.game = Some(GameView::new(parsed.game, None, parsed.diagnostics));
-            }
+            Ok(t) if !t.trim().is_empty() => self.open_pgn_text(ctx, t, false),
             _ => self.toast(ctx, tr("The clipboard is empty or unavailable")),
         }
+    }
+
+    /// Opens PGN text (the first game of it) as a new game.
+    /// `at_end`: show the position after the last main-line move (a line from the
+    /// search board continues where the user stopped).
+    fn open_pgn_text(&mut self, ctx: &egui::Context, t: String, at_end: bool) {
+        // Split into records first: several games must not be glued into one.
+        let never = AtomicBool::new(false);
+        let db = PgnDatabase::from_bytes(
+            t.into_bytes(),
+            Some(TextEncoding::Utf8),
+            &mut |_| {},
+            &never,
+        );
+        let (parsed, count) = match db.as_ref().ok().filter(|db| !db.is_empty()) {
+            Some(db) => (db.load_game(0), db.len()),
+            None => (None, 0),
+        };
+        let Some(parsed) = parsed else {
+            self.toast(ctx, tr("The clipboard contains no recognizable PGN game"));
+            return;
+        };
+        if parsed.game.main_child(parsed.game.root()).is_none()
+            && parsed.game.tags().len() <= 7
+            && !parsed.diagnostics.is_empty()
+        {
+            self.toast(ctx, tr("The clipboard contains no recognizable PGN game"));
+            return;
+        }
+        if count > 1 {
+            self.toast(ctx, trf("The clipboard has {count} games — the first one is open. To work with all of them, save them to a .pgn file and add it as a database", &[("count", &count)]));
+        }
+        let mut view = GameView::new(parsed.game, None, parsed.diagnostics);
+        if at_end {
+            view.goto_main_line_end();
+        }
+        self.game = Some(view);
     }
 
     fn confirm_dialog(&mut self, ctx: &egui::Context) {
@@ -507,7 +547,10 @@ impl App {
                 self.confirm_close = None;
                 self.finish_close(ctx, intent);
             }
-            Some(2) => self.confirm_close = None,
+            Some(2) => {
+                self.confirm_close = None;
+                self.find_after_close = None;
+            }
             _ => {}
         }
     }
@@ -553,6 +596,7 @@ impl eframe::App for App {
             for a in actions {
                 match a {
                     GameAction::Back => self.request_close(&ctx, CloseIntent::BackToLibrary),
+                    GameAction::FindPosition(db) => self.find_position(&ctx, db),
                     GameAction::Sound(s) => self.play(s),
                     GameAction::CopyText(text, msg) => {
                         ctx.copy_text(text);
@@ -599,9 +643,17 @@ impl eframe::App for App {
             }
         } else {
             let dbs = self.settings.databases.clone();
-            for a in self.library.show(ui, &dbs) {
+            for a in self.library.show(ui, &dbs, &self.settings) {
                 match a {
-                    LibraryAction::OpenGame { path, index } => self.open_game(&ctx, path, index),
+                    LibraryAction::OpenGame { path, index, at } => {
+                        self.open_game(&ctx, path, index, at)
+                    }
+                    LibraryAction::Sound(s) => self.play(s),
+                    LibraryAction::CopyText(text, msg) => {
+                        ctx.copy_text(text);
+                        self.toast(&ctx, msg);
+                    }
+                    LibraryAction::OpenPgn(text) => self.open_pgn_text(&ctx, text, true),
                     LibraryAction::NewGame => {
                         self.game = Some(GameView::new(Game::new(), None, Vec::new()))
                     }
