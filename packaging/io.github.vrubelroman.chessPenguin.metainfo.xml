@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.6.0" date="2026-10-19">
+      <description>
+        <p>Stockfish is downloaded on request (smaller packages; the Flatpak keeps it inside); macOS builds for Apple Silicon; position search fixes and narrow-window layout.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-19">
       <description>
         <p>Find games by position: play moves on a board next to the game list and see the games that reach the position by any move order, with the moves played next and their results; works with the filters, in books also in variations.</p>
