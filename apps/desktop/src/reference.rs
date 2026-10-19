@@ -975,7 +975,6 @@ impl Reference {
         // while it is worked out, so nothing jumps).
         let line = main_line(game);
         let book = self.book_for(&path, &line).cloned();
-        let failed_book = self.book_failed.as_ref() == Some(&(path.clone(), line.clone()));
         // The novelty: the first move of the game no other game of the database played
         // (the line keeps its height while it is worked out, so nothing jumps).
         let novelty = book.as_ref().and_then(|b| match b.last {
@@ -998,9 +997,10 @@ impl Reference {
                 }
             }
             (Some(_), None) => {}
-            (None, _) if failed_book => {}
+            // Still being worked out: an empty line of the same height, so the tables
+            // do not jump when the novelty appears.
             (None, _) => {
-                ui.label(RichText::new(tr("Comparing the game with the database…")).weak());
+                ui.label(" ");
             }
         });
         // The game itself is in the database (maybe annotated there): open it.
@@ -1110,6 +1110,7 @@ impl Reference {
         let books = found.books;
         let total: u32 = out.moves.iter().map(|m| m.tally.games).sum::<u32>() + out.ended.games;
         let mut action = None;
+        let start = chess_import::position::same_position(pos, &Chess::default());
         let rows = out.moves.len() + usize::from(out.ended.games > 0);
         if rows == 0 {
             // The games go on with a null move (a teaching "--"), which is not a move.
@@ -1207,6 +1208,8 @@ impl Reference {
                             .to_move(pos)
                             .map(|m| move_label(pos, m))
                             .unwrap_or_else(|_| s.san.clone()),
+                        // In the start position "ended" are games recorded without moves.
+                        None if start => tr("Without moves").to_owned(),
                         None => tr("Game over").to_owned(),
                     };
                     row.col(|ui| {
@@ -1220,6 +1223,10 @@ impl Reference {
                         let r = ui.add(egui::Label::new(text).selectable(false));
                         if in_game {
                             r.on_hover_text(tr("The move played in this game"));
+                        } else if stat.is_none() && start {
+                            r.on_hover_text(tr(
+                                "Games of the database with only the players and the result, no moves",
+                            ));
                         } else if stat.is_none() {
                             r.on_hover_text(tr(
                                 "Games that ended in this position (resignation, draw, mate, time)",

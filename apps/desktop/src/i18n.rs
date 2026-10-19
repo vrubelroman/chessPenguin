@@ -2064,6 +2064,22 @@ const ROWS: &[[&str; 6]] = &[
         "Partite finite in questa posizione (abbandono, patta, matto, tempo)",
     ],
     [
+        "Without moves",
+        "Без ходов",
+        "Sans coups",
+        "Ohne Züge",
+        "Sin jugadas",
+        "Senza mosse",
+    ],
+    [
+        "Games of the database with only the players and the result, no moves",
+        "Партии базы, у которых записаны только игроки и результат, без ходов",
+        "Parties de la base avec seulement les joueurs et le résultat, sans coups",
+        "Partien der Datenbank nur mit Spielern und Ergebnis, ohne Züge",
+        "Partidas de la base solo con los jugadores y el resultado, sin jugadas",
+        "Partite della base con solo giocatori e risultato, senza mosse",
+    ],
+    [
         "Checking engine…",
         "Проверка движка…",
         "Vérification du moteur…",
