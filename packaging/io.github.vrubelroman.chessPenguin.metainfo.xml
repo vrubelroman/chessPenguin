@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.7.0" date="2026-10-20">
+      <description>
+        <p>The «Reference» tab of a game: what was played in the current position in a database of the shelf — the moves with their statistics and the strongest games, the novelty of the game, and its copy in the database. The board always keeps the full height of the window.</p>
+      </description>
+    </release>
     <release version="0.6.3" date="2026-10-19">
       <description>
         <p>Faster position search in large ChessBase databases: an opening index (when there is enough memory) and a search index of its own for databases without one. Quieter import notes; the email in Settings → About is copied on click.</p>

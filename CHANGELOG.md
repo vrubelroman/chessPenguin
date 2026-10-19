@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0] — 2026-10-20
 
 - «Справочник» (Reference) tab of a game: what was played in the current position in a
   database of the shelf (Mega for theory, an opening collection, a pupil's games), as two
@@ -11,8 +11,11 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   position with how they went on. Click a move to see its games, double-click to play it;
   double-click a game to open it at this position (the current game stays a click away:
   "⬅ Back to …", unsaved edits included). It also tells how far the game follows the
-  database ("known up to 13…Bf5") and finds the game itself there (to open, for example, an
-  annotated copy).
+  database (the novelty: the first move no other game of the database played) and finds the
+  game itself there (to open, for example, an annotated copy).
+- The board of a game always keeps the full height of the window (the side panel is never
+  wider than the room beside it).
+- Settings → Engines no longer offers to download Stockfish when one is already set up.
 - Russian numbers use a decimal comma ("11,7 млн").
 
 ## [0.6.3] — 2026-10-19
