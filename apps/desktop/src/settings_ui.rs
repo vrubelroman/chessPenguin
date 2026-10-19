@@ -1,4 +1,4 @@
-//! Settings window: engines, board & pieces, sound, interface.
+//! Settings window: engines, board & pieces, sound, interface, about.
 
 use crate::i18n::{Lang, tr, trf};
 use egui::{RichText, Sense, Ui, vec2};
@@ -14,6 +14,7 @@ pub enum Tab {
     Board,
     Sound,
     Interface,
+    About,
 }
 
 pub enum SettingsAction {
@@ -67,12 +68,14 @@ impl SettingsWindow {
                     ui.selectable_value(&mut self.tab, Tab::Board, tr("Board & pieces"));
                     ui.selectable_value(&mut self.tab, Tab::Sound, tr("Sound"));
                     ui.selectable_value(&mut self.tab, Tab::Interface, tr("Interface"));
+                    ui.selectable_value(&mut self.tab, Tab::About, tr("About"));
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                     Tab::Engines => self.engines(ui, s, &mut actions, &mut changed),
                     Tab::Board => board_tab(ui, s, &mut changed),
                     Tab::Sound => sound_tab(ui, s, &mut actions, &mut changed),
+                    Tab::About => about_tab(ui, s.language),
                     Tab::Interface => {
                         ui.horizontal(|ui| {
                             ui.label(tr("Language:"));
@@ -462,6 +465,65 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     *changed |= ui
         .checkbox(&mut s.show_best_arrow, tr("Show engine best-move arrows"))
         .changed();
+}
+
+const SITE: &str = "https://chess.vrubel.xyz";
+const REPO: &str = "https://github.com/vrubelroman/chessPenguin";
+
+/// Version, links to the website and the sources, support contacts, donations.
+fn about_tab(ui: &mut Ui, lang: Lang) {
+    let version = env!("CARGO_PKG_VERSION");
+    // The website page in the interface language.
+    let site = match lang {
+        Lang::En => format!("{SITE}/"),
+        Lang::Ru => format!("{SITE}/ru/"),
+        Lang::Fr => format!("{SITE}/fr/"),
+        Lang::De => format!("{SITE}/de/"),
+        Lang::Es => format!("{SITE}/es/"),
+        Lang::It => format!("{SITE}/it/"),
+    };
+    ui.add_space(6.0);
+    ui.label(RichText::new("ChessPenguin").size(22.0).strong());
+    ui.label(format!("{} {version}", tr("Version")));
+    ui.label(
+        RichText::new(tr(
+            "Free chess database software for Windows, macOS and Linux.",
+        ))
+        .weak(),
+    );
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.hyperlink_to(tr("Website"), &site);
+        ui.label("·");
+        ui.hyperlink_to(tr("What's new"), format!("{REPO}/releases/tag/v{version}"));
+        ui.label("·");
+        ui.hyperlink_to(tr("Source code"), REPO);
+    });
+    ui.add_space(14.0);
+    ui.label(RichText::new(tr("Found a problem or have an idea? Write to us:")).strong());
+    ui.horizontal_wrapped(|ui| {
+        ui.hyperlink_to("vrubelroman@gmail.com", "mailto:vrubelroman@gmail.com");
+        ui.label("·");
+        ui.hyperlink_to("Telegram @vrubelr", "https://t.me/vrubelr");
+    });
+    ui.add_space(14.0);
+    ui.label(
+        RichText::new(tr(
+            "ChessPenguin is free. If it is useful to you, you can support its development.",
+        ))
+        .weak(),
+    );
+    if ui.button(tr("Support the project")).clicked() {
+        // The website sends this on to the current donation page.
+        ui.ctx()
+            .open_url(egui::OpenUrl::new_tab(format!("{SITE}/donate")));
+    }
+    ui.add_space(14.0);
+    ui.label(
+        RichText::new(tr("Free software under GPL-3.0-or-later. Piece sets, boards and sounds come from Lichess under their own free licences."))
+            .weak()
+            .small(),
+    );
 }
 
 fn sound_tab(ui: &mut Ui, s: &mut Settings, actions: &mut Vec<SettingsAction>, changed: &mut bool) {

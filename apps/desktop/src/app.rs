@@ -59,7 +59,7 @@ pub struct App {
 
 /// Dev-only startup automation for screenshots/manual QA (see docs/dev/desktop.md):
 /// `CP_OPEN=<game index>` opens a game from the first database, `CP_PLY=<n>` steps
-/// along the main line, `CP_ANALYZE=1` starts the engine, `CP_SETTINGS=1` opens settings,
+/// along the main line, `CP_ANALYZE=1` starts the engine, `CP_SETTINGS=1` opens settings (`=board`, `=about`: that tab),
 /// `CP_REVIEW=1` starts the whole-game analysis (`=dialog` only opens its dialog).
 #[derive(Default)]
 struct DebugStartup {
@@ -148,8 +148,10 @@ impl App {
         if let Ok(tab) = std::env::var("CP_SETTINGS") {
             // Opened after a short delay (see debug_screenshot) so a fullscreen switch is done first.
             self.debug.open_settings = true;
-            if tab == "board" {
-                self.settings_ui.tab = Tab::Board;
+            match tab.as_str() {
+                "board" => self.settings_ui.tab = Tab::Board,
+                "about" => self.settings_ui.tab = Tab::About,
+                _ => {}
             }
         }
         self
