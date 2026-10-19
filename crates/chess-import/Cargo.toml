@@ -12,4 +12,5 @@ shakmaty.workspace = true
 encoding_rs.workspace = true
 thiserror.workspace = true
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64", "bzip2"] }
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 sevenz-rust2 = { version = "0.24.1", default-features = false, features = ["bzip2", "ppmd", "deflate"] }

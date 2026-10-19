@@ -24,6 +24,26 @@ mod viewed;
 mod widgets;
 
 fn main() -> eframe::Result {
+    // `chesspenguin --bench <database> [report.txt]`: timings instead of the window
+    // (`docs/dev/import.md`, "Замер на другой машине").
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--bench") {
+        let Some(db) = args.get(1) else {
+            eprintln!("usage: chesspenguin --bench <database> [report.txt]");
+            std::process::exit(2);
+        };
+        let cache = settings::Settings::cache_dir().map(|d| d.join("boosters"));
+        let result = match args.get(2) {
+            Some(file) => std::fs::File::create(file)
+                .and_then(|mut f| chess_import::bench::run(db.as_ref(), cache.as_deref(), &mut f)),
+            None => chess_import::bench::run(db.as_ref(), cache.as_deref(), &mut std::io::stdout()),
+        };
+        if let Err(e) = result {
+            eprintln!("bench: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_app_id("io.github.vrubelroman.chessPenguin")

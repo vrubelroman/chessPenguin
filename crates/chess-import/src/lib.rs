@@ -8,8 +8,10 @@
 //! records and a game is converted to PGN when it is opened. Sources are only read.
 
 mod archive;
+pub mod bench;
 pub mod cbv;
 pub mod chessbase;
+pub mod memory;
 pub mod pgn_positions;
 pub mod position;
 
@@ -104,7 +106,7 @@ impl PgnDb {
     }
 
     /// The position table, built on first use. `None` when cancelled.
-    fn positions(
+    pub(crate) fn positions(
         &self,
         progress: &AtomicUsize,
         cancel: &AtomicBool,
