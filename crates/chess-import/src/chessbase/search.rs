@@ -5,7 +5,6 @@
 //! Research and measurements: `docs/research/position-index.md`.
 
 use std::fs::File;
-use std::os::unix::fs::FileExt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use shakmaty::uci::UciMove;
@@ -363,8 +362,9 @@ impl Worker<'_> {
             });
         } else {
             let mut rec = [0u8; CBB_RECORD];
-            self.games
-                .retain(|&(i, _)| cbb.read_exact_at(&mut rec, at(i)).is_err() || sig.admits(&rec));
+            self.games.retain(|&(i, _)| {
+                read_exact_at(cbb, &mut rec, at(i)).is_err() || sig.admits(&rec)
+            });
         }
     }
 
@@ -405,12 +405,38 @@ fn find(target: &Target, cbg: &[u8], offset: u32) -> Option<Hit> {
     }
 }
 
+/// Reads at a position without moving a shared cursor (`pread` on Unix; on Windows
+/// the handle's cursor moves, but every thread has its own handle).
+fn read_at(f: &File, buf: &mut [u8], at: u64) -> std::io::Result<usize> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::FileExt::read_at(f, buf, at)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::FileExt::seek_read(f, buf, at)
+    }
+}
+
+fn read_exact_at(f: &File, mut buf: &mut [u8], mut at: u64) -> std::io::Result<()> {
+    while !buf.is_empty() {
+        match read_at(f, buf, at)? {
+            0 => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            n => {
+                buf = &mut buf[n..];
+                at += n as u64;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Reads up to `len` bytes at `at` into `buf` (shorter at the end of the file).
 fn read_span(f: &File, at: u64, buf: &mut Vec<u8>, len: usize) {
     buf.resize(len, 0);
     let mut done = 0;
     while done < len {
-        match f.read_at(&mut buf[done..], at + done as u64) {
+        match read_at(f, &mut buf[done..], at + done as u64) {
             Ok(0) | Err(_) => break,
             Ok(n) => done += n,
         }
@@ -421,7 +447,7 @@ fn read_span(f: &File, at: u64, buf: &mut Vec<u8>, len: usize) {
 /// Reads the `.cbg` record at `offset` into `buf`; its size, 0 when unreadable.
 fn read_record(f: &File, offset: u32, buf: &mut Vec<u8>) -> usize {
     let mut head = [0u8; 4];
-    if f.read_exact_at(&mut head, u64::from(offset)).is_err() {
+    if read_exact_at(f, &mut head, u64::from(offset)).is_err() {
         return 0;
     }
     let size = be(&head, 1, 3).unwrap_or(0) as usize;
@@ -430,7 +456,7 @@ fn read_record(f: &File, offset: u32, buf: &mut Vec<u8>) -> usize {
         return 0;
     }
     buf.resize(size, 0);
-    if f.read_exact_at(buf, u64::from(offset)).is_err() {
+    if read_exact_at(f, buf, u64::from(offset)).is_err() {
         return 0;
     }
     size
