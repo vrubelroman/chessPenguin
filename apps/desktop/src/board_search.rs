@@ -690,15 +690,14 @@ fn continuation_row(
         ui.painter()
             .text(egui::pos2(x, y), align, s, font.clone(), color);
     };
-    if i < 9 {
-        text(
-            x,
-            &(i + 1).to_string(),
-            visuals.weak_text_color(),
-            egui::Align2::LEFT_CENTER,
-        );
-    }
-    x += 16.0;
+    // Every row is numbered; 1-9 also play the move.
+    text(
+        x + 18.0,
+        &(i + 1).to_string(),
+        visuals.weak_text_color(),
+        egui::Align2::RIGHT_CENTER,
+    );
+    x += 26.0;
     let label = stat
         .uci
         .to_move(pos)

@@ -10,6 +10,7 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   taken from a variation; average rating of a continuation only from games with both ratings.
 - Narrow windows: the [Filters | Board] switch stays visible, conditions that do not fit become
   "+N more", columns hide by priority and the date becomes the year.
+- Continuations are numbered through the whole list (keys 1-9 still play the first nine).
 - Ctrl+Shift+Backspace clears all conditions with the position; a × removes the position in small
   databases; the cache of search results is bounded.
 
