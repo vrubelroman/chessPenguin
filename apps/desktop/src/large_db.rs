@@ -263,14 +263,39 @@ impl LargeView {
         if let Ok(p) = std::env::var("CP_FILTER_PLAYER") {
             form.player.text = p;
         }
-        let (board, pane) = match SearchBoard::from_env() {
+        // `CP_FILTER="player=carlsen;years=2015-2026;elo=2600"` (screenshots).
+        if let Ok(spec) = std::env::var("CP_FILTER") {
+            for part in spec.split(';') {
+                let Some((k, v)) = part.split_once('=') else { continue };
+                match k.trim() {
+                    "player" => form.player.text = v.to_string(),
+                    "years" => {
+                        let (a, b) = v.split_once('-').unwrap_or((v, ""));
+                        form.year_from = a.to_string();
+                        form.year_to = b.to_string();
+                    }
+                    "elo" => form.elo_min = v.to_string(),
+                    _ => {}
+                }
+            }
+        }
+        let (board, mut pane) = match SearchBoard::from_env() {
             Some(b) => (b, Pane::Board),
             None => (SearchBoard::new(), Pane::Filters),
         };
+        if std::env::var("CP_PANE").as_deref() == Ok("hidden") {
+            pane = Pane::Hidden;
+        }
+        // `CP_SORT=date`: newest games first (screenshots).
+        let sort = if std::env::var("CP_SORT").as_deref() == Ok("date") {
+            (SortKey::Date, false)
+        } else {
+            (SortKey::Number, true)
+        };
         LargeView {
             form,
-            sort: (SortKey::Number, true),
-            sort_chosen: false,
+            sort,
+            sort_chosen: sort.0 != SortKey::Number,
             view: Vec::new(),
             shown: None,
             outcome: None,
