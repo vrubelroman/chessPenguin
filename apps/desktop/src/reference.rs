@@ -976,42 +976,30 @@ impl Reference {
         let line = main_line(game);
         let book = self.book_for(&path, &line).cloned();
         let failed_book = self.book_failed.as_ref() == Some(&(path.clone(), line.clone()));
-        ui.horizontal(|ui| match &book {
+        // The novelty: the first move of the game no other game of the database played
+        // (the line keeps its height while it is worked out, so nothing jumps).
+        let novelty = book.as_ref().and_then(|b| match b.last {
+            _ if b.to_the_end => None,
+            Some(last) => game.main_child(last),
+            None => game.main_child(game.root()),
+        });
+        ui.horizontal(|ui| match (&book, novelty) {
             _ if line.is_empty() => {}
-            Some(b) if b.to_the_end => {
-                ui.label(RichText::new(tr("The whole game is in this database")).weak());
-            }
-            Some(BookEnd {
-                last: Some(node), ..
-            }) if *node == game.root() => {
-                ui.label(
-                    RichText::new(tr(
-                        "The games of this database leave this one at its first move",
-                    ))
-                    .weak(),
-                );
-            }
-            Some(BookEnd {
-                last: Some(node), ..
-            }) => {
-                ui.label(RichText::new(tr("Known up to")).weak());
+            (Some(_), Some(node)) => {
+                ui.label(RichText::new(tr("Novelty:")).weak());
                 if ui
-                    .link(node_label(game, *node).unwrap_or_default())
+                    .link(node_label(game, node).unwrap_or_default())
                     .on_hover_text(tr(
-                        "The last move of the game still played in other games of this database",
+                        "The first move of this game that no other game of this database played; before it the game followed games of the database",
                     ))
                     .clicked()
                 {
-                    action = Some(RefAction::Goto(*node));
+                    action = Some(RefAction::Goto(node));
                 }
             }
-            Some(_) => {
-                ui.label(
-                    RichText::new(tr("Not even the start of the game is in this database")).weak(),
-                );
-            }
-            None if failed_book => {}
-            None => {
+            (Some(_), None) => {}
+            (None, _) if failed_book => {}
+            (None, _) => {
                 ui.label(RichText::new(tr("Comparing the game with the database…")).weak());
             }
         });
@@ -1138,6 +1126,8 @@ impl Reference {
         let show_score = width > 400.0 && !books;
         let show_elo = width > 330.0 && !books;
         let show_bar = !books;
+        // Text in the rows must not take the clicks meant for the row.
+        ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
             .id_salt("reference_moves")
             .striped(true)
@@ -1217,7 +1207,7 @@ impl Reference {
                             .to_move(pos)
                             .map(|m| move_label(pos, m))
                             .unwrap_or_else(|_| s.san.clone()),
-                        None => tr("Ended").to_owned(),
+                        None => tr("Game over").to_owned(),
                     };
                     row.col(|ui| {
                         let text = if in_game {
@@ -1227,9 +1217,13 @@ impl Reference {
                         } else {
                             RichText::new(format!("  {label}")).weak()
                         };
-                        let r = ui.label(text);
+                        let r = ui.add(egui::Label::new(text).selectable(false));
                         if in_game {
                             r.on_hover_text(tr("The move played in this game"));
+                        } else if stat.is_none() {
+                            r.on_hover_text(tr(
+                                "Games that ended in this position (resignation, draw, mate, time)",
+                            ));
                         }
                     });
                     row.col(|ui| {
@@ -1412,6 +1406,7 @@ impl Reference {
         let show_event = width > 720.0;
         let show_then = width > 520.0;
         let show_year = width > 380.0;
+        ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
             .id_salt("reference_games")
             .striped(true)

@@ -454,9 +454,9 @@ impl App {
             self.game = self.previous_games.pop();
             return;
         }
-        // Games left for others (reference tab) with unsaved edits come first: the last
-        // such one is shown again and, when quitting, asked about; the library (or the
-        // search board) waits until none is left.
+        // Games left for others (reference tab) with unsaved edits are asked about one
+        // by one (each shown with the question) before the library, the search board or
+        // quitting.
         if let Some(k) = self
             .previous_games
             .iter()
@@ -464,18 +464,9 @@ impl App {
         {
             self.previous_games.truncate(k + 1);
             self.game = self.previous_games.pop();
-            if let Some(g) = &self.game {
-                let msg = trf(
-                    "Back to {game}: it has unsaved changes",
-                    &[("game", &g.title())],
-                );
-                self.toast(ctx, msg);
-            }
-            if intent == CloseIntent::QuitApp {
-                self.confirm_close = Some(CloseIntent::QuitApp);
-            }
-            // The search board asked for was for the game just closed: not later.
-            self.find_after_close = None;
+            // Ask about it right away; its answer continues to where the user was going
+            // (the library, the search board, quitting).
+            self.confirm_close = Some(intent);
             return;
         }
         self.previous_games.clear();

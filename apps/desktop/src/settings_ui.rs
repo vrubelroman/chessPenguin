@@ -304,8 +304,14 @@ impl SettingsWindow {
             }
         }
         // ChessPenguin's Stockfish can always be (re)downloaded from here.
+        // Not when a Stockfish of the user's is there already (it would be the same
+        // engine twice).
         let own = crate::engines::own_stockfish().is_some();
-        if !s.engines.is_empty() && !own && crate::engine_download::available() {
+        let has_stockfish = s
+            .engines
+            .iter()
+            .any(|e| e.name.to_lowercase().contains("stockfish") && e.executable().is_some());
+        if !s.engines.is_empty() && !own && !has_stockfish && crate::engine_download::available() {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if downloading {
