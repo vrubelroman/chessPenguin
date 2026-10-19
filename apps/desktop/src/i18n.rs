@@ -80,6 +80,15 @@ pub fn trf(key: &'static str, args: &[(&str, &dyn Display)]) -> String {
 // [English, Русский, Français, Deutsch, Español, Italiano]
 const ROWS: &[[&str; 6]] = &[
     // --- position search ---
+    ["Year", "Год", "Année", "Jahr", "Año", "Anno"],
+    [
+        "+{n} more",
+        "ещё {n}",
+        "+{n} autres",
+        "+{n} weitere",
+        "+{n} más",
+        "+{n} altri",
+    ],
     [
         "Clear",
         "Очистить",

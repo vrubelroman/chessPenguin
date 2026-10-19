@@ -2,6 +2,17 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Position search fixes (QA report 3): "in this move order" no longer reused from another move
+  order of the same position; while a search runs, the arrow and the position a game opens at
+  belong to the rows shown; in books the next move of a game ending in the position is no longer
+  taken from a variation; average rating of a continuation only from games with both ratings.
+- Narrow windows: the [Filters | Board] switch stays visible, conditions that do not fit become
+  "+N more", columns hide by priority and the date becomes the year.
+- Ctrl+Shift+Backspace clears all conditions with the position; a × removes the position in small
+  databases; the cache of search results is bounded.
+
 ## [0.5.0] — 2026-10-19
 
 - Find games by position: the "Board" pane next to the game list (Ctrl+B). Play moves and the list

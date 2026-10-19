@@ -86,11 +86,11 @@ impl Tally {
             GameResult::BlackWins => self.black_wins += 1,
             GameResult::Unknown => {}
         }
-        for e in [white_elo, black_elo] {
-            if e > 0 {
-                self.elo_sum += u64::from(e);
-                self.elo_count += 1;
-            }
+        // The average rating counts games where both ratings are known, like the
+        // "strongest first" sort.
+        if white_elo > 0 && black_elo > 0 {
+            self.elo_sum += u64::from(white_elo) + u64::from(black_elo);
+            self.elo_count += 2;
         }
         self.last_year = self.last_year.max(year);
     }
@@ -161,6 +161,8 @@ pub struct Collector {
     /// Per move: games that played it in their main line.
     main_line: HashMap<UciMove, u32>,
     ended: Tally,
+    /// The last match whose first continuation was recorded (it decides `next`).
+    continued: Option<u32>,
 }
 
 impl Collector {
@@ -187,6 +189,13 @@ impl Collector {
         self.matches.push(m);
     }
 
+    /// Records a matching game whose [`Match::next`] is already decided (the move
+    /// after its chosen occurrence); its continuations do not change it.
+    pub fn add_match_with_next(&mut self, m: Match) {
+        self.matches.push(m);
+        self.continued = Some(m.index);
+    }
+
     /// Records one continuation of game `index` (added with [`Collector::add_match`]):
     /// a move played next (`main_line`: in the game's main line) or `None` when the
     /// game ends here. The first move recorded for a game is its [`Match::next`].
@@ -201,14 +210,18 @@ impl Collector {
         black_elo: u16,
         year: u16,
     ) {
+        // The first continuation belongs to the chosen occurrence: it is the game's
+        // next move, even when it is the end of the game (later ones come from other
+        // branches of a PGN game).
+        if self.continued != Some(index)
+            && let Some(m) = self.matches.last_mut()
+            && m.index == index
+        {
+            m.next = next;
+            self.continued = Some(index);
+        }
         let tally = match next {
             Some(uci) => {
-                if let Some(m) = self.matches.last_mut()
-                    && m.index == index
-                    && m.next.is_none()
-                {
-                    m.next = Some(uci);
-                }
                 if main_line {
                     *self.main_line.entry(uci).or_default() += 1;
                 }
@@ -309,17 +322,25 @@ mod tests {
         let mut b = Collector::default();
         b.add(m(2), Some(e4), GameResult::BlackWins, 2500, 0, 2024);
         b.add(m(5), None, GameResult::Unknown, 0, 0, 0);
+        // A game ending in its chosen occurrence keeps no next move, whatever its other
+        // branches play.
+        b.add_match(m(7));
+        b.add_continuation(7, None, true, GameResult::Draw, 0, 0, 0);
+        b.add_continuation(7, Some(e4), false, GameResult::Draw, 0, 0, 0);
         a.merge(b);
         let out = a.finish(&pos);
         assert_eq!(
             out.matches.iter().map(|m| m.index).collect::<Vec<_>>(),
-            vec![1, 2, 3, 5]
+            vec![1, 2, 3, 5, 7]
         );
+        assert_eq!(out.matches[4].next, None, "ends in its chosen occurrence");
+        assert_eq!(out.matches[2].next, Some(e4));
         assert_eq!(out.moves[0].san, "e4");
-        assert_eq!(out.moves[0].tally.games, 2);
-        assert_eq!(out.moves[0].tally.average_elo(), Some(2600));
+        assert_eq!(out.moves[0].tally.games, 3);
+        // Only game 3 has both ratings.
+        assert_eq!(out.moves[0].tally.average_elo(), Some(2650));
         assert_eq!(out.moves[0].tally.last_year, 2024);
         assert_eq!(out.moves[1].san, "d4");
-        assert_eq!(out.ended.games, 1);
+        assert_eq!(out.ended.games, 2);
     }
 }

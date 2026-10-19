@@ -300,15 +300,16 @@ impl PositionTable {
             return;
         };
         let index = game as u32;
-        out.add_match(Match {
+        // The move after the chosen occurrence is the game's `next` (none when the
+        // game ends there, whatever its other branches play).
+        let first = self.first_child_move(at, refs);
+        out.add_match_with_next(Match {
             index,
             ply: u32::from(self.nodes[at].ply),
             same_order: !other_order,
             in_variation,
-            next: None,
+            next: first.map(decode),
         });
-        // The move after the chosen occurrence goes first: it is the game's `next`.
-        let first = self.first_child_move(at, refs);
         if let Some(pos) = moves.iter().position(|m| Some(m.0) == first) {
             moves.swap(0, pos);
         }
@@ -645,6 +646,17 @@ mod tests {
                 m(6, 3, true, false),
             ]
         );
+    }
+
+    #[test]
+    fn next_move_belongs_to_the_chosen_occurrence() {
+        // The main line ends in the position; a variation reaches it and goes on.
+        let db = db("1. e4 (1. Nf3 e5 2. e4 Nc6) 1... e5 2. Nf3 *\n");
+        let t = table(&db);
+        let out = search(&t, &db, &query(&["e4", "e5", "Nf3"]));
+        assert_eq!(out.matches.len(), 1);
+        assert!(!out.matches[0].in_variation);
+        assert_eq!(out.matches[0].next, None);
     }
 
     #[test]

@@ -75,8 +75,9 @@ struct SmallRequest {
 struct SmallBoard {
     board: SearchBoard,
     open: bool,
-    job: Option<(SmallRequest, Background<PositionOutcome>)>,
-    shown: Option<(SmallRequest, Arc<PositionOutcome>)>,
+    job: Option<(SmallRequest, shakmaty::Chess, Background<PositionOutcome>)>,
+    /// The last result, the request and the position it answers.
+    shown: Option<(SmallRequest, shakmaty::Chess, Arc<PositionOutcome>)>,
     table_hover: Option<UciMove>,
     /// Most games have no result: a book; continuations count chapters.
     books: bool,
@@ -111,13 +112,13 @@ impl SmallBoard {
 
     /// Collects a finished search and starts the one the board and search text ask for.
     fn update(&mut self, db: &Arc<Database>, search: &str, ctx: &egui::Context) {
-        if let Some((req, job)) = &self.job
+        if let Some((req, pos, job)) = &self.job
             && let Some(result) = job.poll()
         {
-            let req = req.clone();
+            let (req, pos) = (req.clone(), pos.clone());
             self.job = None;
             if let Some(out) = result {
-                self.shown = Some((req, Arc::new(out)));
+                self.shown = Some((req, pos, Arc::new(out)));
             }
         }
         if !self.open && !self.board.is_set() {
@@ -127,10 +128,11 @@ impl SmallBoard {
         let current = self
             .job
             .as_ref()
-            .map(|(r, _)| r)
-            .or(self.shown.as_ref().map(|(r, _)| r));
+            .map(|(r, ..)| r)
+            .or(self.shown.as_ref().map(|(r, ..)| r));
         if current != Some(&wanted) {
             let (db, query, text) = (db.clone(), self.board.query(), wanted.search.clone());
+            let pos = query.position.clone();
             let now = ctx.input(|i| i.time);
             self.job = Background::spawn(ctx, now, move |progress, cancel| {
                 let pgn = db.as_pgn()?;
@@ -145,7 +147,7 @@ impl SmallBoard {
                 });
                 db.search_position(candidates.as_deref(), &query, progress, cancel)
             })
-            .map(|j| (wanted, j));
+            .map(|j| (wanted, pos, j));
         }
         if self.job.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -154,7 +156,7 @@ impl SmallBoard {
 
     /// The outcome for the current board and search text, if ready.
     fn outcome(&self, search: &str) -> Option<&PositionOutcome> {
-        let (req, out) = self.shown.as_ref()?;
+        let (req, _, out) = self.shown.as_ref()?;
         (*req == self.request(search)).then_some(out.as_ref())
     }
 }
@@ -867,17 +869,22 @@ impl Library {
         // With a position on the board: only the games that reach it.
         let small = self.small.get(&path);
         let position = small.filter(|s| s.board.is_set());
-        let outcome: Option<Arc<PositionOutcome>> = position.and_then(|s| {
-            s.outcome(&self.search)
-                .map(|_| s.shown.as_ref().expect("shown").1.clone())
-        });
-        let searching = position.is_some() && outcome.is_none();
-        let ordered = position.is_some_and(|s| s.board.query().line.is_some());
-        let at = position.map(|s| s.board.position());
+        // While a new search runs the last result stays (dimmed): its rows, arrows and
+        // the position a game opens at all belong to the position it was found for.
+        let last = position.and_then(|s| s.shown.as_ref());
+        let outcome: Option<Arc<PositionOutcome>> = last.map(|(_, _, out)| out.clone());
+        let current = position.is_some_and(|s| s.outcome(&self.search).is_some());
+        let searching = position.is_some() && !current;
+        let ordered = last.is_some_and(|(req, ..)| req.line.is_some());
+        let at = last.map(|(_, pos, _)| pos.clone());
+        let mut clear_position = false;
         if let Some(s) = position {
             ui.horizontal(|ui| {
                 let text = trf("Position: {line}", &[("line", &s.board.chip_text())]);
                 ui.label(RichText::new(text).size(13.0));
+                clear_position = crate::widgets::small_close_button(ui)
+                    .on_hover_text(tr("Remove the condition"))
+                    .clicked();
                 if searching {
                     ui.add(egui::Spinner::new().size(14.0));
                 } else if let Some(out) = &outcome {
@@ -1122,10 +1129,14 @@ impl Library {
                 });
             });
         let next = hovered
+            .filter(|_| current)
             .zip(outcome.as_deref())
             .and_then(|(i, out)| board_search::next_move_of(out, i));
         if let Some(small) = self.small.get_mut(&path) {
             small.table_hover = next;
+            if clear_position {
+                small.board = SearchBoard::new();
+            }
         }
         if let Some((k, v)) = toggle_viewed {
             self.viewed.set(k, v);

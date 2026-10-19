@@ -271,7 +271,8 @@ impl SearchBoard {
         let now = ctx.input(|i| i.time);
         let mut changed = false;
         ctx.input_mut(|i| {
-            if i.consume_key(Modifiers::COMMAND, Key::Backspace) {
+            // Ctrl+Backspace (not with Shift: that clears all conditions).
+            if !i.modifiers.shift && i.consume_key(Modifiers::COMMAND, Key::Backspace) {
                 self.reset(now);
                 changed = true;
             }

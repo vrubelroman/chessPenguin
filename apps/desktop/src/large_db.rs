@@ -181,8 +181,26 @@ pub enum Pane {
     Board,
 }
 
-/// Search outcomes of the session, by filter and position.
+/// Search outcomes of the session, by filter and position with the board's move order
+/// (it decides "in this move order").
 type OutcomeCache = HashMap<(u64, u64), Arc<PositionOutcome>>;
+
+/// Matching games kept in the cache at most (16 bytes each).
+const CACHE_MATCHES: usize = 20_000_000;
+
+/// Identity of a searched position with the board's move order.
+fn position_id((key, query): &(u64, PositionQuery)) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut h);
+    if let Some(line) = &query.line {
+        for m in line {
+            chess_import::position::uci(m).to_string().hash(&mut h);
+        }
+    } else {
+        "no line".hash(&mut h);
+    }
+    h.finish()
+}
 
 fn filter_hash(f: &Filter) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -347,12 +365,15 @@ impl LargeView {
                             && s.position.as_ref().map(|p| p.0)
                                 != job.request.position.as_ref().map(|p| p.0))
                 });
-                if let (Some(out), Some((key, _))) = (&answer.outcome, &job.request.position) {
-                    if self.cache.len() > 256 {
+                if let (Some(out), Some(pos)) = (&answer.outcome, &job.request.position) {
+                    let kept: usize = self.cache.values().map(|o| o.matches.len()).sum();
+                    if kept + out.matches.len() > CACHE_MATCHES {
                         self.cache.clear();
                     }
-                    self.cache
-                        .insert((filter_hash(&job.request.filter), *key), out.clone());
+                    self.cache.insert(
+                        (filter_hash(&job.request.filter), position_id(pos)),
+                        out.clone(),
+                    );
                 }
                 self.view = answer.view;
                 self.outcome = answer.outcome;
@@ -408,7 +429,10 @@ impl LargeView {
         let cached = request
             .position
             .as_ref()
-            .and_then(|(key, _)| self.cache.get(&(filter_hash(&request.filter), *key)))
+            .and_then(|pos| {
+                self.cache
+                    .get(&(filter_hash(&request.filter), position_id(pos)))
+            })
             .cloned();
         let (db, req) = (db.clone(), request.clone());
         let work = Background::spawn(ctx, now, move |progress, cancel| {
@@ -718,23 +742,12 @@ impl LargeView {
         let mut toggle_order = false;
         ui.horizontal(|ui| {
             ui.set_min_height(22.0);
-            if conditions.is_empty() {
-                ui.label(RichText::new(tr("No conditions: all games are shown")).weak());
-            }
-            for c in &conditions {
-                let (open, remove) = chip(ui, c);
-                if open {
-                    goto = Some(c.pane);
-                }
-                if remove {
-                    clear = Some(c.clear);
-                }
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some((same, all)) = self.in_order
                 && self.board.is_set()
                 && (same < all || self.only_order)
             {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                {
                     let link = if self.only_order {
                         tr("all move orders")
                     } else {
@@ -755,8 +768,36 @@ impl LargeView {
                         .weak()
                         .size(12.0),
                     );
-                });
+                }
             }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                if conditions.is_empty() {
+                    ui.label(RichText::new(tr("No conditions: all games are shown")).weak());
+                }
+                for (n, c) in conditions.iter().enumerate() {
+                    // No room for another chip: the rest in a tooltip.
+                    if ui.available_width() < 140.0 && n + 1 < conditions.len() {
+                        let rest: Vec<&str> =
+                            conditions[n..].iter().map(|c| c.text.as_str()).collect();
+                        if ui
+                            .link(trf("+{n} more", &[("n", &rest.len())]))
+                            .on_hover_text(rest.join("\n"))
+                            .clicked()
+                        {
+                            goto = Some(Pane::Filters);
+                        }
+                        break;
+                    }
+                    let (open, remove) = chip(ui, c);
+                    if open {
+                        goto = Some(c.pane);
+                    }
+                    if remove {
+                        clear = Some(c.clear);
+                    }
+                }
+            });
+            });
         });
         if toggle_order {
             self.only_order = !self.only_order;
@@ -803,14 +844,6 @@ impl LargeView {
                 ui.add_space(4.0);
                 self.annotations_group(ui);
             });
-        if ui.input_mut(|i| {
-            i.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::Backspace,
-            )
-        }) {
-            self.reset();
-        }
     }
 
     fn reset(&mut self) {
@@ -1164,19 +1197,31 @@ impl LargeView {
         let progress = self.slow_progress(now, base.records());
         let total = base.games() + base.texts();
 
+        // The pane switch comes first (right): it stays visible in a narrow window,
+        // the rest of the line is shortened.
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(
-                    path.file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
+          ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // The switch packs its segments; the rest keeps the usual spacing.
+            ui.scope(|ui| self.pane_switch(ui));
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        path.file_stem()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    )
+                    .strong(),
                 )
-                .strong(),
+                .truncate(),
             );
-            ui.label(RichText::new(tr("· ChessBase, read-only")).weak())
-                .on_hover_text(tr(
-                    "Read in place; the original files are not changed. Save a game to keep your edits.",
-                ));
+            if ui.available_width() > 520.0 {
+                ui.label(RichText::new(tr("· ChessBase, read-only")).weak())
+                    .on_hover_text(tr(
+                        "Read in place; the original files are not changed. Save a game to keep your edits.",
+                    ));
+            }
             let counter = match &self.shown {
                 Some(s)
                     if s.use_position
@@ -1198,7 +1243,7 @@ impl LargeView {
             if progress.is_some() {
                 counter = counter.weak();
             }
-            ui.label(counter);
+            ui.add(egui::Label::new(counter).truncate());
             if let Some(p) = progress {
                 ui.add(egui::Spinner::new().size(14.0));
                 ui.label(RichText::new(format!("{:.0} %", p * 100.0)).weak());
@@ -1211,9 +1256,8 @@ impl LargeView {
             {
                 open_notes = true;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.pane_switch(ui);
             });
+          });
         });
         self.chips(ui, settings);
         ui.add_space(2.0);
@@ -1225,8 +1269,26 @@ impl LargeView {
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::B)) {
             self.pane = Pane::Board;
         }
+        // Ctrl+Shift+Backspace: all conditions, the position included.
+        if ui.input_mut(|i| {
+            i.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Backspace,
+            )
+        }) {
+            self.reset();
+            self.board = SearchBoard::new();
+            self.only_order = false;
+        }
 
         let use_position = self.shown.as_ref().is_some_and(|s| s.use_position);
+        // The position the shown rows were found for (the board may be ahead of it).
+        let shown_position = self
+            .shown
+            .as_ref()
+            .filter(|s| s.use_position)
+            .and_then(|s| s.position.as_ref())
+            .map(|(_, q)| q.position.clone());
         if self.shown.is_some() && self.view.is_empty() && self.job.is_none() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
@@ -1262,46 +1324,60 @@ impl LargeView {
             None
         };
         // Narrow windows drop the least needed columns first.
+        // Narrow windows drop the least needed columns first (round, number, marks,
+        // length, ECO, event); the date becomes the year.
         let width = ui.available_width();
-        let show_round = width >= 1000.0;
-        let show_moves = width >= 760.0;
-        let show_marks = width >= 720.0;
+        let show_round = width >= 1100.0;
+        let show_number = !use_position || width >= 1100.0;
+        let show_moves = width >= 1000.0;
+        let show_marks = width >= 1000.0;
+        let show_eco = width >= 860.0;
+        let show_event = width >= 720.0;
+        let year_only = width < 1000.0;
         let mut columns: Vec<(&str, Option<SortKey>, Column)> = Vec::new();
         if use_position {
             columns.push((tr("Move"), None, Column::exact(52.0)));
         }
+        if show_number {
+            columns.push(("№", Some(SortKey::Number), Column::exact(84.0)));
+        }
+        // Without the event the names share the rest of the width.
+        let name = if show_event {
+            Column::initial(170.0).at_least(60.0).clip(true)
+        } else {
+            Column::remainder().at_least(60.0).clip(true)
+        };
         columns.extend([
-            ("№", Some(SortKey::Number), Column::exact(84.0)),
-            (
-                tr("White"),
-                Some(SortKey::White),
-                Column::initial(170.0).at_least(60.0).clip(true),
-            ),
+            (tr("White"), Some(SortKey::White), name),
             ("Elo", Some(SortKey::WhiteElo), Column::exact(44.0)),
-            (
-                tr("Black"),
-                Some(SortKey::Black),
-                Column::initial(170.0).at_least(60.0).clip(true),
-            ),
+            (tr("Black"), Some(SortKey::Black), name),
             ("Elo", Some(SortKey::BlackElo), Column::exact(44.0)),
             (tr("Result"), Some(SortKey::Result), Column::exact(56.0)),
         ]);
         if show_moves {
             columns.push((tr("Length"), Some(SortKey::Moves), Column::exact(56.0)));
         }
-        columns.push(("ECO", Some(SortKey::Eco), Column::exact(44.0)));
+        if show_eco {
+            columns.push(("ECO", Some(SortKey::Eco), Column::exact(44.0)));
+        }
         if show_marks {
             columns.push(("💬", None, Column::exact(40.0)));
         }
-        columns.push((
-            tr("Event"),
-            Some(SortKey::Event),
-            Column::remainder().at_least(80.0).clip(true),
-        ));
+        if show_event {
+            columns.push((
+                tr("Event"),
+                Some(SortKey::Event),
+                Column::remainder().at_least(80.0).clip(true),
+            ));
+        }
         if show_round {
             columns.push((tr("Round"), None, Column::exact(48.0)));
         }
-        columns.push((tr("Date"), Some(SortKey::Date), Column::exact(88.0)));
+        if year_only {
+            columns.push((tr("Year"), Some(SortKey::Date), Column::exact(48.0)));
+        } else {
+            columns.push((tr("Date"), Some(SortKey::Date), Column::exact(88.0)));
+        }
 
         if progress.is_some() {
             ui.set_opacity(0.6);
@@ -1432,6 +1508,9 @@ impl LargeView {
                                     RichText::new(marks).weak()
                                 }
                                 (_, Some(SortKey::Event)) => RichText::new(r.event.as_str()).italics(),
+                                (_, Some(SortKey::Date)) if year_only => {
+                                    RichText::new(r.date.get(..4).filter(|y| !y.contains('?')).unwrap_or(""))
+                                }
                                 (_, Some(SortKey::Date)) => RichText::new(crate::library::display_date(&r.date)),
                                 _ => RichText::new(if r.round == "?" { "" } else { r.round.as_str() }).weak(),
                             };
@@ -1439,7 +1518,7 @@ impl LargeView {
                         });
                     }
                     let resp = row.response();
-                    let resp = if show_round {
+                    let resp = if show_round && show_event {
                         resp
                     } else {
                         resp.on_hover_text(format!("{} · {}", r.event, r.round))
@@ -1466,7 +1545,10 @@ impl LargeView {
                     }
                 });
             });
+        // The shown rows belong to the shown position: no arrow on another one.
+        let shown_here = shown_position.as_ref() == Some(&self.board.position());
         self.table_hover = hovered
+            .filter(|_| shown_here)
             .zip(self.outcome.as_deref().filter(|_| use_position))
             .and_then(|(i, out)| board_search::next_move_of(out, i));
         if let Some((k, v)) = toggle_viewed {
@@ -1490,7 +1572,7 @@ impl LargeView {
             actions.push(LibraryAction::OpenGame {
                 path: path.to_path_buf(),
                 index,
-                at: use_position.then(|| self.board.position()),
+                at: shown_position.clone(),
             });
         }
         open_notes
@@ -1534,7 +1616,12 @@ impl LargeView {
             actions.push(LibraryAction::OpenGame {
                 path: path.to_path_buf(),
                 index,
-                at: self.board.is_set().then(|| self.board.position()),
+                at: self
+                    .shown
+                    .as_ref()
+                    .filter(|s| s.use_position)
+                    .and_then(|s| s.position.as_ref())
+                    .map(|(_, q)| q.position.clone()),
             });
         }
     }

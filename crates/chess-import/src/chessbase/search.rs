@@ -362,9 +362,8 @@ impl Worker<'_> {
             });
         } else {
             let mut rec = [0u8; CBB_RECORD];
-            self.games.retain(|&(i, _)| {
-                read_exact_at(cbb, &mut rec, at(i)).is_err() || sig.admits(&rec)
-            });
+            self.games
+                .retain(|&(i, _)| read_exact_at(cbb, &mut rec, at(i)).is_err() || sig.admits(&rec));
         }
     }
 
