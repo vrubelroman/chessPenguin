@@ -75,6 +75,8 @@ pub(super) struct GameData {
     pub record: [u8; CBB_RECORD],
     /// The opening entries, when asked for; `None` for a game from a set-up position.
     pub opening: Option<GameEntry>,
+    /// The game starts from a set-up position (with `opening` asked for).
+    pub set_up: bool,
 }
 
 fn walk(cbg: &[u8], offset: u32, fast: bool, opening: Option<u32>) -> Result<GameData, WalkError> {
@@ -96,9 +98,11 @@ fn walk(cbg: &[u8], offset: u32, fast: bool, opening: Option<u32>) -> Result<Gam
         true
     })?;
     r[0x03] |= end_pawns;
+    let set_up = entry.as_ref().is_some_and(|e| !e.standard);
     Ok(GameData {
         record: r,
         opening: entry.filter(|e| e.standard),
+        set_up,
     })
 }
 
@@ -185,6 +189,7 @@ pub(super) fn build(
                     let (mut span, mut single) = (Vec::new(), Vec::new());
                     let mut block = vec![0u8; BLOCK * CBB_RECORD];
                     let mut entries: Vec<GameEntry> = Vec::new();
+                    let mut set_up: Vec<u32> = Vec::new();
                     loop {
                         if cancel.load(Ordering::Relaxed) {
                             return Ok(());
@@ -197,6 +202,7 @@ pub(super) fn build(
                         let bytes = &mut block[..(to - from) * CBB_RECORD];
                         bytes.fill(0);
                         entries.clear();
+                        set_up.clear();
                         games.clear();
                         for i in from..to {
                             // Texts and Chess960 games (ECO field ≥ 64576) have no
@@ -213,13 +219,16 @@ pub(super) fn build(
                                 let at = (index as usize - from) * CBB_RECORD;
                                 bytes[at..at + CBB_RECORD].copy_from_slice(&d.record);
                                 entries.extend(d.opening);
+                                if d.set_up {
+                                    set_up.push(index);
+                                }
                             }
                         });
                         if let Some(f) = &file {
                             write_all_at(f, bytes, ((from + 1) * CBB_RECORD) as u64)?;
                         }
                         if let Some(sink) = &sink {
-                            sink.add(&entries)?;
+                            sink.add(&entries, &set_up)?;
                         }
                         progress.fetch_add(to - from, Ordering::Relaxed);
                     }

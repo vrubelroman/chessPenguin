@@ -2,8 +2,10 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.3] — 2026-10-19
 
+- Import notes (for example, Chess960 games shown without moves) are a quiet grey "ℹ" now
+  instead of an orange warning sign.
 - Position search in a large ChessBase database without a usable `.cbb` search index: the
   program builds its own once (in the background, kept in the cache) and deep positions are
   then found in milliseconds instead of a pass over every game.

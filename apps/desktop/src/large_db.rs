@@ -239,7 +239,8 @@ pub struct LargeView {
     /// Building the search index of the base (our booster when `.cbb` cannot be used,
     /// the opening positions), once the board is used; `booster_failed` keeps a
     /// failure from being retried.
-    booster: Option<Background<bool>>,
+    /// The job and the work it has to do (in its progress units).
+    booster: Option<(Background<bool>, usize)>,
     booster_failed: bool,
     board: SearchBoard,
     only_order: bool,
@@ -461,7 +462,7 @@ impl LargeView {
     /// Builds the search index in the background when the board is in use and the
     /// base lacks something (`Base::prepare`); searches meanwhile run without it.
     fn update_booster(&mut self, db: &Arc<Database>, now: f64, ctx: &egui::Context) {
-        if let Some(b) = &self.booster
+        if let Some((b, _)) = &self.booster
             && let Some(result) = b.poll()
         {
             self.booster = None;
@@ -475,8 +476,9 @@ impl LargeView {
         {
             return;
         }
+        let work = db.as_chessbase().map_or(0, |b| b.prepare_work());
         let db = db.clone();
-        self.booster = Background::spawn(ctx, now, move |progress, cancel| {
+        let job = Background::spawn(ctx, now, move |progress, cancel| {
             match db.as_chessbase()?.prepare(progress, cancel) {
                 Ok(true) => Some(true),
                 Ok(false) => None,
@@ -486,6 +488,7 @@ impl LargeView {
                 }
             }
         });
+        self.booster = job.map(|j| (j, work));
     }
 
     fn start(&mut self, db: &Arc<Database>, request: Request, now: f64, ctx: &egui::Context) {
@@ -590,20 +593,19 @@ impl LargeView {
             .job
             .as_ref()
             .map(|j| (j.work.progress() as f32 / total.max(1) as f32).min(1.0));
-        if let Some(b) = &self.booster {
-            // The pass over the records, then the sort of the index.
-            let p = (b.progress() as f32 / (2 * total).max(1) as f32).min(1.0);
+        if let Some((b, work)) = &self.booster {
+            let p = (b.progress() as f32 / (*work).max(1) as f32).min(1.0);
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(14.0));
                 ui.label(
                     RichText::new(trf(
-                        "Preparing fast position search… {p} %",
+                        "Speeding up search in this database (once)… {p} %",
                         &[("p", &format!("{:.0}", p * 100.0))],
                     ))
                     .weak(),
                 )
                 .on_hover_text(tr(
-                    "The search index of the base is built once and kept in the cache.",
+                    "An index for fast position search is built once and kept in the cache. Searching works meanwhile, only slower.",
                 ));
             });
         }
@@ -1330,12 +1332,7 @@ impl LargeView {
                 ui.add(egui::Spinner::new().size(14.0));
                 ui.label(RichText::new(format!("{:.0} %", p * 100.0)).weak());
             }
-            if notes > 0
-                && ui
-                    .button(RichText::new(format!("⚠ {notes}")).color(ui.visuals().warn_fg_color))
-                    .on_hover_text(tr("Import notes"))
-                    .clicked()
-            {
+            if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
                 open_notes = true;
             }
             });

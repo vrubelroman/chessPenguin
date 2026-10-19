@@ -517,7 +517,7 @@ impl Library {
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                     for n in &info.notes {
-                        ui.label(RichText::new(format!("⚠ {n}")).color(ui.visuals().warn_fg_color));
+                        ui.label(format!("• {n}"));
                     }
                 });
             });
@@ -838,14 +838,7 @@ impl Library {
                 }
             }
             let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
-            if notes > 0
-                && ui
-                    .button(
-                        RichText::new(format!("⚠ {notes}")).color(ui.visuals().warn_fg_color),
-                    )
-                    .on_hover_text(tr("Import notes"))
-                    .clicked()
-            {
+            if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
                 self.notes_open = Some(path.clone());
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

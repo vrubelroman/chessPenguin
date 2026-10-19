@@ -657,6 +657,21 @@ impl Base {
             )
     }
 
+    /// The work [`Base::prepare`] has to do, in the units of its `progress`: the
+    /// records of the pass, and as many again for sorting the opening index.
+    pub fn prepare_work(&self) -> usize {
+        let pass = self.booster_wanted() || self.openings_to_build();
+        let sort = self.openings_to_build();
+        self.records * (usize::from(pass) + usize::from(sort))
+    }
+
+    fn openings_to_build(&self) -> bool {
+        matches!(
+            self.openings_status(),
+            OpeningsStatus::Missing { room: true }
+        )
+    }
+
     /// Builds what is missing for fast position searches — our booster when `.cbb`
     /// cannot be used, the opening index when the machine has room for it — in one
     /// pass over the games (`progress` counts the records done, and again while the

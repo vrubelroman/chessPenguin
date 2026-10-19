@@ -26,3 +26,9 @@ fn x_button(ui: &mut Ui, size: egui::Vec2, d: f32) -> egui::Response {
         .line_segment([c + vec2(-d, d), c + vec2(d, -d)], stroke);
     resp
 }
+
+/// The quiet "ℹ n" of import notes: minor remarks, so no colour and no frame.
+pub fn notes_button(ui: &mut egui::Ui, notes: usize) -> egui::Response {
+    ui.add(egui::Button::new(egui::RichText::new(format!("ℹ {notes}")).weak().small()).frame(false))
+        .on_hover_text(crate::i18n::tr("Import notes"))
+}

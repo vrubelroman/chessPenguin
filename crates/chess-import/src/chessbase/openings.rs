@@ -15,9 +15,10 @@
 //! no entries (a search finds them in the pass, as before; the index answers only for
 //! positions reached by at most `PLIES` moves from the usual start).
 //!
-//! File. `<hash>.cpo` in the cache directory (same hash as the booster): a 40-byte
+//! File. `<hash>.cpo` in the cache directory (same hash as the booster): a 48-byte
 //! header (magic, plies, records, section lengths), the prefixes, the keys, the
-//! games; all little-endian. It is read whole into memory ([`Index::load`]), so its
+//! games, the games from a set-up position (u32 each, ascending: a search walks
+//! them as before); all little-endian. It is read whole into memory ([`Index::load`]), so its
 //! size is what it costs to keep.
 
 use std::fs::File;
@@ -30,7 +31,7 @@ use shakmaty::uci::UciMove;
 use shakmaty::{Chess, Role, Square};
 
 use super::base::Base;
-use crate::position::{self, Collector, GameResult, Match, PositionOutcome, PositionQuery, uci};
+use crate::position::{self, Collector, GameResult, Match, PositionQuery, uci};
 
 /// Half-moves of each game in the index.
 pub const PLIES: usize = 10;
@@ -44,7 +45,9 @@ pub const BYTES_PER_GAME: u64 = 60;
 const END: u16 = u16::MAX;
 /// Prefix code: a null move.
 const NULL: u16 = u16::MAX - 1;
-const MAGIC: &[u8; 8] = b"CPOPEN01";
+const MAGIC: &[u8; 8] = b"CPOPEN02";
+/// Header: magic, plies, records, then the lengths of the four sections.
+const HEADER: usize = 48;
 /// Temporary files the entries are spread over by the top bits of the key, so that
 /// no more than a fraction of them is sorted in memory at a time.
 const BUCKETS: usize = 64;
@@ -123,6 +126,8 @@ impl GameEntry {
 pub(super) struct Sink {
     buckets: Vec<Mutex<BufWriter<File>>>,
     prefix: Mutex<Vec<u16>>,
+    /// Games from a set-up position (the index has no entries for them).
+    set_up: Mutex<Vec<u32>>,
     dir: std::path::PathBuf,
 }
 
@@ -137,12 +142,19 @@ impl Sink {
         Ok(Sink {
             buckets,
             prefix: Mutex::new(vec![END; records * PREFIX]),
+            set_up: Mutex::new(Vec::new()),
             dir: dir.to_owned(),
         })
     }
 
-    /// Adds the entries of a block of games; `entries` hold distinct games.
-    pub(super) fn add(&self, entries: &[GameEntry]) -> io::Result<()> {
+    /// Adds the entries of a block of games (`entries` hold distinct games) and the
+    /// games of the block that start from a set-up position.
+    pub(super) fn add(&self, entries: &[GameEntry], set_up: &[u32]) -> io::Result<()> {
+        if !set_up.is_empty()
+            && let Ok(mut s) = self.set_up.lock()
+        {
+            s.extend_from_slice(set_up);
+        }
         if let Ok(mut p) = self.prefix.lock() {
             for e in entries {
                 let at = e.index as usize * PREFIX;
@@ -222,7 +234,7 @@ impl Sink {
         file.write_all(MAGIC)?;
         file.write_all(&(PLIES as u32).to_le_bytes())?;
         file.write_all(&(records as u32).to_le_bytes())?;
-        file.write_all(&[0u8; 24])?;
+        file.write_all(&[0u8; HEADER - 16])?;
         // The prefix section: records × PREFIX × u16.
         let prefix = self.prefix.lock().map_err(|_| io::Error::other("lock"))?;
         let mut bytes = Vec::with_capacity(prefix.len() * 2);
@@ -293,7 +305,11 @@ impl Sink {
                 games.write_all(&list)?;
                 games_len += list.len() as u64;
             }
-            progress.fetch_add(records / BUCKETS, Ordering::Relaxed);
+            // In all exactly `records` over the buckets.
+            progress.fetch_add(
+                records * (b + 1) / BUCKETS - records * b / BUCKETS,
+                Ordering::Relaxed,
+            );
         }
         let keys_len = keys.len() as u64;
         file.write_all(&keys)?;
@@ -306,6 +322,14 @@ impl Sink {
         }
         drop(games);
         let _ = std::fs::remove_file(&games_path);
+        // The games from a set-up position, ascending.
+        let mut set_up =
+            std::mem::take(&mut *self.set_up.lock().map_err(|_| io::Error::other("lock"))?);
+        set_up.sort_unstable();
+        for g in &set_up {
+            file.write_all(&g.to_le_bytes())?;
+        }
+        let set_up_len = set_up.len() as u64 * 4;
         let mut file = file.into_inner().map_err(|e| e.into_error())?;
         {
             use std::io::Seek;
@@ -313,6 +337,7 @@ impl Sink {
             file.write_all(&prefix_len.to_le_bytes())?;
             file.write_all(&keys_len.to_le_bytes())?;
             file.write_all(&games_len.to_le_bytes())?;
+            file.write_all(&set_up_len.to_le_bytes())?;
         }
         file.sync_all()?;
         drop(file);
@@ -356,6 +381,7 @@ pub struct Index {
     prefix: std::ops::Range<usize>,
     keys: std::ops::Range<usize>,
     games: std::ops::Range<usize>,
+    set_up: std::ops::Range<usize>,
 }
 
 impl Index {
@@ -367,7 +393,7 @@ impl Index {
     /// Reads the whole file; `None` when it is not an index for `records` records.
     pub fn load(path: &Path, records: usize) -> Option<Index> {
         let bytes = std::fs::read(path).ok()?;
-        let head = bytes.get(..40)?;
+        let head = bytes.get(..HEADER)?;
         if &head[..8] != MAGIC {
             return None;
         }
@@ -382,11 +408,12 @@ impl Index {
         if u32_at(8) != Some(PLIES as u64) || u32_at(12) != Some(records as u64) {
             return None;
         }
-        let (p, k, g) = (u64_at(16)?, u64_at(24)?, u64_at(32)?);
-        let prefix = 40..40 + p;
+        let (p, k, g, u) = (u64_at(16)?, u64_at(24)?, u64_at(32)?, u64_at(40)?);
+        let prefix = HEADER..HEADER + p;
         let keys = prefix.end..prefix.end + k;
         let games = keys.end..keys.end + g;
-        if games.end != bytes.len() || p != records * PREFIX * 2 || k % KEY != 0 {
+        let set_up = games.end..games.end + u;
+        if set_up.end != bytes.len() || p != records * PREFIX * 2 || k % KEY != 0 || u % 4 != 0 {
             return None;
         }
         Some(Index {
@@ -395,6 +422,7 @@ impl Index {
             prefix,
             keys,
             games,
+            set_up,
         })
     }
 
@@ -524,12 +552,12 @@ impl Index {
 
     /// The games (among `candidates`, ascending; `None`: all) that reach the position,
     /// with what they played next, as the pass would find them.
-    pub fn search(
+    pub fn collect(
         &self,
         base: &Base,
         candidates: Option<&[u32]>,
         query: &PositionQuery,
-    ) -> PositionOutcome {
+    ) -> Collector {
         let line: Vec<u16> = query
             .line
             .as_deref()
@@ -570,6 +598,28 @@ impl Index {
         for part in parts {
             out.merge(part);
         }
-        out.finish(&query.position)
+        out
+    }
+
+    /// The games from a set-up position (not in the index) among `candidates`.
+    pub fn set_up_games(&self, candidates: Option<&[u32]>) -> Vec<u32> {
+        let all = self
+            .set_up
+            .clone()
+            .step_by(4)
+            .map(|at| u32::from_le_bytes(self.bytes[at..at + 4].try_into().expect("4 bytes")));
+        match candidates {
+            None => all.collect(),
+            Some(c) => {
+                let mut i = 0;
+                all.filter(|&g| {
+                    while i < c.len() && c[i] < g {
+                        i += 1;
+                    }
+                    i < c.len() && c[i] == g
+                })
+                .collect()
+            }
+        }
     }
 }

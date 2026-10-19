@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.6.3" date="2026-10-19">
+      <description>
+        <p>Faster position search in large ChessBase databases: an opening index (when there is enough memory) and a search index of its own for databases without one. Quieter import notes; the email in Settings → About is copied on click.</p>
+      </description>
+    </release>
     <release version="0.6.2" date="2026-10-19">
       <description>
         <p>Settings → About: the version, links to the website, the release notes and the source code, and the support contacts.</p>

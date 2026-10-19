@@ -42,16 +42,36 @@ pub fn search(
     scanned: &AtomicUsize,
     cancel: &AtomicBool,
 ) -> Option<PositionOutcome> {
-    let total = candidates.map_or(base.records(), <[u32]>::len);
-    // A position of the opening: the index knows its games.
+    // A position of the opening: the index knows its games, except those from a
+    // set-up position, which the pass looks at.
     if let Some(index) = base.openings()
         && index.answers(query, candidates)
     {
+        let others = index.set_up_games(candidates);
+        let mut out = collect(base, Some(&others), query, scanned, cancel)?;
         if cancel.load(Ordering::Relaxed) {
             return None;
         }
-        scanned.fetch_add(total, Ordering::Relaxed);
-        return Some(index.search(base, candidates, query));
+        out.merge(index.collect(base, candidates, query));
+        let total = candidates.map_or(base.records(), <[u32]>::len);
+        scanned.fetch_add(total.saturating_sub(others.len()), Ordering::Relaxed);
+        return Some(out.finish(&query.position));
+    }
+    collect(base, candidates, query, scanned, cancel).map(|c| c.finish(&query.position))
+}
+
+/// The pass of [`search`]: the matches in record order and the statistics, not yet
+/// finished. `None` when cancelled.
+fn collect(
+    base: &Base,
+    candidates: Option<&[u32]>,
+    query: &PositionQuery,
+    scanned: &AtomicUsize,
+    cancel: &AtomicBool,
+) -> Option<Collector> {
+    let total = candidates.map_or(base.records(), <[u32]>::len);
+    if total == 0 {
+        return Some(Collector::default());
     }
     let target = Target::new(query);
     let cbb = base
@@ -129,7 +149,7 @@ pub fn search(
         all.merge(c);
     }
     all.matches = matches;
-    Some(all.finish(&query.position))
+    Some(all)
 }
 
 /// The searched position, prepared for cheap checks.
@@ -1068,6 +1088,147 @@ mod tests {
         );
         assert_eq!(progress.load(Ordering::Relaxed), 0);
         assert!(again.openings().is_some());
+    }
+
+    #[test]
+    fn opening_index_leaves_set_up_games_to_the_pass() {
+        let Some(sample) = Sample::unpack("Endgame Manual.cbv") else {
+            return;
+        };
+        let base = sample.open();
+        base.set_booster_dir(&sample.dir.join("cache"));
+        assert!(base.prepare_work() > 0);
+        let progress = AtomicUsize::new(0);
+        assert!(
+            base.prepare(&progress, &AtomicBool::new(false))
+                .expect("prepares")
+        );
+        let Some(index) = base.openings() else {
+            eprintln!("skipped: no memory for the index");
+            return;
+        };
+        let lines: Vec<_> = (0..base.records()).map(|i| oracle_line(&base, i)).collect();
+        let set_up: Vec<u32> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| {
+                l.as_ref()
+                    .and_then(|l| l.first())
+                    .is_some_and(|(p, _)| !same_position(p, &Chess::default()))
+            })
+            .map(|(i, _)| i as u32)
+            .collect();
+        assert!(!set_up.is_empty());
+        assert_eq!(index.set_up_games(None), set_up);
+        let some: Vec<u32> = set_up.iter().copied().step_by(2).collect();
+        assert_eq!(index.set_up_games(Some(&some)), some);
+        // A position of the opening, also reached by a set-up game: what the pass finds.
+        let plain = sample.open();
+        let (pos, _) = &lines[set_up[0] as usize].as_ref().expect("readable")[0];
+        for query in [
+            PositionQuery::new(pos.clone(), Some(Vec::new())),
+            PositionQuery::new(Chess::default(), Some(Vec::new())),
+        ] {
+            let (fast, slow) = (run(&base, None, &query), run(&plain, None, &query));
+            assert_eq!(full(&fast), full(&slow));
+        }
+        // The set-up start itself is found (by the pass, through the index's list).
+        let query = PositionQuery::new(pos.clone(), Some(Vec::new()));
+        assert!(
+            run(&base, None, &query)
+                .matches
+                .iter()
+                .any(|m| m.index == set_up[0])
+        );
+    }
+
+    /// Mega Database 2026 (not in the repository): the opening index against the pass
+    /// on positions of the opening taken from games all over the base. The index may
+    /// only miss games that reach the position later than its plies (by a detour),
+    /// and finds nothing the pass does not; the rest of every match is the same. Run
+    /// with `cargo test --release -p chess-import mega_openings_random -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn mega_openings_random() {
+        use super::super::openings::PLIES;
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../pgnFilesforExample/Mega2026/Mega Database 2026.cbh");
+        if !path.exists() {
+            eprintln!("skipped: no Mega");
+            return;
+        }
+        let base = Base::open(&path, &mut |_, _| {}, &AtomicBool::new(false)).expect("opens");
+        let dir = std::env::temp_dir().join(format!("chess-import-random-{}", std::process::id()));
+        base.set_booster_dir(&dir);
+        assert!(
+            base.prepare(&AtomicUsize::new(0), &AtomicBool::new(false))
+                .expect("prepares")
+        );
+        assert!(base.openings().is_some(), "no memory for the index");
+        let plain = Base::open(&path, &mut |_, _| {}, &AtomicBool::new(false)).expect("opens");
+        let cbg = File::open(base.cbg_path()).expect("cbg");
+        let mut buf = Vec::new();
+        let (mut queries, mut detours, mut games_seen) = (0, 0, 0usize);
+        let mut i = 7usize;
+        while queries < 120 {
+            i = (i * 7_919 + 104_729) % base.records();
+            if base.kind(i) != RecordKind::Game
+                || read_record(&cbg, base.moves_offset(i), &mut buf) == 0
+            {
+                continue;
+            }
+            let mut line: Vec<(Chess, Option<Move>)> = Vec::new();
+            let walked = moves::main_line(&buf, 0, false, |pos, step| {
+                line.push((
+                    pos.clone(),
+                    match step {
+                        Step::Move(m) => Some(*m),
+                        _ => None,
+                    },
+                ));
+                line.len() <= PLIES
+            });
+            if walked.is_err()
+                || line
+                    .first()
+                    .is_none_or(|(p, _)| !same_position(p, &Chess::default()))
+            {
+                continue;
+            }
+            let ply = (queries * 3) % (PLIES + 1);
+            if ply >= line.len() || line[..ply].iter().any(|(_, m)| m.is_none()) {
+                continue;
+            }
+            let moves: Vec<Move> = line[..ply].iter().filter_map(|(_, m)| *m).collect();
+            let query = PositionQuery::new(line[ply].0.clone(), Some(moves));
+            let fast = run(&base, None, &query);
+            let slow = run(&plain, None, &query);
+            let mut j = 0;
+            for m in &slow.matches {
+                if fast.matches.get(j) == Some(m) {
+                    j += 1;
+                } else {
+                    assert!(
+                        m.ply as usize > PLIES,
+                        "game {} at ply {} missing from the index (query ply {ply})",
+                        m.index + 1,
+                        m.ply
+                    );
+                    detours += 1;
+                }
+            }
+            assert_eq!(
+                j,
+                fast.matches.len(),
+                "the index found games the pass did not"
+            );
+            games_seen += slow.matches.len();
+            queries += 1;
+        }
+        eprintln!(
+            "{queries} positions, {games_seen} matches of the pass, {detours} reached only by a detour after ply {PLIES}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Mega Database 2026 (not in the repository): the opening index against the
