@@ -56,6 +56,9 @@ pub struct Base {
     own_booster: OnceLock<PathBuf>,
     /// The opening index, once loaded (`openings.rs`; kept in the same directory).
     openings: Mutex<Option<Arc<openings::Index>>>,
+    /// Held by [`Base::prepare`]: two callers (the search board, the reference panel)
+    /// never build the same files at once; the second finds them done.
+    preparing: Mutex<()>,
     cba: Option<Mutex<File>>,
     /// Titles of guiding texts read so far (they are stored with the text).
     text_titles: Mutex<HashMap<usize, String>>,
@@ -441,6 +444,7 @@ impl Base {
             booster_dir: OnceLock::new(),
             own_booster: OnceLock::new(),
             openings: Mutex::new(None),
+            preparing: Mutex::new(()),
             cba: cba.map(Mutex::new),
             text_titles: Mutex::new(HashMap::new()),
             notes: Vec::new(),
@@ -677,6 +681,13 @@ impl Base {
     /// pass over the games (`progress` counts the records done, and again while the
     /// index is sorted), then loads the index. `Ok(false)` when cancelled.
     pub fn prepare(&self, progress: &AtomicUsize, cancel: &AtomicBool) -> std::io::Result<bool> {
+        let _one_at_a_time = self
+            .preparing
+            .lock()
+            .map_err(|_| std::io::Error::other("prepare lock"))?;
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
         let Some(stem) = self.cache_stem() else {
             return Err(std::io::Error::other("no cache directory"));
         };

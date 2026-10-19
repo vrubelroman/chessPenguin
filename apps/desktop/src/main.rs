@@ -17,6 +17,7 @@ mod library;
 mod notation;
 mod online;
 mod online_ui;
+mod reference;
 mod report;
 mod review;
 mod settings;

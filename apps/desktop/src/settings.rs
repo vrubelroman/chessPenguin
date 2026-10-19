@@ -88,6 +88,8 @@ pub struct Settings {
     /// Chess.com.
     pub online_nick: String,
     pub online_nick_chesscom: Option<String>,
+    /// The database of the reference tab (`None`: the largest one on the shelf).
+    pub reference_db: Option<PathBuf>,
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -143,6 +145,7 @@ impl Default for Settings {
             examples_added: false,
             online_nick: String::new(),
             online_nick_chesscom: None,
+            reference_db: None,
         }
     }
 }
