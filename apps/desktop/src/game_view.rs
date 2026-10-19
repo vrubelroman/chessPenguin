@@ -83,6 +83,8 @@ pub enum GameAction {
     ResumeLive,
     /// Find the current position in a database (`None`: the last chosen one).
     FindPosition(Option<std::path::PathBuf>),
+    /// Game analysis needs an engine that is not there yet (offer to download one).
+    NeedEngine,
 }
 
 impl GameView {
@@ -275,6 +277,11 @@ impl GameView {
         ctx: &egui::Context,
         actions: &mut Vec<GameAction>,
     ) {
+        if !crate::engine_offer::EngineOffer::engine_ready(settings) {
+            self.review.dialog_open = false;
+            actions.push(GameAction::NeedEngine);
+            return;
+        }
         let Some(engine) = settings.active_engine().cloned() else {
             self.review.dialog_open = true;
             return;
@@ -1073,6 +1080,17 @@ impl GameView {
         } else {
             self.review.dialog_open = true;
         }
+    }
+
+    /// Starts the game analysis right away (after an engine was installed for it).
+    pub fn start_review_now(
+        &mut self,
+        settings: &Settings,
+        ctx: &egui::Context,
+    ) -> Vec<GameAction> {
+        let mut actions = Vec::new();
+        self.start_review(settings, true, ctx, &mut actions);
+        actions
     }
 
     /// Moves the cursor to the end of the main line.

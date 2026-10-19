@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds ChessPenguin-<version>-x86_64.AppImage from target/release/chesspenguin and the
-# Stockfish fetched by `packaging/stockfish.sh linux build/stockfish`.
+# Builds ChessPenguin-<version>-x86_64.AppImage from target/release/chesspenguin (the
+# program downloads Stockfish on request).
 # Usage (repository root): VERSION=0.1.0 packaging/build-appimage.sh dist/
 set -euo pipefail
 
@@ -30,12 +30,7 @@ APPIMAGE_EXTRACT_AND_RUN=1 "${work}/linuxdeploy" \
     --desktop-file "packaging/${app_id}.desktop" \
     --icon-file "packaging/icons/hicolor/256x256/apps/${app_id}.png"
 
-# 2. Stockfish is added afterwards: linuxdeploy would rewrite its RUNPATH, and the bundled
-#    engine must stay the unmodified official binary.
-install -Dm755 build/stockfish/stockfish "${appdir}/usr/lib/chesspenguin/stockfish"
-install -Dm644 build/stockfish/Copying.txt "${appdir}/usr/share/licenses/chesspenguin/stockfish-Copying.txt"
-
-# 3. appimagetool packs the AppDir as is.
+# 2. appimagetool packs the AppDir as is.
 mkdir -p "${out_dir}"
 output="${out_dir}/ChessPenguin-${version}-x86_64.AppImage"
 ARCH=x86_64 VERSION="${version}" APPIMAGE_EXTRACT_AND_RUN=1 \

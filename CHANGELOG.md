@@ -4,6 +4,13 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Stockfish is no longer inside the packages (they shrink from about 95 MB to about 14 MB): the
+  first time you analyse, ChessPenguin offers to download the official Stockfish 19 (checked
+  before use, installed for your account only) and starts the analysis when it is there. The same
+  button is in Settings → Engines, with progress, cancel and "remove" to free the space. A system
+  `stockfish` is still found and offered; the Flatpak keeps Stockfish inside.
+- macOS on Apple Silicon: a `.dmg` with ChessPenguin.app (not signed by Apple yet).
+
 - Position search fixes (QA report 3): "in this move order" no longer reused from another move
   order of the same position; while a search runs, the arrow and the position a game opens at
   belong to the rows shown; in books the next move of a game ending in the position is no longer

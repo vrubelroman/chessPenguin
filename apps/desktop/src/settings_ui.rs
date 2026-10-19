@@ -18,6 +18,11 @@ pub enum Tab {
 
 pub enum SettingsAction {
     AddEngine,
+    /// Download the official Stockfish (decision 14).
+    DownloadEngine,
+    CancelDownload,
+    /// Delete the downloaded Stockfish from the disk (it was removed from the list).
+    RemoveDownloaded,
     TestSound,
     /// The active engine (or its options) changed; a running analysis should restart.
     EngineChanged,
@@ -27,6 +32,10 @@ pub struct SettingsWindow {
     pub open: bool,
     pub tab: Tab,
     pub checking_engine: bool,
+    /// The running (or last) Stockfish download, set by the application every frame.
+    pub download: Option<crate::engine_download::Stage>,
+    /// Engine whose removal (with its downloaded files) waits for confirmation.
+    confirm_remove: Option<usize>,
 }
 
 impl SettingsWindow {
@@ -35,6 +44,8 @@ impl SettingsWindow {
             open: false,
             tab: Tab::default(),
             checking_engine: false,
+            download: None,
+            confirm_remove: None,
         }
     }
 
@@ -106,6 +117,43 @@ impl SettingsWindow {
             RichText::new(tr("UCI engines. The active one is used for game analysis. Time, lines, threads and memory are set with ⚙ in the analysis panel.")).weak(),
         );
         ui.add_space(6.0);
+        let downloading = self.download.as_ref().is_some_and(|d| {
+            matches!(
+                d,
+                crate::engine_download::Stage::Downloading { .. }
+                    | crate::engine_download::Stage::Unpacking
+            )
+        });
+        // No engine yet: the two ways to get one, plainly.
+        if s.engines.is_empty() {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(tr("No engine yet")).strong());
+                ui.label(
+                    RichText::new(tr("An engine evaluates positions and suggests moves. Stockfish is the strongest free one."))
+                        .weak(),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if downloading {
+                        self.download_progress(ui, actions);
+                    } else if crate::engine_download::available()
+                        && ui
+                            .button(RichText::new(tr("⬇ Download Stockfish 19")).strong())
+                            .on_hover_text(trf(
+                                "{mb} MB from the official Stockfish page; installed for your account only",
+                                &[("mb", &crate::engine_download::size_mb())],
+                            ))
+                            .clicked()
+                    {
+                        actions.push(SettingsAction::DownloadEngine);
+                    }
+                    if ui.button(tr("Choose engine file…")).clicked() {
+                        actions.push(SettingsAction::AddEngine);
+                    }
+                });
+            });
+        }
         let mut remove = None;
         for i in 0..s.engines.len() {
             let active = s.active_engine == Some(i);
@@ -127,29 +175,100 @@ impl SettingsWindow {
                         .add(egui::TextEdit::singleline(&mut e.name).desired_width(220.0))
                         .changed();
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button("🗑")
-                            .on_hover_text(tr("Remove from list"))
-                            .clicked()
-                        {
-                            remove = Some(i);
+                        let downloaded =
+                            s.engines[i].builtin && crate::engines::bundled_stockfish().is_none();
+                        let hint = if downloaded {
+                            tr("Remove (and delete the downloaded files)")
+                        } else {
+                            tr("Remove from list")
+                        };
+                        if ui.button("🗑").on_hover_text(hint).clicked() {
+                            if downloaded && crate::engine_download::installed().is_some() {
+                                self.confirm_remove = Some(i);
+                            } else {
+                                remove = Some(i);
+                            }
                         }
                     });
                 });
                 let e = &s.engines[i];
-                let location = if e.builtin {
-                    match crate::engines::bundled_stockfish() {
-                        Some(p) => trf(
-                            "Shipped with ChessPenguin: {path}",
-                            &[("path", &p.display())],
-                        ),
-                        None => tr("Shipped with ChessPenguin: not part of this build").into(),
+                if e.builtin {
+                    if let Some(p) = crate::engines::bundled_stockfish() {
+                        ui.label(
+                            RichText::new(tr("Included with ChessPenguin"))
+                                .small()
+                                .weak(),
+                        )
+                        .on_hover_text(p.display().to_string());
+                    } else if let Some(p) = crate::engine_download::installed() {
+                        let mb = std::fs::metadata(&p).map_or(0, |m| m.len() / 1_000_000);
+                        ui.label(
+                            RichText::new(trf(
+                                "Downloaded by ChessPenguin · {mb} MB",
+                                &[("mb", &mb)],
+                            ))
+                            .small()
+                            .weak(),
+                        )
+                        .on_hover_text(p.display().to_string());
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(tr("⚠ File not found"))
+                                    .small()
+                                    .color(ui.visuals().warn_fg_color),
+                            );
+                            if downloading {
+                                self.download_progress(ui, actions);
+                            } else if crate::engine_download::available()
+                                && ui.small_button(tr("Download again")).clicked()
+                            {
+                                actions.push(SettingsAction::DownloadEngine);
+                            }
+                        });
                     }
                 } else {
-                    e.path.display().to_string()
-                };
-                ui.label(RichText::new(location).small().weak());
+                    ui.label(RichText::new(e.path.display().to_string()).small().weak());
+                }
             });
+        }
+        if let Some(i) = self.confirm_remove {
+            let mut answer = None;
+            let modal = egui::Modal::new(egui::Id::new("remove_engine")).show(ui.ctx(), |ui| {
+                ui.set_width(360.0);
+                let mb = crate::engine_download::installed()
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .map_or(0, |m| m.len() / 1_000_000);
+                ui.label(trf(
+                    "Remove Stockfish 19? This frees {mb} MB. You can download it again at any time.",
+                    &[("mb", &mb)],
+                ));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let cancel = ui.button(tr("Cancel"));
+                        cancel.request_focus();
+                        if cancel.clicked() {
+                            answer = Some(false);
+                        }
+                        if ui.button(tr("Remove")).clicked() {
+                            answer = Some(true);
+                        }
+                    });
+                });
+            });
+            if modal.should_close() {
+                answer = Some(false);
+            }
+            match answer {
+                Some(true) => {
+                    remove = Some(i);
+                    actions.push(SettingsAction::RemoveDownloaded);
+                    self.confirm_remove = None;
+                }
+                Some(false) => self.confirm_remove = None,
+                None => {}
+            }
         }
         if let Some(i) = remove {
             s.engines.remove(i);
@@ -181,12 +300,33 @@ impl SettingsWindow {
                 });
             }
         }
+        // ChessPenguin's Stockfish can always be (re)downloaded from here.
+        let own = crate::engines::own_stockfish().is_some();
+        if !s.engines.is_empty() && !own && crate::engine_download::available() {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if downloading {
+                    self.download_progress(ui, actions);
+                } else if ui
+                    .button(trf(
+                        "⬇ Download Stockfish 19 · {mb} MB",
+                        &[("mb", &crate::engine_download::size_mb())],
+                    ))
+                    .on_hover_text(tr(
+                        "From the official Stockfish page; installed for your account only",
+                    ))
+                    .clicked()
+                {
+                    actions.push(SettingsAction::DownloadEngine);
+                }
+            });
+        }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
                     !self.checking_engine,
-                    egui::Button::new(tr("+ Add engine…")),
+                    egui::Button::new(tr("+ Choose engine file…")),
                 )
                 .clicked()
             {
@@ -197,6 +337,38 @@ impl SettingsWindow {
                 ui.label(tr("Checking engine…"));
             }
         });
+    }
+}
+
+impl SettingsWindow {
+    /// The download's progress in place of its button, with a cancel button.
+    fn download_progress(&self, ui: &mut Ui, actions: &mut Vec<SettingsAction>) {
+        match &self.download {
+            Some(crate::engine_download::Stage::Downloading { done, total }) => {
+                let frac = if *total > 0 {
+                    *done as f32 / *total as f32
+                } else {
+                    0.0
+                };
+                ui.add(egui::ProgressBar::new(frac).desired_width(200.0).text(trf(
+                    "{done} of {total} MB",
+                    &[
+                        ("done", &(done / 1_000_000)),
+                        ("total", &(total / 1_000_000)),
+                    ],
+                )));
+            }
+            _ => {
+                ui.spinner();
+                ui.label(tr("Checking and installing…"));
+            }
+        }
+        if crate::widgets::small_close_button(ui)
+            .on_hover_text(tr("Cancel download"))
+            .clicked()
+        {
+            actions.push(SettingsAction::CancelDownload);
+        }
     }
 }
 

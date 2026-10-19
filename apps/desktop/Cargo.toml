@@ -24,6 +24,12 @@ rodio.workspace = true
 directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Downloading the official Stockfish on request (decision 14).
+ureq = "3.4"
+flate2 = "1.1"
+tar = "0.4"
+sha2 = "0.11"
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [build-dependencies]
 winresource = "0.1"

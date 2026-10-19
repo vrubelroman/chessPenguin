@@ -30,9 +30,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked -p chesspenguin
-      # The bundled engine: pinned download, checksum and a UCI handshake.
-      - name: Stockfish
-        shell: bash
-        run: |
-          packaging/stockfish.sh windows build/stockfish
-          printf 'uci\nquit\n' | build/stockfish/stockfish.exe | grep -m1 '^id name'
+
+  # Apple Silicon: the build and the app bundle (decision 15).
+  macos-build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p chesspenguin
+      - run: VERSION=0.0.0 packaging/macos/build-app.sh dist

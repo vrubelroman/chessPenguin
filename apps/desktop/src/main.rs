@@ -6,6 +6,8 @@ mod app;
 mod assets;
 mod board;
 mod board_search;
+mod engine_download;
+mod engine_offer;
 mod engines;
 mod game_view;
 mod i18n;

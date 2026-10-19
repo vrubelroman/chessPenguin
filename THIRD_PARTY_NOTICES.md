@@ -64,12 +64,13 @@ Notes:
 - Piece sets and boards under CC BY-NC-SA (e.g. california, staunty, maestro, horsey) are not bundled: non-commercial terms are incompatible with the GPL.
 - AGPLv3+ sound, piece and board files are combined with this GPLv3+ program under GPLv3 §13.
 
-## Stockfish (bundled engine)
+## Stockfish (engine)
 
-Release packages include **Stockfish 19** (tag `sf_19`), the unmodified official
-`stockfish-*-x86-64-universal` binaries from
-https://github.com/official-stockfish/Stockfish/releases/tag/sf_19 (SHA-256 pinned in
-`packaging/stockfish.sh`).
+**Stockfish 19** (tag `sf_19`) is the unmodified official "universal" build from
+https://github.com/official-stockfish/Stockfish/releases/tag/sf_19. The Flatpak bundles it;
+the other packages do not: on request the program downloads the same official archive for the
+platform into the user's data directory and checks its SHA-256 (pinned in
+`apps/desktop/src/engine_download.rs` and `packaging/stockfish.sh`) before using it.
 
 - License: GNU General Public License version 3 (`Copying.txt`, installed as
   `stockfish-Copying.txt` next to this application's license); authors: the Stockfish

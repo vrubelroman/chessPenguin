@@ -3,12 +3,13 @@ pkgname=chesspenguin-bin
 _appid=io.github.vrubelroman.chessPenguin
 pkgver=0.5.0
 pkgrel=1
-pkgdesc="Chess database: view, enter and analyse PGN games; Stockfish included"
+pkgdesc="Chess database: view, enter and analyse PGN and ChessBase games; Stockfish on request"
 arch=('x86_64')
 url="https://github.com/vrubelroman/chessPenguin"
 license=('GPL-3.0-or-later' 'GPL-3.0-only')
 depends=('glibc' 'gcc-libs' 'alsa-lib' 'libxkbcommon' 'dbus' 'hicolor-icon-theme')
-optdepends=('vulkan-icd-loader: GPU rendering via Vulkan')
+optdepends=('vulkan-icd-loader: GPU rendering via Vulkan'
+            'stockfish: chess engine from the AUR (otherwise the program offers to download it)')
 provides=('chesspenguin')
 conflicts=('chesspenguin')
 options=('!debug')
@@ -18,10 +19,6 @@ sha256sums=('17334d0050b1726f21c70b8a5441578b875d7ff42433065d15afb8c17341d066')
 package() {
     cd "ChessPenguin-${pkgver}-linux-x86_64"
     install -Dm755 chesspenguin "${pkgdir}/usr/bin/chesspenguin"
-    # Bundled Stockfish (GPL-3.0); the application looks for it in ../lib/chesspenguin.
-    install -Dm755 stockfish/stockfish "${pkgdir}/usr/lib/chesspenguin/stockfish"
-    install -Dm644 stockfish/Copying.txt "${pkgdir}/usr/share/licenses/${pkgname}/stockfish-Copying.txt"
-    install -Dm644 stockfish/AUTHORS "${pkgdir}/usr/share/doc/${pkgname}/stockfish-AUTHORS"
     install -Dm644 "${_appid}.desktop" "${pkgdir}/usr/share/applications/${_appid}.desktop"
     for size in 16 24 32 48 64 128 256 512; do
         install -Dm644 "icons/hicolor/${size}x${size}/apps/${_appid}.png" \

@@ -39,10 +39,13 @@
 ## Установка
 
 Пакеты каждого релиза — на странице [Releases](https://github.com/vrubelroman/chessPenguin/releases):
-`.deb`, `.rpm`, AppImage, Flatpak и архив для Windows. Команды установки — в [README.md](README.md#install).
+`.deb`, `.rpm`, AppImage, Flatpak, архив для Windows и `.dmg` для macOS на Apple Silicon (приложение пока
+не подписано Apple: в первый раз — правый клик → «Открыть»). Команды установки — в [README.md](README.md#install).
 
-**Stockfish 19 входит в комплект** и настраивается при первом запуске: установил и анализируешь.
-Системный `stockfish` тоже находится автоматически, другие UCI-движки добавляются в **Настройки → Движки**.
+**Stockfish — в один клик:** при первом анализе ChessPenguin предложит скачать официальный
+Stockfish 19 (около 80 МБ, проверяется перед запуском, ставится только для вас); та же кнопка есть
+в **Настройки → Движки**. Установленный в системе `stockfish` находится сам, другие UCI-движки
+добавляются из файла. Во Flatpak Stockfish уже есть.
 
 Сборка из исходников: Rust 1.97+, затем `cargo run --release -p chesspenguin`
 или `./scripts/install.sh` для установки в `~/.local` вместе со Stockfish (`--no-stockfish` — без него).

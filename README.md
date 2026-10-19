@@ -61,9 +61,15 @@ Packages for every release are on the [Releases](https://github.com/vrubelroman/
 | Any distribution | `chmod +x ChessPenguin-<version>-x86_64.AppImage && ./ChessPenguin-<version>-x86_64.AppImage` |
 | Flatpak | `flatpak install --user ChessPenguin-<version>-x86_64.flatpak` |
 | Windows | unzip `ChessPenguin-<version>-windows-x86_64.zip`, run `ChessPenguin.exe` |
+| macOS (Apple Silicon) | open `ChessPenguin-<version>-macos-arm64.dmg`, drag ChessPenguin to Applications |
 
-**Stockfish 19 is included** and set up on the first start: install and analyse. A `stockfish`
-from your distribution is found too, and any other UCI engine can be added in **Settings → Engines**.
+On macOS the app is not signed by Apple yet: the first time, right-click ChessPenguin in
+Applications and choose **Open** (on macOS 15: System Settings → Privacy & Security → Open Anyway).
+
+**Stockfish** is one click away: the first time you analyse, ChessPenguin offers to download the
+official Stockfish 19 (about 80 MB, checked before use, installed for your account only); the
+button is also in **Settings → Engines**. A `stockfish` installed on the system is found
+automatically, any other UCI engine can be added from a file. The Flatpak includes Stockfish.
 
 ### Build from source
 

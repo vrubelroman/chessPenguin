@@ -43,14 +43,13 @@ jobs:
       - name: System libraries
         run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev libwayland-dev libfuse2
       - run: cargo build --release --locked -p chesspenguin
-      - name: Stockfish
-        run: packaging/stockfish.sh linux build/stockfish
+      # Stockfish is not bundled here: the program downloads it on request (decision 14).
       - name: Tarball
         run: |
           name="ChessPenguin-${VERSION}-linux-x86_64"
           mkdir -p "dist/${name}"
           cp target/release/chesspenguin LICENSE README.md THIRD_PARTY_NOTICES.md "dist/${name}/"
-          cp -r packaging/icons packaging/*.desktop examples build/stockfish "dist/${name}/"
+          cp -r packaging/icons packaging/*.desktop examples "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           rm -rf "dist/${name}"
       - name: deb, rpm and Arch Linux packages
@@ -96,9 +95,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p chesspenguin
-      - name: Stockfish
-        shell: bash
-        run: packaging/stockfish.sh windows build/stockfish
       - name: Zip
         shell: pwsh
         run: |
@@ -106,7 +102,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item target/release/chesspenguin.exe "dist/$name/ChessPenguin.exe"
           Copy-Item LICENSE, README.md, THIRD_PARTY_NOTICES.md "dist/$name/"
-          Copy-Item -Recurse examples, build/stockfish "dist/$name/"
+          Copy-Item -Recurse examples "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           Remove-Item -Recurse "dist/$name"
       - uses: actions/upload-artifact@v7
@@ -114,8 +110,27 @@ jobs:
           name: windows
           path: dist/*
 
+  macos:
+    needs: version
+    # Apple Silicon (arm64). Not signed by Apple yet: the first start goes through
+    # "Open" in the context menu (decision 15).
+    runs-on: macos-14
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p chesspenguin
+      - name: App bundle and disk image
+        run: packaging/macos/build-app.sh dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: dist/*
+
   publish:
-    needs: [version, linux, flatpak, windows]
+    needs: [version, linux, flatpak, windows, macos]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     steps:
@@ -124,7 +139,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Stockfish source (GPL-3.0 source offer for the bundled engine)
+      - name: Stockfish source (GPL-3.0 source offer for the engine bundled in the Flatpak)
         run: packaging/stockfish.sh source dist
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt

@@ -47,6 +47,9 @@ pub struct App {
     confirm_close: Option<CloseIntent>,
     /// Close the game once the pending "save as" succeeds.
     close_after_save: Option<CloseIntent>,
+    /// The offer to download Stockfish when an action needs an engine.
+    engine_offer: crate::engine_offer::EngineOffer,
+    offer_hook_done: bool,
     /// A position to find in a database once the game is closed.
     find_after_close: Option<(PathBuf, shakmaty::Chess, Vec<shakmaty::Move>, bool)>,
     allow_quit: bool,
@@ -93,6 +96,7 @@ impl App {
     pub fn new(ctx: &egui::Context) -> Self {
         let mut settings = Settings::load();
         crate::i18n::set_lang(settings.language);
+        crate::engine_download::clean_leftovers();
         if crate::engines::first_run_setup(&mut settings) {
             let _ = settings.save();
         }
@@ -129,6 +133,8 @@ impl App {
             confirm_close: None,
             close_after_save: None,
             find_after_close: None,
+            engine_offer: crate::engine_offer::EngineOffer::new(),
+            offer_hook_done: false,
             allow_quit: false,
             applied_dark: None,
             debug: DebugStartup::from_env(),
@@ -459,11 +465,70 @@ impl App {
             return;
         }
         match self.settings.active_engine().cloned() {
-            Some(cfg) => self.analysis.start(&cfg, ctx),
-            None => {
-                self.settings_ui.open = true;
-                self.settings_ui.tab = Tab::Engines;
-                self.toast(ctx, tr("Add a UCI engine (for example, Stockfish)"));
+            Some(cfg) if crate::engine_offer::EngineOffer::engine_ready(&self.settings) => {
+                self.analysis.start(&cfg, ctx)
+            }
+            _ => self
+                .engine_offer
+                .ask(crate::engine_offer::Pending::LiveAnalysis, &self.settings),
+        }
+    }
+
+    /// Makes ChessPenguin's Stockfish (just downloaded) or a found engine the active
+    /// one, then runs what the user was doing.
+    fn engine_arrived(
+        &mut self,
+        ctx: &egui::Context,
+        cfg: crate::settings::EngineConfig,
+        pending: Option<crate::engine_offer::Pending>,
+    ) {
+        let known = self.settings.engines.iter().position(|e| {
+            (cfg.builtin && e.builtin) || (!cfg.builtin && !e.builtin && e.path == cfg.path)
+        });
+        let index = known.unwrap_or_else(|| {
+            self.settings.engines.push(cfg);
+            self.settings.engines.len() - 1
+        });
+        self.settings.active_engine = Some(index);
+        self.settings_dirty = true;
+        match pending {
+            Some(crate::engine_offer::Pending::LiveAnalysis) => {
+                if !self.analysis.is_on() {
+                    self.toggle_engine(ctx);
+                }
+            }
+            Some(crate::engine_offer::Pending::GameAnalysis) => {
+                let actions = match self.game.as_mut() {
+                    Some(g) => g.start_review_now(&self.settings, ctx),
+                    None => Vec::new(),
+                };
+                for a in actions {
+                    match a {
+                        GameAction::PauseLive if self.analysis.is_on() => {
+                            self.analysis.stop();
+                            self.live_paused = true;
+                        }
+                        GameAction::Toast(m) => self.toast(ctx, m),
+                        _ => {}
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn offer_events(&mut self, ctx: &egui::Context) {
+        for e in self.engine_offer.show(ctx) {
+            match e {
+                crate::engine_offer::OfferEvent::Installed(pending) => {
+                    self.engine_arrived(ctx, crate::engines::builtin_config(), pending)
+                }
+                crate::engine_offer::OfferEvent::UseSystem(path, pending) => {
+                    let cfg = crate::settings::EngineConfig::new("Stockfish".into(), path);
+                    self.engine_arrived(ctx, cfg, pending)
+                }
+                crate::engine_offer::OfferEvent::ChooseFile => self.pick_engine(ctx),
+                crate::engine_offer::OfferEvent::Toast(m) => self.toast(ctx, m),
             }
         }
     }
@@ -575,6 +640,16 @@ impl eframe::App for App {
             self.confirm_close = Some(CloseIntent::QuitApp);
         }
         self.handle_async(&ctx);
+        // Dev hook (screenshots): the engine offer as on pressing L without an engine.
+        if std::env::var("CP_ENGINE_OFFER").is_ok() && !self.offer_hook_done {
+            self.offer_hook_done = true;
+            self.engine_offer
+                .ask(crate::engine_offer::Pending::LiveAnalysis, &self.settings);
+            if std::env::var("CP_ENGINE_OFFER").as_deref() == Ok("download") {
+                self.engine_offer.start(&ctx);
+            }
+        }
+        self.offer_events(&ctx);
         self.debug_step(&ctx);
         self.debug_screenshot(&ctx);
         self.analysis.poll();
@@ -597,6 +672,9 @@ impl eframe::App for App {
                 match a {
                     GameAction::Back => self.request_close(&ctx, CloseIntent::BackToLibrary),
                     GameAction::FindPosition(db) => self.find_position(&ctx, db),
+                    GameAction::NeedEngine => self
+                        .engine_offer
+                        .ask(crate::engine_offer::Pending::GameAnalysis, &self.settings),
                     GameAction::Sound(s) => self.play(s),
                     GameAction::CopyText(text, msg) => {
                         ctx.copy_text(text);
@@ -669,11 +747,24 @@ impl eframe::App for App {
             }
         }
 
+        self.settings_ui.download = self.engine_offer.stage();
         let (actions, changed) = self.settings_ui.show(&ctx, &mut self.settings);
         self.settings_dirty |= changed;
         for a in actions {
             match a {
                 SettingsAction::AddEngine => self.pick_engine(&ctx),
+                SettingsAction::DownloadEngine => self.engine_offer.start(&ctx),
+                SettingsAction::CancelDownload => self.engine_offer.cancel(),
+                SettingsAction::RemoveDownloaded => {
+                    if let Err(e) = crate::engine_download::remove() {
+                        self.toast(&ctx, e.to_string());
+                    }
+                    if self.settings.active_engine().is_some_and(|e| e.builtin)
+                        && !crate::engine_offer::EngineOffer::engine_ready(&self.settings)
+                    {
+                        self.analysis.stop();
+                    }
+                }
                 SettingsAction::TestSound => {
                     if self.settings.sound_enabled {
                         self.sound

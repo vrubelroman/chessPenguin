@@ -20,7 +20,8 @@ pub struct EngineConfig {
     /// Search time per position in seconds; `None` = infinite.
     #[serde(default)]
     pub search_secs: Option<u32>,
-    /// The Stockfish shipped with ChessPenguin; `path` is unused and resolved at start.
+    /// ChessPenguin's Stockfish (bundled in the Flatpak, otherwise downloaded on
+    /// request); `path` is unused and resolved at start.
     #[serde(default)]
     pub builtin: bool,
 }
@@ -50,10 +51,11 @@ impl EngineConfig {
         }
     }
 
-    /// Executable to start; `None` if the built-in engine is missing (e.g. a source build).
+    /// Executable to start; `None` if ChessPenguin's Stockfish is neither bundled nor
+    /// downloaded yet (it is offered for download then).
     pub fn executable(&self) -> Option<PathBuf> {
         if self.builtin {
-            crate::engines::bundled_stockfish()
+            crate::engines::own_stockfish()
         } else {
             Some(self.path.clone())
         }
