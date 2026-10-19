@@ -2,6 +2,11 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.6.2] — not released yet
+
+- Settings → About: the version, links to the website (in the interface language), the release
+  notes and the source code, and the support contacts. Links open in the browser.
+
 ## [0.6.1] — 2026-10-19
 
 - The library is no longer empty at the first start: two sample databases are on the shelf —

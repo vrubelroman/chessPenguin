@@ -2749,22 +2749,6 @@ const ROWS: &[[&str; 6]] = &[
         "Hai trovato un problema o hai un'idea? Scrivici:",
     ],
     [
-        "ChessPenguin is free. If it is useful to you, you can support its development.",
-        "ChessPenguin бесплатен. Если программа вам полезна, вы можете поддержать её развитие.",
-        "ChessPenguin est gratuit. S'il vous est utile, vous pouvez soutenir son développement.",
-        "ChessPenguin ist kostenlos. Wenn es Ihnen nützt, können Sie die Entwicklung unterstützen.",
-        "ChessPenguin es gratuito. Si te resulta útil, puedes apoyar su desarrollo.",
-        "ChessPenguin è gratuito. Se ti è utile, puoi sostenerne lo sviluppo.",
-    ],
-    [
-        "Support the project",
-        "Поддержать проект",
-        "Soutenir le projet",
-        "Projekt unterstützen",
-        "Apoyar el proyecto",
-        "Sostieni il progetto",
-    ],
-    [
         "Free software under GPL-3.0-or-later. Piece sets, boards and sounds come from Lichess under their own free licences.",
         "Свободная программа под лицензией GPL-3.0-or-later. Наборы фигур, доски и звуки взяты из Lichess под их собственными свободными лицензиями.",
         "Logiciel libre sous GPL-3.0-or-later. Les jeux de pièces, échiquiers et sons viennent de Lichess, sous leurs propres licences libres.",

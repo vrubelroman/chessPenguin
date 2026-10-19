@@ -470,7 +470,7 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
 const SITE: &str = "https://chess.vrubel.xyz";
 const REPO: &str = "https://github.com/vrubelroman/chessPenguin";
 
-/// Version, links to the website and the sources, support contacts, donations.
+/// Version, links to the website and the sources, support contacts.
 fn about_tab(ui: &mut Ui, lang: Lang) {
     let version = env!("CARGO_PKG_VERSION");
     // The website page in the interface language.
@@ -506,18 +506,6 @@ fn about_tab(ui: &mut Ui, lang: Lang) {
         ui.label("·");
         ui.hyperlink_to("Telegram @vrubelr", "https://t.me/vrubelr");
     });
-    ui.add_space(14.0);
-    ui.label(
-        RichText::new(tr(
-            "ChessPenguin is free. If it is useful to you, you can support its development.",
-        ))
-        .weak(),
-    );
-    if ui.button(tr("Support the project")).clicked() {
-        // The website sends this on to the current donation page.
-        ui.ctx()
-            .open_url(egui::OpenUrl::new_tab(format!("{SITE}/donate")));
-    }
     ui.add_space(14.0);
     ui.label(
         RichText::new(tr("Free software under GPL-3.0-or-later. Piece sets, boards and sounds come from Lichess under their own free licences."))
