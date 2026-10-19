@@ -25,7 +25,7 @@ const WIDE: f32 = 820.0;
 const CONTINUATIONS_WIDTH: f32 = 360.0;
 /// Arrow of a previewed move (continuation or a game's next move): blue, unlike the
 /// engine's green arrows.
-const PREVIEW_ARROW: Color32 = Color32::from_rgba_premultiplied(40, 110, 200, 190);
+pub const PREVIEW_ARROW: Color32 = Color32::from_rgba_premultiplied(40, 110, 200, 190);
 
 /// What the board asks of its owner.
 pub enum BoardEvent {
@@ -661,7 +661,7 @@ fn move_label(pos: &Chess, m: Move, first: bool) -> String {
 }
 
 /// One continuation: number, move, games, share, results bar, average rating, year.
-fn continuation_row(
+pub fn continuation_row(
     ui: &mut Ui,
     i: usize,
     pos: &Chess,
@@ -761,7 +761,7 @@ fn continuation_row(
 
 /// White wins (light), draws (grey), Black wins (dark), with the percentages inside
 /// wide enough segments: readable without telling colours apart.
-fn results_bar(ui: &Ui, rect: egui::Rect, t: &Tally, _text: Color32) {
+pub fn results_bar(ui: &Ui, rect: egui::Rect, t: &Tally, _text: Color32) {
     let decided = t.white_wins + t.draws + t.black_wins;
     let painter = ui.painter();
     if decided == 0 {

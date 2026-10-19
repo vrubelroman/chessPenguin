@@ -1,6 +1,7 @@
 //! Game screen: board with eval bar, engine lines with PV preview, notation, toolbar.
 
 use crate::i18n::{tr, trf};
+use crate::reference::RefAction;
 use std::path::PathBuf;
 
 use chess_core::shakmaty::{Chess, Color, Move, Position, Square};
@@ -56,11 +57,15 @@ pub struct GameView {
     engine_settings_open: bool,
     review: Review,
     side_tab: SideTab,
+    /// The game this one was opened from (reference tab): the title for "← back to".
+    pub previous: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SideTab {
     Notation,
+    /// What was played here in a database (`reference.rs`).
+    Reference,
     Report,
 }
 
@@ -85,6 +90,12 @@ pub enum GameAction {
     FindPosition(Option<std::path::PathBuf>),
     /// Game analysis needs an engine that is not there yet (offer to download one).
     NeedEngine,
+    /// The reference tab: use / load a database, open one of its games.
+    ReferenceChoose(std::path::PathBuf),
+    ReferenceLoad(std::path::PathBuf),
+    OpenGame(std::path::PathBuf, usize, Chess),
+    /// Back to the game this one was opened from.
+    ReturnToPrevious,
 }
 
 impl GameView {
@@ -103,7 +114,13 @@ impl GameView {
             show_diagnostics: false,
             engine_settings_open: false,
             review,
-            side_tab: SideTab::Notation,
+            // Dev hook (screenshots): `CP_TAB=reference` opens that tab.
+            side_tab: if std::env::var("CP_TAB").as_deref() == Ok("reference") {
+                SideTab::Reference
+            } else {
+                SideTab::Notation
+            },
+            previous: None,
         }
     }
 
@@ -130,6 +147,20 @@ impl GameView {
             }
         }
         parts.join(" · ")
+    }
+
+    /// A move made on the board or picked in the reference tab: goes to it if the
+    /// game has it, else adds it (undoable).
+    fn play_move(&mut self, m: Move, actions: &mut Vec<GameAction>) {
+        match self.game.add_move(self.cursor, m) {
+            Ok(id) => {
+                self.goto(id);
+                if let Some(s) = self.sound_for(id) {
+                    actions.push(GameAction::Sound(s));
+                }
+            }
+            Err(e) => actions.push(GameAction::Toast(trf("Move not added: {e}", &[("e", &e)]))),
+        }
     }
 
     fn goto(&mut self, id: NodeId) {
@@ -192,6 +223,7 @@ impl GameView {
         ui: &mut Ui,
         settings: &mut Settings,
         analysis: &mut Analysis,
+        reference: &mut crate::reference::Reference,
         input_enabled: bool,
     ) -> Vec<GameAction> {
         let mut actions = Vec::new();
@@ -217,16 +249,26 @@ impl GameView {
         egui::Panel::top("game_header").show(ui, |ui| self.header(ui, &databases, &mut actions));
         // Keep room for the board on narrow windows: the side panel never exceeds 60 %.
         let width = ui.available_width();
-        egui::Panel::right("game_side")
+        // The reference tab has two wide tables: its own (wider) panel width, which
+        // egui remembers apart from the notation's.
+        let (side_id, side_width) = if self.side_tab == SideTab::Reference {
+            ("game_side_reference", (width * 0.55).clamp(360.0, 1100.0))
+        } else {
+            ("game_side", (width * 0.4).clamp(260.0, 460.0))
+        };
+        egui::Panel::right(side_id)
             .resizable(true)
-            .default_size((width * 0.4).clamp(260.0, 460.0))
-            .size_range(240.0_f32.min(width * 0.5)..=(width * 0.6).max(240.0))
+            .default_size(side_width)
+            .size_range(240.0_f32.min(width * 0.5)..=(width * 0.7).max(240.0))
             .show(ui, |ui| {
-                self.side_panel(ui, settings, analysis, &mut actions)
+                self.side_panel(ui, settings, analysis, reference, &mut actions)
             });
         self.sync_analysis(analysis);
+        let hover = (self.side_tab == SideTab::Reference)
+            .then(|| reference.hover())
+            .flatten();
         egui::CentralPanel::default().show(ui, |ui| {
-            self.board_area(ui, &*settings, analysis, &mut actions)
+            self.board_area(ui, &*settings, analysis, hover, &mut actions)
         });
         self.sync_analysis(analysis);
 
@@ -366,6 +408,14 @@ impl GameView {
             {
                 actions.push(GameAction::Back);
             }
+            if let Some(t) = &self.previous
+                && ui
+                    .button(trf("⬅ Back to {game}", &[("game", t)]))
+                    .on_hover_text(tr("The game this one was opened from, as you left it"))
+                    .clicked()
+            {
+                actions.push(GameAction::ReturnToPrevious);
+            }
             ui.separator();
             ui.vertical(|ui| {
                 let modified = if self.game.is_modified() { " •" } else { "" };
@@ -454,6 +504,7 @@ impl GameView {
         ui: &mut Ui,
         settings: &Settings,
         analysis: &Analysis,
+        reference_hover: Option<shakmaty::uci::UciMove>,
         actions: &mut Vec<GameAction>,
     ) {
         let preview_pos = self.preview.as_ref().map(|p| p.position());
@@ -532,6 +583,19 @@ impl GameView {
                     }
                 }
             }
+        }
+
+        // A continuation under the pointer in the reference tab (blue, like the library's).
+        if self.preview.is_none()
+            && let Some(m) = reference_hover.and_then(|u| u.to_move(&pos).ok())
+            && let Some((from, to)) = move_squares(&m)
+        {
+            arrows.push(Arrow {
+                from,
+                to,
+                color: crate::board_search::PREVIEW_ARROW,
+                weight: 1.0,
+            });
         }
 
         // Center the eval bar + board horizontally between the left edge and the side panel.
@@ -617,16 +681,7 @@ impl GameView {
                     pieces: settings.piece_set,
                 };
                 if let Some(m) = view.show(ui, &mut self.board) {
-                    match self.game.add_move(self.cursor, m) {
-                        Ok(id) => {
-                            self.goto(id);
-                            if let Some(s) = self.sound_for(id) {
-                                actions.push(GameAction::Sound(s));
-                            }
-                        }
-                        Err(e) => actions
-                            .push(GameAction::Toast(trf("Move not added: {e}", &[("e", &e)]))),
-                    }
+                    self.play_move(m, actions);
                 }
             });
         });
@@ -652,22 +707,54 @@ impl GameView {
         ui: &mut Ui,
         settings: &mut Settings,
         analysis: &mut Analysis,
+        reference: &mut crate::reference::Reference,
         actions: &mut Vec<GameAction>,
     ) {
         egui::Panel::bottom("game_toolbar").show(ui, |ui| self.toolbar(ui, actions));
         egui::Panel::top("engine_panel")
             .show(ui, |ui| self.engine_panel(ui, settings, analysis, actions));
-        let tabs = self.review.visible && (self.review.has_data() || self.review.running());
-        if !tabs {
+        let report = self.review.visible && (self.review.has_data() || self.review.running());
+        if !report && self.side_tab == SideTab::Report {
             self.side_tab = SideTab::Notation;
         }
         egui::CentralPanel::default().show(ui, |ui| {
-            if tabs {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.side_tab, SideTab::Notation, tr("Notation"));
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.side_tab, SideTab::Notation, tr("Notation"));
+                ui.selectable_value(&mut self.side_tab, SideTab::Reference, tr("Reference"))
+                    .on_hover_text(tr("What was played in this position in a database"));
+                if report {
                     ui.selectable_value(&mut self.side_tab, SideTab::Report, tr("Report"));
-                });
-                ui.separator();
+                }
+            });
+            ui.separator();
+            if self.side_tab == SideTab::Reference {
+                let source = self.source.as_ref().map(|s| (s.path.as_path(), s.index));
+                let action = egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        reference.ui(
+                            ui,
+                            &self.game,
+                            self.cursor,
+                            settings.reference_db.as_deref(),
+                            source,
+                        )
+                    })
+                    .inner;
+                match action {
+                    Some(RefAction::Play(m)) => self.play_move(m, actions),
+                    Some(RefAction::Goto(id)) => self.goto(id),
+                    Some(RefAction::Choose(p)) => actions.push(GameAction::ReferenceChoose(p)),
+                    Some(RefAction::Load(p)) => actions.push(GameAction::ReferenceLoad(p)),
+                    Some(RefAction::OpenGame(p, i, at)) => {
+                        actions.push(GameAction::OpenGame(p, i, at))
+                    }
+                    Some(RefAction::FindInLibrary(p)) => {
+                        actions.push(GameAction::FindPosition(Some(p)))
+                    }
+                    None => {}
+                }
+                return;
             }
             if self.side_tab == SideTab::Report {
                 let action = egui::ScrollArea::vertical()
@@ -1122,6 +1209,15 @@ impl GameView {
 
     /// The cursor's position as a line of moves from the game's start, for searching
     /// it in a database; `None` after a null move or in a game that cannot be searched.
+    /// The reference tab is shown (kept for the next game opened from it).
+    pub fn reference_tab(&self) -> bool {
+        self.side_tab == SideTab::Reference
+    }
+
+    pub fn show_reference_tab(&mut self) {
+        self.side_tab = SideTab::Reference;
+    }
+
     pub fn search_line(&self) -> Option<(Chess, Vec<shakmaty::Move>, bool)> {
         let (start, line) = crate::board_search::line_to(&self.game, self.cursor)?;
         Some((start, line, self.flipped))

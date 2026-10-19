@@ -29,6 +29,8 @@ enum Async {
 enum CloseIntent {
     BackToLibrary,
     QuitApp,
+    /// Back to the game this one was opened from (reference tab).
+    ReturnToPrevious,
 }
 
 pub struct App {
@@ -52,6 +54,13 @@ pub struct App {
     offer_hook_done: bool,
     /// A position to find in a database once the game is closed.
     find_after_close: Option<(PathBuf, shakmaty::Chess, Vec<shakmaty::Move>, bool)>,
+    /// Games left for one opened from the reference tab ("⬅ Back to …"), kept as they
+    /// were (unsaved edits included).
+    previous_games: Vec<GameView>,
+    /// The last game showed the reference tab: the next one opens with it too.
+    reference_tab: bool,
+    /// The reference tab of games (kept across games: its results stay cached).
+    reference: crate::reference::Reference,
     allow_quit: bool,
     applied_dark: Option<bool>,
     debug: DebugStartup,
@@ -135,6 +144,9 @@ impl App {
             confirm_close: None,
             close_after_save: None,
             find_after_close: None,
+            previous_games: Vec::new(),
+            reference_tab: false,
+            reference: Default::default(),
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
             allow_quit: false,
@@ -410,6 +422,11 @@ impl App {
                     }),
                     parsed.diagnostics,
                 ));
+                if self.reference_tab
+                    && let Some(g) = self.game.as_mut()
+                {
+                    g.show_reference_tab();
+                }
                 if let (Some(target), Some(g)) = (at, self.game.as_mut()) {
                     g.goto_position(&target);
                 }
@@ -432,7 +449,37 @@ impl App {
     fn finish_close(&mut self, ctx: &egui::Context, intent: CloseIntent) {
         self.analysis.stop();
         self.live_paused = false;
-        if let Some(g) = self.game.take()
+        let closed = self.game.take();
+        if intent == CloseIntent::ReturnToPrevious {
+            self.game = self.previous_games.pop();
+            return;
+        }
+        // Games left for others (reference tab) with unsaved edits come first: the last
+        // such one is shown again and, when quitting, asked about; the library (or the
+        // search board) waits until none is left.
+        if let Some(k) = self
+            .previous_games
+            .iter()
+            .rposition(|g| g.game.is_modified())
+        {
+            self.previous_games.truncate(k + 1);
+            self.game = self.previous_games.pop();
+            if let Some(g) = &self.game {
+                let msg = trf(
+                    "Back to {game}: it has unsaved changes",
+                    &[("game", &g.title())],
+                );
+                self.toast(ctx, msg);
+            }
+            if intent == CloseIntent::QuitApp {
+                self.confirm_close = Some(CloseIntent::QuitApp);
+            }
+            // The search board asked for was for the game just closed: not later.
+            self.find_after_close = None;
+            return;
+        }
+        self.previous_games.clear();
+        if let Some(g) = closed
             && let Some(src) = g.source
         {
             self.library.reveal(&src.path, src.index);
@@ -440,6 +487,7 @@ impl App {
         if let Some((path, start, line, flipped)) = self.find_after_close.take() {
             self.library.show_position(&path, start, line, flipped, ctx);
         }
+
         if intent == CloseIntent::QuitApp {
             self.allow_quit = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -590,6 +638,9 @@ impl App {
         egui::Modal::new(egui::Id::new("confirm_close")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(tr("Game modified"));
+            if let Some(g) = &self.game {
+                ui.label(RichText::new(g.title()).strong());
+            }
             ui.label(tr(
                 "The source PGN is not changed. Save the changes to a separate file?",
             ));
@@ -636,6 +687,19 @@ impl eframe::App for App {
             });
             self.applied_dark = Some(self.settings.dark_mode);
         }
+        // Quitting with a modified game left for another (reference tab): show that one,
+        // so the question "save?" is about the game that has the changes.
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.allow_quit
+            && !self.game.as_ref().is_some_and(|g| g.game.is_modified())
+            && let Some(k) = self
+                .previous_games
+                .iter()
+                .rposition(|g| g.game.is_modified())
+        {
+            self.previous_games.truncate(k + 1);
+            self.game = self.previous_games.pop();
+        }
         if ctx.input(|i| i.viewport().close_requested())
             && !self.allow_quit
             && self.game.as_ref().is_some_and(|g| g.game.is_modified())
@@ -671,11 +735,62 @@ impl eframe::App for App {
 
         if let Some(game) = &mut self.game {
             let input_enabled = self.confirm_close.is_none();
-            let actions = game.show(ui, &mut self.settings, &mut self.analysis, input_enabled);
+            // A database opened for the reference tab arrives here (the library is
+            // not drawn while a game is shown).
+            self.library.poll();
+            self.reference.dbs = self
+                .settings
+                .databases
+                .iter()
+                .filter(|p| p.exists())
+                .map(|p| crate::reference::RefDb {
+                    path: p.clone(),
+                    name: p
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    db: self.library.database(p),
+                    failed: self.library.failure(p).map(str::to_owned),
+                    bytes: self.library.file_size(p),
+                })
+                .collect();
+            let actions = game.show(
+                ui,
+                &mut self.settings,
+                &mut self.analysis,
+                &mut self.reference,
+                input_enabled,
+            );
+            self.reference_tab = game.reference_tab();
             for a in actions {
                 match a {
                     GameAction::Back => self.request_close(&ctx, CloseIntent::BackToLibrary),
                     GameAction::FindPosition(db) => self.find_position(&ctx, db),
+                    GameAction::ReferenceChoose(p) => {
+                        self.settings.reference_db = Some(p);
+                        self.settings_dirty = true;
+                    }
+                    GameAction::ReferenceLoad(p) => self.library.load(&p, &ctx),
+                    GameAction::OpenGame(path, index, at) => {
+                        if let Some(prev) = self.game.take() {
+                            let title = prev.title();
+                            self.previous_games.push(prev);
+                            self.open_game(&ctx, path, index, Some(at));
+                            match &mut self.game {
+                                Some(g) => {
+                                    g.previous = Some(title);
+                                    g.show_reference_tab();
+                                }
+                                // Not opened: back to where we were.
+                                None => self.game = self.previous_games.pop(),
+                            }
+                        }
+                    }
+                    GameAction::ReturnToPrevious => {
+                        if !self.previous_games.is_empty() {
+                            self.request_close(&ctx, CloseIntent::ReturnToPrevious);
+                        }
+                    }
                     GameAction::NeedEngine => self
                         .engine_offer
                         .ask(crate::engine_offer::Pending::GameAnalysis, &self.settings),

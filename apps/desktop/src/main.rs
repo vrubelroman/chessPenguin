@@ -15,6 +15,7 @@ mod i18n;
 mod large_db;
 mod library;
 mod notation;
+mod reference;
 mod report;
 mod review;
 mod settings;

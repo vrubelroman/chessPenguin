@@ -84,6 +84,8 @@ pub struct Settings {
     pub engines_discovered: bool,
     /// The sample databases were put on the shelf (see `examples::first_run_setup`).
     pub examples_added: bool,
+    /// The database of the reference tab (`None`: the largest one on the shelf).
+    pub reference_db: Option<PathBuf>,
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -137,6 +139,7 @@ impl Default for Settings {
             review: ReviewSettings::default(),
             engines_discovered: false,
             examples_added: false,
+            reference_db: None,
         }
     }
 }

@@ -197,6 +197,8 @@ pub struct Library {
     view: Vec<usize>,
     view_key: Option<(PathBuf, String, SortKey, bool)>,
     scroll_to_selected: bool,
+    /// File sizes of databases (`file_size`).
+    sizes: HashMap<PathBuf, u64>,
 }
 
 impl Library {
@@ -216,6 +218,7 @@ impl Library {
             view: Vec::new(),
             view_key: None,
             scroll_to_selected: false,
+            sizes: HashMap::new(),
         }
     }
 
@@ -307,6 +310,22 @@ impl Library {
         }
     }
 
+    /// Size of a database's file (cached: asked every frame by the reference tab).
+    pub fn file_size(&mut self, path: &Path) -> u64 {
+        *self
+            .sizes
+            .entry(path.to_owned())
+            .or_insert_with(|| std::fs::metadata(path).map_or(0, |m| m.len()))
+    }
+
+    /// Why the database could not be opened, if it could not.
+    pub fn failure(&self, path: &Path) -> Option<&str> {
+        match self.slots.get(path) {
+            Some(Slot::Failed(e)) => Some(e.as_str()),
+            _ => None,
+        }
+    }
+
     pub fn database(&self, path: &Path) -> Option<Arc<Database>> {
         match self.slots.get(path) {
             Some(Slot::Ready(db)) => Some(db.clone()),
@@ -314,7 +333,8 @@ impl Library {
         }
     }
 
-    fn poll(&mut self) {
+    /// Takes the databases that finished opening (also while a game is shown).
+    pub fn poll(&mut self) {
         for (path, slot) in self.slots.iter_mut() {
             if let Slot::Loading { rx, .. } = slot
                 && let Ok(res) = rx.try_recv()
@@ -460,10 +480,12 @@ impl Library {
                     let mut events = Vec::new();
                     small.board.keys(ui.ctx(), outcome.as_ref(), &mut events);
                     if let Some(need) = small.blocked {
+                        let free = chess_import::memory::available().unwrap_or(0);
+                        let missing = (need + (256 << 20)).saturating_sub(free) / 1_000_000;
                         ui.label(
                             egui::RichText::new(trf(
-                                "Position search needs about {n} MB of free memory for this database.",
-                                &[("n", &((need + (256 << 20)) / 1_000_000))],
+                                "Not enough memory for position search in this database: about {n} MB more is needed. Close other programs and try again.",
+                                &[("n", &missing.max(1))],
                             ))
                             .color(ui.visuals().warn_fg_color),
                         );

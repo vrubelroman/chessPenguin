@@ -2,6 +2,19 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- «Справочник» (Reference) tab of a game: what was played in the current position in a
+  database of the shelf (Mega for theory, an opening collection, a pupil's games), as two
+  tables — the moves with games, share, results, White's score, average rating, year and
+  the best players who played them, and the strongest (or newest) games that reached the
+  position with how they went on. Click a move to see its games, double-click to play it;
+  double-click a game to open it at this position (the current game stays a click away:
+  "⬅ Back to …", unsaved edits included). It also tells how far the game follows the
+  database ("known up to 13…Bf5") and finds the game itself there (to open, for example, an
+  annotated copy).
+- Russian numbers use a decimal comma ("11,7 млн").
+
 ## [0.6.3] — 2026-10-19
 
 - Import notes (for example, Chess960 games shown without moves) are a quiet grey "ℹ" now
