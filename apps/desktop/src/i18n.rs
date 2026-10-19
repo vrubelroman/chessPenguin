@@ -2741,6 +2741,22 @@ const ROWS: &[[&str; 6]] = &[
         "Codice sorgente",
     ],
     [
+        "Copied",
+        "Скопировано",
+        "Copié",
+        "Kopiert",
+        "Copiado",
+        "Copiato",
+    ],
+    [
+        "Click to copy the address",
+        "Нажмите, чтобы скопировать адрес",
+        "Cliquez pour copier l'adresse",
+        "Klicken, um die Adresse zu kopieren",
+        "Haz clic para copiar la dirección",
+        "Fai clic per copiare l'indirizzo",
+    ],
+    [
         "Found a problem or have an idea? Write to us:",
         "Нашли проблему или есть идея? Напишите нам:",
         "Un problème ou une idée ? Écrivez-nous :",

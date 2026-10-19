@@ -469,6 +469,7 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
 
 const SITE: &str = "https://chess.vrubel.xyz";
 const REPO: &str = "https://github.com/vrubelroman/chessPenguin";
+const EMAIL: &str = "vrubelroman@gmail.com";
 
 /// Version, links to the website and the sources, support contacts.
 fn about_tab(ui: &mut Ui, lang: Lang) {
@@ -502,7 +503,24 @@ fn about_tab(ui: &mut Ui, lang: Lang) {
     ui.add_space(14.0);
     ui.label(RichText::new(tr("Found a problem or have an idea? Write to us:")).strong());
     ui.horizontal_wrapped(|ui| {
-        ui.hyperlink_to("vrubelroman@gmail.com", "mailto:vrubelroman@gmail.com");
+        // Copied rather than opened: a mailto link does nothing useful without a mail app.
+        let copied_at = egui::Id::new("about_email_copied");
+        let now = ui.input(|i| i.time);
+        let copied = ui
+            .data(|d| d.get_temp::<f64>(copied_at))
+            .is_some_and(|t| now - t < 2.0);
+        let link = ui
+            .link(EMAIL)
+            .on_hover_text(tr("Click to copy the address"));
+        if link.clicked() {
+            ui.ctx().copy_text(EMAIL.to_owned());
+            ui.data_mut(|d| d.insert_temp(copied_at, now));
+        }
+        if copied {
+            ui.label(RichText::new(tr("Copied")).weak());
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(250));
+        }
         ui.label("·");
         ui.hyperlink_to("Telegram @vrubelr", "https://t.me/vrubelr");
     });

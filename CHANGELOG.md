@@ -2,6 +2,11 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Settings → About: clicking the email address copies it instead of opening a mail app,
+  which does nothing useful when none is installed.
+
 ## [0.6.2] — 2026-10-19
 
 - Settings → About: the version, links to the website (in the interface language), the release
