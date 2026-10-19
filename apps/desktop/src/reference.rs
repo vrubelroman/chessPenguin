@@ -711,6 +711,14 @@ fn book_end(
     })
 }
 
+/// "Mega Database 2026 · 11,7 млн партий" for the database picker.
+fn db_label(d: &RefDb) -> String {
+    match &d.db {
+        Some(db) => format!("{} · {}", d.name, crate::i18n::games_short(db.len())),
+        None => format!("{} · {}", d.name, tr("not open")),
+    }
+}
+
 impl Reference {
     /// The move under the pointer, or the selected one (an arrow on the board).
     pub fn hover(&self) -> Option<UciMove> {
@@ -884,27 +892,77 @@ impl Reference {
         };
         let path = current.path.clone();
         let db = current.db.clone();
-        // The database picker.
-        ui.horizontal(|ui| {
+        let failed = current.failed.clone();
+        let current_label = db_label(current);
+        let query = query_for(game, cursor);
+        let exclude = source.filter(|(p, _)| *p == path).map(|(_, i)| i);
+        if let (Some(db), Some(q)) = (&db, &query) {
+            self.request(ui.ctx(), &path, db, game, q, exclude);
+            if self.job.is_some() || self.prepare.is_some() || self.book_job.is_some() {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        }
+        // The novelty (the first move of the game no other game of the database played)
+        // and a copy of the game in the database, once worked out.
+        let line = main_line(game);
+        let book = db
+            .is_some()
+            .then(|| self.book_for(&path, &line).cloned())
+            .flatten();
+        let novelty = book.as_ref().and_then(|b| match b.last {
+            _ if b.to_the_end || line.is_empty() => None,
+            Some(last) => game.main_child(last),
+            None => game.main_child(game.root()),
+        });
+        let copy = book
+            .as_ref()
+            .and_then(|b| b.copies.iter().copied().find(|c| Some(*c) != exclude));
+        // The first line: the database, then the novelty and the copy beside it (they
+        // come a moment later; on this line they take no room of their own).
+        ui.horizontal_wrapped(|ui| {
             ui.label(tr("Database"));
-            let label = |d: &RefDb| match &d.db {
-                Some(db) => format!("{} · {}", d.name, crate::i18n::games_short(db.len())),
-                None => format!("{} · {}", d.name, tr("not open")),
-            };
             egui::ComboBox::from_id_salt("reference_db")
-                .selected_text(label(current))
-                .width(ui.available_width().min(380.0))
+                .selected_text(current_label)
+                .width(ui.available_width().min(340.0))
                 .truncate()
                 .show_ui(ui, |ui| {
                     for d in &self.dbs {
-                        if ui.selectable_label(d.path == path, label(d)).clicked() && d.path != path
+                        if ui.selectable_label(d.path == path, db_label(d)).clicked()
+                            && d.path != path
                         {
                             action = Some(RefAction::Choose(d.path.clone()));
                         }
                     }
                 });
+            if let Some(node) = novelty {
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr("Novelty:")).weak());
+                if ui
+                    .link(node_label(game, node).unwrap_or_default())
+                    .on_hover_text(tr(
+                        "The first move of this game that no other game of this database played; before it the game followed games of the database",
+                    ))
+                    .clicked()
+                {
+                    action = Some(RefAction::Goto(node));
+                }
+            }
+            if let (Some(c), Some(q)) = (copy, &query) {
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr("This game is in the database")).weak());
+                if ui
+                    .link(tr("open it"))
+                    .on_hover_text(tr(
+                        "Open the copy of this game from the database at this position",
+                    ))
+                    .clicked()
+                {
+                    action = Some(RefAction::OpenGame(path.clone(), c, q.position.clone()));
+                }
+            }
         });
-        if let Some(e) = &current.failed {
+        if let Some(e) = &failed {
             ui.add_space(8.0);
             ui.label(
                 RichText::new(trf("This database cannot be opened: {e}", &[("e", e)]))
@@ -920,16 +978,10 @@ impl Reference {
             });
             return action.or(Some(RefAction::Load(path)));
         };
-        let Some(query) = query_for(game, cursor) else {
+        let Some(query) = query else {
             return action;
         };
         let pos = query.position.clone();
-        let exclude = source.filter(|(p, _)| *p == path).map(|(_, i)| i);
-        self.request(ui.ctx(), &path, &db, game, &query, exclude);
-        if self.job.is_some() || self.prepare.is_some() || self.book_job.is_some() {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(100));
-        }
         if let Some((p, job)) = &self.prepare
             && *p == path
         {
@@ -971,56 +1023,6 @@ impl Reference {
             ));
         }
         ui.label(RichText::new(context).weak());
-        // Theory: where the main line leaves the database (the line keeps its height
-        // while it is worked out, so nothing jumps).
-        let line = main_line(game);
-        let book = self.book_for(&path, &line).cloned();
-        // The novelty: the first move of the game no other game of the database played
-        // (the line keeps its height while it is worked out, so nothing jumps).
-        let novelty = book.as_ref().and_then(|b| match b.last {
-            _ if b.to_the_end => None,
-            Some(last) => game.main_child(last),
-            None => game.main_child(game.root()),
-        });
-        ui.horizontal(|ui| match (&book, novelty) {
-            _ if line.is_empty() => {}
-            (Some(_), Some(node)) => {
-                ui.label(RichText::new(tr("Novelty:")).weak());
-                if ui
-                    .link(node_label(game, node).unwrap_or_default())
-                    .on_hover_text(tr(
-                        "The first move of this game that no other game of this database played; before it the game followed games of the database",
-                    ))
-                    .clicked()
-                {
-                    action = Some(RefAction::Goto(node));
-                }
-            }
-            (Some(_), None) => {}
-            // Still being worked out: an empty line of the same height, so the tables
-            // do not jump when the novelty appears.
-            (None, _) => {
-                ui.label(" ");
-            }
-        });
-        // The game itself is in the database (maybe annotated there): open it.
-        if let Some(copy) = book
-            .as_ref()
-            .and_then(|b| b.copies.iter().find(|c| Some(**c) != exclude))
-        {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(tr("This game is in the database")).weak());
-                if ui
-                    .link(tr("open it"))
-                    .on_hover_text(tr(
-                        "Open the copy of this game from the database at this position",
-                    ))
-                    .clicked()
-                {
-                    action = Some(RefAction::OpenGame(path.clone(), *copy, pos.clone()));
-                }
-            });
-        }
         ui.separator();
         let current_key = key(&path, &query);
         let shown = self

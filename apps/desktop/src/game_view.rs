@@ -247,19 +247,28 @@ impl GameView {
         self.sync_analysis(analysis);
         let databases = settings.databases.clone();
         egui::Panel::top("game_header").show(ui, |ui| self.header(ui, &databases, &mut actions));
-        // Keep room for the board on narrow windows: the side panel never exceeds 60 %.
+        // The board takes the full height of the window: the side panel is never wider
+        // than what is left beside it (the user can make it narrower, not wider). The
+        // reference tab has two wide tables and its own width (egui remembers each).
         let width = ui.available_width();
-        // The reference tab has two wide tables: its own (wider) panel width, which
-        // egui remembers apart from the notation's.
-        let (side_id, side_width) = if self.side_tab == SideTab::Reference {
-            ("game_side_reference", (width * 0.55).clamp(360.0, 1100.0))
+        let height = ui.available_height();
+        let graph = self.review.visible && (self.review.has_data() || self.review.running());
+        let board = if graph {
+            height - (height * 0.14).clamp(80.0, 130.0) - 8.0
         } else {
-            ("game_side", (width * 0.4).clamp(260.0, 460.0))
+            height
+        } - 16.0;
+        let room = (width - board - 24.0).max(240.0);
+        let (side_id, side_width) = if self.side_tab == SideTab::Reference {
+            ("game_side_ref", room.min(1100.0))
+        } else {
+            ("game_side", (width * 0.4).clamp(260.0, 460.0).min(room))
         };
+        let max = room.max(side_width).min((width * 0.7).max(240.0));
         egui::Panel::right(side_id)
             .resizable(true)
             .default_size(side_width)
-            .size_range(240.0_f32.min(width * 0.5)..=(width * 0.7).max(240.0))
+            .size_range(240.0_f32.min(width * 0.5).min(max)..=max)
             .show(ui, |ui| {
                 self.side_panel(ui, settings, analysis, reference, &mut actions)
             });
