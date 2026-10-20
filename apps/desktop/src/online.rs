@@ -91,27 +91,63 @@ impl std::fmt::Display for Failure {
     }
 }
 
+/// Makes a request again when the connection broke (Lichess drops connections for a
+/// minute or so after an export was cut short), waiting `waits` seconds in between;
+/// stops waiting when cancelled.
+fn retrying<T>(
+    waits: &[u64],
+    cancel: &AtomicBool,
+    mut request: impl FnMut() -> Result<T, ureq::Error>,
+) -> Result<T, Failure> {
+    let mut waits = waits.iter();
+    loop {
+        match request() {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                let Some(&secs) = waits.next() else {
+                    return Err(Failure::Network(e.to_string()));
+                };
+                for _ in 0..secs * 10 {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(Failure::Network(e.to_string()));
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+    }
+}
+
+/// Waits before the attempts of a download request: about a minute in all.
+const DOWNLOAD_WAITS: &[u64] = &[3, 10, 20, 30];
+
 /// GET returning (status, body); the body of an error status is not read.
 fn get(url: &str) -> Result<(u16, String), Failure> {
-    let mut resp = agent(false)
-        .get(url)
-        .header("Accept", "application/json")
-        .call()
-        .map_err(|e| Failure::Network(e.to_string()))?;
-    let status = resp.status().as_u16();
-    if status == 429 {
-        return Err(Failure::RateLimited);
-    }
-    if status != 200 {
-        return Ok((status, String::new()));
-    }
-    let body = resp
-        .body_mut()
-        .with_config()
-        .limit(64 << 20)
-        .read_to_string()
-        .map_err(|e| Failure::Network(e.to_string()))?;
-    Ok((status, body))
+    let never = AtomicBool::new(false);
+    // The whole exchange is repeated: a connection may also break in the body.
+    retrying(&[2, 5], &never, || {
+        let mut resp = agent(false)
+            .get(url)
+            .header("Accept", "application/json")
+            .call()?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            return Ok((status, String::new()));
+        }
+        let body = resp
+            .body_mut()
+            .with_config()
+            .limit(64 << 20)
+            .read_to_string()?;
+        Ok((status, body))
+    })
+    .and_then(|(status, body)| {
+        if status == 429 {
+            Err(Failure::RateLimited)
+        } else {
+            Ok((status, body))
+        }
+    })
 }
 
 fn json(url: &str) -> Result<Option<Value>, Failure> {
@@ -577,6 +613,19 @@ pub fn download(
     status: &Progress,
 ) -> Result<Done, Failure> {
     let _claim = Claim::take(path).ok_or(Failure::Busy)?;
+    // Another ChessPenguin running may download into the same database: a file lock
+    // (released when the file closes, also if the process dies).
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d).map_err(|e| Failure::Disk(e.to_string()))?;
+    }
+    let lock = std::fs::File::create(path.with_extension("online.lock"))
+        .map_err(|e| Failure::Disk(e.to_string()))?;
+    if let Err(e) = lock.try_lock() {
+        return Err(match e {
+            std::fs::TryLockError::WouldBlock => Failure::Busy,
+            std::fs::TryLockError::Error(e) => Failure::Disk(e.to_string()),
+        });
+    }
     let path = path.to_owned();
     let mut state = State::load(&path)
         // The games are gone (the file was deleted): fetch them again.
@@ -640,25 +689,26 @@ struct LichessGame<'a> {
     /// Still being played (not exported as a game yet).
     playing: bool,
     standard: bool,
-    pgn: &'a str,
+    /// Present for finished games (an unfinished one may come without it).
+    pgn: Option<&'a str>,
 }
 
 fn lichess_game(v: &Value) -> Option<LichessGame<'_>> {
-    Some(LichessGame {
+    let g = LichessGame {
         id: v["id"].as_str()?,
         created: v["createdAt"].as_i64()?,
         playing: matches!(v["status"].as_str(), Some("created" | "started")),
         standard: v["variant"]
             .as_str()
             .is_none_or(|x| x == "standard" || x == "fromPosition"),
-        pgn: v["pgn"].as_str()?,
-    })
+        pgn: v["pgn"].as_str(),
+    };
+    (g.playing || g.pgn.is_some()).then_some(g)
 }
 
-/// What to do with a game of the Lichess export: `Some(write?)`, given the newest game
-/// fetched before this run and the games pending then (unfinished). The export repeats
-/// games from the oldest pending one on; those fetched already are skipped.
-fn lichess_keep(a: &mut AccountState, g: &LichessGame, before: Option<i64>) -> bool {
+/// Whether to write a game of the Lichess export; an unfinished one is remembered as
+/// pending instead (asked about by id next time), a pending one that ended is written.
+fn lichess_keep(a: &mut AccountState, g: &LichessGame) -> bool {
     let pending = a.lichess_pending.iter().position(|(id, _)| id == g.id);
     if g.playing {
         if pending.is_none() && g.standard {
@@ -668,50 +718,25 @@ fn lichess_keep(a: &mut AccountState, g: &LichessGame, before: Option<i64>) -> b
     }
     if let Some(k) = pending {
         a.lichess_pending.remove(k);
-        return g.standard;
     }
-    g.standard && before.is_none_or(|b| g.created > b)
+    g.standard
 }
 
-/// The games of account `i` of the writer's database from Lichess. `Ok(true)` when
-/// cancelled.
-fn lichess(
-    w: &mut Writer,
-    i: usize,
-    progress: &AtomicUsize,
+/// A pending game Lichess no longer returns is given up after a year.
+const PENDING_DAYS: i64 = 365;
+
+/// Reads a Lichess NDJSON answer line by line. `Ok(true)` when cancelled.
+fn lichess_lines(
+    resp: ureq::http::Response<ureq::Body>,
     cancel: &AtomicBool,
-    status: &Progress,
+    mut each: impl FnMut(usize, &Value) -> Result<(), Failure>,
 ) -> Result<bool, Failure> {
-    let a = &w.state.accounts[i];
-    let before = a.lichess_last;
-    let from = a
-        .lichess_pending
-        .iter()
-        .map(|(_, t)| *t)
-        .chain(before.map(|b| b + 1))
-        .min();
-    let pending_before: Vec<String> = a.lichess_pending.iter().map(|(id, _)| id.clone()).collect();
-    let mut url = format!(
-        "https://lichess.org/api/games/user/{}?sort=dateAsc&finished=false&pgnInJson=true\
-         &perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence\
-         &clocks=false&evals=false&opening=true",
-        a.username
-    );
-    if let Some(from) = from {
-        url.push_str(&format!("&since={from}"));
-    }
-    let resp = agent(true)
-        .get(&url)
-        .header("Accept", "application/x-ndjson")
-        .call()
-        .map_err(|e| Failure::Network(e.to_string()))?;
     match resp.status().as_u16() {
         200 => {}
         429 => return Err(Failure::RateLimited),
         code => return Err(Failure::Unexpected(format!("HTTP {code}"))),
     }
     let reader = BufReader::new(resp.into_body().into_reader());
-    let mut seen: Vec<String> = Vec::new();
     for (n, line) in reader.lines().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Ok(true);
@@ -722,30 +747,83 @@ fn lichess(
         }
         let v: Value =
             serde_json::from_str(&line).map_err(|e| Failure::Unexpected(e.to_string()))?;
-        let g = lichess_game(&v)
+        each(n, &v)?;
+    }
+    Ok(false)
+}
+
+const LICHESS_PARAMS: &str = "pgnInJson=true&clocks=false&evals=false&opening=true";
+
+/// The games of account `i` of the writer's database from Lichess: first the pending
+/// (unfinished last time) ones by id, then the new ones. `Ok(true)` when cancelled.
+fn lichess(
+    w: &mut Writer,
+    i: usize,
+    progress: &AtomicUsize,
+    cancel: &AtomicBool,
+    status: &Progress,
+) -> Result<bool, Failure> {
+    let write = |w: &mut Writer, v: &Value| -> Result<i64, Failure> {
+        let g = lichess_game(v)
             .ok_or_else(|| Failure::Unexpected("a game without id, pgn or createdAt".into()))?;
-        if pending_before.iter().any(|id| id == g.id) {
-            seen.push(g.id.to_owned());
-        }
-        let a = &mut w.state.accounts[i];
-        if lichess_keep(a, &g, before) {
-            let pgn = g.pgn.to_owned();
+        if lichess_keep(&mut w.state.accounts[i], &g)
+            && let Some(pgn) = g.pgn
+        {
+            let pgn = pgn.to_owned();
             w.game(&pgn)?;
             progress.fetch_add(1, Ordering::Relaxed);
             status.games.fetch_add(1, Ordering::Relaxed);
         }
+        Ok(g.created)
+    };
+    let pending: Vec<String> = w.state.accounts[i]
+        .lichess_pending
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect();
+    for chunk in pending.chunks(300) {
+        let resp = retrying(DOWNLOAD_WAITS, cancel, || {
+            agent(true)
+                .post(&format!(
+                    "https://lichess.org/api/games/export/_ids?{LICHESS_PARAMS}"
+                ))
+                .header("Accept", "application/x-ndjson")
+                .send(chunk.join(","))
+        })?;
+        if lichess_lines(resp, cancel, |_, v| write(w, v).map(|_| ()))? {
+            return Ok(true);
+        }
+    }
+    let year_ago = now_secs() * 1000 - PENDING_DAYS * 86_400_000;
+    w.state.accounts[i]
+        .lichess_pending
+        .retain(|(_, created)| *created > year_ago);
+    w.commit()?;
+
+    let a = &w.state.accounts[i];
+    let mut url = format!(
+        "https://lichess.org/api/games/user/{}?sort=dateAsc&finished=false\
+         &perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence&{LICHESS_PARAMS}",
+        a.username
+    );
+    if let Some(last) = a.lichess_last {
+        url.push_str(&format!("&since={}", last + 1));
+    }
+    let resp = retrying(DOWNLOAD_WAITS, cancel, || {
+        agent(true)
+            .get(&url)
+            .header("Accept", "application/x-ndjson")
+            .call()
+    })?;
+    lichess_lines(resp, cancel, |n, v| {
+        let created = write(w, v)?;
         let a = &mut w.state.accounts[i];
-        a.lichess_last = Some(a.lichess_last.map_or(g.created, |l| l.max(g.created)));
+        a.lichess_last = Some(a.lichess_last.map_or(created, |l| l.max(created)));
         if n % 100 == 99 {
             w.commit()?;
         }
-    }
-    // The whole export arrived: a game pending before that did not come again is gone
-    // (deleted, or a variant that ended).
-    w.state.accounts[i]
-        .lichess_pending
-        .retain(|(id, _)| !pending_before.contains(id) || seen.contains(id));
-    Ok(false)
+        Ok(())
+    })
 }
 
 /// The games of account `i` of the writer's database from Chess.com. `Ok(true)` when
@@ -1001,28 +1079,33 @@ mod tests {
     #[test]
     fn unfinished_lichess_games_come_later() {
         let mut a = AccountState::default();
-        let g = |id: &'static str, created: i64, playing: bool| LichessGame {
+        let g = |id: &'static str, playing: bool| LichessGame {
             id,
-            created,
+            created: 10,
             playing,
             standard: true,
-            pgn: "",
+            pgn: (!playing).then_some("1. e4 *"),
         };
-        // First run: a correspondence game is still on, a later one is over.
-        assert!(!lichess_keep(&mut a, &g("corr", 10, true), None));
-        assert!(lichess_keep(&mut a, &g("blitz", 20, false), None));
+        // First run: a correspondence game is still on, another one is over.
+        assert!(!lichess_keep(&mut a, &g("corr", true)));
+        assert!(lichess_keep(&mut a, &g("blitz", false)));
         assert_eq!(a.lichess_pending, vec![("corr".to_owned(), 10)]);
-        // The next run starts from the pending game: it is over now and is kept, the
-        // game fetched before is not repeated.
-        assert!(lichess_keep(&mut a, &g("corr", 10, false), Some(20)));
-        assert!(!lichess_keep(&mut a, &g("blitz", 20, false), Some(20)));
-        assert!(lichess_keep(&mut a, &g("new", 30, false), Some(20)));
+        // Asked about by id: still on, then over.
+        assert!(!lichess_keep(&mut a, &g("corr", true)));
+        assert_eq!(a.lichess_pending.len(), 1);
+        assert!(lichess_keep(&mut a, &g("corr", false)));
         assert!(a.lichess_pending.is_empty());
         // A variant game is neither kept nor waited for.
-        let mut v = g("960", 40, true);
+        let mut v = g("960", true);
         v.standard = false;
-        assert!(!lichess_keep(&mut a, &v, Some(30)));
+        assert!(!lichess_keep(&mut a, &v));
         assert!(a.lichess_pending.is_empty());
+        // An unfinished game may come without its PGN, a finished one may not.
+        let json = |s: &str| serde_json::from_str::<Value>(s).unwrap();
+        let on = json(r#"{"id":"a","createdAt":1,"status":"started"}"#);
+        assert!(lichess_game(&on).is_some_and(|g| g.playing));
+        let over = json(r#"{"id":"a","createdAt":1,"status":"mate"}"#);
+        assert!(lichess_game(&over).is_none());
     }
 
     /// Against the real sites, with an account given by `CP_ONLINE_NICK` (kept out of
@@ -1068,15 +1151,17 @@ mod tests {
         for round in 1..=2 {
             let progress = AtomicUsize::new(0);
             let cancel = AtomicBool::new(false);
+            let over = AtomicBool::new(false);
             let done = std::thread::scope(|s| {
                 s.spawn(|| {
-                    while progress.load(Ordering::Relaxed) < 150 {
+                    while progress.load(Ordering::Relaxed) < 150 && !over.load(Ordering::Relaxed) {
                         std::thread::sleep(Duration::from_millis(50));
                     }
                     cancel.store(true, Ordering::Relaxed);
                 });
-                download_to(std::slice::from_ref(&li), &path, &progress, &cancel)
-                    .expect("downloads")
+                let r = download_to(std::slice::from_ref(&li), &path, &progress, &cancel);
+                over.store(true, Ordering::Relaxed);
+                r.expect("downloads")
             });
             eprintln!("lichess round {round}: {done:?}");
             assert!(done.cancelled && done.added >= 150);
@@ -1150,6 +1235,7 @@ mod tests {
         for round in 1..=2 {
             let progress = AtomicUsize::new(0);
             let cancel = AtomicBool::new(false);
+            let over = AtomicBool::new(false);
             let goal = if round == 1 {
                 done.total as usize + 100
             } else {
@@ -1157,12 +1243,14 @@ mod tests {
             };
             let d = std::thread::scope(|s| {
                 s.spawn(|| {
-                    while progress.load(Ordering::Relaxed) < goal {
+                    while progress.load(Ordering::Relaxed) < goal && !over.load(Ordering::Relaxed) {
                         std::thread::sleep(Duration::from_millis(50));
                     }
                     cancel.store(true, Ordering::Relaxed);
                 });
-                download_to(&accounts, &path, &progress, &cancel).expect("downloads")
+                let r = download_to(&accounts, &path, &progress, &cancel);
+                over.store(true, Ordering::Relaxed);
+                r.expect("downloads")
             });
             eprintln!("both, round {round}: {d:?}");
             assert!(d.cancelled);

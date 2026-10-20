@@ -705,7 +705,7 @@ impl Library {
                 ui.painter()
                     .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
                 let below = match self.online_running {
-                    Some(n) => trf("downloading… {n}", &[("n", &large_db::grouped(n))]),
+                    Some(n) => trf("downloading… {n}", &[("n", &crate::i18n::games(n))]),
                     None => "Lichess · Chess.com".to_owned(),
                 };
                 ui.painter().text(
