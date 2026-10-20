@@ -207,6 +207,8 @@ pub struct Library {
     pub online: bool,
     /// Online databases being downloaded or updated.
     pub online_busy: Vec<PathBuf>,
+    /// Games downloaded so far while downloads run (shown on the shelf card).
+    pub online_running: Option<usize>,
     /// A newer version to offer (its number), next to Settings.
     pub update: Option<String>,
     /// File sizes of databases (`file_size`).
@@ -232,6 +234,7 @@ impl Library {
             scroll_to_selected: false,
             online: false,
             online_busy: Vec::new(),
+            online_running: None,
             sizes: HashMap::new(),
             update: None,
         }
@@ -618,7 +621,7 @@ impl Library {
             if self.online
                 && ui
                     .button("🌐")
-                    .on_hover_text(tr("Download your online games by nickname into a database"))
+                    .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
                     .clicked()
             {
                 actions.push(LibraryAction::OnlineGames);
@@ -701,17 +704,26 @@ impl Library {
                 let visuals = ui.style().interact(&resp);
                 ui.painter()
                     .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
-                for (dy, text) in [(-9.0, tr("Games from")), (9.0, "Lichess · Chess.com")] {
-                    ui.painter().text(
-                        rect.center() + vec2(0.0, dy),
-                        egui::Align2::CENTER_CENTER,
-                        text,
-                        egui::FontId::proportional(14.0),
-                        visuals.text_color(),
-                    );
-                }
+                let below = match self.online_running {
+                    Some(n) => trf("downloading… {n}", &[("n", &large_db::grouped(n))]),
+                    None => "Lichess · Chess.com".to_owned(),
+                };
+                ui.painter().text(
+                    rect.center() + vec2(0.0, -9.0),
+                    egui::Align2::CENTER_CENTER,
+                    format!("🌐 {}", tr("Online games")),
+                    egui::FontId::proportional(15.0),
+                    visuals.text_color(),
+                );
+                ui.painter().text(
+                    rect.center() + vec2(0.0, 11.0),
+                    egui::Align2::CENTER_CENTER,
+                    below,
+                    egui::FontId::proportional(13.0),
+                    ui.visuals().weak_text_color(),
+                );
                 if resp
-                    .on_hover_text(tr("Download your online games by nickname into a database"))
+                    .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
                     .clicked()
                 {
                     actions.push(LibraryAction::OnlineGames);
@@ -768,7 +780,11 @@ impl Library {
         ui.painter().text(
             rect.left_top() + vec2(12.0, 10.0),
             egui::Align2::LEFT_TOP,
-            "🗄",
+            if crate::online::is_online(path) {
+                "🌐"
+            } else {
+                "🗄"
+            },
             egui::FontId::proportional(22.0),
             text_color,
         );
@@ -933,13 +949,28 @@ impl Library {
                 if self.online_busy.contains(&path) {
                     ui.add(egui::Spinner::new().size(14.0));
                     ui.label(RichText::new(tr("updating…")).weak());
-                } else if self.online
-                    && ui
-                        .small_button(tr("⟳ Update"))
-                        .on_hover_text(tr("Fetch the games played since the last download"))
+                } else {
+                    let when = crate::online::State::load(&path)
+                        .and_then(|s| s.updated)
+                        .map(crate::online::ago);
+                    let hint = if !self.online {
+                        tr("No connection to Lichess and Chess.com").to_owned()
+                    } else if let Some(w) = when {
+                        trf(
+                            "Fetch the games played since the last download ({when})",
+                            &[("when", &w)],
+                        )
+                    } else {
+                        tr("Fetch the games played since the last download").to_owned()
+                    };
+                    if ui
+                        .add_enabled(self.online, egui::Button::new(tr("⟳ New games")).small())
+                        .on_hover_text(&hint)
+                        .on_disabled_hover_text(&hint)
                         .clicked()
-                {
-                    actions.push(LibraryAction::UpdateOnline(path.clone()));
+                    {
+                        actions.push(LibraryAction::UpdateOnline(path.clone()));
+                    }
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

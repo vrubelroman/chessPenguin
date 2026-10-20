@@ -892,6 +892,7 @@ impl eframe::App for App {
             self.online_probe.poll();
             self.library.online = self.online_probe.any();
             self.library.online_busy = self.online.busy();
+            self.library.online_running = self.online.running();
             for a in self.library.show(ui, &dbs, &self.settings) {
                 match a {
                     LibraryAction::OpenGame { path, index, at } => {
@@ -937,6 +938,12 @@ impl eframe::App for App {
                     self.settings_dirty = true;
                 }
                 crate::online_ui::OnlineEvent::Updated(p) => self.library.reload(&p, &ctx),
+                crate::online_ui::OnlineEvent::Open(p) => {
+                    self.settings.touch_database(&p);
+                    self.library.select_db(&p, &ctx);
+                    self.settings_dirty = true;
+                }
+                crate::online_ui::OnlineEvent::Message(t) => self.toast(&ctx, t),
             }
         }
         // Updates: the badge next to Settings, the window, the status in Settings → About.
@@ -1054,6 +1061,13 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         self.analysis.stop();
+        // Downloads of online games stop and save what they got; a new database goes on
+        // the shelf with it (the next download continues it).
+        for p in self.online.stop_all() {
+            if crate::online::State::load(&p).is_some_and(|s| s.games > 0) {
+                self.settings.touch_database(&p);
+            }
+        }
         let _ = self.settings.save();
     }
 }

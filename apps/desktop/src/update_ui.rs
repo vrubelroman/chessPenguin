@@ -209,7 +209,7 @@ impl UpdateDialog {
                 ui.label(tr("It starts after a restart. Unsaved games are asked about first; databases and settings stay as they are."));
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if primary(ui, tr("⟳ Restart now")).clicked() {
+                    if crate::widgets::primary(ui, tr("⟳ Restart now")).clicked() {
                         events.push(UpdateEvent::Restart(exe.clone()));
                     }
                     if ui.button(tr("Later")).clicked() {
@@ -226,7 +226,7 @@ impl UpdateDialog {
                 ui.label(tr("2. In the window of the disk image, drag the ChessPenguin icon onto the Applications folder and choose Replace."));
                 ui.label(tr("3. Start ChessPenguin from Applications."));
                 ui.add_space(6.0);
-                if primary(ui, tr("Quit ChessPenguin")).clicked() {
+                if crate::widgets::primary(ui, tr("Quit ChessPenguin")).clicked() {
                     events.push(UpdateEvent::Quit);
                 }
                 return;
@@ -296,7 +296,7 @@ impl UpdateDialog {
                 ));
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if primary(ui, action(retry, tr("⬆ Update"))).clicked() {
+                    if crate::widgets::primary(ui, action(retry, tr("⬆ Update"))).clicked() {
                         self.start(release, k, ui.ctx());
                     }
                     self.not_now(ui, release, events);
@@ -309,7 +309,7 @@ impl UpdateDialog {
                 ));
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if primary(ui, action(retry, tr("⬇ Download"))).clicked() {
+                    if crate::widgets::primary(ui, action(retry, tr("⬇ Download"))).clicked() {
                         self.start(release, kind, ui.ctx());
                     }
                     self.not_now(ui, release, events);
@@ -322,7 +322,7 @@ impl UpdateDialog {
                 ));
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if primary(ui, action(retry, tr("⬇ Download"))).clicked() {
+                    if crate::widgets::primary(ui, action(retry, tr("⬇ Download"))).clicked() {
                         self.start(release, k, ui.ctx());
                     }
                     self.not_now(ui, release, events);
@@ -385,15 +385,6 @@ fn heading(ui: &mut Ui, release: &Release) {
     ui.add_space(6.0);
 }
 
-/// The main button of the window: filled, a little taller.
-fn primary(ui: &mut Ui, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(label).strong())
-            .fill(ui.visuals().selection.bg_fill)
-            .min_size(egui::vec2(0.0, 30.0)),
-    )
-}
-
 /// A command in a monospace box with a Copy button beside it.
 fn command_line(ui: &mut Ui, command: &str, events: &mut Vec<UpdateEvent>) {
     ui.horizontal(|ui| {
@@ -406,7 +397,7 @@ fn command_line(ui: &mut Ui, command: &str, events: &mut Vec<UpdateEvent>) {
                 ui.set_max_width(width);
                 ui.add(egui::Label::new(RichText::new(command).monospace()).wrap());
             });
-        if primary(ui, tr("Copy")).clicked() {
+        if crate::widgets::primary(ui, tr("Copy")).clicked() {
             events.push(UpdateEvent::CopyText(command.to_owned()));
         }
     });

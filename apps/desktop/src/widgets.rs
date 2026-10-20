@@ -39,3 +39,12 @@ pub fn update_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.button(egui::RichText::new(label).color(ui.visuals().hyperlink_color))
         .on_hover_text(crate::i18n::tr("A new version of ChessPenguin is out"))
 }
+
+/// The main button of a window: filled, a little taller.
+pub fn primary(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).strong())
+            .fill(ui.visuals().selection.bg_fill)
+            .min_size(egui::vec2(0.0, 30.0)),
+    )
+}

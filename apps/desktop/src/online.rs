@@ -1,6 +1,7 @@
-//! The user's games from Lichess and Chess.com, by nickname (no login): each platform's
-//! games become a PGN database of their own in `<local data dir>/online/`, with a small
-//! state file next to it so that "Update" fetches only the new games (and continues an
+//! A player's games from Lichess and Chess.com, by nickname (no login; anyone's: the
+//! user's own, a pupil's, an opponent's): they become a PGN database in
+//! `<local data dir>/online/` (one per site, or both sites in one), with a small state
+//! file next to it so that "Update" fetches only the new games (and continues an
 //! interrupted download). Both public APIs are probed at start; a platform that does not
 //! answer as expected (offline, the API changed) is simply not offered.
 //!
@@ -53,9 +54,9 @@ fn agent(stream: bool) -> ureq::Agent {
         .http_status_as_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
-        // A long export is one response: no limit on the body, only on the rest.
+        // A long export is one response: hours for the body (a stalled one ends).
         .timeout_recv_body(if stream {
-            None
+            Some(Duration::from_secs(4 * 3600))
         } else {
             Some(Duration::from_secs(60))
         })
@@ -74,6 +75,8 @@ pub enum Failure {
     Unexpected(String),
     /// Writing the database failed.
     Disk(String),
+    /// The database is being downloaded already.
+    Busy,
 }
 
 impl std::fmt::Display for Failure {
@@ -83,6 +86,7 @@ impl std::fmt::Display for Failure {
             Failure::RateLimited => write!(f, "rate limited"),
             Failure::Unexpected(e) => write!(f, "unexpected answer: {e}"),
             Failure::Disk(e) => write!(f, "{e}"),
+            Failure::Busy => write!(f, "the database is being downloaded already"),
         }
     }
 }
@@ -249,19 +253,54 @@ pub fn database_path(p: Platform, username: &str) -> Option<PathBuf> {
     dir().map(|d| d.join(format!("{username} ({}).pgn", p.name())))
 }
 
-/// The database of several accounts in one: "Name (Lichess + Chess.com).pgn", named
-/// after the first account.
+/// The database of several accounts in one: "Name (Lichess + Chess.com).pgn" when the
+/// nicknames are the same, "Name (Lichess) + Other (Chess.com).pgn" otherwise (so that
+/// another set of accounts never lands in the same file).
 pub fn combined_path(accounts: &[Account]) -> Option<PathBuf> {
     let first = accounts.first()?;
     if accounts.len() == 1 {
         return database_path(first.platform, &first.username);
     }
-    let platforms = accounts
+    let same = accounts
         .iter()
-        .map(|a| a.platform.name())
-        .collect::<Vec<_>>()
-        .join(" + ");
-    dir().map(|d| d.join(format!("{} ({platforms}).pgn", first.username)))
+        .all(|a| a.username.eq_ignore_ascii_case(&first.username));
+    let name = if same {
+        let platforms = accounts
+            .iter()
+            .map(|a| a.platform.name())
+            .collect::<Vec<_>>()
+            .join(" + ");
+        format!("{} ({platforms})", first.username)
+    } else {
+        accounts
+            .iter()
+            .map(|a| format!("{} ({})", a.username, a.platform.name()))
+            .collect::<Vec<_>>()
+            .join(" + ")
+    };
+    dir().map(|d| d.join(format!("{name}.pgn")))
+}
+
+/// The online databases already holding `account` (several when it was downloaded
+/// alone and together with another one), those with more accounts first.
+pub fn holding(account: &Account) -> Vec<PathBuf> {
+    let Some(dir) = dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(usize, PathBuf)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "pgn"))
+        .filter_map(|p| {
+            let s = State::load(&p)?;
+            s.holds(account).then_some((s.accounts.len(), p))
+        })
+        .collect();
+    found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    found.into_iter().map(|(_, p)| p).collect()
 }
 
 fn state_path(pgn: &Path) -> PathBuf {
@@ -275,6 +314,11 @@ pub struct AccountState {
     pub username: String,
     /// Lichess: creation time (ms) of the newest game fetched.
     pub lichess_last: Option<i64>,
+    /// Lichess: games still being played when last fetched (id, creation time ms):
+    /// the next update asks again from the oldest of them, so that a long
+    /// (correspondence) game is fetched once it ends.
+    #[serde(default)]
+    pub lichess_pending: Vec<(String, i64)>,
     /// Chess.com: the newest month fetched ("2026/10") and the end time (s) of its
     /// last game fetched.
     pub chesscom_month: Option<String>,
@@ -288,7 +332,20 @@ pub struct State {
     pub accounts: Vec<AccountState>,
     /// Games written so far.
     pub games: u64,
+    /// When the last download finished (Unix seconds).
+    #[serde(default)]
+    pub updated: Option<i64>,
+    /// The length of the database file when the state was saved, and its last bytes:
+    /// what a crash appended after that is cut off before the next download (only if
+    /// the file still ends the same way there, i.e. nobody else changed it).
+    #[serde(default)]
+    pub bytes: Option<u64>,
+    #[serde(default)]
+    pub tail: Vec<u8>,
 }
+
+/// How many last bytes of the file the state remembers.
+const TAIL: usize = 64;
 
 impl State {
     pub fn load(pgn: &Path) -> Option<State> {
@@ -307,6 +364,10 @@ impl State {
             .map_err(|e| Failure::Disk(e.to_string()))
     }
 
+    fn holds(&self, a: &Account) -> bool {
+        self.accounts.iter().any(|s| s.is(a))
+    }
+
     /// The accounts of the database, to update it.
     pub fn accounts(&self) -> Vec<Account> {
         self.accounts
@@ -323,9 +384,50 @@ impl State {
     }
 }
 
+impl AccountState {
+    fn is(&self, a: &Account) -> bool {
+        self.platform == Some(a.platform) && self.username.eq_ignore_ascii_case(&a.username)
+    }
+}
+
+impl Account {
+    /// The same account (the counts aside).
+    pub fn same(&self, other: &Account) -> bool {
+        self.platform == other.platform && self.username.eq_ignore_ascii_case(&other.username)
+    }
+}
+
 /// An online database (it has a state file).
 pub fn is_online(pgn: &Path) -> bool {
     dir().is_some_and(|d| pgn.parent() == Some(d.as_path())) && state_path(pgn).exists()
+}
+
+/// What a running download is doing, for the progress line: the account (its index in
+/// the accounts passed to [`download`]), the games of that account so far, and for
+/// Chess.com the months done of all.
+#[derive(Debug, Default)]
+pub struct Progress {
+    pub account: AtomicUsize,
+    pub games: AtomicUsize,
+    pub months_done: AtomicUsize,
+    pub months_total: AtomicUsize,
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// "5 min ago", "3 h ago", "2 d ago" for a time in Unix seconds.
+pub fn ago(t: i64) -> String {
+    use crate::i18n::trf;
+    let s = (now_secs() - t).max(0);
+    match s {
+        0..3600 => trf("{n} min ago", &[("n", &(s / 60).max(1))]),
+        3600..86400 => trf("{n} h ago", &[("n", &(s / 3600))]),
+        _ => trf("{n} d ago", &[("n", &(s / 86400))]),
+    }
 }
 
 /// The result of a download.
@@ -339,30 +441,83 @@ pub struct Done {
     pub cancelled: bool,
 }
 
+/// The databases being written now: one download per file at a time.
+static WRITING: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Holds a database for one download; released when dropped.
+struct Claim(PathBuf);
+
+impl Claim {
+    fn take(path: &Path) -> Option<Claim> {
+        let mut w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        if w.iter().any(|p| p == path) {
+            return None;
+        }
+        w.push(path.to_owned());
+        Some(Claim(path.to_owned()))
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let mut w = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        w.retain(|p| *p != self.0);
+    }
+}
+
 /// Appends games to the database file and keeps the state in step.
 struct Writer {
     path: PathBuf,
     file: std::io::BufWriter<std::fs::File>,
     state: State,
     added: u64,
+    /// The file's length and last bytes as written (flushed or not).
+    len: u64,
+    tail: Vec<u8>,
 }
 
 impl Writer {
-    fn open(path: &Path, state: State) -> Result<Writer, Failure> {
+    /// Opens the database for appending; a state that does not match the file (the file
+    /// is gone, or a crash left games after the state) is put right first.
+    fn open(path: &Path, mut state: State) -> Result<Writer, Failure> {
         let disk = |e: std::io::Error| Failure::Disk(e.to_string());
         if let Some(d) = path.parent() {
             std::fs::create_dir_all(d).map_err(disk)?;
         }
         let file = std::fs::OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(path)
             .map_err(disk)?;
+        let mut len = file.metadata().map_err(disk)?.len();
+        if let Some(b) = state.bytes
+            && len > b
+            && b as usize >= state.tail.len()
+        {
+            let mut end = vec![0; state.tail.len()];
+            use std::io::{Read, Seek, SeekFrom};
+            let mut f = &file;
+            f.seek(SeekFrom::Start(b - state.tail.len() as u64))
+                .and_then(|_| f.read_exact(&mut end))
+                .map_err(disk)?;
+            if end == state.tail {
+                file.set_len(b).map_err(disk)?;
+                len = b;
+            }
+        }
+        let tail = if len == state.bytes.unwrap_or(u64::MAX) {
+            std::mem::take(&mut state.tail)
+        } else {
+            Vec::new()
+        };
         Ok(Writer {
             path: path.to_owned(),
             file: std::io::BufWriter::new(file),
             state,
             added: 0,
+            len,
+            tail,
         })
     }
 
@@ -371,10 +526,16 @@ impl Writer {
         if pgn.is_empty() {
             return Ok(());
         }
-        self.file
-            .write_all(pgn.as_bytes())
-            .and_then(|_| self.file.write_all(b"\n\n"))
-            .map_err(|e| Failure::Disk(e.to_string()))?;
+        for part in [pgn.as_bytes(), b"\n\n"] {
+            self.file
+                .write_all(part)
+                .map_err(|e| Failure::Disk(e.to_string()))?;
+            self.len += part.len() as u64;
+            self.tail.extend_from_slice(part);
+        }
+        if self.tail.len() > TAIL {
+            self.tail.drain(..self.tail.len() - TAIL);
+        }
         self.added += 1;
         self.state.games += 1;
         Ok(())
@@ -385,10 +546,15 @@ impl Writer {
         self.file
             .flush()
             .map_err(|e| Failure::Disk(e.to_string()))?;
+        self.state.bytes = Some(self.len);
+        self.state.tail = self.tail.clone();
         self.state.save(&self.path)
     }
 
     fn done(mut self, cancelled: bool) -> Result<Done, Failure> {
+        if !cancelled {
+            self.state.updated = Some(now_secs());
+        }
         self.commit()?;
         Ok(Done {
             path: self.path,
@@ -399,38 +565,30 @@ impl Writer {
     }
 }
 
-/// Fetches the games of `accounts` new since the last run into their database (one
-/// database for all of them); `progress` counts the games added. Cancelling keeps what
-/// was fetched.
+/// Fetches the games of `accounts` new since the last run into the database at `path`
+/// (one database for all of them); `progress` counts the games added, `status` tells
+/// what is being fetched. Cancelling keeps what was fetched. One download per database
+/// at a time ([`Failure::Busy`] otherwise).
 pub fn download(
-    accounts: &[Account],
-    progress: &AtomicUsize,
-    cancel: &AtomicBool,
-) -> Result<Done, Failure> {
-    let path = combined_path(accounts).ok_or_else(|| Failure::Disk("no data directory".into()))?;
-    download_to(accounts, &path, progress, cancel)
-}
-
-/// [`download`] into the database at `path`.
-fn download_to(
     accounts: &[Account],
     path: &Path,
     progress: &AtomicUsize,
     cancel: &AtomicBool,
+    status: &Progress,
 ) -> Result<Done, Failure> {
+    let _claim = Claim::take(path).ok_or(Failure::Busy)?;
     let path = path.to_owned();
-    let mut state = State::load(&path).unwrap_or_else(|| {
-        // A database without its state: start it anew rather than append duplicates.
-        let _ = std::fs::remove_file(&path);
-        State::default()
-    });
+    let mut state = State::load(&path)
+        // The games are gone (the file was deleted): fetch them again.
+        .filter(|s| path.exists() || s.games == 0)
+        .unwrap_or_else(|| {
+            // A database without its state: start it anew rather than append duplicates.
+            let _ = std::fs::remove_file(&path);
+            State::default()
+        });
     // Accounts not in the database yet start from their first game.
     for a in accounts {
-        if !state
-            .accounts
-            .iter()
-            .any(|s| s.platform == Some(a.platform) && s.username.eq_ignore_ascii_case(&a.username))
-        {
+        if !state.holds(a) {
             state.accounts.push(AccountState {
                 platform: Some(a.platform),
                 username: a.username.clone(),
@@ -441,17 +599,14 @@ fn download_to(
     let mut w = Writer::open(&path, state)?;
     let mut result = Ok(false);
     for i in 0..w.state.accounts.len() {
-        let wanted = accounts.iter().any(|a| {
-            Some(a.platform) == w.state.accounts[i].platform
-                && a.username
-                    .eq_ignore_ascii_case(&w.state.accounts[i].username)
-        });
-        if !wanted {
+        let Some(k) = accounts.iter().position(|a| w.state.accounts[i].is(a)) else {
             continue;
-        }
+        };
+        status.account.store(k, Ordering::Relaxed);
+        status.games.store(0, Ordering::Relaxed);
         result = match w.state.accounts[i].platform {
-            Some(Platform::Lichess) => lichess(&mut w, i, progress, cancel),
-            Some(Platform::ChessCom) => chesscom(&mut w, i, progress, cancel),
+            Some(Platform::Lichess) => lichess(&mut w, i, progress, cancel, status),
+            Some(Platform::ChessCom) => chesscom(&mut w, i, progress, cancel, status),
             None => Ok(false),
         };
         if !matches!(result, Ok(false)) {
@@ -468,6 +623,56 @@ fn download_to(
     }
 }
 
+#[cfg(test)]
+fn download_to(
+    accounts: &[Account],
+    path: &Path,
+    progress: &AtomicUsize,
+    cancel: &AtomicBool,
+) -> Result<Done, Failure> {
+    download(accounts, path, progress, cancel, &Progress::default())
+}
+
+/// Lichess's answer for one game, as far as the download cares.
+struct LichessGame<'a> {
+    id: &'a str,
+    created: i64,
+    /// Still being played (not exported as a game yet).
+    playing: bool,
+    standard: bool,
+    pgn: &'a str,
+}
+
+fn lichess_game(v: &Value) -> Option<LichessGame<'_>> {
+    Some(LichessGame {
+        id: v["id"].as_str()?,
+        created: v["createdAt"].as_i64()?,
+        playing: matches!(v["status"].as_str(), Some("created" | "started")),
+        standard: v["variant"]
+            .as_str()
+            .is_none_or(|x| x == "standard" || x == "fromPosition"),
+        pgn: v["pgn"].as_str()?,
+    })
+}
+
+/// What to do with a game of the Lichess export: `Some(write?)`, given the newest game
+/// fetched before this run and the games pending then (unfinished). The export repeats
+/// games from the oldest pending one on; those fetched already are skipped.
+fn lichess_keep(a: &mut AccountState, g: &LichessGame, before: Option<i64>) -> bool {
+    let pending = a.lichess_pending.iter().position(|(id, _)| id == g.id);
+    if g.playing {
+        if pending.is_none() && g.standard {
+            a.lichess_pending.push((g.id.to_owned(), g.created));
+        }
+        return false;
+    }
+    if let Some(k) = pending {
+        a.lichess_pending.remove(k);
+        return g.standard;
+    }
+    g.standard && before.is_none_or(|b| g.created > b)
+}
+
 /// The games of account `i` of the writer's database from Lichess. `Ok(true)` when
 /// cancelled.
 fn lichess(
@@ -475,15 +680,25 @@ fn lichess(
     i: usize,
     progress: &AtomicUsize,
     cancel: &AtomicBool,
+    status: &Progress,
 ) -> Result<bool, Failure> {
+    let a = &w.state.accounts[i];
+    let before = a.lichess_last;
+    let from = a
+        .lichess_pending
+        .iter()
+        .map(|(_, t)| *t)
+        .chain(before.map(|b| b + 1))
+        .min();
+    let pending_before: Vec<String> = a.lichess_pending.iter().map(|(id, _)| id.clone()).collect();
     let mut url = format!(
-        "https://lichess.org/api/games/user/{}?sort=dateAsc&finished=true&pgnInJson=true\
+        "https://lichess.org/api/games/user/{}?sort=dateAsc&finished=false&pgnInJson=true\
          &perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence\
          &clocks=false&evals=false&opening=true",
-        w.state.accounts[i].username
+        a.username
     );
-    if let Some(last) = w.state.accounts[i].lichess_last {
-        url.push_str(&format!("&since={}", last + 1));
+    if let Some(from) = from {
+        url.push_str(&format!("&since={from}"));
     }
     let resp = agent(true)
         .get(&url)
@@ -496,6 +711,7 @@ fn lichess(
         code => return Err(Failure::Unexpected(format!("HTTP {code}"))),
     }
     let reader = BufReader::new(resp.into_body().into_reader());
+    let mut seen: Vec<String> = Vec::new();
     for (n, line) in reader.lines().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Ok(true);
@@ -506,23 +722,29 @@ fn lichess(
         }
         let v: Value =
             serde_json::from_str(&line).map_err(|e| Failure::Unexpected(e.to_string()))?;
-        let (Some(pgn), Some(created)) = (v["pgn"].as_str(), v["createdAt"].as_i64()) else {
-            return Err(Failure::Unexpected(
-                "a game without pgn or createdAt".into(),
-            ));
-        };
-        if v["variant"]
-            .as_str()
-            .is_none_or(|x| x == "standard" || x == "fromPosition")
-        {
-            w.game(pgn)?;
-            progress.fetch_add(1, Ordering::Relaxed);
+        let g = lichess_game(&v)
+            .ok_or_else(|| Failure::Unexpected("a game without id, pgn or createdAt".into()))?;
+        if pending_before.iter().any(|id| id == g.id) {
+            seen.push(g.id.to_owned());
         }
-        w.state.accounts[i].lichess_last = Some(created);
+        let a = &mut w.state.accounts[i];
+        if lichess_keep(a, &g, before) {
+            let pgn = g.pgn.to_owned();
+            w.game(&pgn)?;
+            progress.fetch_add(1, Ordering::Relaxed);
+            status.games.fetch_add(1, Ordering::Relaxed);
+        }
+        let a = &mut w.state.accounts[i];
+        a.lichess_last = Some(a.lichess_last.map_or(g.created, |l| l.max(g.created)));
         if n % 100 == 99 {
             w.commit()?;
         }
     }
+    // The whole export arrived: a game pending before that did not come again is gone
+    // (deleted, or a variant that ended).
+    w.state.accounts[i]
+        .lichess_pending
+        .retain(|(id, _)| !pending_before.contains(id) || seen.contains(id));
     Ok(false)
 }
 
@@ -533,10 +755,14 @@ fn chesscom(
     i: usize,
     progress: &AtomicUsize,
     cancel: &AtomicBool,
+    status: &Progress,
 ) -> Result<bool, Failure> {
     let lower = w.state.accounts[i].username.to_ascii_lowercase();
     let months = archives(&lower)?;
+    status.months_total.store(months.len(), Ordering::Relaxed);
+    status.months_done.store(0, Ordering::Relaxed);
     for url in months {
+        status.months_done.fetch_add(1, Ordering::Relaxed);
         // ".../games/2026/10" → "2026/10"; months before the last fetched are done.
         let month = url.rsplitn(3, '/').take(2).collect::<Vec<_>>();
         let month = format!(
@@ -574,6 +800,7 @@ fn chesscom(
             }
             w.game(pgn)?;
             progress.fetch_add(1, Ordering::Relaxed);
+            status.games.fetch_add(1, Ordering::Relaxed);
             w.state.accounts[i].chesscom_last_end = Some(end);
         }
         // The mark moves to this month even when it had no standard games (the end
@@ -633,11 +860,13 @@ impl Probe {
             self.job = None;
             self.last = Some(std::time::Instant::now());
         }
-        if self.job.is_none()
-            && !self.available.iter().all(|a| *a)
-            && self.last.is_some_and(|t| t.elapsed() >= Self::RETRY)
-        {
-            self.spawn();
+        if self.job.is_none() && !self.available.iter().all(|a| *a) {
+            match self.last {
+                Some(t) if t.elapsed() >= Self::RETRY => self.spawn(),
+                // Wake up for the retry even when nothing else repaints.
+                Some(t) => self.ctx.request_repaint_after(Self::RETRY - t.elapsed()),
+                None => {}
+            }
         }
     }
 
@@ -653,6 +882,148 @@ impl Probe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("cp-online-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn account(p: Platform, name: &str) -> Account {
+        Account {
+            platform: p,
+            username: name.into(),
+            games: None,
+            months: None,
+        }
+    }
+
+    const GAME: &str = "[Event \"x\"]\n\n1. e4 e5 1-0";
+
+    #[test]
+    fn a_crash_leaves_no_duplicates() {
+        let dir = temp_dir("crash");
+        let path = dir.join("db.pgn");
+        let state = State {
+            accounts: vec![AccountState {
+                platform: Some(Platform::Lichess),
+                username: "a".into(),
+                ..AccountState::default()
+            }],
+            ..State::default()
+        };
+        let mut w = Writer::open(&path, state).unwrap();
+        w.game(GAME).unwrap();
+        w.game(GAME).unwrap();
+        w.commit().unwrap();
+        let good = std::fs::read(&path).unwrap();
+        // Games written after the last commit, then the process died.
+        w.game(GAME).unwrap();
+        w.file.flush().unwrap();
+        drop(w);
+        assert!(std::fs::read(&path).unwrap().len() > good.len());
+        let w = Writer::open(&path, State::load(&path).unwrap()).unwrap();
+        assert_eq!(w.state.games, 2);
+        drop(w);
+        assert_eq!(std::fs::read(&path).unwrap(), good, "cut back to the state");
+
+        // Somebody else changed the file: it is left alone.
+        let mut other = good.clone();
+        other[0] = b' ';
+        other.extend_from_slice(GAME.as_bytes());
+        std::fs::write(&path, &other).unwrap();
+        let w = Writer::open(&path, State::load(&path).unwrap()).unwrap();
+        drop(w);
+        assert_eq!(std::fs::read(&path).unwrap(), other);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_deleted_database_is_downloaded_again() {
+        let dir = temp_dir("deleted");
+        let path = dir.join("db.pgn");
+        let state = State {
+            accounts: vec![AccountState {
+                platform: Some(Platform::Lichess),
+                username: "a".into(),
+                lichess_last: Some(5),
+                ..AccountState::default()
+            }],
+            games: 7,
+            ..State::default()
+        };
+        state.save(&path).unwrap();
+        let never = AtomicBool::new(false);
+        // No account asked for: nothing fetched, only the state put right.
+        let d = download_to(&[], &path, &AtomicUsize::new(0), &never).unwrap();
+        assert_eq!(d.total, 0);
+        let s = State::load(&path).unwrap_or_default();
+        assert!(s.accounts.iter().all(|a| a.lichess_last.is_none()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_download_per_database() {
+        let path = PathBuf::from("/nonexistent/cp-claim.pgn");
+        let first = Claim::take(&path).expect("free");
+        assert!(Claim::take(&path).is_none());
+        let never = AtomicBool::new(false);
+        assert_eq!(
+            download_to(&[], &path, &AtomicUsize::new(0), &never),
+            Err(Failure::Busy)
+        );
+        drop(first);
+        assert!(Claim::take(&path).is_some());
+    }
+
+    #[test]
+    fn names_of_merged_databases() {
+        let name = |a: &[Account]| {
+            combined_path(a)
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        let li = account(Platform::Lichess, "Magnus");
+        assert_eq!(name(std::slice::from_ref(&li)), "Magnus (Lichess).pgn");
+        let cc = account(Platform::ChessCom, "magnus");
+        assert_eq!(name(&[li.clone(), cc]), "Magnus (Lichess + Chess.com).pgn");
+        let other = account(Platform::ChessCom, "MagnusCarlsen");
+        assert_eq!(
+            name(&[li, other]),
+            "Magnus (Lichess) + MagnusCarlsen (Chess.com).pgn"
+        );
+    }
+
+    #[test]
+    fn unfinished_lichess_games_come_later() {
+        let mut a = AccountState::default();
+        let g = |id: &'static str, created: i64, playing: bool| LichessGame {
+            id,
+            created,
+            playing,
+            standard: true,
+            pgn: "",
+        };
+        // First run: a correspondence game is still on, a later one is over.
+        assert!(!lichess_keep(&mut a, &g("corr", 10, true), None));
+        assert!(lichess_keep(&mut a, &g("blitz", 20, false), None));
+        assert_eq!(a.lichess_pending, vec![("corr".to_owned(), 10)]);
+        // The next run starts from the pending game: it is over now and is kept, the
+        // game fetched before is not repeated.
+        assert!(lichess_keep(&mut a, &g("corr", 10, false), Some(20)));
+        assert!(!lichess_keep(&mut a, &g("blitz", 20, false), Some(20)));
+        assert!(lichess_keep(&mut a, &g("new", 30, false), Some(20)));
+        assert!(a.lichess_pending.is_empty());
+        // A variant game is neither kept nor waited for.
+        let mut v = g("960", 40, true);
+        v.standard = false;
+        assert!(!lichess_keep(&mut a, &v, Some(30)));
+        assert!(a.lichess_pending.is_empty());
+    }
 
     /// Against the real sites, with an account given by `CP_ONLINE_NICK` (kept out of
     /// the repository): lookup, an interrupted Lichess download continued without gaps
@@ -853,6 +1224,7 @@ mod tests {
                 ..AccountState::default()
             }],
             games: 3,
+            ..State::default()
         };
         s.save(&pgn).unwrap();
         assert_eq!(State::load(&pgn), Some(s));
