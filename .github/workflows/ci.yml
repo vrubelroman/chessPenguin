@@ -31,7 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked -p chesspenguin
       # Self-update: replacing the running executable (the Windows rename scheme).
-      - run: cargo test --locked -p chesspenguin update::
+      - run: "cargo test --locked -p chesspenguin update::"
 
   # Apple Silicon: the build and the app bundle (decision 15).
   macos-build:
@@ -42,4 +42,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p chesspenguin
       - run: VERSION=0.0.0 packaging/macos/build-app.sh dist
-      - run: cargo test --locked -p chesspenguin update::
+      - run: "cargo test --locked -p chesspenguin update::"
