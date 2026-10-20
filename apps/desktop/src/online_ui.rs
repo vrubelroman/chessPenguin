@@ -12,7 +12,6 @@ use egui::{RichText, Ui};
 use crate::board_search::Background;
 use crate::i18n::{games, tr, trf};
 use crate::online::{self, Account, Done, Failure, Lookup, Platform, Probe};
-use crate::settings::Settings;
 
 /// What the window asks of the application.
 pub enum OnlineEvent {
@@ -70,6 +69,8 @@ pub struct OnlineDialog {
     /// download what was found.
     auto_find: bool,
     auto_download: bool,
+    /// Put the cursor into the nickname field (the window was just opened).
+    focus: bool,
 }
 
 /// Where the found accounts go: all into one database (`together`) or each into its
@@ -156,13 +157,16 @@ fn outcome_text(o: &Outcome) -> String {
 }
 
 impl OnlineDialog {
-    /// Opens the window with the nicknames used last time.
-    pub fn open_with(&mut self, settings: &Settings) {
-        if !self.open && self.jobs.is_empty() && self.lookup.is_none() {
-            self.nick = settings.online_nick.clone();
-            self.other = settings.online_nick_chesscom.clone();
+    /// Opens the window with an empty nickname, ready to type: the databases already
+    /// downloaded fetch their new games with "⟳ New games", so the next search is
+    /// usually for another player. A search still running keeps its nickname.
+    pub fn open(&mut self) {
+        if !self.open && self.lookup.is_none() {
+            self.nick.clear();
+            self.other = None;
             self.pick = [true, true];
             self.found.clear();
+            self.focus = true;
         }
         self.open = true;
     }
@@ -253,14 +257,8 @@ impl OnlineDialog {
     }
 
     /// Collects finished work; the window itself when open.
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        probe: &Probe,
-        settings: &mut Settings,
-    ) -> (Vec<OnlineEvent>, bool) {
+    pub fn show(&mut self, ctx: &egui::Context, probe: &Probe) -> Vec<OnlineEvent> {
         let mut events = Vec::new();
-        let mut changed = false;
         if let Some(l) = &self.lookup
             && let Some(r) = l.poll()
         {
@@ -316,7 +314,7 @@ impl OnlineDialog {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         if !self.open {
-            return (events, changed);
+            return events;
         }
         let mut open = true;
         egui::Window::new(tr("Games from Lichess and Chess.com"))
@@ -326,22 +324,15 @@ impl OnlineDialog {
             .pivot(egui::Align2::CENTER_TOP)
             .default_pos(ctx.content_rect().center_top() + egui::vec2(0.0, 120.0))
             .show(ctx, |ui| {
-                changed |= self.body(ui, probe, settings, &mut events);
+                self.body(ui, probe, &mut events);
             });
         if !open || events.iter().any(|e| matches!(e, OnlineEvent::Open(_))) {
             self.open = false;
         }
-        (events, changed)
+        events
     }
 
-    fn body(
-        &mut self,
-        ui: &mut Ui,
-        probe: &Probe,
-        settings: &mut Settings,
-        events: &mut Vec<OnlineEvent>,
-    ) -> bool {
-        let mut changed = false;
+    fn body(&mut self, ui: &mut Ui, probe: &Probe, events: &mut Vec<OnlineEvent>) {
         ui.label(
             RichText::new(tr(
                 "Any player's games — yours, a pupil's, an opponent's — become a database here, to search and analyse. Only the nickname is needed, no login.",
@@ -358,6 +349,9 @@ impl OnlineDialog {
                     .hint_text(tr("as on the site"))
                     .desired_width(220.0),
             );
+            if std::mem::take(&mut self.focus) {
+                r.request_focus();
+            }
             if r.changed() {
                 self.found.clear();
             }
@@ -437,9 +431,6 @@ impl OnlineDialog {
                             .collect(),
                     )
                 });
-                settings.online_nick = self.nick.trim().to_owned();
-                settings.online_nick_chesscom = self.other.as_ref().map(|o| o.trim().to_owned());
-                changed = true;
             }
             if searching {
                 ui.add(egui::Spinner::new());
@@ -455,7 +446,6 @@ impl OnlineDialog {
         }
         self.jobs_ui(ui);
         self.results_ui(ui, events);
-        changed
     }
 
     /// What was found, the choice of one database or separate ones, and Download.

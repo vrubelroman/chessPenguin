@@ -2,6 +2,12 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- The window "Games from Lichess and Chess.com" opens with an empty nickname, the cursor in
+  it: the next search is usually for another player (a database already downloaded fetches
+  its new games with "⟳ New games").
+
 ## [0.8.1] — 2026-10-20
 
 - The side panel fits small screens (a laptop with 200 % scaling): the reference tab no longer

@@ -909,7 +909,7 @@ impl eframe::App for App {
                     }
                     LibraryAction::PastePgn => self.paste_pgn(&ctx),
                     LibraryAction::AddDatabases => self.pick_databases(&ctx),
-                    LibraryAction::OnlineGames => self.online.open_with(&self.settings),
+                    LibraryAction::OnlineGames => self.online.open(),
                     LibraryAction::UpdateOnline(p) => self.online.update(&p, &ctx),
                     LibraryAction::OpenUpdate => self.update_ui.open = true,
                     LibraryAction::RemoveDatabase(p) => {
@@ -922,10 +922,7 @@ impl eframe::App for App {
             }
         }
 
-        let (events, changed) = self
-            .online
-            .show(&ctx, &self.online_probe, &mut self.settings);
-        self.settings_dirty |= changed;
+        let events = self.online.show(&ctx, &self.online_probe);
         for e in events {
             match e {
                 crate::online_ui::OnlineEvent::Added(p) => {
