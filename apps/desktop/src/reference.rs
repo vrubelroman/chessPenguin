@@ -972,7 +972,7 @@ impl Reference {
         }
         let Some(db) = db else {
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add(egui::Spinner::new().size(14.0));
                 ui.label(RichText::new(tr("Opening the database…")).weak());
             });
@@ -987,7 +987,7 @@ impl Reference {
         {
             let work = db.as_chessbase().map_or(1, |b| b.prepare_work()).max(1);
             let pct = 100.0 * job.progress() as f32 / work as f32;
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add(egui::Spinner::new().size(12.0));
                 ui.label(
                     RichText::new(trf(
@@ -1055,7 +1055,7 @@ impl Reference {
             if ui.input(|i| i.time) - started > 0.3 {
                 let total = db.len().max(1);
                 let p = self.job.as_ref().map_or(0, |(_, j)| j.progress());
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.add(egui::Spinner::new().size(14.0));
                     let text = if p > 0 {
                         trf(
@@ -1123,12 +1123,25 @@ impl Reference {
         let natural = 26.0 * (rows as f32 + 1.0) + 8.0;
         let height = natural.min((ui.available_height() * 0.4).max(120.0));
         // Columns that give way in a narrow panel: players, year, White's score, rating.
+        // Each is shown only while the table still fits the panel (in this order).
         let width = ui.available_width();
-        let show_players = width > 600.0 && !books;
-        let show_year = width > 470.0;
-        let show_score = width > 400.0 && !books;
-        let show_elo = width > 330.0 && !books;
+        let gap = ui.spacing().item_spacing.x;
         let show_bar = !books;
+        let mut used = 86.0 + 64.0 + 44.0 + 3.0 * gap;
+        if show_bar {
+            used += 86.0 + gap;
+        }
+        let mut fits = |w: f32, wanted: bool| {
+            let ok = wanted && used + w + gap <= width;
+            if ok {
+                used += w + gap;
+            }
+            ok
+        };
+        let show_elo = fits(56.0, !books);
+        let show_score = fits(48.0, !books);
+        let show_year = fits(44.0, true);
+        let show_players = fits(80.0, !books);
         // Text in the rows must not take the clicks meant for the row.
         ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
@@ -1368,7 +1381,7 @@ impl Reference {
         };
         let rows: Vec<&GameRow> = list.into_iter().filter(|g| !is_copy(g.index)).collect();
         let mut action = None;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             match selected.and_then(|m| m.to_move(pos).ok()) {
                 Some(m) => {
                     ui.label(
@@ -1415,6 +1428,19 @@ impl Reference {
         let show_event = width > 720.0;
         let show_then = width > 520.0;
         let show_year = width > 380.0;
+        // The table never gets wider than the panel: wider content pushes the whole side
+        // panel out to the left, under the board (a 1440-point-wide laptop screen).
+        let columns = 5 + usize::from(show_year) + usize::from(show_then) + usize::from(show_event);
+        let fixed = 3.0 * 44.0
+            + if show_year { 52.0 } else { 0.0 }
+            + match (show_then, show_event) {
+                (true, true) => 150.0,
+                (true, false) => 80.0,
+                _ => 0.0,
+            }
+            + if show_event { 80.0 } else { 0.0 }
+            + ui.spacing().item_spacing.x * columns as f32;
+        let player = ((width - fixed) / 2.0).clamp(60.0, 150.0);
         ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
             .id_salt("reference_games")
@@ -1422,16 +1448,18 @@ impl Reference {
             .sense(Sense::click())
             .auto_shrink([false, false])
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(150.0).at_least(60.0).clip(true))
+            .column(Column::exact(player).clip(true))
             .column(Column::exact(44.0))
-            .column(Column::initial(150.0).at_least(60.0).clip(true))
+            .column(Column::exact(player).clip(true))
             .column(Column::exact(44.0))
             .column(Column::exact(44.0));
         if show_year {
             table = table.column(Column::exact(52.0));
         }
-        if show_then {
-            table = table.column(Column::initial(150.0).at_least(80.0).clip(true));
+        if show_then && show_event {
+            table = table.column(Column::exact(150.0).clip(true));
+        } else if show_then {
+            table = table.column(Column::remainder().at_least(80.0).clip(true));
         }
         if show_event {
             table = table.column(Column::remainder().at_least(80.0).clip(true));

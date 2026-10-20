@@ -2,6 +2,13 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.8.1] — 2026-10-20
+
+- The side panel fits small screens (a laptop with 200 % scaling): the reference tab no longer
+  slides under the board and is no longer cut off on the left. Its tables narrow their columns
+  and drop the less important ones to fit, their headings wrap, and in a tall narrow window the
+  board gives way so the reference keeps enough width.
+
 ## [0.8.0] — 2026-10-20
 
 - Games from Lichess and Chess.com: anyone's games by nickname — yours, a pupil's, an

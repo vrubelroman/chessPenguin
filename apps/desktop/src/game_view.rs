@@ -263,7 +263,13 @@ impl GameView {
         } else {
             height
         } - 16.0;
-        let room = (width - board - 24.0).max(240.0);
+        // In a tall narrow window the board gives way: the reference tables need 320 px.
+        let least: f32 = if self.side_tab == SideTab::Reference {
+            320.0
+        } else {
+            240.0
+        };
+        let room = (width - board - 24.0).max(least.min(width * 0.5));
         let (side_id, side_width) = if self.side_tab == SideTab::Reference {
             ("game_side_ref", room.min(1100.0))
         } else {
@@ -273,7 +279,7 @@ impl GameView {
         egui::Panel::right(side_id)
             .resizable(true)
             .default_size(side_width)
-            .size_range(240.0_f32.min(width * 0.5).min(max)..=max)
+            .size_range(least.min(width * 0.5).min(max)..=max)
             .show(ui, |ui| {
                 self.side_panel(ui, settings, analysis, reference, &mut actions)
             });

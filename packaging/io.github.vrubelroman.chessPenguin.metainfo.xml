@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.8.1" date="2026-10-20">
+      <description>
+        <p>The side panel fits small screens: on a laptop screen the reference tab no longer slides under the board.</p>
+      </description>
+    </release>
     <release version="0.8.0" date="2026-10-20">
       <description>
         <p>Games from Lichess and Chess.com: download anyone's games by nickname — yours, a pupil's, an opponent's — into a database, both sites merged or one per site, and fetch the new ones with one click. Interrupted downloads continue without duplicates.</p>
