@@ -2,6 +2,17 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] — 2026-10-20
+
+- Updates: at start ChessPenguin asks GitHub for the latest version (can be turned off in
+  Settings → About) and offers a newer one with a button next to Settings. The Windows zip,
+  the AppImage and the Linux archive update themselves (download, checksum check, replace,
+  restart); macOS downloads and opens the disk image with step-by-step instructions; deb, rpm,
+  Arch and Flatpak packages are downloaded into Downloads and the one command that installs
+  them is shown with a Copy button; the AUR package shows the helper command. "Skip this
+  version" hides the button until the next one.
+- The Flatpak may use the network (the update check).
+
 ## [0.7.0] — 2026-10-20
 
 - «Справочник» (Reference) tab of a game: what was played in the current position in a

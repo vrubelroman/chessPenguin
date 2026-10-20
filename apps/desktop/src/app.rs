@@ -59,6 +59,12 @@ pub struct App {
     previous_games: Vec<GameView>,
     /// The last game showed the reference tab: the next one opens with it too.
     reference_tab: bool,
+    /// Updates: the release check, how this copy is installed, the window, and the
+    /// executable to start after quitting (a restart into the new version).
+    update_check: crate::update::Check,
+    update_kind: crate::update::Install,
+    update_ui: crate::update_ui::UpdateDialog,
+    restart_to: Option<PathBuf>,
     /// The reference tab of games (kept across games: its results stay cached).
     reference: crate::reference::Reference,
     allow_quit: bool,
@@ -107,6 +113,18 @@ impl App {
         // Before the samples, which are named in this language.
         crate::i18n::set_lang(settings.language);
         crate::engine_download::clean_leftovers();
+        crate::update::clean_leftovers();
+        let settings_check_updates = settings.check_updates;
+        // "Updated to …" once, when this version runs for the first time after another.
+        let current = env!("CARGO_PKG_VERSION");
+        let updated_from = settings
+            .last_version
+            .clone()
+            .filter(|v| crate::update::parse_version(v) < crate::update::parse_version(current));
+        if settings.last_version.as_deref() != Some(current) {
+            settings.last_version = Some(current.to_owned());
+            let _ = settings.save();
+        }
         let engines_found = crate::engines::first_run_setup(&mut settings);
         if crate::examples::first_run_setup(&mut settings) || engines_found {
             let _ = settings.save();
@@ -129,7 +147,7 @@ impl App {
         if let Some(first) = settings.databases.first().filter(|p| p.exists()) {
             library.select_db(first, ctx);
         }
-        Self {
+        let mut app = Self {
             settings,
             settings_dirty: false,
             sound: SoundPlayer::new(),
@@ -146,6 +164,14 @@ impl App {
             find_after_close: None,
             previous_games: Vec::new(),
             reference_tab: false,
+            update_check: if settings_check_updates {
+                crate::update::Check::start(ctx)
+            } else {
+                crate::update::Check::idle()
+            },
+            update_kind: crate::update::detect(),
+            update_ui: crate::update_ui::UpdateDialog::from_env(),
+            restart_to: None,
             reference: Default::default(),
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
@@ -153,7 +179,15 @@ impl App {
             applied_dark: None,
             debug: DebugStartup::from_env(),
         }
-        .with_debug_settings()
+        .with_debug_settings();
+        if let Some(from) = updated_from {
+            let msg = trf(
+                "ChessPenguin is updated: {from} → {to}",
+                &[("from", &from), ("to", &current)],
+            );
+            app.toast(ctx, msg);
+        }
+        app
     }
 
     fn with_debug_settings(mut self) -> Self {
@@ -341,7 +375,10 @@ impl App {
                     self.settings_dirty = true;
                 }
                 Async::SavePicked(path) => self.save_game(ctx, path),
-                Async::SaveCancelled => self.close_after_save = None,
+                Async::SaveCancelled => {
+                    self.close_after_save = None;
+                    self.restart_to = None;
+                }
                 Async::EngineChecked(res) => {
                     self.settings_ui.checking_engine = false;
                     match res {
@@ -480,6 +517,19 @@ impl App {
         }
 
         if intent == CloseIntent::QuitApp {
+            // A restart into the new version: start it as this one goes.
+            if let Some(exe) = self.restart_to.take() {
+                // The settings first (the new process reads them), and none of the dev
+                // hooks of this one (they would start the update again).
+                let _ = self.settings.save();
+                let mut cmd = std::process::Command::new(exe);
+                for (k, _) in std::env::vars_os() {
+                    if k.to_string_lossy().starts_with("CP_") {
+                        cmd.env_remove(k);
+                    }
+                }
+                let _ = cmd.spawn();
+            }
             self.allow_quit = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -661,6 +711,8 @@ impl App {
             Some(2) => {
                 self.confirm_close = None;
                 self.find_after_close = None;
+                // A restart asked for waits for no later quit.
+                self.restart_to = None;
             }
             _ => {}
         }
@@ -777,6 +829,7 @@ impl eframe::App for App {
                             }
                         }
                     }
+                    GameAction::OpenUpdate => self.update_ui.open = true,
                     GameAction::ReturnToPrevious => {
                         if !self.previous_games.is_empty() {
                             self.request_close(&ctx, CloseIntent::ReturnToPrevious);
@@ -847,6 +900,7 @@ impl eframe::App for App {
                     }
                     LibraryAction::PastePgn => self.paste_pgn(&ctx),
                     LibraryAction::AddDatabases => self.pick_databases(&ctx),
+                    LibraryAction::OpenUpdate => self.update_ui.open = true,
                     LibraryAction::RemoveDatabase(p) => {
                         self.settings.databases.retain(|d| *d != p);
                         self.library.forget(&p);
@@ -857,12 +911,63 @@ impl eframe::App for App {
             }
         }
 
+        // Updates: the badge next to Settings, the window, the status in Settings → About.
+        self.update_check.poll();
+        let skipped = self.settings.skipped_version.clone();
+        let badge = self
+            .update_check
+            .newer()
+            .filter(|r| self.update_ui.active() || skipped.as_deref() != Some(r.version.as_str()))
+            .map(|r| self.update_ui.badge(r));
+        self.library.update = badge.clone();
+        if let Some(g) = &mut self.game {
+            g.update = badge;
+        }
+        for e in self
+            .update_ui
+            .show(&ctx, self.update_check.newer(), &self.update_kind)
+        {
+            match e {
+                crate::update_ui::UpdateEvent::Restart(exe) => {
+                    self.restart_to = Some(exe);
+                    self.request_close(&ctx, CloseIntent::QuitApp);
+                }
+                crate::update_ui::UpdateEvent::CopyText(t) => {
+                    ctx.copy_text(t);
+                    self.toast(&ctx, tr("Copied"));
+                }
+                crate::update_ui::UpdateEvent::Quit => {
+                    self.request_close(&ctx, CloseIntent::QuitApp);
+                }
+                crate::update_ui::UpdateEvent::Skip(v) => {
+                    self.settings.skipped_version = Some(v);
+                    self.settings_dirty = true;
+                }
+            }
+        }
+        self.settings_ui.update_available = self.update_check.newer().map(|r| r.version.clone());
+        self.settings_ui.update_status = if self.update_check.running() {
+            Some(tr("Checking…").to_owned())
+        } else if let Some(r) = self.update_check.newer() {
+            Some(trf("Version {v} is out", &[("v", &r.version)]))
+        } else if self.update_check.release.is_some() {
+            Some(tr("This is the latest version").to_owned())
+        } else if self.update_check.error.is_some() {
+            Some(tr("Could not check for updates").to_owned())
+        } else {
+            None
+        };
+
         self.settings_ui.download = self.engine_offer.stage();
         let (actions, changed) = self.settings_ui.show(&ctx, &mut self.settings);
         self.settings_dirty |= changed;
         for a in actions {
             match a {
                 SettingsAction::AddEngine => self.pick_engine(&ctx),
+                SettingsAction::CheckUpdates => {
+                    self.update_check = self.update_check.again(&ctx);
+                }
+                SettingsAction::OpenUpdate => self.update_ui.open = true,
                 SettingsAction::DownloadEngine => self.engine_offer.start(&ctx),
                 SettingsAction::CancelDownload => self.engine_offer.cancel(),
                 SettingsAction::RemoveDownloaded => {

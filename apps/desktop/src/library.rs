@@ -58,6 +58,8 @@ pub enum LibraryAction {
     NewGame,
     PastePgn,
     AddDatabases,
+    /// The window offering a newer version.
+    OpenUpdate,
     RemoveDatabase(PathBuf),
     OpenSettings,
 }
@@ -197,6 +199,8 @@ pub struct Library {
     view: Vec<usize>,
     view_key: Option<(PathBuf, String, SortKey, bool)>,
     scroll_to_selected: bool,
+    /// A newer version to offer (its number), next to Settings.
+    pub update: Option<String>,
     /// File sizes of databases (`file_size`).
     sizes: HashMap<PathBuf, u64>,
 }
@@ -219,6 +223,7 @@ impl Library {
             view_key: None,
             scroll_to_selected: false,
             sizes: HashMap::new(),
+            update: None,
         }
     }
 
@@ -592,6 +597,11 @@ impl Library {
                 if ui.button(tr("⚙ Settings")).clicked() {
                     actions.push(LibraryAction::OpenSettings);
                 }
+                if let Some(v) = &self.update
+                    && crate::widgets::update_button(ui, v).clicked()
+                {
+                    actions.push(LibraryAction::OpenUpdate);
+                }
                 if ui.button(tr("📋 Paste PGN")).clicked() {
                     actions.push(LibraryAction::PastePgn);
                 }
@@ -609,6 +619,11 @@ impl Library {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(tr("⚙ Settings")).clicked() {
                     actions.push(LibraryAction::OpenSettings);
+                }
+                if let Some(v) = &self.update
+                    && crate::widgets::update_button(ui, v).clicked()
+                {
+                    actions.push(LibraryAction::OpenUpdate);
                 }
                 if ui
                     .button(tr("📋 Paste PGN"))

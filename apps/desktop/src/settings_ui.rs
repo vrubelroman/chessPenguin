@@ -27,6 +27,10 @@ pub enum SettingsAction {
     TestSound,
     /// The active engine (or its options) changed; a running analysis should restart.
     EngineChanged,
+    /// Ask now whether a newer version is out.
+    CheckUpdates,
+    /// Open the update window.
+    OpenUpdate,
 }
 
 pub struct SettingsWindow {
@@ -37,6 +41,10 @@ pub struct SettingsWindow {
     pub download: Option<crate::engine_download::Stage>,
     /// Engine whose removal (with its downloaded files) waits for confirmation.
     confirm_remove: Option<usize>,
+    /// What the update check found, set by the application every frame, and the newer
+    /// version if there is one.
+    pub update_status: Option<String>,
+    pub update_available: Option<String>,
 }
 
 impl SettingsWindow {
@@ -47,6 +55,8 @@ impl SettingsWindow {
             checking_engine: false,
             download: None,
             confirm_remove: None,
+            update_status: None,
+            update_available: None,
         }
     }
 
@@ -75,7 +85,41 @@ impl SettingsWindow {
                     Tab::Engines => self.engines(ui, s, &mut actions, &mut changed),
                     Tab::Board => board_tab(ui, s, &mut changed),
                     Tab::Sound => sound_tab(ui, s, &mut actions, &mut changed),
-                    Tab::About => about_tab(ui, s.language),
+                    Tab::About => {
+                        let (status, available) =
+                            (self.update_status.clone(), self.update_available.clone());
+                        about_tab(ui, s.language, |ui| {
+                            // Updates, right under the version.
+                            ui.add_space(4.0);
+                            ui.horizontal_wrapped(|ui| {
+                                match (&available, &status) {
+                                    (Some(v), _) => {
+                                        let label = RichText::new(trf(
+                                            "⬆ Update to {v}…",
+                                            &[("v", v)],
+                                        ))
+                                        .color(ui.visuals().hyperlink_color);
+                                        if ui.button(label).clicked() {
+                                            actions.push(SettingsAction::OpenUpdate);
+                                        }
+                                    }
+                                    (None, Some(st)) => {
+                                        ui.label(RichText::new(st).weak());
+                                    }
+                                    (None, None) => {}
+                                }
+                                if ui.button(tr("Check now")).clicked() {
+                                    actions.push(SettingsAction::CheckUpdates);
+                                }
+                            });
+                            changed |= ui
+                                .checkbox(&mut s.check_updates, tr("Check for updates at start"))
+                                .on_hover_text(tr(
+                                    "ChessPenguin asks GitHub which version is the latest; nothing about you is sent",
+                                ))
+                                .changed();
+                        });
+                    }
                     Tab::Interface => {
                         ui.horizontal(|ui| {
                             ui.label(tr("Language:"));
@@ -478,7 +522,7 @@ const REPO: &str = "https://github.com/vrubelroman/chessPenguin";
 const EMAIL: &str = "vrubelroman@gmail.com";
 
 /// Version, links to the website and the sources, support contacts.
-fn about_tab(ui: &mut Ui, lang: Lang) {
+fn about_tab(ui: &mut Ui, lang: Lang, updates: impl FnOnce(&mut Ui)) {
     let version = env!("CARGO_PKG_VERSION");
     // The website page in the interface language.
     let site = match lang {
@@ -492,6 +536,7 @@ fn about_tab(ui: &mut Ui, lang: Lang) {
     ui.add_space(6.0);
     ui.label(RichText::new("ChessPenguin").size(22.0).strong());
     ui.label(format!("{} {version}", tr("Version")));
+    updates(ui);
     ui.label(
         RichText::new(tr(
             "Free chess database software for Windows, macOS and Linux.",

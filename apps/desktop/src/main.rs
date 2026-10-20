@@ -21,6 +21,8 @@ mod review;
 mod settings;
 mod settings_ui;
 mod sound;
+mod update;
+mod update_ui;
 mod viewed;
 mod widgets;
 

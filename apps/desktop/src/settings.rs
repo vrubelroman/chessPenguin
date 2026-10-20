@@ -84,6 +84,12 @@ pub struct Settings {
     pub engines_discovered: bool,
     /// The sample databases were put on the shelf (see `examples::first_run_setup`).
     pub examples_added: bool,
+    /// Ask GitHub for a newer release at start (Settings → About).
+    pub check_updates: bool,
+    /// A version the user chose to skip (its button is not shown).
+    pub skipped_version: Option<String>,
+    /// The version that ran last (to say "updated to …" once).
+    pub last_version: Option<String>,
     /// The database of the reference tab (`None`: the largest one on the shelf).
     pub reference_db: Option<PathBuf>,
 }
@@ -139,6 +145,9 @@ impl Default for Settings {
             review: ReviewSettings::default(),
             engines_discovered: false,
             examples_added: false,
+            check_updates: true,
+            skipped_version: None,
+            last_version: None,
             reference_db: None,
         }
     }
