@@ -52,6 +52,9 @@ pub struct App {
     /// The offer to download Stockfish when an action needs an engine.
     engine_offer: crate::engine_offer::EngineOffer,
     offer_hook_done: bool,
+    /// Lichess / Chess.com: which answered at start, and the download window.
+    online_probe: crate::online::Probe,
+    online: crate::online_ui::OnlineDialog,
     /// A position to find in a database once the game is closed.
     find_after_close: Option<(PathBuf, shakmaty::Chess, Vec<shakmaty::Move>, bool)>,
     /// Games left for one opened from the reference tab ("⬅ Back to …"), kept as they
@@ -175,6 +178,8 @@ impl App {
             reference: Default::default(),
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
+            online_probe: crate::online::Probe::start(ctx),
+            online: crate::online_ui::OnlineDialog::from_env(),
             allow_quit: false,
             applied_dark: None,
             debug: DebugStartup::from_env(),
@@ -884,6 +889,10 @@ impl eframe::App for App {
             }
         } else {
             let dbs = self.settings.databases.clone();
+            self.online_probe.poll();
+            self.library.online = self.online_probe.any();
+            self.library.online_busy = self.online.busy();
+            self.library.online_running = self.online.running();
             for a in self.library.show(ui, &dbs, &self.settings) {
                 match a {
                     LibraryAction::OpenGame { path, index, at } => {
@@ -900,6 +909,8 @@ impl eframe::App for App {
                     }
                     LibraryAction::PastePgn => self.paste_pgn(&ctx),
                     LibraryAction::AddDatabases => self.pick_databases(&ctx),
+                    LibraryAction::OnlineGames => self.online.open_with(&self.settings),
+                    LibraryAction::UpdateOnline(p) => self.online.update(&p, &ctx),
                     LibraryAction::OpenUpdate => self.update_ui.open = true,
                     LibraryAction::RemoveDatabase(p) => {
                         self.settings.databases.retain(|d| *d != p);
@@ -911,6 +922,30 @@ impl eframe::App for App {
             }
         }
 
+        let (events, changed) = self
+            .online
+            .show(&ctx, &self.online_probe, &mut self.settings);
+        self.settings_dirty |= changed;
+        for e in events {
+            match e {
+                crate::online_ui::OnlineEvent::Added(p) => {
+                    let known = self.settings.databases.contains(&p);
+                    self.settings.touch_database(&p);
+                    if known {
+                        self.library.reload(&p, &ctx);
+                    }
+                    self.library.select_db(&p, &ctx);
+                    self.settings_dirty = true;
+                }
+                crate::online_ui::OnlineEvent::Updated(p) => self.library.reload(&p, &ctx),
+                crate::online_ui::OnlineEvent::Open(p) => {
+                    self.settings.touch_database(&p);
+                    self.library.select_db(&p, &ctx);
+                    self.settings_dirty = true;
+                }
+                crate::online_ui::OnlineEvent::Message(t) => self.toast(&ctx, t),
+            }
+        }
         // Updates: the badge next to Settings, the window, the status in Settings → About.
         self.update_check.poll();
         let skipped = self.settings.skipped_version.clone();
@@ -1026,6 +1061,13 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         self.analysis.stop();
+        // Downloads of online games stop and save what they got; a new database goes on
+        // the shelf with it (the next download continues it).
+        for p in self.online.stop_all() {
+            if crate::online::State::load(&p).is_some_and(|s| s.games > 0) {
+                self.settings.touch_database(&p);
+            }
+        }
         let _ = self.settings.save();
     }
 }

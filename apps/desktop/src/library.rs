@@ -58,6 +58,10 @@ pub enum LibraryAction {
     NewGame,
     PastePgn,
     AddDatabases,
+    /// The window for downloading games from Lichess and Chess.com.
+    OnlineGames,
+    /// Fetch the new games of an online database.
+    UpdateOnline(PathBuf),
     /// The window offering a newer version.
     OpenUpdate,
     RemoveDatabase(PathBuf),
@@ -199,6 +203,12 @@ pub struct Library {
     view: Vec<usize>,
     view_key: Option<(PathBuf, String, SortKey, bool)>,
     scroll_to_selected: bool,
+    /// Lichess or Chess.com answered at start (the online games are offered).
+    pub online: bool,
+    /// Online databases being downloaded or updated.
+    pub online_busy: Vec<PathBuf>,
+    /// Games downloaded so far while downloads run (shown on the shelf card).
+    pub online_running: Option<usize>,
     /// A newer version to offer (its number), next to Settings.
     pub update: Option<String>,
     /// File sizes of databases (`file_size`).
@@ -222,6 +232,9 @@ impl Library {
             view: Vec::new(),
             view_key: None,
             scroll_to_selected: false,
+            online: false,
+            online_busy: Vec::new(),
+            online_running: None,
             sizes: HashMap::new(),
             update: None,
         }
@@ -293,6 +306,18 @@ impl Library {
         if self.selected_db.as_deref() == Some(path) {
             self.selected_row = Some(index);
             self.scroll_to_selected = true;
+        }
+    }
+
+    /// Reads a database again (its file changed), keeping it selected if it was.
+    pub fn reload(&mut self, path: &Path, ctx: &egui::Context) {
+        let selected = self.selected_db.as_deref() == Some(path);
+        self.forget(path);
+        self.small.remove(path);
+        if selected {
+            self.select_db(path, ctx);
+        } else {
+            self.load(path, ctx);
         }
     }
 
@@ -593,6 +618,14 @@ impl Library {
             {
                 actions.push(LibraryAction::AddDatabases);
             }
+            if self.online
+                && ui
+                    .button("🌐")
+                    .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
+                    .clicked()
+            {
+                actions.push(LibraryAction::OnlineGames);
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(tr("⚙ Settings")).clicked() {
                     actions.push(LibraryAction::OpenSettings);
@@ -666,6 +699,36 @@ impl Library {
             {
                 actions.push(LibraryAction::AddDatabases);
             }
+            if self.online {
+                let (rect, resp) = ui.allocate_exact_size(vec2(150.0, 64.0), Sense::click());
+                let visuals = ui.style().interact(&resp);
+                ui.painter()
+                    .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
+                let below = match self.online_running {
+                    Some(n) => trf("downloading… {n}", &[("n", &crate::i18n::games(n))]),
+                    None => "Lichess · Chess.com".to_owned(),
+                };
+                ui.painter().text(
+                    rect.center() + vec2(0.0, -9.0),
+                    egui::Align2::CENTER_CENTER,
+                    format!("🌐 {}", tr("Online games")),
+                    egui::FontId::proportional(15.0),
+                    visuals.text_color(),
+                );
+                ui.painter().text(
+                    rect.center() + vec2(0.0, 11.0),
+                    egui::Align2::CENTER_CENTER,
+                    below,
+                    egui::FontId::proportional(13.0),
+                    ui.visuals().weak_text_color(),
+                );
+                if resp
+                    .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
+                    .clicked()
+                {
+                    actions.push(LibraryAction::OnlineGames);
+                }
+            }
         });
         ui.add_space(8.0);
     }
@@ -717,7 +780,11 @@ impl Library {
         ui.painter().text(
             rect.left_top() + vec2(12.0, 10.0),
             egui::Align2::LEFT_TOP,
-            "🗄",
+            if crate::online::is_online(path) {
+                "🌐"
+            } else {
+                "🗄"
+            },
             egui::FontId::proportional(22.0),
             text_color,
         );
@@ -877,6 +944,34 @@ impl Library {
             let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
             if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
                 self.notes_open = Some(path.clone());
+            }
+            if crate::online::is_online(&path) {
+                if self.online_busy.contains(&path) {
+                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.label(RichText::new(tr("updating…")).weak());
+                } else {
+                    let when = crate::online::State::load(&path)
+                        .and_then(|s| s.updated)
+                        .map(crate::online::ago);
+                    let hint = if !self.online {
+                        tr("No connection to Lichess and Chess.com").to_owned()
+                    } else if let Some(w) = when {
+                        trf(
+                            "Fetch the games played since the last download ({when})",
+                            &[("when", &w)],
+                        )
+                    } else {
+                        tr("Fetch the games played since the last download").to_owned()
+                    };
+                    if ui
+                        .add_enabled(self.online, egui::Button::new(tr("⟳ New games")).small())
+                        .on_hover_text(&hint)
+                        .on_disabled_hover_text(&hint)
+                        .clicked()
+                    {
+                        actions.push(LibraryAction::UpdateOnline(path.clone()));
+                    }
+                }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let small = self

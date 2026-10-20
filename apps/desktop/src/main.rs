@@ -15,6 +15,8 @@ mod i18n;
 mod large_db;
 mod library;
 mod notation;
+mod online;
+mod online_ui;
 mod reference;
 mod report;
 mod review;

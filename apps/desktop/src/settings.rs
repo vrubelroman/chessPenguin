@@ -84,6 +84,10 @@ pub struct Settings {
     pub engines_discovered: bool,
     /// The sample databases were put on the shelf (see `examples::first_run_setup`).
     pub examples_added: bool,
+    /// The nickname last looked up on Lichess / Chess.com, and a different one for
+    /// Chess.com.
+    pub online_nick: String,
+    pub online_nick_chesscom: Option<String>,
     /// Ask GitHub for a newer release at start (Settings → About).
     pub check_updates: bool,
     /// A version the user chose to skip (its button is not shown).
@@ -145,6 +149,8 @@ impl Default for Settings {
             review: ReviewSettings::default(),
             engines_discovered: false,
             examples_added: false,
+            online_nick: String::new(),
+            online_nick_chesscom: None,
             check_updates: true,
             skipped_version: None,
             last_version: None,

@@ -2,6 +2,19 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-10-20
+
+- Games from Lichess and Chess.com: anyone's games by nickname — yours, a pupil's, an
+  opponent's, a champion's (no login; another nickname for Chess.com if it differs). See what
+  was found, download the games into a database — both sites merged into one by default, or
+  one per site — and later fetch the new ones with "⟳ New games" in the database header. The
+  progress shows per site with the time left; the window may be closed meanwhile (the result
+  then shows as a message). An interrupted download — stopped, failed, or the program closed —
+  keeps what it got and continues where it stopped, without duplicates (also after a crash);
+  games still being played (correspondence) are fetched once they end. Only standard chess is
+  kept. The feature is offered only when the sites answer: ChessPenguin asks each for a public
+  profile at start (nothing of yours is sent), so offline it stays hidden.
+
 ## [0.7.1] — 2026-10-20
 
 - Updates: at start ChessPenguin asks GitHub for the latest version (can be turned off in
