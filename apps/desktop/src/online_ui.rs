@@ -19,7 +19,8 @@ pub enum OnlineEvent {
 }
 
 struct Job {
-    account: Account,
+    /// One account, or several downloaded into one database.
+    accounts: Vec<Account>,
     /// Updating a database already on the shelf (not a first download).
     update: bool,
     work: Background<Result<Done, Failure>>,
@@ -37,7 +38,11 @@ pub struct OnlineDialog {
     /// The nicknames `found` answers.
     found_for: (String, String),
     jobs: Vec<Job>,
-    results: Vec<(Platform, String, Result<Done, Failure>)>,
+    /// Per finished download: the platforms ("Lichess + Chess.com"), the database name
+    /// and the outcome.
+    results: Vec<(String, String, Result<Done, Failure>)>,
+    /// Two accounts found: download them into separate databases (one by default).
+    separate: bool,
     /// Dev hook (screenshots): look the nickname up once the probe answered, and
     /// download what was found.
     auto_find: bool,
@@ -46,6 +51,22 @@ pub struct OnlineDialog {
 
 fn count(n: u64) -> String {
     crate::large_db::grouped(n as usize)
+}
+
+/// "Lichess + Chess.com".
+fn platforms(accounts: &[Account]) -> String {
+    accounts
+        .iter()
+        .map(|a| a.platform.name())
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// The file name of a database without the extension.
+fn db_name(path: &std::path::Path) -> String {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 impl OnlineDialog {
@@ -78,7 +99,7 @@ impl OnlineDialog {
     pub fn busy(&self) -> Vec<std::path::PathBuf> {
         self.jobs
             .iter()
-            .filter_map(|j| online::database_path(j.account.platform, &j.account.username))
+            .filter_map(|j| online::combined_path(&j.accounts))
             .collect()
     }
 
@@ -87,29 +108,23 @@ impl OnlineDialog {
         let Some(state) = online::State::load(path) else {
             return;
         };
-        let Some(platform) = state.platform else {
-            return;
-        };
         if self.busy().iter().any(|p| p == path) {
             return;
         }
-        let account = Account {
-            platform,
-            username: state.username,
-            games: None,
-            months: None,
-        };
-        self.start(account, true, ctx);
+        self.start(state.accounts(), true, ctx);
     }
 
-    fn start(&mut self, account: Account, update: bool, ctx: &egui::Context) {
+    fn start(&mut self, accounts: Vec<Account>, update: bool, ctx: &egui::Context) {
+        if accounts.is_empty() {
+            return;
+        }
         let now = ctx.input(|i| i.time);
-        let a = account.clone();
+        let a = accounts.clone();
         if let Some(work) = Background::spawn(ctx, now, move |progress, cancel| {
             Some(online::download(&a, progress, cancel))
         }) {
             self.jobs.push(Job {
-                account,
+                accounts,
                 update,
                 work,
             });
@@ -152,11 +167,12 @@ impl OnlineDialog {
                         events.push(OnlineEvent::Added(done.path.clone()));
                     }
                 }
-                self.results.retain(|(p, u, _)| {
-                    !(*p == job.account.platform && *u == job.account.username)
-                });
-                self.results
-                    .push((job.account.platform, job.account.username, r));
+                let label = platforms(&job.accounts);
+                let name = online::combined_path(&job.accounts)
+                    .map(|p| db_name(&p))
+                    .unwrap_or_default();
+                self.results.retain(|(_, n, _)| *n != name);
+                self.results.push((label, name, r));
                 // An update finished with the window closed: say so once it is opened.
             } else {
                 i += 1;
@@ -302,8 +318,6 @@ impl OnlineDialog {
             for (p, l) in &self.found {
                 ui.horizontal(|ui| match l {
                     Lookup::Found(a) => {
-                        let have = online::database_path(a.platform, &a.username)
-                            .and_then(|path| online::State::load(&path));
                         let what = match (a.games, a.months) {
                             (Some(g), _) => {
                                 let secs = g / online::LICHESS_RATE;
@@ -324,16 +338,7 @@ impl OnlineDialog {
                             _ => format!("{}: {}", p.name(), a.username),
                         };
                         ui.label(format!("✔ {what}"));
-                        if let Some(s) = have {
-                            ui.label(
-                                RichText::new(trf(
-                                    "(already here: {n})",
-                                    &[("n", &count(s.games))],
-                                ))
-                                .weak(),
-                            );
-                        }
-                        if !self.jobs.iter().any(|j| j.account == *a) {
+                        if !self.jobs.iter().any(|j| j.accounts.contains(a)) {
                             start.push(a.clone());
                         }
                     }
@@ -353,17 +358,48 @@ impl OnlineDialog {
                     }
                 });
             }
+            // Both platforms: one database by default (the player's games together).
+            let together = start.len() > 1 && !self.separate;
+            if start.len() > 1 {
+                let mut one = !self.separate;
+                if ui
+                    .checkbox(
+                        &mut one,
+                        tr("Put the games of both sites into one database"),
+                    )
+                    .on_hover_text(tr("Otherwise each site gets a database of its own"))
+                    .changed()
+                {
+                    self.separate = !one;
+                }
+            }
+            // Where the games go, and what is there already.
+            let targets: Vec<Vec<Account>> = if together {
+                vec![start.clone()]
+            } else {
+                start.iter().map(|a| vec![a.clone()]).collect()
+            };
+            for t in &targets {
+                if let Some(path) = online::combined_path(t) {
+                    let text = match online::State::load(&path) {
+                        Some(s) => trf(
+                            "Into «{name}» (already {n} games there; only new ones are added)",
+                            &[("name", &db_name(&path)), ("n", &count(s.games))],
+                        ),
+                        None => trf(
+                            "Into the new database «{name}»",
+                            &[("name", &db_name(&path))],
+                        ),
+                    };
+                    ui.label(RichText::new(text).weak());
+                }
+            }
             let auto = std::mem::take(&mut self.auto_download) && !start.is_empty();
-            if !start.is_empty()
-                && (ui
-                    .button(trf("⬇ Download ({n})", &[("n", &start.len())]))
-                    .clicked()
-                    || auto)
-            {
+            if !start.is_empty() && (ui.button(tr("⬇ Download")).clicked() || auto) {
                 // From the window the database goes (back) on the shelf, also when it
                 // was downloaded before and only gets the new games now.
-                for a in start {
-                    self.start(a, false, ui.ctx());
+                for t in targets {
+                    self.start(t, false, ui.ctx());
                 }
             }
         }
@@ -375,19 +411,15 @@ impl OnlineDialog {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(14.0));
                 let n = j.work.progress() as u64;
-                let text = match j.account.games {
-                    Some(total) if total > 0 => trf(
+                let known: u64 = j.accounts.iter().filter_map(|a| a.games).sum();
+                let label = platforms(&j.accounts);
+                let text = if known > 0 && j.accounts.iter().all(|a| a.games.is_some()) {
+                    trf(
                         "{p}: {n} of up to {t} games",
-                        &[
-                            ("p", &j.account.platform.name()),
-                            ("n", &count(n)),
-                            ("t", &count(total)),
-                        ],
-                    ),
-                    _ => trf(
-                        "{p}: {n} games",
-                        &[("p", &j.account.platform.name()), ("n", &count(n))],
-                    ),
+                        &[("p", &label), ("n", &count(n)), ("t", &count(known))],
+                    )
+                } else {
+                    trf("{p}: {n} games", &[("p", &label), ("n", &count(n))])
                 };
                 ui.label(text);
                 if ui
@@ -405,19 +437,20 @@ impl OnlineDialog {
             self.jobs[k].work.cancel();
         }
         for (p, name, r) in &self.results {
+            let p = p.as_str();
             let line = match r {
                 Ok(d) if d.cancelled => trf(
                     "{p}: stopped, {t} games kept in «{name}»",
-                    &[("p", &p.name()), ("t", &count(d.total)), ("name", name)],
+                    &[("p", &p), ("t", &count(d.total)), ("name", name)],
                 ),
                 Ok(d) if d.added == 0 => trf(
                     "{p}: nothing new, {t} games in «{name}»",
-                    &[("p", &p.name()), ("t", &count(d.total)), ("name", name)],
+                    &[("p", &p), ("t", &count(d.total)), ("name", name)],
                 ),
                 Ok(d) => trf(
                     "{p}: +{n} games, {t} in «{name}»",
                     &[
-                        ("p", &p.name()),
+                        ("p", &p),
                         ("n", &count(d.added)),
                         ("t", &count(d.total)),
                         ("name", name),
@@ -425,9 +458,9 @@ impl OnlineDialog {
                 ),
                 Err(Failure::RateLimited) => trf(
                     "{p}: the site asks to wait a minute; then try again",
-                    &[("p", &p.name())],
+                    &[("p", &p)],
                 ),
-                Err(e) => trf("{p}: failed ({e})", &[("p", &p.name()), ("e", e)]),
+                Err(e) => trf("{p}: failed ({e})", &[("p", &p), ("e", e)]),
             };
             ui.label(line);
         }

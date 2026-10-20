@@ -3561,6 +3561,8 @@ mod tests {
             include_str!("settings_ui.rs"),
             include_str!("widgets.rs"),
             include_str!("reference.rs"),
+            include_str!("online.rs"),
+            include_str!("online_ui.rs"),
             include_str!("report.rs"),
             include_str!("board.rs"),
             include_str!("engine_download.rs"),
