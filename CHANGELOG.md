@@ -5,10 +5,22 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 ## [Unreleased]
 
 - Your games from Lichess and Chess.com: enter the nickname (another one for Chess.com if it
-  differs), see what was found, download the games into a database of their own and update
+  differs), see what was found and download the games into a database — one for both sites
+  by default ("Put the games of both sites into one database"), or one per site — and update
   it later with one click; an interrupted download continues where it stopped. Only standard
   chess is kept. The feature is offered only when the sites answer: ChessPenguin asks each
   for a public profile at start (no data of yours is sent), so offline it stays hidden.
+
+## [0.7.1] — 2026-10-20
+
+- Updates: at start ChessPenguin asks GitHub for the latest version (can be turned off in
+  Settings → About) and offers a newer one with a button next to Settings. The Windows zip,
+  the AppImage and the Linux archive update themselves (download, checksum check, replace,
+  restart); macOS downloads and opens the disk image with step-by-step instructions; deb, rpm,
+  Arch and Flatpak packages are downloaded into Downloads and the one command that installs
+  them is shown with a Copy button; the AUR package shows the helper command. "Skip this
+  version" hides the button until the next one.
+- The Flatpak may use the network (the update check).
 
 ## [0.7.0] — 2026-10-20
 

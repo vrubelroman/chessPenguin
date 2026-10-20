@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.7.1" date="2026-10-20">
+      <description>
+        <p>Updates: ChessPenguin tells when a new version is out and updates itself where it can (Windows, AppImage, the Linux archive); for packages it downloads the new one and shows the command that installs it.</p>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-10-20">
       <description>
         <p>The «Reference» tab of a game: what was played in the current position in a database of the shelf — the moves with their statistics and the strongest games, the novelty of the game, and its copy in the database. The board always keeps the full height of the window.</p>

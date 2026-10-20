@@ -88,6 +88,12 @@ pub struct Settings {
     /// Chess.com.
     pub online_nick: String,
     pub online_nick_chesscom: Option<String>,
+    /// Ask GitHub for a newer release at start (Settings → About).
+    pub check_updates: bool,
+    /// A version the user chose to skip (its button is not shown).
+    pub skipped_version: Option<String>,
+    /// The version that ran last (to say "updated to …" once).
+    pub last_version: Option<String>,
     /// The database of the reference tab (`None`: the largest one on the shelf).
     pub reference_db: Option<PathBuf>,
 }
@@ -145,6 +151,9 @@ impl Default for Settings {
             examples_added: false,
             online_nick: String::new(),
             online_nick_chesscom: None,
+            check_updates: true,
+            skipped_version: None,
+            last_version: None,
             reference_db: None,
         }
     }

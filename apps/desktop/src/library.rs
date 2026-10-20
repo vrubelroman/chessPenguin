@@ -62,6 +62,8 @@ pub enum LibraryAction {
     OnlineGames,
     /// Fetch the new games of an online database.
     UpdateOnline(PathBuf),
+    /// The window offering a newer version.
+    OpenUpdate,
     RemoveDatabase(PathBuf),
     OpenSettings,
 }
@@ -205,6 +207,8 @@ pub struct Library {
     pub online: bool,
     /// Online databases being downloaded or updated.
     pub online_busy: Vec<PathBuf>,
+    /// A newer version to offer (its number), next to Settings.
+    pub update: Option<String>,
     /// File sizes of databases (`file_size`).
     sizes: HashMap<PathBuf, u64>,
 }
@@ -229,6 +233,7 @@ impl Library {
             online: false,
             online_busy: Vec::new(),
             sizes: HashMap::new(),
+            update: None,
         }
     }
 
@@ -622,6 +627,11 @@ impl Library {
                 if ui.button(tr("⚙ Settings")).clicked() {
                     actions.push(LibraryAction::OpenSettings);
                 }
+                if let Some(v) = &self.update
+                    && crate::widgets::update_button(ui, v).clicked()
+                {
+                    actions.push(LibraryAction::OpenUpdate);
+                }
                 if ui.button(tr("📋 Paste PGN")).clicked() {
                     actions.push(LibraryAction::PastePgn);
                 }
@@ -639,6 +649,11 @@ impl Library {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(tr("⚙ Settings")).clicked() {
                     actions.push(LibraryAction::OpenSettings);
+                }
+                if let Some(v) = &self.update
+                    && crate::widgets::update_button(ui, v).clicked()
+                {
+                    actions.push(LibraryAction::OpenUpdate);
                 }
                 if ui
                     .button(tr("📋 Paste PGN"))

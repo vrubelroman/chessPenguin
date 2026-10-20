@@ -59,6 +59,8 @@ pub struct GameView {
     side_tab: SideTab,
     /// The game this one was opened from (reference tab): the title for "← back to".
     pub previous: Option<String>,
+    /// A newer version to offer (its number), next to Settings.
+    pub update: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -96,6 +98,8 @@ pub enum GameAction {
     OpenGame(std::path::PathBuf, usize, Chess),
     /// Back to the game this one was opened from.
     ReturnToPrevious,
+    /// The window offering a newer version.
+    OpenUpdate,
 }
 
 impl GameView {
@@ -121,6 +125,7 @@ impl GameView {
                 SideTab::Notation
             },
             previous: None,
+            update: None,
         }
     }
 
@@ -457,11 +462,16 @@ impl GameView {
                 {
                     actions.push(GameAction::OpenSettings);
                 }
+                if let Some(v) = &self.update
+                    && crate::widgets::update_button(ui, v).clicked()
+                {
+                    actions.push(GameAction::OpenUpdate);
+                }
                 // Find the position in a database: the last chosen one, or another.
                 let searchable = self.search_line().is_some();
                 let why = tr("After a null move (--) this is a teaching scheme, not a position of a game: it is not searched");
                 ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
-                    ui.menu_button("▾", |ui| {
+                    ui.menu_button("⏷", |ui| {
                         for db in databases {
                             let name = db
                                 .file_stem()
