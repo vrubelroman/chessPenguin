@@ -62,12 +62,46 @@ impl EngineConfig {
     }
 }
 
+/// Piece animation, with Lichess's durations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Animation {
+    Off,
+    Fast,
+    #[default]
+    Normal,
+    Slow,
+}
+
+impl Animation {
+    pub const ALL: [Animation; 4] = [Self::Off, Self::Fast, Self::Normal, Self::Slow];
+
+    pub fn seconds(self) -> f32 {
+        match self {
+            Self::Off => 0.0,
+            Self::Fast => 0.12,
+            Self::Normal => 0.25,
+            Self::Slow => 0.5,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        crate::i18n::tr(match self {
+            Self::Off => "Off",
+            Self::Fast => "Fast",
+            Self::Normal => "Normal",
+            Self::Slow => "Slow",
+        })
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub piece_set: PieceSet,
     pub board_theme: BoardThemeId,
     pub show_coords: bool,
+    /// How fast moves slide on the board.
+    pub animation: Animation,
     pub sound_enabled: bool,
     pub sound_set: SoundSet,
     pub volume: f32,
@@ -133,6 +167,7 @@ impl Default for Settings {
             piece_set: PieceSet::default(),
             board_theme: BoardThemeId::default(),
             show_coords: true,
+            animation: Animation::default(),
             sound_enabled: true,
             sound_set: SoundSet::default(),
             volume: 0.7,

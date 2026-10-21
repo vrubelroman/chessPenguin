@@ -1,7 +1,7 @@
 //! Chessboard widget: drawing, click/drag move input, promotion picker, arrows.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, Vec2, vec2};
-use shakmaty::{Chess, Color, File, Move, Piece, Position, Rank, Role, Square};
+use shakmaty::{Board, Chess, Color, File, Move, Piece, Position, Rank, Role, Square};
 
 use crate::assets::{BoardTheme, PieceSet};
 
@@ -28,11 +28,82 @@ pub struct BoardState {
     selected: Option<Square>,
     drag: Option<Square>,
     promotion: Option<(Square, Square)>,
+    /// The position drawn last: a different one next frame is animated from it.
+    shown: Option<Board>,
+    anim: Option<Anim>,
+    /// A move was dropped by dragging the piece from this square: that piece is
+    /// already in place (a castling rook or a captured pawn still move).
+    dropped: Option<Square>,
 }
 
 impl BoardState {
+    /// Forgets the selection, the drag and the promotion choice.
     pub fn clear(&mut self) {
-        *self = Self::default();
+        self.selected = None;
+        self.drag = None;
+        self.promotion = None;
+    }
+}
+
+/// Pieces moving from one position to the next, as on Lichess (chessground): each piece
+/// of the new position that was not there slides from the nearest square that held the
+/// same piece; a piece left without a new square fades out.
+struct Anim {
+    start: f64,
+    duration: f64,
+    slides: Vec<(Piece, Square, Square)>,
+    fadings: Vec<(Piece, Square)>,
+}
+
+impl Anim {
+    fn new(prev: &Board, cur: &Board, start: f64, duration: f64) -> Anim {
+        let mut missing: Vec<(Piece, Square)> = Vec::new();
+        let mut new: Vec<(Piece, Square)> = Vec::new();
+        for sq in Square::ALL {
+            match (prev.piece_at(sq), cur.piece_at(sq)) {
+                (Some(a), Some(b)) if a == b => {}
+                (a, b) => {
+                    missing.extend(a.map(|p| (p, sq)));
+                    new.extend(b.map(|p| (p, sq)));
+                }
+            }
+        }
+        let mut slides = Vec::new();
+        for (piece, to) in new {
+            let nearest = missing
+                .iter()
+                .enumerate()
+                .filter(|(_, (p, _))| *p == piece)
+                .min_by_key(|(_, (_, from))| {
+                    let df = i32::from(from.file()) - i32::from(to.file());
+                    let dr = i32::from(from.rank()) - i32::from(to.rank());
+                    df * df + dr * dr
+                })
+                .map(|(i, _)| i);
+            if let Some(i) = nearest {
+                let (_, from) = missing.swap_remove(i);
+                slides.push((piece, from, to));
+            }
+        }
+        Anim {
+            start,
+            duration,
+            slides,
+            fadings: missing,
+        }
+    }
+
+    /// How much of the way is left: 1 at the start, 0 at the end (eased like chessground).
+    fn rest(&self, now: f64) -> Option<f32> {
+        let t = 1.0 - (now - self.start) / self.duration;
+        (t > 0.0).then(|| {
+            let t = t as f32;
+            if t < 0.5 {
+                4.0 * t * t * t
+            } else {
+                (t - 1.0) * (2.0 * t - 2.0) * (2.0 * t - 2.0) + 1.0
+            }
+        })
     }
 }
 
@@ -49,6 +120,8 @@ pub struct BoardView<'a> {
     pub show_coords: bool,
     pub theme: BoardTheme,
     pub pieces: PieceSet,
+    /// Seconds a move takes to slide (0: no animation).
+    pub animation: f32,
 }
 
 impl BoardView<'_> {
@@ -75,6 +148,8 @@ impl BoardView<'_> {
                 if let Some(sq) = origin.and_then(|p| geo.square_at(p))
                     && self.own_piece(sq)
                 {
+                    // The piece is taken from where it stands now, not from mid-flight.
+                    state.anim = None;
                     state.drag = Some(sq);
                     state.selected = Some(sq);
                 }
@@ -86,6 +161,7 @@ impl BoardView<'_> {
                         .and_then(|p| geo.square_at(p));
                     if let Some(to) = target.filter(|&t| t != from) {
                         result = self.try_move(state, &legal, from, to);
+                        state.dropped = result.is_some().then_some(from);
                     }
                 }
             } else if response.clicked()
@@ -104,6 +180,30 @@ impl BoardView<'_> {
             if response.secondary_clicked() {
                 state.clear();
             }
+        }
+
+        // --- animation ---------------------------------------------------------------------
+        let now = ui.input(|i| i.time);
+        let board = self.pos.board();
+        if state.shown.as_ref() != Some(board) {
+            state.anim = None;
+            if let Some(prev) = &state.shown
+                && self.animation > 0.0
+            {
+                let mut anim = Anim::new(prev, board, now, f64::from(self.animation));
+                if let Some(from) = state.dropped {
+                    anim.slides.retain(|s| s.1 != from);
+                }
+                state.anim = Some(anim);
+            }
+            state.dropped = None;
+            state.shown = Some(board.clone());
+        }
+        let rest = state.anim.as_ref().and_then(|a| a.rest(now));
+        if rest.is_none() {
+            state.anim = None;
+        } else {
+            ui.ctx().request_repaint();
         }
 
         // --- squares -----------------------------------------------------------------------
@@ -148,12 +248,32 @@ impl BoardView<'_> {
         }
 
         // --- pieces --------------------------------------------------------------------------
+        let anim = state.anim.as_ref().zip(rest);
+        if let Some((a, rest)) = anim {
+            for &(piece, sq) in &a.fadings {
+                let r = geo.square_rect(sq).shrink(sq_size * 0.02);
+                self.pieces
+                    .paint_tinted(ui, piece, r, Color32::WHITE.gamma_multiply(rest));
+            }
+        }
         for (sq, piece) in self.pos.board().clone() {
             if state.drag == Some(sq) && response.dragged() {
                 continue;
             }
+            if anim.is_some_and(|(a, _)| a.slides.iter().any(|s| s.2 == sq)) {
+                continue;
+            }
             self.pieces
                 .paint(ui, piece, geo.square_rect(sq).shrink(sq_size * 0.02));
+        }
+        // Moving pieces over the others.
+        if let Some((a, rest)) = anim {
+            for &(piece, from, to) in &a.slides {
+                let r = geo.square_rect(to);
+                let offset = (geo.square_rect(from).center() - r.center()) * rest;
+                self.pieces
+                    .paint(ui, piece, r.translate(offset).shrink(sq_size * 0.02));
+            }
         }
 
         // legal targets of the selected piece
@@ -404,4 +524,97 @@ fn draw_arrow(painter: &egui::Painter, geo: &Geometry, a: &Arrow) {
         a.color,
         Stroke::NONE,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shakmaty::fen::Fen;
+    use shakmaty::san::San;
+    use shakmaty::{CastlingMode, Chess};
+
+    fn after(fen: &str, moves: &str) -> (Board, Board) {
+        let pos: Chess = fen
+            .parse::<Fen>()
+            .unwrap()
+            .into_position(CastlingMode::Standard)
+            .unwrap();
+        let mut next = pos.clone();
+        for san in moves.split_whitespace() {
+            let m = san.parse::<San>().unwrap().to_move(&next).unwrap();
+            next.play_unchecked(m);
+        }
+        (pos.board().clone(), next.board().clone())
+    }
+
+    fn plan(fen: &str, moves: &str) -> (Vec<String>, Vec<String>) {
+        let (a, b) = after(fen, moves);
+        let anim = Anim::new(&a, &b, 0.0, 0.25);
+        let mut slides: Vec<String> = anim
+            .slides
+            .iter()
+            .map(|(p, f, t)| format!("{}{f}{t}", p.char()))
+            .collect();
+        let mut fadings: Vec<String> = anim
+            .fadings
+            .iter()
+            .map(|(p, s)| format!("{}{s}", p.char()))
+            .collect();
+        slides.sort();
+        fadings.sort();
+        (slides, fadings)
+    }
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    #[test]
+    fn a_move_slides_one_piece() {
+        assert_eq!(plan(START, "e4"), (vec!["Pe2e4".into()], vec![]));
+    }
+
+    #[test]
+    fn a_captured_piece_fades() {
+        let fen = "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+        assert_eq!(
+            plan(fen, "exd5"),
+            (vec!["Pe4d5".into()], vec!["pd5".into()])
+        );
+    }
+
+    #[test]
+    fn castling_slides_king_and_rook() {
+        let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
+        assert_eq!(
+            plan(fen, "O-O"),
+            (vec!["Ke1g1".into(), "Rh1f1".into()], vec![])
+        );
+    }
+
+    #[test]
+    fn a_promoted_pawn_fades_and_the_queen_appears() {
+        let fen = "8/4P3/8/8/8/8/k7/4K3 w - - 0 1";
+        assert_eq!(plan(fen, "e8=Q"), (vec![], vec!["Pe7".into()]));
+    }
+
+    #[test]
+    fn en_passant_fades_the_pawn_beside() {
+        let fen = "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 2";
+        assert_eq!(
+            plan(fen, "exd6"),
+            (vec!["Pe5d6".into()], vec!["pd5".into()])
+        );
+    }
+
+    #[test]
+    fn a_jump_over_several_moves_slides_each_piece_once() {
+        let (slides, fadings) = plan(START, "e4 e5 Nf3 Nc6");
+        assert_eq!(
+            slides,
+            vec!["Ng1f3", "Pe2e4", "nb8c6", "pe7e5"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+        assert!(fadings.is_empty());
+    }
 }

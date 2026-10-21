@@ -1767,6 +1767,7 @@ fn chip(ui: &mut Ui, c: &Condition) -> (bool, bool) {
                         show_coords: false,
                         theme: theme.theme(),
                         pieces: *pieces,
+                        animation: 0.0,
                     };
                     ui.allocate_ui(vec2(160.0, 160.0), |ui| {
                         view.show(ui, &mut crate::board::BoardState::default())

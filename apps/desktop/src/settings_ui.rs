@@ -509,6 +509,14 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
         }
     });
     ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label(tr("Piece animation"));
+        for a in crate::settings::Animation::ALL {
+            *changed |= ui
+                .selectable_value(&mut s.animation, a, a.label())
+                .changed();
+        }
+    });
     *changed |= ui
         .checkbox(&mut s.show_coords, tr("Show coordinates"))
         .changed();

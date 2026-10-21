@@ -134,6 +134,12 @@ impl PieceSet {
     pub fn paint(self, ui: &egui::Ui, piece: Piece, rect: Rect) {
         egui::Image::new(self.uri(piece)).paint_at(ui, rect);
     }
+
+    pub fn paint_tinted(self, ui: &egui::Ui, piece: Piece, rect: Rect, tint: egui::Color32) {
+        egui::Image::new(self.uri(piece))
+            .tint(tint)
+            .paint_at(ui, rect);
+    }
 }
 
 /// Registers all bundled SVGs with egui's byte loader.

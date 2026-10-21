@@ -704,6 +704,7 @@ impl GameView {
                     show_coords: settings.show_coords,
                     theme: settings.board_theme.theme(),
                     pieces: settings.piece_set,
+                    animation: settings.animation.seconds(),
                 };
                 if let Some(m) = view.show(ui, &mut self.board) {
                     self.play_move(m, actions);

@@ -498,6 +498,7 @@ impl SearchBoard {
             show_coords: settings.show_coords,
             theme: settings.board_theme.theme(),
             pieces: settings.piece_set,
+            animation: settings.animation.seconds(),
         };
         let played = ui
             .allocate_ui(vec2(side, side), |ui| view.show(ui, &mut self.board))

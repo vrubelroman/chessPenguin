@@ -2,6 +2,13 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Piece animation, as on Lichess: a move slides on the board (castling moves both king and
+  rook; jumping several moves slides every piece once), a captured piece fades out. Speed in
+  Settings → Board: Off, Fast (120 ms), Normal (250 ms, the default), Slow (500 ms). A piece
+  dropped by dragging is already in place and does not slide.
+
 ## [0.8.2] — 2026-10-21
 
 - Windows: ChessPenguin no longer quits silently on a machine whose graphics do not

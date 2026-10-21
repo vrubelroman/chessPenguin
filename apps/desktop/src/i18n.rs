@@ -342,6 +342,16 @@ const ROWS: &[[&str; 6]] = &[
         "Dettagli",
     ],
     [
+        "Piece animation",
+        "Анимация фигур",
+        "Animation des pièces",
+        "Figurenanimation",
+        "Animación de piezas",
+        "Animazione dei pezzi",
+    ],
+    ["Off", "Нет", "Aucune", "Aus", "No", "No"],
+    ["Slow", "Медленно", "Lent", "Langsam", "Lento", "Lento"],
+    [
         "ChessPenguin could not start.",
         "ChessPenguin не удалось запустить.",
         "ChessPenguin n’a pas pu démarrer.",
