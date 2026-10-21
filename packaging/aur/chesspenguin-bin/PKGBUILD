@@ -1,7 +1,7 @@
 # Maintainer: vrubelroman <vrubelroman@gmail.com>
 pkgname=chesspenguin-bin
 _appid=io.github.vrubelroman.chessPenguin
-pkgver=0.8.2
+pkgver=0.8.4
 pkgrel=1
 pkgdesc="Chess database: view, enter and analyse PGN and ChessBase games; Stockfish on request"
 arch=('x86_64')
@@ -14,7 +14,7 @@ provides=('chesspenguin')
 conflicts=('chesspenguin')
 options=('!debug')
 source=("${url}/releases/download/v${pkgver}/ChessPenguin-${pkgver}-linux-x86_64.tar.gz")
-sha256sums=('ff234be09b50f1e5d4239c3fbbb5ae9e74c3d5547632097ba01626910df251bf')
+sha256sums=('0d0ca00982039c8796bae7ff033be546ee2f3f26a05269d12d401c2a65fb8bda')
 
 package() {
     cd "ChessPenguin-${pkgver}-linux-x86_64"
