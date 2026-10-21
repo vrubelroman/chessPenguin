@@ -221,7 +221,7 @@ impl Drop for SignIn {
 fn page(ok: bool) -> String {
     let (title, text) = if ok {
         (
-            crate::i18n::tr("✓ You are signed in to ChatGPT"),
+            crate::i18n::tr("✔ You are signed in to ChatGPT"),
             crate::i18n::tr(
                 "Go back to ChessPenguin — the translation goes on there. You can close this tab.",
             ),

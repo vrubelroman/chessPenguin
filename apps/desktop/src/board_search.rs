@@ -138,7 +138,7 @@ impl SearchBoard {
         chess_import::position::key(&self.position())
     }
 
-    /// "1.e4 c5 2.Nf3 d6" (with "⌂" before a start taken from a game).
+    /// "1.e4 c5 2.Nf3 d6" (with "🏠" before a start taken from a game).
     fn san_line(&self, upto: usize) -> Vec<(String, usize)> {
         let mut pos = self.start.clone();
         let mut out = Vec::new();
@@ -166,7 +166,11 @@ impl SearchBoard {
     /// Text of the position chip: the moves up to 8 half-moves, then "after 14…Nf6".
     pub fn chip_text(&self) -> String {
         let moves = self.san_line(self.cursor);
-        let prefix = if self.start_fen.is_some() { "⌂ " } else { "" };
+        let prefix = if self.start_fen.is_some() {
+            "🏠 "
+        } else {
+            ""
+        };
         if moves.len() <= 8 {
             let text: Vec<String> = moves
                 .into_iter()
@@ -541,7 +545,7 @@ impl SearchBoard {
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         if self.start_fen.is_some() {
-                            ui.label("⌂").on_hover_text(format!(
+                            ui.label("🏠").on_hover_text(format!(
                                 "{}\n{}",
                                 tr("Start position of the game"),
                                 self.start_fen.clone().unwrap_or_default()

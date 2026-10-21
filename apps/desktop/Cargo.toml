@@ -40,3 +40,6 @@ form_urlencoded = "1"
 
 [build-dependencies]
 winresource = "0.1"
+
+[dev-dependencies]
+skrifa = "0.44"

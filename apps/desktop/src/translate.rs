@@ -1288,7 +1288,16 @@ mod tests {
     #[test]
     #[ignore = "prints the instructions for a manual check"]
     fn print_instructions() {
-        println!("{}", instructions(Lang::Ru));
+        // TRANSLATE_LANG=en|ru|fr|de|es|it (Russian by default).
+        let lang = match std::env::var("TRANSLATE_LANG").as_deref() {
+            Ok("en") => Lang::En,
+            Ok("fr") => Lang::Fr,
+            Ok("de") => Lang::De,
+            Ok("es") => Lang::Es,
+            Ok("it") => Lang::It,
+            _ => Lang::Ru,
+        };
+        println!("{}", instructions(lang));
     }
 
     #[test]

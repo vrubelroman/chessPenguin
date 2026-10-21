@@ -171,13 +171,19 @@ impl OnlineDialog {
         self.open = true;
     }
 
-    /// Dev hook: `CP_ONLINE=<nick>` opens the window and looks the nickname up,
-    /// `CP_ONLINE_DOWNLOAD=1` then downloads (screenshots, manual checks).
+    /// Dev hook: `CP_ONLINE=<nick>` (`<lichess>,<chess.com>` for two nicknames) opens the
+    /// window and looks the nickname up, `CP_ONLINE_DOWNLOAD=1` then downloads
+    /// (screenshots, manual checks).
     pub fn from_env() -> OnlineDialog {
         let mut d = OnlineDialog::default();
         if let Ok(nick) = std::env::var("CP_ONLINE") {
             d.open = true;
+            let (nick, other) = match nick.split_once(',') {
+                Some((a, b)) => (a.to_owned(), Some(b.to_owned())),
+                None => (nick, None),
+            };
             d.nick = nick;
+            d.other = other;
             d.pick = [true, true];
             d.auto_find = true;
             d.auto_download = std::env::var("CP_ONLINE_DOWNLOAD").is_ok();
@@ -378,7 +384,7 @@ impl OnlineDialog {
                         clear |= r.changed();
                         enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         same = ui
-                            .small_button("✕")
+                            .small_button("🗙")
                             .on_hover_text(tr("The same nickname"))
                             .clicked();
                     });

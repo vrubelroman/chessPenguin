@@ -869,7 +869,7 @@ impl Hub {
         match &self.check_result {
             Some(Ok(t)) => {
                 ui.label(trf(
-                    "✓ Works: “{sample}” → “{result}”",
+                    "✔ Works: “{sample}” → “{result}”",
                     &[("sample", &translate::sample(s.target())), ("result", t)],
                 ));
             }
@@ -1108,7 +1108,7 @@ impl Hub {
         let warn = ui.visuals().warn_fg_color;
         match &self.chatgpt {
             ChatGptState::Works(m) => {
-                ui.label(trf("✓ Works, model {model}", &[("model", m)]));
+                ui.label(trf("✔ Works, model {model}", &[("model", m)]));
             }
             ChatGptState::NoPlan => {
                 ui.horizontal_wrapped(|ui| {
@@ -1306,7 +1306,7 @@ impl Hub {
             match r {
                 Ok(t) => {
                     ui.label(trf(
-                        "✓ Works: “{sample}” → “{result}”",
+                        "✔ Works: “{sample}” → “{result}”",
                         &[("sample", &translate::sample(s.target())), ("result", t)],
                     ));
                 }

@@ -153,6 +153,11 @@ pub fn install(ctx: &egui::Context) {
     for (name, bytes) in TEXTURES {
         ctx.include_bytes(format!("bytes://boards/{name}"), *bytes);
     }
+    ctx.set_fonts(font_definitions());
+}
+
+/// egui's fonts with ours added: figurines for the move notation, then the fallbacks.
+pub fn font_definitions() -> egui::FontDefinitions {
     // Arrows (→ ⇄ ↔) are only in egui's monospace font, and three evaluation signs
     // (⩲ ⩱ ⌓) in none: the last fallbacks of the text.
     let mut fonts = egui::FontDefinitions::default();
@@ -196,7 +201,7 @@ pub fn install(ctx: &egui::Context) {
             list.push("nag-symbols".into());
         }
     }
-    ctx.set_fonts(fonts);
+    fonts
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

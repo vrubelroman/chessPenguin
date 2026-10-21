@@ -1256,12 +1256,12 @@ const ROWS: &[[&str; 6]] = &[
         "Come {service} conserva i dati: informativa sulla privacy ↗",
     ],
     [
-        "✓ Works: “{sample}” → “{result}”",
-        "✓ Работает: «{sample}» → «{result}»",
-        "✓ Fonctionne : « {sample} » → « {result} »",
-        "✓ Funktioniert: „{sample}“ → „{result}“",
-        "✓ Funciona: «{sample}» → «{result}»",
-        "✓ Funziona: «{sample}» → «{result}»",
+        "✔ Works: “{sample}” → “{result}”",
+        "✔ Работает: «{sample}» → «{result}»",
+        "✔ Fonctionne : « {sample} » → « {result} »",
+        "✔ Funktioniert: „{sample}“ → „{result}“",
+        "✔ Funciona: «{sample}» → «{result}»",
+        "✔ Funziona: «{sample}» → «{result}»",
     ],
     [
         "As the interface ({lang})",
@@ -1296,12 +1296,12 @@ const ROWS: &[[&str; 6]] = &[
         "Hai effettuato l’accesso: {account}",
     ],
     [
-        "✓ Works, model {model}",
-        "✓ Работает, модель {model}",
-        "✓ Fonctionne, modèle {model}",
-        "✓ Funktioniert, Modell {model}",
-        "✓ Funciona, modelo {model}",
-        "✓ Funziona, modello {model}",
+        "✔ Works, model {model}",
+        "✔ Работает, модель {model}",
+        "✔ Fonctionne, modèle {model}",
+        "✔ Funktioniert, Modell {model}",
+        "✔ Funciona, modelo {model}",
+        "✔ Funziona, modello {model}",
     ],
     [
         "Get a key on the {service} website ↗",
@@ -1432,12 +1432,12 @@ const ROWS: &[[&str; 6]] = &[
         "Tradotti: {n} di {total}",
     ],
     [
-        "✓ You are signed in to ChatGPT",
-        "✓ Вы вошли в ChatGPT",
-        "✓ Vous êtes connecté à ChatGPT",
-        "✓ Sie sind bei ChatGPT angemeldet",
-        "✓ Ha iniciado sesión en ChatGPT",
-        "✓ Hai effettuato l’accesso a ChatGPT",
+        "✔ You are signed in to ChatGPT",
+        "✔ Вы вошли в ChatGPT",
+        "✔ Vous êtes connecté à ChatGPT",
+        "✔ Sie sind bei ChatGPT angemeldet",
+        "✔ Ha iniciado sesión en ChatGPT",
+        "✔ Hai effettuato l’accesso a ChatGPT",
     ],
     [
         "Go back to ChessPenguin — the translation goes on there. You can close this tab.",
@@ -5846,6 +5846,79 @@ mod tests {
         assert_eq!(Lang::from_locales(["ja-JP", "pt-BR"]), Lang::En);
         assert_eq!(Lang::from_locales(["C"]), Lang::En);
         assert_eq!(Lang::from_locales(Vec::<String>::new()), Lang::En);
+    }
+
+    /// Every character the interface shows — the translations in all languages and the
+    /// string literals of the sources — has a glyph in the bundled fonts (no empty boxes).
+    #[test]
+    fn every_shown_character_has_a_glyph() {
+        let sources = [
+            include_str!("app.rs"),
+            include_str!("assets.rs"),
+            include_str!("analysis.rs"),
+            include_str!("game_view.rs"),
+            include_str!("library.rs"),
+            include_str!("large_db.rs"),
+            include_str!("board_search.rs"),
+            include_str!("engine_offer.rs"),
+            include_str!("notation.rs"),
+            include_str!("review.rs"),
+            include_str!("engines.rs"),
+            include_str!("examples.rs"),
+            include_str!("settings.rs"),
+            include_str!("settings_ui.rs"),
+            include_str!("widgets.rs"),
+            include_str!("reference.rs"),
+            include_str!("online.rs"),
+            include_str!("online_ui.rs"),
+            include_str!("update.rs"),
+            include_str!("update_ui.rs"),
+            include_str!("report.rs"),
+            include_str!("board.rs"),
+            include_str!("engine_download.rs"),
+            include_str!("main.rs"),
+            include_str!("graphics.rs"),
+            include_str!("translate.rs"),
+            include_str!("translate_ui.rs"),
+            include_str!("chatgpt.rs"),
+            include_str!("san.rs"),
+        ];
+        let mut chars = std::collections::BTreeSet::new();
+        for row in ROWS {
+            for text in row.iter() {
+                chars.extend(text.chars());
+            }
+        }
+        for src in sources {
+            for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
+                // The parts of the line inside double quotes.
+                for (i, part) in line.split('"').enumerate() {
+                    if i % 2 == 1 {
+                        chars.extend(part.chars());
+                    }
+                }
+            }
+        }
+        // The characters each font of the text has (egui's own check cannot tell a
+        // glyph of its last fallback from the replacement box).
+        let fonts = crate::assets::font_definitions();
+        let maps: Vec<std::collections::HashSet<u32>> = fonts.families
+            [&egui::FontFamily::Proportional]
+            .iter()
+            .map(|name| {
+                use skrifa::MetadataProvider as _;
+                let data = &fonts.font_data[name];
+                let font = skrifa::FontRef::new(&data.font).expect("a font");
+                font.charmap().mappings().map(|(c, _)| c).collect()
+            })
+            .collect();
+        let missing: Vec<String> = chars
+            .into_iter()
+            .filter(|c| !c.is_ascii() && !c.is_whitespace() && *c != '\u{fe0f}')
+            .filter(|c| !maps.iter().any(|m| m.contains(&(*c as u32))))
+            .map(|c| format!("{c} U+{:04X}", c as u32))
+            .collect();
+        assert!(missing.is_empty(), "no glyph for: {missing:?}");
     }
 
     /// Every `tr("…")` / `trf("…"` key used in the sources must have a translation row.
