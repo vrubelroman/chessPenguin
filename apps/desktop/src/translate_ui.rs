@@ -1846,6 +1846,9 @@ impl GameTranslation {
                                 text(ui, trf("The service asks to wait… {s} s", &[("s", &waiting)]).into());
                             } else if n == 0 && local && now - self.job_started > 8.0 {
                                 text(ui, tr("The model is loading into memory — this can take up to a minute…").into());
+                            } else if self.plan.as_ref().is_some_and(|p| translate::one_batch(&p.texts)) {
+                                // One request: a count would only jump from 0 to all.
+                                text(ui, tr("Translating…").into());
                             } else {
                                 text(ui, trf("Translating… {n} of {total}", &[("n", &n), ("total", &total)]).into());
                             }

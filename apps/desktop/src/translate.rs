@@ -1113,6 +1113,11 @@ pub struct Job {
 const BATCH_CHARS: usize = 5000;
 const BATCH_ITEMS: usize = 40;
 
+/// These texts go in one request (then a count "n of total" says nothing).
+pub fn one_batch(texts: &[String]) -> bool {
+    texts.len() <= BATCH_ITEMS && texts.iter().map(|t| t.len()).sum::<usize>() <= BATCH_CHARS
+}
+
 impl Job {
     pub fn start(
         ctx: &egui::Context,

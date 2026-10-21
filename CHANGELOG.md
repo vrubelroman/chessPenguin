@@ -2,6 +2,11 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- A game whose comments go in one request shows just "Translating…": the count
+  ("12 of 40") is kept for long games sent in several parts.
+
 ## [0.8.5] — 2026-10-21
 
 - Translation with a ChatGPT subscription works: the list of models the subscription answers
