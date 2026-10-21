@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.8.2" date="2026-10-21">
+      <description>
+        <p>Starts on more machines: when the graphics do not cooperate, other ways of drawing are tried and the one that works is kept; a start that still fails says why. The online games window opens with an empty nickname.</p>
+      </description>
+    </release>
     <release version="0.8.1" date="2026-10-20">
       <description>
         <p>The side panel fits small screens: on a laptop screen the reference tab no longer slides under the board.</p>

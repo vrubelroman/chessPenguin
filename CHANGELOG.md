@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.2] — 2026-10-21
 
 - Windows: ChessPenguin no longer quits silently on a machine whose graphics do not
   cooperate (an old driver, a broken Vulkan, a virtual machine). A start that fails or dies
