@@ -3,8 +3,8 @@
     <string name="sample_classics">Classic games</string>
     <string name="sample_alekhine">Alekhine</string>
 
-    <string name="empty_title">Your databases will be here</string>
-    <string name="empty_text">Add a PGN file or an archive .zip/.7z — from the phone or a cloud.</string>
+    <string name="empty_title">Your databases will appear here</string>
+    <string name="empty_text">Add a PGN file or a .zip/.7z archive — from your phone or the cloud.</string>
     <string name="add_database">Add database</string>
     <string name="open_samples">Open sample games</string>
     <string name="not_opened">not opened yet · %1$s</string>
@@ -15,8 +15,8 @@
     <string name="games_with_format">%1$s · %2$s</string>
     <string name="menu">Menu</string>
     <string name="rename">Rename</string>
-    <string name="remove">Remove from the list</string>
-    <string name="rename_hint">The name on the list. The file does not change.</string>
+    <string name="remove">Remove from list</string>
+    <string name="rename_hint">The name in the list. The file is not changed.</string>
     <string name="cancel">Cancel</string>
     <string name="save">Save</string>
     <string name="removed">Database removed from the list</string>
@@ -34,13 +34,13 @@
     <string name="game_of">%1$d of %2$d</string>
     <string name="previous_game">Previous game</string>
     <string name="next_game">Next game</string>
-    <string name="flip">Flip</string>
+    <string name="flip">Flip board</string>
     <string name="to_start">To the start</string>
     <string name="move_back">Move back</string>
     <string name="move_forward">Move forward</string>
-    <string name="to_end">To the end</string>
+    <string name="to_end">To the end of the line</string>
     <string name="next_moves">Next:</string>
-    <string name="board_hint">This is a game viewer. Moves are stepped with the ◀ ▶ buttons below.</string>
+    <string name="board_hint">This is a game viewer. Step through the moves with ◀ ▶ below.</string>
     <string name="board_description">Board, position after %1$s</string>
     <string name="board_start">Board, starting position</string>
     <string name="white_won">White won</string>
@@ -50,12 +50,12 @@
 
     <string name="engine">Engine</string>
     <string name="thinking">Thinking…</string>
-    <string name="depth">d. %1$d</string>
+    <string name="depth">depth %1$d</string>
     <string name="paused">paused</string>
     <string name="deeper">Deeper</string>
     <string name="more_lines">More lines</string>
     <string name="fewer_lines">Fewer lines</string>
-    <string name="engine_not_answering">The engine is not answering</string>
+    <string name="engine_not_answering">The engine is not responding</string>
     <string name="engine_not_starting">The engine does not start on this phone</string>
     <string name="restart">Restart</string>
     <string name="engine_line_preview">Engine line · move %1$d of %2$d</string>
@@ -63,7 +63,7 @@
     <string name="engine_sheet_title">Stockfish engine</string>
     <string name="engine_sheet_text">Evaluates the position and shows the best moves. Works offline — it only has to be downloaded once.</string>
     <string name="engine_size">Size: %1$d MB</string>
-    <string name="engine_metered">No Wi-Fi now: the download will go over mobile data.</string>
+    <string name="engine_metered">No Wi-Fi now: the download will use mobile data.</string>
     <string name="not_now">Not now</string>
     <string name="download">Download</string>
     <string name="downloaded_of">Downloaded %1$d of %2$d MB</string>
@@ -71,9 +71,9 @@
     <string name="download_cancelled">Download cancelled</string>
     <string name="engine_ready">The engine is ready</string>
     <string name="no_internet">No internet. Connect to a network and try again.</string>
-    <string name="interrupted">The download was interrupted. What came is kept.</string>
+    <string name="interrupted">The download was interrupted. The downloaded part is kept.</string>
     <string name="no_space">Not enough space: %1$d MB needed.</string>
-    <string name="corrupt">The engine file was damaged in the download. Download it again.</string>
+    <string name="corrupt">The engine file was damaged during the download. Download it again.</string>
     <string name="retry">Try again</string>
     <string name="resume">Continue</string>
     <string name="download_again">Download again</string>
@@ -81,18 +81,17 @@
     <string name="preparing_engine">Preparing the engine…</string>
 
     <string name="settings">Settings</string>
-    <string name="group_look">Look</string>
-    <string name="group_board">Board</string>
+    <string name="group_look">Appearance</string>
     <string name="group_engine">Engine</string>
     <string name="theme">Theme</string>
-    <string name="theme_system">As in the system</string>
+    <string name="theme_system">System default</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="notation">Move notation</string>
     <string name="notation_latin">Latin letters (K Q R B N)</string>
     <string name="notation_figurines">Figurines</string>
     <string name="notation_local">Letters of the language</string>
-    <string name="notation_hint">Only how moves look on the screen. PGN always keeps K Q R B N.</string>
+    <string name="notation_hint">Display only. PGN always uses K Q R B N.</string>
     <string name="animation">Piece animation</string>
     <string name="best_arrow">Best-move arrow</string>
     <string name="vibration">Vibration</string>
@@ -101,7 +100,7 @@
     <string name="engine_missing">Not downloaded · Download (%1$d MB)</string>
     <string name="engine_downloading">Downloading… %1$d of %2$d MB</string>
     <string name="engine_delete">Delete the engine (frees %1$d MB)</string>
-    <string name="engine_delete_question">Delete the engine? It can be downloaded again.</string>
+    <string name="engine_delete_question">Delete the engine? You can download it again.</string>
     <string name="delete">Delete</string>
     <string name="lines">Lines</string>
     <string name="time_per_position">Time per position</string>
@@ -111,11 +110,23 @@
     <string name="threads">Threads</string>
     <string name="memory">Memory</string>
     <string name="megabytes">%1$d MB</string>
-    <string name="engine_battery">The engine uses the battery. It stops by itself when the screen goes dark.</string>
+    <string name="engine_battery">The engine uses the battery. It stops by itself when the screen turns off.</string>
     <string name="about">About</string>
     <string name="build_full">Stockfish built in</string>
     <string name="build_light">Stockfish downloaded in the app</string>
     <string name="about_text">A viewer of chess databases: PGN, ChessBase, archives. Files are only read, never changed.</string>
-    <string name="licenses">Licenses</string>
+    <string name="licenses">Licenses and authors</string>
     <string name="website">Website and source code</string>
+
+    <string name="game_info">Game details</string>
+    <string name="copy_pgn">Copy PGN</string>
+    <string name="copy_fen">Copy FEN</string>
+    <string name="share_game">Share game</string>
+    <string name="copied">Copied</string>
+    <string name="notes">Notes</string>
+    <string name="engine_state_on">on</string>
+    <string name="engine_state_off">off</string>
+    <string name="engine_state_missing">not downloaded</string>
+    <string name="found_of">Found %1$s of %2$s</string>
+    <string name="group_game">Game</string>
 </resources>

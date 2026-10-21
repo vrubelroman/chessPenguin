@@ -316,6 +316,11 @@ impl Database {
     }
 
     /// The game `index`, ready to show.
+    /// The game `index` as PGN text, as it is in the file (to copy or share).
+    pub fn pgn(&self, index: u32) -> Option<String> {
+        self.db.raw_text(index as usize)
+    }
+
     pub fn game(&self, index: u32) -> Result<GameData, ApiError> {
         let parsed = self
             .db
@@ -499,6 +504,7 @@ mod tests {
             ]
         );
         assert!(g.nodes[0].uci.is_empty());
+        assert!(db.pgn(0).unwrap().contains("[%cal Ge2e4,Rd7d5]"));
     }
 
     #[test]

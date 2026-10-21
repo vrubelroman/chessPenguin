@@ -158,7 +158,8 @@ private fun variationText(
                             append(label(n, number, san))
                         }
                         if (n.nagSymbols.isNotEmpty()) {
-                            val c = n.nags.firstOrNull()?.let { nagColor(it.toInt()) } ?: onSurface
+                            // On the highlighted move the sign takes the text color.
+                            val c = if (id == current) onSurface else n.nags.firstOrNull()?.let { nagColor(it.toInt(), chess.dark) } ?: onSurface
                             withStyle(SpanStyle(color = c)) { append(n.nagSymbols) }
                         }
                     }
@@ -222,7 +223,7 @@ fun Notation(
                     lineHeight = 22.sp,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -231,7 +232,7 @@ fun Notation(
                 is Item.Variation -> Box(
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = (8 + 16 * (item.depth - 1)).dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+                        .padding(start = (16 + 16 * (item.depth - 1)).dp, end = 16.dp, top = 2.dp, bottom = 2.dp),
                 ) {
                     Row(Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Min)) {
                         Box(Modifier.width(2.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
@@ -275,8 +276,8 @@ private fun MovesRow(
             modifier = Modifier.width(40.dp).padding(end = 8.dp),
             textAlign = androidx.compose.ui.text.style.TextAlign.End,
         )
-        MoveCell(game, row.white, current, chess, san, onMove, Modifier.weight(1f))
-        MoveCell(game, row.black, current, chess, san, onMove, Modifier.weight(1f))
+        MoveCell(game, row.white, true, current, chess, san, onMove, Modifier.weight(1f))
+        MoveCell(game, row.black, false, current, chess, san, onMove, Modifier.weight(1f))
     }
 }
 
@@ -284,6 +285,7 @@ private fun MovesRow(
 private fun MoveCell(
     game: GameData,
     id: Int?,
+    white: Boolean,
     current: Int,
     chess: ChessColors,
     san: (String) -> AnnotatedString,
@@ -300,7 +302,8 @@ private fun MoveCell(
         contentAlignment = Alignment.CenterStart,
     ) {
         if (id == null) {
-            Text("…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 8.dp))
+            // "4. …  Nf6": only White's empty cell says that a move is there.
+            if (white) Text("…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 8.dp))
         } else {
             val n = game.nodes[id]
             Row(
@@ -316,7 +319,11 @@ private fun MoveCell(
                         n.nagSymbols,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Medium,
-                        color = n.nags.firstOrNull()?.let { nagColor(it.toInt()) } ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            n.nags.firstOrNull()?.let { nagColor(it.toInt(), chess.dark) } ?: MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }

@@ -34,6 +34,7 @@ val DarkErrorContainer = Color(0xFF5C1A14)
 
 /// Colors of the notation and the board that stay ours whatever the theme.
 data class ChessColors(
+    val dark: Boolean,
     val currentMove: Color,
     val comment: Color,
     val lightSquare: Color,
@@ -42,6 +43,7 @@ data class ChessColors(
 )
 
 val LightChess = ChessColors(
+    dark = false,
     currentMove = Color(0xFF90D1FF),
     comment = Color(0xFF2A5B8A),
     lightSquare = Color(0xFFFFFFDD),
@@ -50,17 +52,31 @@ val LightChess = ChessColors(
 )
 
 val DarkChess = LightChess.copy(
+    dark = true,
     currentMove = Color(0xFF005C80),
     comment = Color(0xFF9EC4E0),
 )
 
-/// Move assessments, as on the desktop (Lichess colors), the same in both themes.
-fun nagColor(nag: Int): Color? = when (nag) {
-    1 -> Color(0xFF629C2E) // !
-    2 -> Color(0xFFE68F00) // ?
-    3 -> Color(0xFF22AC9A) // !!
-    4 -> Color(0xFFDF5353) // ??
-    5 -> Color(0xFFEA45D8) // !?
-    6 -> Color(0xFF56B4E9) // ?!
-    else -> null
+/// Move assessments in the colors of Lichess (as on the desktop). On a light background
+/// they are darkened to stay readable (contrast at least 4.5:1).
+fun nagColor(nag: Int, dark: Boolean): Color? = if (dark) {
+    when (nag) {
+        1 -> Color(0xFF629C2E) // !
+        2 -> Color(0xFFE68F00) // ?
+        3 -> Color(0xFF22AC9A) // !!
+        4 -> Color(0xFFDF5353) // ??
+        5 -> Color(0xFFEA45D8) // !?
+        6 -> Color(0xFF56B4E9) // ?!
+        else -> null
+    }
+} else {
+    when (nag) {
+        1 -> Color(0xFF4E7F22)
+        2 -> Color(0xFFA35F00)
+        3 -> Color(0xFF12806F)
+        4 -> Color(0xFFC23B3B)
+        5 -> Color(0xFFB0259F)
+        6 -> Color(0xFF1F72A8)
+        else -> null
+    }
 }

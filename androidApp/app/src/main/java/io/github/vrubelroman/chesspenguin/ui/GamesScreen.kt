@@ -126,8 +126,13 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (Int) -> Unit) {
                             Text(entry?.name ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             database?.let { d ->
                                 val n = d.len().toInt()
+                                val found = shown?.size
                                 Text(
-                                    pluralStringResource(R.plurals.games_count, n, groupDigits(n)),
+                                    if (query.isNotEmpty() && found != null) {
+                                        stringResource(R.string.found_of, groupDigits(found), groupDigits(n))
+                                    } else {
+                                        pluralStringResource(R.plurals.games_count, n, groupDigits(n))
+                                    },
                                     style = MaterialTheme.typography.bodyMedium.merge(Tabular),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -188,20 +193,21 @@ private fun Message(title: String, detail: String) {
     }
 }
 
-/// One game: "White – Black" and the result, then event · year · ECO (§6.2).
+/// One game: "White – Black" and the result, then event · year · ECO (§6.2). An
+/// unfinished game ("*", most book positions) shows no result.
 @Composable
 private fun GameRowView(row: GameRow?, onClick: () -> Unit) {
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .height(64.dp)
             .clickable(enabled = row != null, onClick = onClick)
             .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Column(Modifier.weight(1f)) {
-            if (row == null) return@Column
-            Row {
+        if (row == null) return@Column
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f)) {
                 Text(
                     shortName(row.white),
                     style = MaterialTheme.typography.bodyLarge,
@@ -221,22 +227,25 @@ private fun GameRowView(row: GameRow?, onClick: () -> Unit) {
                     )
                 }
             }
-            val details = joinKnown(row.event, year(row.date), row.eco)
-            if (details.isNotEmpty()) {
+            val result = shortResult(row.result)
+            if (result != "*") {
                 Text(
-                    details,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    result,
+                    style = MaterialTheme.typography.bodyLarge.merge(Tabular),
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.width(48.dp).padding(start = 8.dp),
                 )
             }
         }
-        Text(
-            row?.let { shortResult(it.result) } ?: "",
-            style = MaterialTheme.typography.bodyLarge.merge(Tabular),
-            textAlign = TextAlign.End,
-            modifier = Modifier.width(48.dp).padding(start = 8.dp),
-        )
+        val details = joinKnown(row.event, year(row.date), row.eco)
+        if (details.isNotEmpty()) {
+            Text(
+                details,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }

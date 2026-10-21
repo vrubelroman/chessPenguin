@@ -1,9 +1,15 @@
 package io.github.vrubelroman.chesspenguin.ui
 
 import android.content.Context
+import android.content.Intent
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -22,8 +28,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.ArrowLeft
-import androidx.compose.material.icons.automirrored.rounded.ArrowRight
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -31,9 +35,13 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FirstPage
 import androidx.compose.material.icons.rounded.LastPage
 import androidx.compose.material.icons.rounded.Memory
-import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SwapVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -46,7 +54,9 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +71,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -152,6 +163,16 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
     var sheet by remember { mutableStateOf(false) }
     var wantEngine by remember { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
+    var info by remember { mutableStateOf(false) }
+    @Suppress("DEPRECATION")
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copiedText = stringResource(R.string.copied)
+    suspend fun pgnText(): String? {
+        val index = games?.getOrNull(place) ?: return null
+        val database = app.library.database(db).getOrNull() ?: return null
+        return withContext(Dispatchers.Default) { database.pgn(index) }
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, e ->
@@ -267,7 +288,7 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
                         )
                         if (total > 0) {
                             Text(
-                                joinKnown(stringResource(R.string.game_of, place + 1, total), g?.let { shortResult(it.result) } ?: ""),
+                                joinKnown(stringResource(R.string.game_of, place + 1, total), g?.let { shortResult(it.result) }?.takeIf { it != "*" } ?: ""),
                                 style = MaterialTheme.typography.bodyMedium.merge(Tabular),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -281,13 +302,81 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
                     IconButton(onClick = { place += 1 }, enabled = place + 1 < total) {
                         Icon(Icons.Rounded.ChevronRight, stringResource(R.string.next_game))
                     }
-                    IconButton(onClick = onSettings) { Icon(Icons.Rounded.Settings, stringResource(R.string.settings)) }
+                    Box {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, stringResource(R.string.menu)) }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text(stringResource(R.string.game_info)) }, enabled = g != null, onClick = {
+                                menu = false
+                                info = true
+                            })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.copy_pgn)) }, enabled = g != null, onClick = {
+                                menu = false
+                                scope.launch {
+                                    pgnText()?.let {
+                                        clipboard.setText(AnnotatedString(it))
+                                        snackbar.showSnackbar(copiedText)
+                                    }
+                                }
+                            })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.copy_fen)) }, enabled = node != null, onClick = {
+                                menu = false
+                                (preview?.let { it.line.steps[it.step].fen } ?: node?.fen)?.let {
+                                    clipboard.setText(AnnotatedString(it))
+                                    scope.launch { snackbar.showSnackbar(copiedText) }
+                                }
+                            })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.share_game)) }, enabled = g != null, onClick = {
+                                menu = false
+                                scope.launch {
+                                    pgnText()?.let { text ->
+                                        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+                                        context.startActivity(Intent.createChooser(send, null))
+                                    }
+                                }
+                            })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.settings)) }, onClick = {
+                                menu = false
+                                onSettings()
+                            })
+                        }
+                    }
                 },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        // In the bottom bar, so that snackbars stand above the move buttons.
+        bottomBar = {
+            Column {
+                val p = preview
+                if (p == null && node != null && nodes != null && node.children.size > 1) {
+                    Forks(node.children.map { nodes[it.toInt()] }, san, onMove = ::go)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Row(
+                        Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        EngineButton(
+                            on = engineOn,
+                            needsDownload = !engineReady && !files.builtIn,
+                            loading = netState as? NetState.Loading,
+                            modifier = Modifier.weight(1.2f),
+                            onClick = ::toggleEngine,
+                        )
+                        BarButton(Icons.Rounded.SwapVert, stringResource(R.string.flip), true, Modifier.weight(1f)) { flipped = !flipped }
+                        BarButton(Icons.Rounded.FirstPage, stringResource(R.string.to_start), canBack, Modifier.weight(1f)) {
+                            if (preview != null) preview = null else go(0)
+                        }
+                        BarButton(Icons.Rounded.PlayArrow, stringResource(R.string.move_back), canBack, Modifier.weight(1.5f), 32, repeat = true, mirrored = true) { back() }
+                        BarButton(Icons.Rounded.PlayArrow, stringResource(R.string.move_forward), canForward, Modifier.weight(1.5f), 32, repeat = true) { forward() }
+                        BarButton(Icons.Rounded.LastPage, stringResource(R.string.to_end), canForward, Modifier.weight(1f)) { end() }
+                    }
+                }
+            }
+        },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
+        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())) {
             val p = preview
             val step = p?.let { it.line.steps[it.step] }
             val fen = step?.fen ?: node?.fen ?: START
@@ -347,7 +436,7 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
                     },
                     notation = line,
                 )
-            } else if (wantEngine && netState is NetState.Loading) {
+            } else if (wantEngine && files.builtIn && netState is NetState.Loading) {
                 Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     Text(stringResource(R.string.preparing_engine), Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -365,32 +454,28 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
                     else -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 }
             }
-            if (p == null && node != null && nodes != null && node.children.size > 1) {
-                Forks(node.children.map { nodes[it.toInt()] }, san, onMove = ::go)
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-                Row(
-                    Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    EngineButton(
-                        on = engineOn,
-                        needsDownload = !engineReady && !files.builtIn,
-                        loading = netState as? NetState.Loading,
-                        modifier = Modifier.weight(1.2f),
-                        onClick = ::toggleEngine,
-                    )
-                    BarButton(Icons.Rounded.SwapVert, stringResource(R.string.flip), true, Modifier.weight(1f)) { flipped = !flipped }
-                    BarButton(Icons.Rounded.FirstPage, stringResource(R.string.to_start), canBack, Modifier.weight(1f)) {
-                        if (preview != null) preview = null else go(0)
-                    }
-                    BarButton(Icons.AutoMirrored.Rounded.ArrowLeft, stringResource(R.string.move_back), canBack, Modifier.weight(1.5f), 44, repeat = true) { back() }
-                    BarButton(Icons.AutoMirrored.Rounded.ArrowRight, stringResource(R.string.move_forward), canForward, Modifier.weight(1.5f), 44, repeat = true) { forward() }
-                    BarButton(Icons.Rounded.LastPage, stringResource(R.string.to_end), canForward, Modifier.weight(1f)) { end() }
-                }
-            }
         }
+    }
+    if (info && g != null) {
+        AlertDialog(
+            onDismissRequest = { info = false },
+            title = { Text(stringResource(R.string.game_info)) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    g.tags.filter { it.value.isNotBlank() && it.value != "?" }.forEach { t ->
+                        Row(Modifier.padding(vertical = 4.dp)) {
+                            Text(t.name, Modifier.width(96.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                            Text(t.value, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    if (g.notes.isNotEmpty()) {
+                        Text(stringResource(R.string.notes), Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge)
+                        g.notes.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { info = false }) { Text(stringResource(R.string.close)) } },
+        )
     }
     if (sheet) {
         EngineSheet(
@@ -418,6 +503,13 @@ private const val START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 
 @Composable
 private fun EngineButton(on: Boolean, needsDownload: Boolean, loading: NetState.Loading?, modifier: Modifier, onClick: () -> Unit) {
     val label = stringResource(R.string.engine)
+    val state = stringResource(
+        when {
+            needsDownload -> R.string.engine_state_missing
+            on -> R.string.engine_state_on
+            else -> R.string.engine_state_off
+        },
+    )
     val action by rememberUpdatedState(onClick)
     val color = if (on) MaterialTheme.colorScheme.primary else LocalContentColor.current
     Column(
@@ -426,10 +518,10 @@ private fun EngineButton(on: Boolean, needsDownload: Boolean, loading: NetState.
             .semantics {
                 contentDescription = label
                 role = Role.Switch
-                stateDescription = if (on) "on" else "off"
+                stateDescription = state
                 onClick { action(); true }
             }
-            .pointerInput(Unit) { detectTapGestures { action() } },
+            .clickable(onClick = action),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -484,10 +576,12 @@ private fun BarButton(
     modifier: Modifier,
     iconSize: Int = 24,
     repeat: Boolean = false,
+    mirrored: Boolean = false,
     onClick: () -> Unit,
 ) {
     val action by rememberUpdatedState(onClick)
     val on by rememberUpdatedState(enabled)
+    val interaction = remember { MutableInteractionSource() }
     val color = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     Box(
         modifier
@@ -498,27 +592,34 @@ private fun BarButton(
                 if (!enabled) disabled()
                 onClick { action(); true }
             }
+            .indication(interaction, ripple(bounded = false, radius = 32.dp))
             .pointerInput(repeat) {
-                detectTapGestures(onPress = {
+                detectTapGestures(onPress = { at ->
                     if (!on) return@detectTapGestures
+                    val press = PressInteraction.Press(at)
+                    interaction.emit(press)
                     action()
-                    if (!repeat) return@detectTapGestures
                     coroutineScope {
-                        val job = launch {
-                            delay(400)
-                            while (on) {
-                                action()
-                                delay(120)
+                        val job = if (repeat) {
+                            launch {
+                                delay(400)
+                                while (on) {
+                                    action()
+                                    delay(120)
+                                }
                             }
+                        } else {
+                            null
                         }
                         tryAwaitRelease()
-                        job.cancel()
+                        job?.cancel()
                     }
+                    interaction.emit(PressInteraction.Release(press))
                 })
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(iconSize.dp))
+        Icon(icon, null, tint = color, modifier = Modifier.size(iconSize.dp).then(if (mirrored) Modifier.scale(-1f, 1f) else Modifier))
     }
 }
 

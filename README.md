@@ -63,6 +63,7 @@ Packages for every release are on the [Releases](https://github.com/vrubelroman/
 | Flatpak | `flatpak install --user ChessPenguin-<version>-x86_64.flatpak` |
 | Windows | unzip `ChessPenguin-<version>-windows-x86_64.zip`, run `ChessPenguin.exe` |
 | macOS (Apple Silicon) | open `ChessPenguin-<version>-macos-arm64.dmg`, drag ChessPenguin to Applications |
+| Android 12+ | open `ChessPenguin-<version>-android.apk` (Stockfish built in) or `…-android-noengine.apk` (Stockfish downloaded in the app) on the phone |
 
 On macOS the app is not signed by Apple yet: the first time, right-click ChessPenguin in
 Applications and choose **Open** (on macOS 15: System Settings → Privacy & Security → Open Anyway).
@@ -71,6 +72,9 @@ Applications and choose **Open** (on macOS 15: System Settings → Privacy & Sec
 official Stockfish 19 (about 80 MB, checked before use, installed for your account only); the
 button is also in **Settings → Engines**. A `stockfish` installed on the system is found
 automatically, any other UCI engine can be added from a file. The Flatpak includes Stockfish.
+
+The **Android app** views databases and games (the same formats), with the notation under
+the board and Stockfish. The two APKs install over each other; databases and settings are kept.
 
 ### Build from source
 
@@ -94,7 +98,11 @@ cargo run --release -p chesspenguin -- examples/classics.pgn
 - `crates/chess-core` — game tree, tolerant PGN import/export.
 - `crates/uci` — UCI engine process supervisor.
 - `apps/desktop` — the egui application.
+- `crates/mobile-api`, `androidApp` — the core for the Android app and the app itself.
 - `packaging/` — desktop entry, AppStream metadata, icons, deb/rpm, AppImage and Flatpak recipes.
+
+The Android app is `androidApp/` (Kotlin, Jetpack Compose) over the same Rust core
+(`crates/mobile-api`, UniFFI); `androidApp/scripts/release.sh` builds the two signed APKs.
 
 Releases are built by GitHub Actions when a `v*` tag is pushed (see `.github/workflows/release.yml`).
 

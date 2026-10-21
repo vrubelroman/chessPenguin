@@ -180,17 +180,6 @@ fun Board(
                 )
             }
         }
-        // Coordinates: files along the bottom edge, ranks along the left edge.
-        for (k in 0 until 8) {
-            val fileIndex = if (flipped) 7 - k else k
-            val rankIndex = if (flipped) k else 7 - k
-            val bottomLight = (7 + k) % 2 == 0
-            val leftLight = k % 2 == 0
-            drawCoord(measurer, ('a' + fileIndex).toString(), coordStyle.copy(color = if (bottomLight) colors.darkSquare else colors.lightSquare),
-                Offset((k + 1) * sq - with(density) { 8.sp.toPx() }, 8 * sq - with(density) { 13.sp.toPx() }))
-            drawCoord(measurer, ('1' + rankIndex).toString(), coordStyle.copy(color = if (leftLight) colors.darkSquare else colors.lightSquare),
-                Offset(with(density) { 2.sp.toPx() }, k * sq + with(density) { 1.sp.toPx() }))
-        }
         for (i in 0 until 64) {
             val p = squares[i]
             if (p == ' ') continue
@@ -201,6 +190,18 @@ fun Board(
                 at = Offset(start.x + (at.x - start.x) * slide.value, start.y + (at.y - start.y) * slide.value)
             }
             drawImage(bmp, dstOffset = IntOffset(at.x.toInt(), at.y.toInt()), dstSize = IntSize(px, px))
+        }
+        // Over the pieces, so that b, c, f, g stay readable (as on Lichess).
+        // Coordinates: files along the bottom edge, ranks along the left edge.
+        for (k in 0 until 8) {
+            val fileIndex = if (flipped) 7 - k else k
+            val rankIndex = if (flipped) k else 7 - k
+            val bottomLight = (7 + k) % 2 == 0
+            val leftLight = k % 2 == 0
+            drawCoord(measurer, ('a' + fileIndex).toString(), coordStyle.copy(color = if (bottomLight) colors.darkSquare else colors.lightSquare),
+                Offset((k + 1) * sq - with(density) { 8.sp.toPx() }, 8 * sq - with(density) { 13.sp.toPx() }))
+            drawCoord(measurer, ('1' + rankIndex).toString(), coordStyle.copy(color = if (leftLight) colors.darkSquare else colors.lightSquare),
+                Offset(with(density) { 2.sp.toPx() }, k * sq + with(density) { 1.sp.toPx() }))
         }
         for (a in arrows) {
             val f = squareIndex(a.from) ?: continue

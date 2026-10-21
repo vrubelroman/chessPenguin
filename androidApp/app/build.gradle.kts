@@ -16,6 +16,12 @@ val bundled = layout.buildDirectory.dir("generated/assets")
 val ndkHome = System.getenv("ANDROID_NDK_HOME")
     ?: "${System.getenv("ANDROID_HOME") ?: "${System.getProperty("user.home")}/Android/Sdk"}/ndk/30.0.16248370"
 
+/// The version of the workspace (Cargo.toml): the phone and the desktop are one release.
+val version: String = Regex("""(?m)^version = "([^"]+)"""")
+    .find(File(repo, "Cargo.toml").readText())!!.groupValues[1]
+val versionNumber: Int = version.split('.').map { it.takeWhile(Char::isDigit).toInt() }
+    .let { (major, minor, patch) -> major * 10000 + minor * 100 + patch }
+
 /// The core for the phones (arm64) and the emulator (x86_64).
 val cargoBuild = tasks.register<Exec>("cargoBuild") {
     workingDir = repo
@@ -99,8 +105,8 @@ android {
         applicationId = "io.github.vrubelroman.chesspenguin"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = versionNumber
+        versionName = version
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -115,11 +121,31 @@ android {
         )
     }
 
+    // The release key is never in the repository: CP_KEYSTORE, CP_KEYSTORE_PASSWORD,
+    // CP_KEY_ALIAS, CP_KEY_PASSWORD come from the environment (scripts/release.sh, CI).
+    val keystore = System.getenv("CP_KEYSTORE")
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = File(keystore)
+                storePassword = System.getenv("CP_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("CP_KEY_ALIAS")
+                keyPassword = System.getenv("CP_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
+    }
+    // The languages of the interface; the libraries' other translations stay out.
+    androidResources {
+        localeFilters += listOf("en", "ru")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

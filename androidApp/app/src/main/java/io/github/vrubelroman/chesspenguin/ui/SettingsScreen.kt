@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,6 +57,7 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
     val set = app.settings::update
     var choice by remember { mutableStateOf<Choice?>(null) }
     var deleting by remember { mutableStateOf(false) }
+    var sheet by remember { mutableStateOf(false) }
     val lang = uiLanguage()
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
     val size = (BuildConfig.NET_SIZE / 1_000_000).toInt()
@@ -92,12 +94,7 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-            Group(stringResource(R.string.group_look))
-            Item(stringResource(R.string.theme), themeNames.first { it.first == prefs.theme }.second) {
-                choice = Choice(R.string.theme, themeNames.map { it.second }, themeNames.indexOfFirst { it.first == prefs.theme }) { i ->
-                    set { it.copy(theme = themeNames[i].first) }
-                }
-            }
+            Group(stringResource(R.string.group_game))
             val notationNow = notationNames.firstOrNull { it.first == prefs.notation } ?: notationNames.first()
             Item(stringResource(R.string.notation), notationNow.second) {
                 choice = Choice(
@@ -108,23 +105,30 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
                 ) { i -> set { it.copy(notation = notationNames[i].first) } }
             }
 
-            Group(stringResource(R.string.group_board))
             Toggle(stringResource(R.string.animation), prefs.animation) { v -> set { it.copy(animation = v) } }
             Toggle(stringResource(R.string.best_arrow), prefs.bestArrow) { v -> set { it.copy(bestArrow = v) } }
             Toggle(stringResource(R.string.vibration), prefs.vibration) { v -> set { it.copy(vibration = v) } }
 
+            Group(stringResource(R.string.group_look))
+            Item(stringResource(R.string.theme), themeNames.first { it.first == prefs.theme }.second) {
+                choice = Choice(R.string.theme, themeNames.map { it.second }, themeNames.indexOfFirst { it.first == prefs.theme }) { i ->
+                    set { it.copy(theme = themeNames[i].first) }
+                }
+            }
+
             Group(stringResource(R.string.group_engine))
             when {
-                files.builtIn -> Item(stringResource(R.string.engine_built_in), null, null)
+                files.builtIn -> Status(stringResource(R.string.engine_built_in))
                 net == NetState.Ready -> {
-                    Item(stringResource(R.string.engine_downloaded), null, null)
+                    Status(stringResource(R.string.engine_downloaded))
                     Item(stringResource(R.string.engine_delete, size), null) { deleting = true }
                 }
                 net is NetState.Loading -> {
                     val l = net as NetState.Loading
-                    Item(stringResource(R.string.engine_downloading, (l.done / 1_000_000).toInt(), (l.total / 1_000_000).toInt()), null, null)
+                    Item(stringResource(R.string.engine_downloading, (l.done / 1_000_000).toInt(), (l.total / 1_000_000).toInt()), null) { sheet = true }
                 }
-                else -> Item(stringResource(R.string.engine_missing, size), null) { files.prepare() }
+                // The same sheet as in a game: the size, mobile data, cancel (§9).
+                else -> Item(stringResource(R.string.engine_missing, size), null) { sheet = true }
             }
             Item(stringResource(R.string.lines), "${prefs.engineLines}") {
                 choice = Choice(R.string.lines, listOf("1", "2", "3"), prefs.engineLines - 1) { i -> set { it.copy(engineLines = i + 1) } }
@@ -183,6 +187,19 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
             confirmButton = { TextButton(onClick = { choice = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
+    if (sheet) {
+        EngineSheet(
+            state = net,
+            metered = remember(sheet) { files.metered() },
+            onDownload = { files.prepare() },
+            onCancel = {
+                files.cancel()
+                sheet = false
+            },
+            onDismiss = { sheet = false },
+        )
+    }
+    LaunchedEffect(net) { if (net == NetState.Ready) sheet = false }
     if (deleting) {
         AlertDialog(
             onDismissRequest = { deleting = false },
@@ -223,6 +240,17 @@ private fun Item(title: String, value: String?, onClick: (() -> Unit)?) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
         if (value != null) Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+/// A line that tells, not a button.
+@Composable
+private fun Status(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 @Composable

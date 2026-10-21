@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The background of the adaptive icon (android-ui.md §10.7). -->
+    <color name="ic_launcher_background">#EAF2F9</color>
+</resources>

@@ -35,11 +35,11 @@
     <string name="game_of">%1$d из %2$d</string>
     <string name="previous_game">Предыдущая партия</string>
     <string name="next_game">Следующая партия</string>
-    <string name="flip">Перевернуть</string>
+    <string name="flip">Перевернуть доску</string>
     <string name="to_start">В начало</string>
     <string name="move_back">Ход назад</string>
     <string name="move_forward">Ход вперёд</string>
-    <string name="to_end">В конец</string>
+    <string name="to_end">В конец линии</string>
     <string name="next_moves">Дальше:</string>
     <string name="board_hint">Это просмотр партии. Ходы листаются кнопками ◀ ▶ внизу.</string>
     <string name="board_description">Доска, позиция после %1$s</string>
@@ -83,7 +83,6 @@
 
     <string name="settings">Настройки</string>
     <string name="group_look">Внешний вид</string>
-    <string name="group_board">Доска</string>
     <string name="group_engine">Движок</string>
     <string name="theme">Тема</string>
     <string name="theme_system">Как в системе</string>
@@ -114,9 +113,21 @@
     <string name="megabytes">%1$d МБ</string>
     <string name="engine_battery">Движок расходует заряд. Он сам останавливается, когда гаснет экран.</string>
     <string name="about">О программе</string>
-    <string name="build_full">Stockfish внутри</string>
-    <string name="build_light">Stockfish скачивается</string>
+    <string name="build_full">Stockfish уже внутри</string>
+    <string name="build_light">Stockfish скачивается в приложении</string>
     <string name="about_text">Просмотр шахматных баз: PGN, ChessBase, архивы. Файлы только читаются и никогда не меняются.</string>
-    <string name="licenses">Лицензии</string>
+    <string name="licenses">Лицензии и авторы</string>
     <string name="website">Сайт и исходный код</string>
+
+    <string name="game_info">Сведения о партии</string>
+    <string name="copy_pgn">Копировать PGN</string>
+    <string name="copy_fen">Копировать FEN</string>
+    <string name="share_game">Поделиться партией</string>
+    <string name="copied">Скопировано</string>
+    <string name="notes">Замечания</string>
+    <string name="engine_state_on">включён</string>
+    <string name="engine_state_off">выключен</string>
+    <string name="engine_state_missing">не скачан</string>
+    <string name="found_of">Найдено %1$s из %2$s</string>
+    <string name="group_game">Партия</string>
 </resources>

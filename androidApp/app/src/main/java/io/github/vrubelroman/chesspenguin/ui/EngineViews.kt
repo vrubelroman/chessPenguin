@@ -126,7 +126,7 @@ private fun LineRow(
             .fillMaxWidth()
             .height(if (first) 48.dp else 40.dp)
             .then(if (line != null) Modifier.clickable { onLine(line) } else Modifier)
-            .padding(start = 8.dp, end = if (first) 0.dp else 16.dp),
+            .padding(start = 16.dp, end = if (first) 0.dp else 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         EvalPlaque(line)
@@ -155,7 +155,8 @@ private fun LineRow(
         )
         if (first && status == EngineStatus.Paused) {
             TextButton(onClick = onDeeper) { Text(stringResource(R.string.deeper)) }
-        } else if (first && canExpand) {
+        }
+        if (first && canExpand) {
             IconButton(onClick = onExpand) {
                 Icon(
                     if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
@@ -178,7 +179,7 @@ private fun EvalPlaque(line: EngineLine?) {
             .height(28.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(bg)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -204,7 +205,7 @@ fun PreviewBar(step: Int, total: Int, onClose: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .height(48.dp)
             .background(MaterialTheme.colorScheme.primaryContainer)
             .padding(start = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -259,7 +260,7 @@ fun EngineSheet(state: NetState, metered: Boolean, onDownload: () -> Unit, onCan
                     Text(text, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                     Spacer(Modifier.height(24.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                        TextButton(onClick = onDismiss) { Text(stringResource(R.string.not_now)) }
+                        if (state.problem != NetProblem.NoSpace) TextButton(onClick = onDismiss) { Text(stringResource(R.string.not_now)) }
                         when (state.problem) {
                             NetProblem.NoSpace -> Button(onClick = onDismiss) { Text(stringResource(R.string.ok)) }
                             NetProblem.NoInternet -> Button(onClick = onDownload) { Text(stringResource(R.string.retry)) }

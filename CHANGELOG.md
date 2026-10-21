@@ -2,6 +2,15 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- **ChessPenguin for Android** (12 and newer): add databases of the same formats (PGN, ChessBase
+  `.cbv`, `.zip`/`.7z` archives), the desktop's sample games from the first start, a list of
+  games with a search, the game with the notation under the board (variations, comments, NAG,
+  comment arrows), paging games, and Stockfish 19 with its evaluation, lines and a preview of
+  a line on the board. Two APKs: Stockfish built in, or Stockfish downloaded in the app.
+  Files are only read, never changed.
+
 ## [0.9.0] — 2026-10-22
 
 The 0.8 series together — the reference tab, games from Lichess and Chess.com, self-update,

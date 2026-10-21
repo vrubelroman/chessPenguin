@@ -48,6 +48,10 @@ Stockfish 19 (около 80 МБ, проверяется перед запуск
 в **Настройки → Движки**. Установленный в системе `stockfish` находится сам, другие UCI-движки
 добавляются из файла. Во Flatpak Stockfish уже есть.
 
+**Android 12+:** приложение для просмотра баз и партий (те же форматы), нотация под доской, Stockfish.
+Две сборки: `ChessPenguin-<версия>-android.apk` — Stockfish уже внутри, `…-android-noengine.apk` —
+Stockfish скачивается в приложении. Ставятся одна поверх другой, базы и настройки сохраняются.
+
 Сборка из исходников: Rust 1.97+, затем `cargo run --release -p chesspenguin`
 или `./scripts/install.sh` для установки в `~/.local` вместе со Stockfish (`--no-stockfish` — без него).
 
