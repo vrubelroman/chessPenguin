@@ -22,6 +22,7 @@ mod online_ui;
 mod reference;
 mod report;
 mod review;
+mod san;
 mod settings;
 mod settings_ui;
 mod sound;

@@ -162,6 +162,25 @@ pub fn install(ctx: &egui::Context) {
             "../assets/fonts/NotoSansMath-nag.ttf"
         ))),
     );
+    // Figurines in move notation (♔♕♖♗♘): a copy of egui's icon glyphs, a little
+    // smaller and on the baseline (the icons themselves stay as they are).
+    fonts.font_data.insert(
+        "figurine".into(),
+        std::sync::Arc::new(
+            egui::FontData::from_static(include_bytes!("../assets/fonts/figurines.ttf")).tweak(
+                egui::FontTweak {
+                    scale: 0.85,
+                    y_offset: -1.0,
+                    ..Default::default()
+                },
+            ),
+        ),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        if let Some(list) = fonts.families.get_mut(&family) {
+            list.insert(1, "figurine".into());
+        }
+    }
     let mono = fonts
         .families
         .get(&egui::FontFamily::Monospace)

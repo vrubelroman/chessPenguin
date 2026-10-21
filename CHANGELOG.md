@@ -4,6 +4,11 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Move notation (Settings › Board & pieces): Latin letters (Nf3), figurines as on Lichess
+  (♘f3), or the piece letters of the interface language — Russian Кр Ф Л С К, German
+  K D T L S, French R D T F C, Spanish and Italian R D T A C. It applies to the move list,
+  engine lines, the reference tab, board search and the analysis report; PGN files and
+  copied games always stay in K Q R B N. Latin remains the default.
 - Translation of game comments: when a game's comments are in another language, ChessPenguin
   offers to translate them into yours. Sign in with your ChatGPT Plus or Pro subscription (no
   key), or use an API key — DeepSeek, OpenAI, Google Gemini — or a model on this computer

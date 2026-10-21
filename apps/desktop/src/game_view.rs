@@ -1023,6 +1023,7 @@ impl GameView {
                                         }
                                         None => san.clone(),
                                     };
+                                    let label = crate::san::show(&label).into_owned();
                                     let selected = self.preview.as_ref().is_some_and(|p| {
                                         p.base == base && p.shown == i + 1 && p.san == line.san
                                     });

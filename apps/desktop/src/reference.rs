@@ -228,15 +228,17 @@ fn node_label(game: &Game, node: NodeId) -> Option<String> {
     let m = game.game_move(node)?;
     let before = game.position(game.parent(node)?)?;
     let n = before.fullmoves().get();
+    let san = crate::san::show(&m.san);
     Some(match before.turn() {
-        Color::White => format!("{n}.{}", m.san),
-        Color::Black => format!("{n}…{}", m.san),
+        Color::White => format!("{n}.{san}"),
+        Color::Black => format!("{n}…{san}"),
     })
 }
 
 /// "5.Nc3" / "5…Nc6".
 fn move_label(pos: &Chess, m: Move) -> String {
     let san = shakmaty::san::SanPlus::from_move(pos.clone(), m).to_string();
+    let san = crate::san::show(&san);
     let n = pos.fullmoves().get();
     match pos.turn() {
         Color::White => format!("{n}.{san}"),
@@ -341,6 +343,7 @@ fn then_from(game: &Game, node: NodeId, next: Option<UciMove>) -> String {
             break;
         };
         let n = before.fullmoves().get();
+        // Latin here (made in the background, kept): shown through `san::show_line`.
         out.push(match before.turn() {
             Color::White => format!("{n}.{}", m.san),
             Color::Black if k == 0 => format!("{n}…{}", m.san),
@@ -1127,7 +1130,7 @@ impl Reference {
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
         let show_bar = !books;
-        let mut used = 86.0 + 64.0 + 44.0 + 3.0 * gap;
+        let mut used = 96.0 + 64.0 + 44.0 + 3.0 * gap;
         if show_bar {
             used += 86.0 + gap;
         }
@@ -1151,7 +1154,8 @@ impl Reference {
             .max_scroll_height(height)
             .min_scrolled_height(height)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::exact(86.0))
+            // "12…Крxe2+" and figurines are wider than Latin letters.
+            .column(Column::exact(96.0).clip(true))
             .column(Column::exact(64.0))
             .column(Column::exact(44.0));
         if show_bar {
@@ -1222,7 +1226,7 @@ impl Reference {
                             .uci
                             .to_move(pos)
                             .map(|m| move_label(pos, m))
-                            .unwrap_or_else(|_| s.san.clone()),
+                            .unwrap_or_else(|_| crate::san::show(&s.san).into_owned()),
                         // In the start position "ended" are games recorded without moves.
                         None if start => tr("Without moves").to_owned(),
                         None => tr("Game over").to_owned(),
@@ -1560,7 +1564,7 @@ impl Reference {
                     }
                     if show_then {
                         row.col(|ui| {
-                            ui.label(&g.then);
+                            ui.label(crate::san::show_line(&g.then));
                         });
                     }
                     if show_event {

@@ -101,3 +101,5 @@ egui's bundled fonts are part of the program: Ubuntu Light (Ubuntu Font Licence 
 (MIT and Bitstream Vera licence), Noto Emoji (SIL OFL 1.1), emoji-icon-font (MIT).
 Three evaluation signs (⩲ ⩱ ⌓) come from Noto Sans Math (Copyright 2022 Google LLC, SIL OFL 1.1),
 cut down to those glyphs: `apps/desktop/assets/fonts/NotoSansMath-nag.ttf`, licence beside it.
+The figurines of the move notation (♔♕♖♗♘) are the five chess glyphs of egui's
+emoji-icon-font (MIT), cut out to `apps/desktop/assets/fonts/figurines.ttf`.

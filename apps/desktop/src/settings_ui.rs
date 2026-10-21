@@ -475,6 +475,8 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
         }
     });
     ui.add_space(8.0);
+    notation_section(ui, s, changed);
+    ui.add_space(8.0);
     ui.label(RichText::new(tr("Board")).strong());
     ui.horizontal_wrapped(|ui| {
         for id in BoardThemeId::ALL {
@@ -531,6 +533,92 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     *changed |= ui
         .checkbox(&mut s.show_best_arrow, tr("Show engine best-move arrows"))
         .changed();
+}
+
+/// "Move notation": Latin letters, figurines, the interface language's letters, with a
+/// sample for each and a line of a game as it will look.
+fn notation_section(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
+    use crate::san::{MoveNotation, local_letters, show_in};
+    let lang = crate::i18n::current();
+    ui.label(RichText::new(tr("Move notation")).strong());
+    // In English the language's letters are the Latin ones: that option is not shown.
+    let local = local_letters(lang);
+    let shown = if s.move_notation == MoveNotation::Local && local.is_none() {
+        MoveNotation::Latin
+    } else {
+        s.move_notation
+    };
+    let sample = |m: MoveNotation| {
+        ["Nf3", "Qxd8+", "e8=Q"]
+            .map(|x| show_in(x, m, lang).into_owned())
+            .join("  ")
+    };
+    let mut options = vec![
+        (
+            MoveNotation::Latin,
+            tr("Letters (K Q R B N)").to_owned(),
+            tr("International notation, as in PGN files and engine output"),
+        ),
+        (
+            MoveNotation::Figurine,
+            tr("Figurines").to_owned(),
+            tr("Piece symbols, as on Lichess. They look the same in every language."),
+        ),
+    ];
+    if let Some(l) = local {
+        options.push((
+            MoveNotation::Local,
+            format!("{} ({})", tr("Interface language letters"), l.join(" ")),
+            tr("Follows the interface language"),
+        ));
+    }
+    egui::Grid::new("move_notation")
+        .num_columns(2)
+        .spacing(vec2(24.0, 4.0))
+        .show(ui, |ui| {
+            for (mode, label, tip) in options {
+                let r = ui.radio(shown == mode, label).on_hover_text(tip);
+                let r2 = ui
+                    .add(
+                        egui::Label::new(RichText::new(sample(mode)).size(15.0))
+                            .sense(Sense::click()),
+                    )
+                    .on_hover_text(tip);
+                if (r.clicked() || r2.clicked()) && s.move_notation != mode {
+                    s.move_notation = mode;
+                    *changed = true;
+                }
+                ui.end_row();
+            }
+        });
+    // A line of a game, the current move highlighted as in the notation.
+    let line = "1.e4 e5 2.Nf3 Nc6 3.Bb5 a6 4.Ba4 Nf6 5.O-O Be7 6.Re1 b5";
+    let mode = shown;
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for word in line.split(' ') {
+                let text = RichText::new(show_in(word, mode, lang).into_owned()).size(16.0);
+                if word == "3.Bb5" {
+                    let sel = ui.visuals().selection;
+                    let galley = egui::Label::new(text.color(sel.stroke.color).strong());
+                    egui::Frame::new()
+                        .fill(sel.bg_fill)
+                        .corner_radius(2.0)
+                        .inner_margin(egui::Margin::symmetric(3, 0))
+                        .show(ui, |ui| ui.add(galley));
+                } else {
+                    ui.label(text);
+                }
+            }
+        });
+    });
+    ui.label(
+        RichText::new(tr(
+            "Only how moves look on screen. PGN files and copied games always use K Q R B N.",
+        ))
+        .weak(),
+    );
 }
 
 const SITE: &str = "https://chess.vrubel.xyz";

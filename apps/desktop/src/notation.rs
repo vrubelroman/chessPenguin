@@ -210,6 +210,7 @@ fn paint_move_cell(
     }
     let node = game.node(id);
     let san = game.game_move(id).map(|m| m.san.as_str()).unwrap_or("?");
+    let san = crate::san::show(san);
     let (sym, color) = node
         .map(|n| move_glyph(n.nags()))
         .unwrap_or((String::new(), None));
@@ -297,6 +298,7 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
                         }
                         None => san.clone(),
                     };
+                    let label = crate::san::show(&label).into_owned();
                     let text = RichText::new(label).size(14.5);
                     let current = shown == Some(i + 1);
                     let button = if current {
@@ -524,6 +526,7 @@ fn inline_line(ui: &mut Ui, n: &Notation, first: NodeId, out: &mut NotationRespo
         }
         let (num, color) = game.move_number(node).unwrap_or((0, Color::White));
         let san = game.game_move(node).map(|m| m.san.as_str()).unwrap_or("?");
+        let san = crate::san::show(san);
         let (sym, sym_color) = move_glyph(nd.nags());
         let label = match (color, need_number) {
             (Color::White, _) => format!("{num}.{san}{sym}"),

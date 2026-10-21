@@ -735,6 +735,7 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        crate::san::set(self.settings.move_notation);
         // The window has shown its first frame: this graphics mode works.
         if ui.ctx().cumulative_frame_nr() >= 1 {
             crate::graphics::started();

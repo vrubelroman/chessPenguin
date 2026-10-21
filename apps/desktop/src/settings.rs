@@ -102,6 +102,8 @@ pub struct Settings {
     pub show_coords: bool,
     /// How fast moves slide on the board.
     pub animation: Animation,
+    /// How moves are shown: Latin letters, figurines or the interface language's letters.
+    pub move_notation: crate::san::MoveNotation,
     /// Translating game comments (docs/design/translation.md).
     pub translation: crate::translate::TranslationSettings,
     pub sound_enabled: bool,
@@ -170,6 +172,7 @@ impl Default for Settings {
             board_theme: BoardThemeId::default(),
             show_coords: true,
             animation: Animation::default(),
+            move_notation: Default::default(),
             translation: Default::default(),
             sound_enabled: true,
             sound_set: SoundSet::default(),

@@ -539,6 +539,7 @@ impl Review {
                     let text = match &mark.best_label {
                         Some(best) => trf(
                             "{judgement}. {best} was best.",
+                            // Written into the game: Latin, as PGN always is.
                             &[("judgement", &name), ("best", best)],
                         ),
                         None => format!("{name}."),
@@ -706,7 +707,7 @@ impl Review {
             let label = if i == 0 {
                 tr("Start position").to_string()
             } else {
-                game.move_label(self.line[i]).unwrap_or_default()
+                crate::san::show(&game.move_label(self.line[i]).unwrap_or_default()).into_owned()
             };
             let eval = self.values[i]
                 .map(Eval::format)

@@ -160,7 +160,7 @@ impl SearchBoard {
         for m in &self.line[..i] {
             pos.play_unchecked(*m);
         }
-        Some(move_label(&pos, *self.line.get(i)?, true))
+        Some(crate::san::show(&move_label(&pos, *self.line.get(i)?, true)).into_owned())
     }
 
     /// Text of the position chip: the moves up to 8 half-moves, then "after 14…Nf6".
@@ -168,7 +168,10 @@ impl SearchBoard {
         let moves = self.san_line(self.cursor);
         let prefix = if self.start_fen.is_some() { "⌂ " } else { "" };
         if moves.len() <= 8 {
-            let text: Vec<String> = moves.into_iter().map(|(s, _)| s).collect();
+            let text: Vec<String> = moves
+                .into_iter()
+                .map(|(s, _)| crate::san::show(&s).into_owned())
+                .collect();
             format!("{prefix}{}", text.join(" "))
         } else {
             let last = self.last_label().unwrap_or_default();
@@ -551,7 +554,8 @@ impl SearchBoard {
                         let mut clicked = None;
                         for (label, n) in all {
                             let current = n == self.cursor;
-                            let mut text = RichText::new(label).size(14.0);
+                            let mut text =
+                                RichText::new(crate::san::show(&label).into_owned()).size(14.0);
                             if n > self.cursor {
                                 text = text.weak();
                             }
@@ -704,8 +708,9 @@ pub fn continuation_row(
         .to_move(pos)
         .map(|m| move_label(pos, m, true))
         .unwrap_or_else(|_| stat.san.clone());
+    let label = crate::san::show(&label);
     text(x, &label, text_color, egui::Align2::LEFT_CENTER);
-    x += 70.0;
+    x += 78.0;
     let games = crate::large_db::grouped(stat.tally.games as usize);
     if books {
         text(
