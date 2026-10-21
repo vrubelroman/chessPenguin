@@ -144,7 +144,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
         }
     }
     renaming?.let { e ->
-        RenameDialog(e.name, onDismiss = { renaming = null }, onSave = {
+        RenameDialog(displayName(e), onDismiss = { renaming = null }, onSave = {
             library.rename(e.id, it)
             renaming = null
         })
@@ -197,7 +197,7 @@ private fun DatabaseRow(e: DbEntry, onOpen: () -> Unit, onRename: () -> Unit, on
     ) {
         FormatBadge(format)
         Column(Modifier.weight(1f).padding(start = 16.dp)) {
-            Text(e.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(displayName(e), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 subtitle,
                 style = MaterialTheme.typography.bodyMedium,

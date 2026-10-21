@@ -129,4 +129,8 @@
     <string name="engine_state_missing">not downloaded</string>
     <string name="found_of">Found %1$s of %2$s</string>
     <string name="group_game">Game</string>
+    <string name="move_white">%1$d, White, %2$s</string>
+    <string name="move_black">%1$d, Black, %2$s</string>
+    <string name="current_move">current move</string>
+    <string name="language">Language</string>
 </resources>

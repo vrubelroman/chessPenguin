@@ -1,5 +1,6 @@
 package io.github.vrubelroman.chesspenguin.ui
 
+import android.app.Activity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,11 +37,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import java.util.Locale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import io.github.vrubelroman.chesspenguin.BuildConfig
 import io.github.vrubelroman.chesspenguin.R
+import io.github.vrubelroman.chesspenguin.data.LANGUAGES
+import io.github.vrubelroman.chesspenguin.data.Language
 import io.github.vrubelroman.chesspenguin.data.NetState
 import io.github.vrubelroman.chesspenguin.data.Notation
 import io.github.vrubelroman.chesspenguin.data.Theme
@@ -113,6 +118,16 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
             Item(stringResource(R.string.theme), themeNames.first { it.first == prefs.theme }.second) {
                 choice = Choice(R.string.theme, themeNames.map { it.second }, themeNames.indexOfFirst { it.first == prefs.theme }) { i ->
                     set { it.copy(theme = themeNames[i].first) }
+                }
+            }
+            val context = LocalContext.current
+            val languageNames = LANGUAGES.map {
+                if (it.isEmpty()) stringResource(R.string.theme_system) else Locale.forLanguageTag(it).let { l -> l.getDisplayLanguage(l).replaceFirstChar(Char::uppercase) }
+            }
+            val language = remember { Language.get(context) }
+            Item(stringResource(R.string.language), languageNames[LANGUAGES.indexOf(language).coerceAtLeast(0)]) {
+                choice = Choice(R.string.language, languageNames, LANGUAGES.indexOf(language).coerceAtLeast(0)) { i ->
+                    if (Language.set(context, LANGUAGES[i])) (context as? Activity)?.recreate()
                 }
             }
 

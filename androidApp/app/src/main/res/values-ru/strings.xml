@@ -130,4 +130,8 @@
     <string name="engine_state_missing">не скачан</string>
     <string name="found_of">Найдено %1$s из %2$s</string>
     <string name="group_game">Партия</string>
+    <string name="move_white">%1$d, белые, %2$s</string>
+    <string name="move_black">%1$d, чёрные, %2$s</string>
+    <string name="current_move">текущий ход</string>
+    <string name="language">Язык</string>
 </resources>

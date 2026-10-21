@@ -23,12 +23,23 @@ import io.github.vrubelroman.chesspenguin.ChessPenguinApp
 import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.Notation
 import io.github.vrubelroman.chesspenguin.data.DbEntry
+import io.github.vrubelroman.chesspenguin.data.Source
+import androidx.compose.ui.res.stringResource
 
 @Composable
 fun app(): ChessPenguinApp = LocalContext.current.applicationContext as ChessPenguinApp
 
 /// 1248 → "1 248": digit groups apart, as on the desktop.
 fun groupDigits(n: Int): String = "%,d".format(n).replace(',', ' ').replace(' ', ' ')
+
+/// The name on the list: a sample keeps the name of the current language until renamed.
+@Composable
+fun displayName(e: DbEntry): String = when {
+    e.source != Source.Sample || e.renamed -> e.name
+    e.id == "sample-classics.pgn" -> stringResource(R.string.sample_classics)
+    e.id == "sample-alekhine.pgn" -> stringResource(R.string.sample_alekhine)
+    else -> e.name
+}
 
 /// The label of a database's format, for its badge (§10.6).
 fun badge(e: DbEntry): String {

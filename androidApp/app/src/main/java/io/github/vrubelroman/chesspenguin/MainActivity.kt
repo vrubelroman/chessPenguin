@@ -1,5 +1,6 @@
 package io.github.vrubelroman.chesspenguin
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,10 +12,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import io.github.vrubelroman.chesspenguin.data.Language
 import io.github.vrubelroman.chesspenguin.data.Theme
 import io.github.vrubelroman.chesspenguin.theme.ChessPenguinTheme
 
 class MainActivity : ComponentActivity() {
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(Language.wrap(base))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

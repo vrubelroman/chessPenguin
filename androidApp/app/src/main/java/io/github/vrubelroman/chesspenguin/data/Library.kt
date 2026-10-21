@@ -42,7 +42,7 @@ data class DbEntry(
     val fileName: String,
     val games: Int? = null,
     val format: String? = null,
-    /// A sample keeps the name of the current language until it is renamed.
+    /// A sample shows the name of the current language until it is renamed (displayName).
     val renamed: Boolean = false,
 )
 
@@ -59,9 +59,7 @@ class Library(private val context: Context) {
 
     private fun load(): List<DbEntry> {
         if (!file.exists()) return samples().also { save(it) }
-        val list = runCatching { json.decodeFromString<List<DbEntry>>(file.readText()) }.getOrDefault(emptyList())
-        val names = samples().associate { it.id to it.name }
-        return list.map { e -> if (e.source == Source.Sample && !e.renamed) e.copy(name = names[e.id] ?: e.name) else e }
+        return runCatching { json.decodeFromString<List<DbEntry>>(file.readText()) }.getOrDefault(emptyList())
     }
 
     private fun save(list: List<DbEntry>) {

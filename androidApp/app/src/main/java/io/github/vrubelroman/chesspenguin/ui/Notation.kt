@@ -33,8 +33,17 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.theme.ChessColors
 import io.github.vrubelroman.chesspenguin.theme.LocalChessColors
 import io.github.vrubelroman.chesspenguin.theme.nagColor
@@ -293,11 +302,30 @@ private fun MoveCell(
     modifier: Modifier,
 ) {
     val selected = id != null && id == current
+    // TalkBack reads "4, White, dxe5", and whether it is the current move.
+    val spoken = id?.let {
+        val n = game.nodes[it]
+        stringResource(if (white) R.string.move_white else R.string.move_black, n.moveNumber.toInt(), n.san + n.nagSymbols)
+    }
+    val currentLabel = stringResource(R.string.current_move)
     // The whole cell takes the tap; the fill only hugs the move.
     Box(
         modifier
             .fillMaxHeight()
             .then(if (id != null) Modifier.clickable { onMove(id) } else Modifier)
+            .then(
+                if (spoken != null) {
+                    Modifier.clearAndSetSemantics {
+                        contentDescription = spoken
+                        role = Role.Button
+                        this.selected = selected
+                        if (selected) stateDescription = currentLabel
+                        onClick { onMove(id); true }
+                    }
+                } else {
+                    Modifier
+                },
+            )
             .padding(start = 4.dp),
         contentAlignment = Alignment.CenterStart,
     ) {

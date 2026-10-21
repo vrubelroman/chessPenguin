@@ -123,7 +123,7 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (Int) -> Unit) {
                         LaunchedEffect(Unit) { focus.requestFocus() }
                     } else {
                         Column {
-                            Text(entry?.name ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(entry?.let { displayName(it) } ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             database?.let { d ->
                                 val n = d.len().toInt()
                                 val found = shown?.size
