@@ -50,9 +50,12 @@ jobs:
           $p = Start-Process target/release/chesspenguin.exe -PassThru
           $p | Wait-Process -Timeout 90 -ErrorAction SilentlyContinue
           Get-Process chesspenguin -ErrorAction SilentlyContinue | Stop-Process -Force
-          $log = "$env:APPDATA/vrubelroman/ChessPenguin/config/chesspenguin.log"
-          if (Test-Path $log) { Get-Content $log }
-          Get-Content "$env:APPDATA/vrubelroman/ChessPenguin/config/graphics" -ErrorAction SilentlyContinue
+          $dir = "$env:APPDATA/vrubelroman/ChessPenguin/config"
+          # Annotations: readable on the run page without signing in.
+          $lines = @("exit code: $($p.ExitCode)")
+          if (Test-Path "$dir/graphics") { $lines += "graphics: " + (Get-Content "$dir/graphics") }
+          if (Test-Path "$dir/chesspenguin.log") { $lines += Get-Content "$dir/chesspenguin.log" | Select-Object -First 40 }
+          foreach ($l in $lines) { Write-Output "::warning title=Windows start::$($l -replace '%','%25')" }
           if (-not (Test-Path start.png)) { throw "no screenshot: the window did not start" }
       - uses: actions/upload-artifact@v7
         if: always()
