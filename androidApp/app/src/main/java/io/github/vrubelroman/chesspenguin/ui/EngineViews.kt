@@ -64,6 +64,7 @@ fun whiteShare(line: EngineLine?): Float {
 /// evaluation, the depth, the best line; ▾ shows more lines.
 @Composable
 fun EngineStrip(
+    ending: String?,
     status: EngineStatus,
     analysis: Analysis?,
     flipped: Boolean,
@@ -86,6 +87,12 @@ fun EngineStrip(
             val left = if (flipped) 1f - share else share
             if (left > 0f) Box(Modifier.weight(left.coerceAtLeast(0.001f)).fillMaxHeight().background(if (flipped) black else white))
             if (left < 1f) Box(Modifier.weight((1f - left).coerceAtLeast(0.001f)).fillMaxHeight().background(if (flipped) white else black))
+        }
+        if (ending != null) {
+            Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(ending, style = MaterialTheme.typography.labelLarge)
+            }
+            return@Column
         }
         if (status is EngineStatus.Failed) {
             Row(Modifier.fillMaxWidth().height(48.dp).padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -170,7 +177,8 @@ private fun LineRow(
 /// The evaluation: light when White is better, dark when Black is (§8.2).
 @Composable
 private fun EvalPlaque(line: EngineLine?) {
-    val blackBetter = line != null && ((line.mate ?: 0) < 0 || (line.mate == null && (line.cp ?: 0) < 0))
+    // Dark only when Black is better by what is shown ("0.0" stays light).
+    val blackBetter = line != null && ((line.mate ?: 0) < 0 || (line.mate == null && Math.round((line.cp ?: 0) / 10.0) < 0))
     val bg = if (blackBetter) Color(0xFF26282B) else Color(0xFFF5F5F0)
     val fg = if (blackBetter) Color(0xFFE8E8E8) else Color(0xFF1C1D1F)
     Box(
@@ -183,7 +191,7 @@ private fun EvalPlaque(line: EngineLine?) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            line?.eval?.let(::shortEval) ?: "",
+            line?.let(::shownEval) ?: "",
             color = fg,
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
@@ -192,11 +200,15 @@ private fun EvalPlaque(line: EngineLine?) {
     }
 }
 
-/// One decimal is enough on a phone (§8.2): "+0.45" → "+0.4".
-fun shortEval(eval: String): String {
-    if (eval.contains('#')) return eval
-    val dot = eval.indexOf('.')
-    return if (dot >= 0 && eval.length > dot + 2) eval.substring(0, dot + 2) else eval
+/// The evaluation as shown (§8.2): pawns with one decimal, rounded ("+0.45" → "+0.5"),
+/// no sign for an equal position; mates as the engine line has them ("#3", "#−2").
+fun shownEval(line: EngineLine): String {
+    if (line.mate != null) return line.eval
+    val tenths = Math.round((line.cp ?: 0) / 10.0).toInt()
+    if (tenths == 0) return "0.0"
+    val sign = if (tenths > 0) "+" else "\u2212"
+    val a = kotlin.math.abs(tenths)
+    return "$sign${a / 10}.${a % 10}"
 }
 
 /// The bar above the notation while an engine line is shown on the board (§8.3).

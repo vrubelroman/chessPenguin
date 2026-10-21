@@ -36,7 +36,7 @@ pub enum EngineFailure {
 pub struct EngineLine {
     /// 1 for the best line.
     pub multipv: u32,
-    /// "+0.45", "−1.20", "0.00", "#3" (White mates), "−#2" (Black mates).
+    /// "+0.45", "−1.20", "0.00", "#3" (White mates), "#−2" (Black mates).
     pub eval: String,
     /// Centipawns for White, when the score is not a mate.
     pub cp: Option<i32>,
@@ -288,7 +288,7 @@ fn engine_line(root: &Chess, multipv: u32, score: Score, pv: &[String]) -> Engin
             if winner == Side::White {
                 (format!("#{n}"), None, Some(n))
             } else {
-                (format!("\u{2212}#{n}"), None, Some(-n))
+                (format!("#\u{2212}{n}"), None, Some(-n))
             }
         }
     };
@@ -366,7 +366,7 @@ mod tests {
             (Some("e7"), Some("e5"))
         );
         let m = engine_line(&black_to_move, 1, Score::Mate(2), &[]);
-        assert_eq!((m.eval.as_str(), m.mate), ("\u{2212}#2", Some(-2)));
+        assert_eq!((m.eval.as_str(), m.mate), ("#\u{2212}2", Some(-2)));
         assert_eq!(pawns(0), "0.00");
         assert_eq!(pawns(-120), "\u{2212}1.20");
     }

@@ -122,7 +122,6 @@
     <string name="copy_pgn">Copy PGN</string>
     <string name="copy_fen">Copy FEN</string>
     <string name="share_game">Share game</string>
-    <string name="copied">Copied</string>
     <string name="notes">Notes</string>
     <string name="engine_state_on">on</string>
     <string name="engine_state_off">off</string>
@@ -133,4 +132,23 @@
     <string name="move_black">%1$d, Black, %2$s</string>
     <string name="current_move">current move</string>
     <string name="language">Language</string>
+    <string name="checkmate">Checkmate</string>
+    <string name="stalemate">Stalemate</string>
+    <string name="pgn_copied">PGN copied</string>
+    <string name="fen_copied">FEN copied</string>
+    <string name="tag_event">Event</string>
+    <string name="tag_site">Site</string>
+    <string name="tag_date">Date</string>
+    <string name="tag_round">Round</string>
+    <string name="tag_white">White</string>
+    <string name="tag_black">Black</string>
+    <string name="tag_result">Result</string>
+    <string name="tag_white_elo">White Elo</string>
+    <string name="tag_black_elo">Black Elo</string>
+    <string name="tag_annotator">Annotator</string>
+    <string name="tag_plies">Plies</string>
+    <string name="open_no_access">No access to the file: it was moved, deleted or its permission was taken back. Remove it from the list and add it again.</string>
+    <string name="open_corrupt">The file is damaged or is not a chess database.</string>
+    <string name="open_empty">There is no PGN or ChessBase database in the archive.</string>
+    <string name="open_unsupported">This kind of database cannot be read: %1$s</string>
 </resources>

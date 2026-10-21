@@ -16,8 +16,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class Games(val db: String) : NavKey
 
-/// The game at `place` on the list of games shown for the database.
-@Serializable data class GameAt(val db: String, val place: Int) : NavKey
+/// The game at `place` on the list of games found by `query` in the database (kept, so
+/// the same game comes back after Android restarts the app).
+@Serializable data class GameAt(val db: String, val place: Int, val query: String = "") : NavKey
 
 @Serializable data object SettingsKey : NavKey
 
@@ -34,10 +35,10 @@ fun MainNavigation() {
                 DatabasesScreen(onOpen = { backStack.add(Games(it)) }, onSettings = { backStack.add(SettingsKey) })
             }
             entry<Games> { key ->
-                GamesScreen(key.db, onBack = { backStack.removeLastOrNull() }, onGame = { backStack.add(GameAt(key.db, it)) })
+                GamesScreen(key.db, onBack = { backStack.removeLastOrNull() }, onGame = { place, query -> backStack.add(GameAt(key.db, place, query)) })
             }
             entry<GameAt> { key ->
-                GameScreen(key.db, key.place, onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) })
+                GameScreen(key.db, key.place, key.query, onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) })
             }
             entry<SettingsKey> {
                 SettingsScreen(onBack = { backStack.removeLastOrNull() }, onAbout = { backStack.add(AboutKey) })

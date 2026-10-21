@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use chess_core::{Game, MoveKind, NodeId};
+use shakmaty::Position;
 
 mod engine;
 
@@ -118,6 +119,8 @@ pub struct MoveNode {
     pub uci: String,
     /// Arrows (`[%cal]`) and marked squares (`[%csl]`) of the comments after the move.
     pub marks: Vec<Mark>,
+    /// "checkmate" or "stalemate" when the game cannot go on from here; "" otherwise.
+    pub end: String,
     /// On the main line of the game (not inside a variation).
     pub main_line: bool,
 }
@@ -442,6 +445,19 @@ fn game_data(game: &Game, diagnostics: &[chess_core::Diagnostic]) -> GameData {
                 null_move: mv.is_some_and(|m| matches!(m.kind, MoveKind::Null)),
                 uci: uci.clone().unwrap_or_default(),
                 marks: node.map(|n| marks(n.comments_after())).unwrap_or_default(),
+                end: game
+                    .position(id)
+                    .map(|p| {
+                        if p.is_checkmate() {
+                            "checkmate"
+                        } else if p.is_stalemate() {
+                            "stalemate"
+                        } else {
+                            ""
+                        }
+                    })
+                    .unwrap_or("")
+                    .to_owned(),
                 main_line: id == NodeId::ROOT || main.contains(&id),
             }
         })
@@ -504,6 +520,10 @@ mod tests {
             ]
         );
         assert!(g.nodes[0].uci.is_empty());
+        assert!(g.nodes.iter().all(|n| n.end.is_empty()));
+        let mate = open_bytes("m.pgn".into(), b"1. f3 e5 2. g4 Qh4# 0-1\n".to_vec()).unwrap();
+        let g = mate.game(0).unwrap();
+        assert_eq!(g.nodes.last().unwrap().end, "checkmate");
         assert!(db.pgn(0).unwrap().contains("[%cal Ge2e4,Rd7d5]"));
     }
 

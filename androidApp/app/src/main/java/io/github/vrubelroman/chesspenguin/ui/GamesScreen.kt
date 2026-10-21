@@ -28,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -58,6 +59,7 @@ import io.github.vrubelroman.chesspenguin.theme.Tabular
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import uniffi.mobile_api.ApiException
 import uniffi.mobile_api.Database
 import uniffi.mobile_api.GameRow
 
@@ -66,18 +68,19 @@ private const val CHUNK = 100
 /// The games of a database, with a search (android-ui.md §6).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GamesScreen(db: String, onBack: () -> Unit, onGame: (Int) -> Unit) {
+fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: String) -> Unit) {
     val app = app()
     val entries by app.library.entries.collectAsState()
     val entry = entries.firstOrNull { it.id == db }
     var database by remember { mutableStateOf<Database?>(null) }
-    var failed by remember { mutableStateOf<String?>(null) }
+    var failed by remember { mutableStateOf<Throwable?>(null) }
     LaunchedEffect(db) {
-        app.library.database(db).onSuccess { database = it }.onFailure { failed = it.message ?: "" }
+        app.library.database(db).onSuccess { database = it }.onFailure { failed = it }
     }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var shown by remember { mutableStateOf<List<UInt>?>(null) }
+    val list = rememberLazyListState()
     val rows = remember { mutableStateMapOf<Int, List<GameRow>>() }
     LaunchedEffect(database, query) {
         val d = database ?: return@LaunchedEffect
@@ -85,9 +88,10 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (Int) -> Unit) {
         val found = withContext(Dispatchers.Default) { d.find(query) }
         rows.clear()
         shown = found
+        // New results start at the top.
+        list.scrollToItem(0)
         app.shown[db] = found
     }
-    val list = rememberLazyListState()
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -156,7 +160,13 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (Int) -> Unit) {
         Box(Modifier.fillMaxSize().padding(padding)) {
             val games = shown
             when {
-                failed != null -> Message(stringResource(R.string.open_failed), failed!!)
+                failed != null -> Message(stringResource(R.string.open_failed), openProblem(failed!!)) {
+                    // The way out: take the database off the list, add the file again.
+                    TextButton(onClick = {
+                        app.library.remove(db)?.let { app.library.forget(it.second) }
+                        onBack()
+                    }) { Text(stringResource(R.string.remove)) }
+                }
                 games == null -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(16.dp))
@@ -174,7 +184,7 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (Int) -> Unit) {
                                 rows[chunk] = withContext(Dispatchers.Default) { d.rowsOf(part) }
                             }
                         }
-                        GameRowView(loaded?.getOrNull(place % CHUNK)) { onGame(place) }
+                        GameRowView(loaded?.getOrNull(place % CHUNK)) { onGame(place, query) }
                     }
                 }
             }
@@ -183,14 +193,28 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (Int) -> Unit) {
 }
 
 @Composable
-private fun Message(title: String, detail: String) {
+private fun Message(title: String, detail: String, action: (@Composable () -> Unit)? = null) {
     Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
         if (detail.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
+        if (action != null) {
+            Spacer(Modifier.height(16.dp))
+            action()
+        }
     }
+}
+
+/// Why a database did not open, in plain words with the next step (§11).
+@Composable
+private fun openProblem(e: Throwable): String = when (e) {
+    is SecurityException, is java.io.FileNotFoundException, is ApiException.Io -> stringResource(R.string.open_no_access)
+    is ApiException.Corrupt -> stringResource(R.string.open_corrupt)
+    is ApiException.Empty -> stringResource(R.string.open_empty)
+    is ApiException.Unsupported -> stringResource(R.string.open_unsupported, e.detail)
+    else -> ""
 }
 
 /// One game: "White – Black" and the result, then event · year · ECO (§6.2). An

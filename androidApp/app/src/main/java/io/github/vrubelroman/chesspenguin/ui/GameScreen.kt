@@ -1,6 +1,7 @@
 package io.github.vrubelroman.chesspenguin.ui
 
 import android.content.Context
+import android.content.res.Configuration
 import android.content.Intent
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
@@ -75,6 +76,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -112,7 +114,7 @@ private data class Preview(val line: EngineLine, val step: Int)
 /// under the thumb; ‹ › page the games of the list (android-ui.md §7).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -> Unit) {
+fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, onSettings: () -> Unit) {
     val app = app()
     val context = LocalContext.current
     val prefs by app.settings.prefs.collectAsState()
@@ -130,8 +132,8 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
             failed = true
             return@LaunchedEffect
         }
-        // After the process was restarted the list is gone: page all the games.
-        val list = games ?: withContext(Dispatchers.Default) { database.find("") }.also {
+        // After the process was restarted the list is gone: the same search finds it again.
+        val list = games ?: withContext(Dispatchers.Default) { database.find(query) }.also {
             games = it
             app.shown[db] = it
         }
@@ -158,7 +160,7 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
     val netState by files.state.collectAsState()
     val session = remember { EngineSession(files, app.scope) }
     val status by session.status.collectAsState()
-    val analysis by session.analysis.collectAsState()
+    val engineView by session.analysis.collectAsState()
     var visible by remember { mutableStateOf(true) }
     var sheet by remember { mutableStateOf(false) }
     var wantEngine by remember { mutableStateOf(false) }
@@ -167,7 +169,8 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
     var info by remember { mutableStateOf(false) }
     @Suppress("DEPRECATION")
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
-    val copiedText = stringResource(R.string.copied)
+    val pgnCopied = stringResource(R.string.pgn_copied)
+    val fenCopied = stringResource(R.string.fen_copied)
     suspend fun pgnText(): String? {
         val index = games?.getOrNull(place) ?: return null
         val database = app.library.database(db).getOrNull() ?: return null
@@ -204,10 +207,23 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
     val notation = rememberLazyListState()
     val engineReady = netState == NetState.Ready
     val engineOn = prefs.engineOn && engineReady
+    val position = remember(g, current) { g?.let { enginePosition(it, current) } }
+    // Only what the engine said about the position on the board.
+    val analysis = engineView?.takeIf { it.position == position }?.analysis
+    // Mate and stalemate need no engine: the strip says what it is (§7.3).
+    val ending = when (node?.end) {
+        "checkmate" -> stringResource(R.string.checkmate) + (g?.let { " · " + shortResult(it.result) }?.takeIf { !it.endsWith("*") } ?: "")
+        "stalemate" -> stringResource(R.string.stalemate) + " · ½-½"
+        else -> null
+    }
 
-    LaunchedEffect(g, current, engineOn, visible, prefs.engineLines, prefs.engineSeconds) {
-        if (g == null || !visible) return@LaunchedEffect
-        if (engineOn) session.show(enginePosition(g, current), prefs) else session.shutdown()
+    LaunchedEffect(position, engineOn, visible, prefs.engineLines, prefs.engineSeconds) {
+        if (position == null || !visible) return@LaunchedEffect
+        when {
+            !engineOn -> session.shutdown()
+            ending != null -> session.pause()
+            else -> session.show(position, prefs)
+        }
     }
     // A download started from the button turns the engine on when it is done.
     LaunchedEffect(netState) {
@@ -268,6 +284,123 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
     }
     BackHandler(preview != null) { preview = null }
 
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val controls: @Composable (Modifier) -> Unit = { modifier ->
+        Column(modifier) {
+            val p = preview
+            if (p == null && node != null && nodes != null && node.children.size > 1) {
+                Forks(node.children.map { nodes[it.toInt()] }, san, onMove = ::go)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+                Row(
+                    Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    EngineButton(
+                        on = engineOn,
+                        needsDownload = !engineReady && !files.builtIn,
+                        loading = netState as? NetState.Loading,
+                        modifier = Modifier.weight(1.2f),
+                        onClick = ::toggleEngine,
+                    )
+                    BarButton(Icons.Rounded.SwapVert, stringResource(R.string.flip), true, Modifier.weight(1f)) { flipped = !flipped }
+                    BarButton(Icons.Rounded.FirstPage, stringResource(R.string.to_start), canBack, Modifier.weight(1f)) {
+                        if (preview != null) preview = null else go(0)
+                    }
+                    BarButton(Icons.Rounded.PlayArrow, stringResource(R.string.move_back), canBack, Modifier.weight(1.5f), 32, repeat = true, mirrored = true) { back() }
+                    BarButton(Icons.Rounded.PlayArrow, stringResource(R.string.move_forward), canForward, Modifier.weight(1.5f), 32, repeat = true) { forward() }
+                    BarButton(Icons.Rounded.LastPage, stringResource(R.string.to_end), canForward, Modifier.weight(1f)) { end() }
+                }
+            }
+        }
+    }
+    val board: @Composable (Modifier) -> Unit = { boardModifier ->
+        val p = preview
+        val step = p?.let { it.line.steps[it.step] }
+        val fen = step?.fen ?: node?.fen ?: START
+        val description = when {
+            step != null -> stringResource(R.string.board_description, step.label)
+            node == null || current == 0 -> stringResource(R.string.board_start)
+            else -> stringResource(R.string.board_description, (if (node.white) "${node.moveNumber}." else "${node.moveNumber}…") + node.san)
+        }
+        val arrows = buildList {
+            if (p != null) {
+                p.line.steps.getOrNull(p.step + 1)?.let { add(BoardArrow(it.fromSquare, it.toSquare, EngineArrow)) }
+            } else {
+                node?.marks?.forEach { m -> m.to?.let { add(BoardArrow(m.from, it, markColor(m.color), 0.9f)) } }
+                if (engineOn && prefs.bestArrow) {
+                    analysis?.lines?.take(2)?.forEachIndexed { i, l ->
+                        val f = l.fromSquare
+                        val t = l.toSquare
+                        if (f != null && t != null) {
+                            add(BoardArrow(f, t, EngineArrow.copy(alpha = if (i == 0) 0.63f else 0.35f), if (i == 0) 1f else 0.7f))
+                        }
+                    }
+                }
+            }
+        }
+        val marks = if (p == null) node?.marks?.filter { it.to == null }?.map { BoardMark(it.from, markColor(it.color)) }.orEmpty() else emptyList()
+        val check = (step?.label ?: node?.san ?: "").let { it.endsWith("+") || it.endsWith("#") }
+        Board(
+            fen = fen,
+            flipped = flipped,
+            lastFrom = step?.fromSquare ?: node?.fromSquare,
+            lastTo = step?.toSquare ?: node?.toSquare,
+            pieces = pieces,
+            description = description,
+            arrows = arrows,
+            marks = marks,
+            check = check,
+            animated = prefs.animation,
+            modifier = boardModifier.pointerInput(Unit) {
+                detectTapGestures {
+                    if (firstBoardTouch(context)) scope.launch { snackbar.showSnackbar(hint) }
+                }
+            },
+        )
+    }
+    val side: @Composable (Modifier) -> Unit = { sideModifier ->
+        Column(sideModifier.fillMaxWidth()) {
+            val p = preview
+            if (engineOn) {
+                EngineStrip(
+                    ending = ending,
+                    status = status,
+                    analysis = analysis,
+                    flipped = flipped,
+                    lines = prefs.engineLines,
+                    expanded = expanded,
+                    onExpand = { expanded = !expanded },
+                    onLine = { l -> if (l.steps.isNotEmpty()) preview = Preview(l, 0) },
+                    onDeeper = { session.deeper() },
+                    onRestart = {
+                        session.shutdown()
+                        position?.let { session.show(it, prefs) }
+                    },
+                    notation = line,
+                )
+            } else if (wantEngine && files.builtIn && netState is NetState.Loading) {
+                Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text(stringResource(R.string.preparing_engine), Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (p != null) PreviewBar(p.step + 1, p.line.steps.size, onClose = { preview = null })
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    g != null -> Notation(g, items, where, current, notation, san, onMove = ::go, modifier = Modifier.fillMaxSize())
+                    failed -> Text(
+                        stringResource(R.string.game_failed),
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                    else -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -314,7 +447,7 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
                                 scope.launch {
                                     pgnText()?.let {
                                         clipboard.setText(AnnotatedString(it))
-                                        snackbar.showSnackbar(copiedText)
+                                        snackbar.showSnackbar(pgnCopied)
                                     }
                                 }
                             })
@@ -322,7 +455,7 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
                                 menu = false
                                 (preview?.let { it.line.steps[it.step].fen } ?: node?.fen)?.let {
                                     clipboard.setText(AnnotatedString(it))
-                                    scope.launch { snackbar.showSnackbar(copiedText) }
+                                    scope.launch { snackbar.showSnackbar(fenCopied) }
                                 }
                             })
                             DropdownMenuItem(text = { Text(stringResource(R.string.share_game)) }, enabled = g != null, onClick = {
@@ -344,115 +477,23 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
-        // In the bottom bar, so that snackbars stand above the move buttons.
-        bottomBar = {
-            Column {
-                val p = preview
-                if (p == null && node != null && nodes != null && node.children.size > 1) {
-                    Forks(node.children.map { nodes[it.toInt()] }, san, onMove = ::go)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-                    Row(
-                        Modifier.fillMaxWidth().navigationBarsPadding().height(72.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        EngineButton(
-                            on = engineOn,
-                            needsDownload = !engineReady && !files.builtIn,
-                            loading = netState as? NetState.Loading,
-                            modifier = Modifier.weight(1.2f),
-                            onClick = ::toggleEngine,
-                        )
-                        BarButton(Icons.Rounded.SwapVert, stringResource(R.string.flip), true, Modifier.weight(1f)) { flipped = !flipped }
-                        BarButton(Icons.Rounded.FirstPage, stringResource(R.string.to_start), canBack, Modifier.weight(1f)) {
-                            if (preview != null) preview = null else go(0)
-                        }
-                        BarButton(Icons.Rounded.PlayArrow, stringResource(R.string.move_back), canBack, Modifier.weight(1.5f), 32, repeat = true, mirrored = true) { back() }
-                        BarButton(Icons.Rounded.PlayArrow, stringResource(R.string.move_forward), canForward, Modifier.weight(1.5f), 32, repeat = true) { forward() }
-                        BarButton(Icons.Rounded.LastPage, stringResource(R.string.to_end), canForward, Modifier.weight(1f)) { end() }
-                    }
-                }
-            }
-        },
+        // In the bottom bar, so that snackbars stand above the move buttons; beside the
+        // board when the phone lies on its side.
+        bottomBar = { if (!landscape) controls(Modifier) },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())) {
-            val p = preview
-            val step = p?.let { it.line.steps[it.step] }
-            val fen = step?.fen ?: node?.fen ?: START
-            val description = when {
-                step != null -> stringResource(R.string.board_description, step.label)
-                node == null || current == 0 -> stringResource(R.string.board_start)
-                else -> stringResource(R.string.board_description, (if (node.white) "${node.moveNumber}." else "${node.moveNumber}…") + node.san)
-            }
-            val arrows = buildList {
-                if (p != null) {
-                    p.line.steps.getOrNull(p.step + 1)?.let { add(BoardArrow(it.fromSquare, it.toSquare, EngineArrow)) }
-                } else {
-                    node?.marks?.forEach { m -> m.to?.let { add(BoardArrow(m.from, it, markColor(m.color), 0.9f)) } }
-                    if (engineOn && prefs.bestArrow) {
-                        analysis?.lines?.take(2)?.forEachIndexed { i, l ->
-                            val f = l.fromSquare
-                            val t = l.toSquare
-                            if (f != null && t != null) {
-                                add(BoardArrow(f, t, EngineArrow.copy(alpha = if (i == 0) 0.63f else 0.35f), if (i == 0) 1f else 0.7f))
-                            }
-                        }
-                    }
+        val inner = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())
+        if (landscape) {
+            Row(inner) {
+                board(Modifier.fillMaxHeight())
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    side(Modifier.weight(1f))
+                    controls(Modifier)
                 }
             }
-            val marks = if (p == null) node?.marks?.filter { it.to == null }?.map { BoardMark(it.from, markColor(it.color)) }.orEmpty() else emptyList()
-            val check = (step?.label ?: node?.san ?: "").let { it.endsWith("+") || it.endsWith("#") }
-            Board(
-                fen = fen,
-                flipped = flipped,
-                lastFrom = step?.fromSquare ?: node?.fromSquare,
-                lastTo = step?.toSquare ?: node?.toSquare,
-                pieces = pieces,
-                description = description,
-                arrows = arrows,
-                marks = marks,
-                check = check,
-                animated = prefs.animation,
-                modifier = Modifier.pointerInput(Unit) {
-                    detectTapGestures {
-                        if (firstBoardTouch(context)) scope.launch { snackbar.showSnackbar(hint) }
-                    }
-                },
-            )
-            if (engineOn) {
-                EngineStrip(
-                    status = status,
-                    analysis = analysis,
-                    flipped = flipped,
-                    lines = prefs.engineLines,
-                    expanded = expanded,
-                    onExpand = { expanded = !expanded },
-                    onLine = { l -> if (l.steps.isNotEmpty()) preview = Preview(l, 0) },
-                    onDeeper = { session.deeper() },
-                    onRestart = {
-                        session.shutdown()
-                        g?.let { session.show(enginePosition(it, current), prefs) }
-                    },
-                    notation = line,
-                )
-            } else if (wantEngine && files.builtIn && netState is NetState.Loading) {
-                Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text(stringResource(R.string.preparing_engine), Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            if (p != null) PreviewBar(p.step + 1, p.line.steps.size, onClose = { preview = null })
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when {
-                    g != null -> Notation(g, items, where, current, notation, san, onMove = ::go, modifier = Modifier.fillMaxSize())
-                    failed -> Text(
-                        stringResource(R.string.game_failed),
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.align(Alignment.Center),
-                    )
-                    else -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                }
+        } else {
+            Column(inner) {
+                board(Modifier.fillMaxWidth())
+                side(Modifier.weight(1f))
             }
         }
     }
@@ -462,10 +503,10 @@ fun GameScreen(db: String, startPlace: Int, onBack: () -> Unit, onSettings: () -
             title = { Text(stringResource(R.string.game_info)) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    g.tags.filter { it.value.isNotBlank() && it.value != "?" }.forEach { t ->
+                    g.tags.filter { it.value.isNotBlank() && it.value != "?" && !it.value.startsWith("????") }.forEach { t ->
                         Row(Modifier.padding(vertical = 4.dp)) {
-                            Text(t.name, Modifier.width(96.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-                            Text(t.value, style = MaterialTheme.typography.bodyMedium)
+                            Text(tagLabel(t.name), Modifier.width(112.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                            Text(if (t.name == "Date" || t.name == "EventDate") pgnDate(t.value) else t.value, style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                     if (g.notes.isNotEmpty()) {
@@ -620,6 +661,36 @@ private fun BarButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, null, tint = color, modifier = Modifier.size(iconSize.dp).then(if (mirrored) Modifier.scale(-1f, 1f) else Modifier))
+    }
+}
+
+/// The names of the usual PGN tags in the language of the interface; others as they are.
+@Composable
+private fun tagLabel(name: String): String = when (name) {
+    "Event" -> stringResource(R.string.tag_event)
+    "Site" -> stringResource(R.string.tag_site)
+    "Date" -> stringResource(R.string.tag_date)
+    "Round" -> stringResource(R.string.tag_round)
+    "White" -> stringResource(R.string.tag_white)
+    "Black" -> stringResource(R.string.tag_black)
+    "Result" -> stringResource(R.string.tag_result)
+    "WhiteElo" -> stringResource(R.string.tag_white_elo)
+    "BlackElo" -> stringResource(R.string.tag_black_elo)
+    "ECO" -> "ECO"
+    "Annotator" -> stringResource(R.string.tag_annotator)
+    "PlyCount" -> stringResource(R.string.tag_plies)
+    else -> name
+}
+
+/// "1858.??.??" → "1858", "1927.09.16" → "16.09.1927".
+private fun pgnDate(date: String): String {
+    val parts = date.split('.')
+    if (parts.size != 3) return date
+    val (y, m, d) = parts
+    return when {
+        m.all { it.isDigit() } && d.all { it.isDigit() } -> "$d.$m.$y"
+        m.all { it.isDigit() } -> "$m.$y"
+        else -> y
     }
 }
 

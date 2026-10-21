@@ -123,7 +123,6 @@
     <string name="copy_pgn">Копировать PGN</string>
     <string name="copy_fen">Копировать FEN</string>
     <string name="share_game">Поделиться партией</string>
-    <string name="copied">Скопировано</string>
     <string name="notes">Замечания</string>
     <string name="engine_state_on">включён</string>
     <string name="engine_state_off">выключен</string>
@@ -134,4 +133,23 @@
     <string name="move_black">%1$d, чёрные, %2$s</string>
     <string name="current_move">текущий ход</string>
     <string name="language">Язык</string>
+    <string name="checkmate">Мат</string>
+    <string name="stalemate">Пат</string>
+    <string name="pgn_copied">PGN скопирован</string>
+    <string name="fen_copied">FEN скопирован</string>
+    <string name="tag_event">Турнир</string>
+    <string name="tag_site">Место</string>
+    <string name="tag_date">Дата</string>
+    <string name="tag_round">Тур</string>
+    <string name="tag_white">Белые</string>
+    <string name="tag_black">Чёрные</string>
+    <string name="tag_result">Результат</string>
+    <string name="tag_white_elo">Эло белых</string>
+    <string name="tag_black_elo">Эло чёрных</string>
+    <string name="tag_annotator">Комментатор</string>
+    <string name="tag_plies">Полуходов</string>
+    <string name="open_no_access">Нет доступа к файлу: его переместили, удалили или отозвали разрешение. Уберите базу из списка и добавьте снова.</string>
+    <string name="open_corrupt">Файл повреждён или это не шахматная база.</string>
+    <string name="open_empty">В архиве нет базы PGN или ChessBase.</string>
+    <string name="open_unsupported">Такую базу прочитать нельзя: %1$s</string>
 </resources>

@@ -134,7 +134,11 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
                             scope.launch {
                                 snackbar.currentSnackbarData?.dismiss()
                                 val r = snackbar.showSnackbar(removedText, undoText, withDismissAction = false)
-                                if (r == SnackbarResult.ActionPerformed) library.restore(removed.first, removed.second)
+                                if (r == SnackbarResult.ActionPerformed) {
+                                    library.restore(removed.first, removed.second)
+                                } else {
+                                    library.forget(removed.second)
+                                }
                             }
                         },
                         modifier = Modifier.animateItem(),

@@ -7,6 +7,8 @@ import io.github.vrubelroman.chesspenguin.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +47,7 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
     private val _state = MutableStateFlow(if (installed()) NetState.Ready else NetState.Missing)
     val state: StateFlow<NetState> = _state.asStateFlow()
     private var job: Job? = null
+    @Volatile private var connection: HttpURLConnection? = null
 
     /// A network checked when it was written: the right size is enough later.
     private fun installed() = net.length() == BuildConfig.NET_SIZE
@@ -61,9 +64,14 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
     /// Gets the network ready: from the APK, or from the internet. Runs on in the app's
     /// scope when the screen that asked goes away.
     fun prepare() {
-        if (_state.value == NetState.Ready || job?.isActive == true) return
+        if (_state.value == NetState.Ready || _state.value is NetState.Loading) return
+        // At once: the sheet shows the progress (and "Cancel") from the first moment.
+        _state.value = NetState.Loading(part.length().coerceAtMost(BuildConfig.NET_SIZE), BuildConfig.NET_SIZE)
+        val previous = job
         job = scope.launch(Dispatchers.IO) {
-            _state.value = try {
+            // A cancelled download may still be leaving: one writer of the file at a time.
+            previous?.cancelAndJoin()
+            val result = try {
                 dir.mkdirs()
                 if (builtIn) copyFromApk() else download()
                 NetState.Ready
@@ -72,13 +80,16 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
             } catch (e: IOException) {
                 NetState.Failed(if (dir.usableSpace < BuildConfig.NET_SIZE) NetProblem.NoSpace else NetProblem.Interrupted)
             }
+            // After "Cancel" the state is already "missing"; the broken connection is no failure.
+            if (isActive) _state.value = result
         }
     }
 
     /// Stops a download; what came is kept for the next one.
     fun cancel() {
         job?.cancel()
-        job = null
+        // A read waiting for the network returns at once.
+        connection?.disconnect()
         _state.value = NetState.Missing
     }
 
@@ -108,6 +119,7 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
         var hops = 0
         while (true) {
             conn = url.openConnection() as HttpURLConnection
+            connection = conn
             conn.instanceFollowRedirects = false
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
@@ -154,7 +166,7 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
                 if (n < 0) break
                 out.write(buf, 0, n)
                 done += n
-                if (done - last > 512 * 1024) {
+                if (done - last > 512 * 1024 && isActive) {
                     last = done
                     _state.value = NetState.Loading(done, total)
                 }

@@ -91,9 +91,13 @@ class Library(private val context: Context) {
     /// Adds a file picked with the system picker; its read permission is kept across
     /// restarts. Returns the new entry, or the one already on the list.
     fun addFile(uri: Uri): DbEntry {
-        _entries.value.firstOrNull { it.location == uri.toString() }?.let { return it }
+        // Taken again for a file already on the list: picking it grants a new permission.
         runCatching {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        _entries.value.firstOrNull { it.location == uri.toString() }?.let {
+            open.remove(it.id)?.close()
+            return it
         }
         val fileName = displayName(uri) ?: "database.pgn"
         val entry = DbEntry(
@@ -110,7 +114,7 @@ class Library(private val context: Context) {
     fun rename(id: String, name: String) = update { list -> list.map { if (it.id == id) it.copy(name = name, renamed = true) else it } }
 
     /// Takes the database off the list (the file stays where it is). Returns its place,
-    /// for "Undo".
+    /// for "Undo"; the access to the file is kept until [forget].
     fun remove(id: String): Pair<Int, DbEntry>? {
         val list = _entries.value
         val i = list.indexOfFirst { it.id == id }
@@ -118,20 +122,18 @@ class Library(private val context: Context) {
         val e = list[i]
         update { it.filterNot { x -> x.id == id } }
         open.remove(id)?.close()
-        if (e.source == Source.File) {
-            runCatching {
-                context.contentResolver.releasePersistableUriPermission(Uri.parse(e.location), Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-        }
         return i to e
     }
 
-    fun restore(place: Int, entry: DbEntry) {
-        if (entry.source == Source.File) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(Uri.parse(entry.location), Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
+    /// Gives the access to a removed file back to the system, once "Undo" is gone.
+    fun forget(entry: DbEntry) {
+        if (entry.source != Source.File || _entries.value.any { it.location == entry.location }) return
+        runCatching {
+            context.contentResolver.releasePersistableUriPermission(Uri.parse(entry.location), Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+    }
+
+    fun restore(place: Int, entry: DbEntry) {
         update { it.toMutableList().apply { add(place.coerceIn(0, size), entry) } }
     }
 

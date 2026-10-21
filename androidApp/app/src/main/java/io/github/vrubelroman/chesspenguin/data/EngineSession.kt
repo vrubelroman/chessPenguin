@@ -54,33 +54,64 @@ sealed interface EngineStatus {
     data class Failed(val notStarting: Boolean) : EngineStatus
 }
 
+/// What the engine said, and about which position: the screen shows it only while that
+/// position is on the board, so an old evaluation never appears for a new one, not
+/// even for a frame.
+data class EngineView(val position: EnginePosition, val analysis: Analysis)
+
 /// The engine while a game is on the screen: one Stockfish process, the analysis of the
-/// shown position only. A new position clears the lines at once; snapshots of an older
-/// search are dropped, so an old evaluation is never shown for a new position.
+/// shown position only.
 class EngineSession(private val files: EngineFiles, private val scope: CoroutineScope) {
     private val _status = MutableStateFlow<EngineStatus>(EngineStatus.Off)
     val status: StateFlow<EngineStatus> = _status.asStateFlow()
-    private val _analysis = MutableStateFlow<Analysis?>(null)
-    val analysis: StateFlow<Analysis?> = _analysis.asStateFlow()
+    private val _analysis = MutableStateFlow<EngineView?>(null)
+    val analysis: StateFlow<EngineView?> = _analysis.asStateFlow()
 
     private val lock = Mutex()
-    private var analyzer: Analyzer? = null
+    @Volatile private var analyzer: Analyzer? = null
     private var loop: Job? = null
     private var timer: Job? = null
-    @Volatile private var search: ULong = 0u
+
+    /// The search whose snapshots are taken, and its position (set together).
+    private data class Search(val id: ULong, val position: EnginePosition)
+    @Volatile private var search: Search? = null
     private var position: EnginePosition? = null
     private var prefs = Prefs()
+
+    /// Bumped by [shutdown]: work queued before it is dropped instead of starting the
+    /// engine again.
+    @Volatile private var generation = 0
 
     /// Starts the engine (if it is not running) and analyses `pos`.
     fun show(pos: EnginePosition, p: Prefs) {
         prefs = p
         val changed = pos != position
         position = pos
+        val gen = generation
         scope.launch {
             lock.withLock {
-                val a = analyzer ?: startLocked() ?: return@withLock
+                if (gen != generation) return@withLock
+                val a = analyzer ?: startLocked(gen) ?: return@withLock
                 // The same position again (the screen redrawn, the time over) stays as it is.
                 if (changed || _status.value == EngineStatus.Starting) analyzeLocked(a, pos)
+            }
+        }
+    }
+
+    /// Stops thinking (a mate or stalemate on the board); the process stays for the next
+    /// position.
+    fun pause() {
+        position = null
+        search = null
+        _analysis.value = null
+        timer?.cancel()
+        val gen = generation
+        scope.launch {
+            lock.withLock {
+                if (gen != generation) return@withLock
+                val a = analyzer ?: return@withLock
+                withContext(Dispatchers.IO) { a.stop() }
+                _status.value = EngineStatus.Paused
             }
         }
     }
@@ -88,29 +119,50 @@ class EngineSession(private val files: EngineFiles, private val scope: Coroutine
     /// Thinks on about the same position after the time ran out.
     fun deeper() {
         val pos = position ?: return
-        scope.launch { lock.withLock { analyzer?.let { analyzeLocked(it, pos) } } }
+        val gen = generation
+        scope.launch {
+            lock.withLock {
+                if (gen == generation) analyzer?.let { analyzeLocked(it, pos) }
+            }
+        }
     }
 
     /// Quits the process (the screen went away, the button was turned off).
     fun shutdown() {
+        generation++
         position = null
+        search = null
         _analysis.value = null
         _status.value = EngineStatus.Off
-        val a = analyzer
-        analyzer = null
         loop?.cancel()
         timer?.cancel()
-        if (a != null) scope.launch(Dispatchers.IO) { lock.withLock { a.quit(); a.close() } }
+        // Taken now, so that a show() right after it starts a new engine.
+        val a = analyzer ?: return
+        analyzer = null
+        scope.launch(Dispatchers.IO) {
+            lock.withLock {
+                a.quit()
+                a.close()
+            }
+        }
     }
 
-    private suspend fun startLocked(): Analyzer? {
+    private suspend fun startLocked(gen: Int): Analyzer? {
         _status.value = EngineStatus.Starting
         val a = withContext(Dispatchers.IO) {
             runCatching {
                 Analyzer.start(files.executable, files.net.path, prefs.engineThreads.toUInt(), prefs.engineHashMb.toUInt())
             }
         }.getOrElse {
-            _status.value = EngineStatus.Failed(notStarting = true)
+            if (gen == generation) _status.value = EngineStatus.Failed(notStarting = true)
+            return null
+        }
+        if (gen != generation) {
+            // Turned off while it was starting.
+            withContext(Dispatchers.IO) {
+                a.quit()
+                a.close()
+            }
             return null
         }
         analyzer = a
@@ -119,23 +171,22 @@ class EngineSession(private val files: EngineFiles, private val scope: Coroutine
     }
 
     private suspend fun analyzeLocked(a: Analyzer, pos: EnginePosition) {
-        // No snapshot is taken until the new search has its number.
-        search = 0u
-        _analysis.value = null
+        search = null
         val id = withContext(Dispatchers.IO) {
             runCatching { a.analyze(pos.startFen, pos.moves, prefs.engineLines.toUInt()) }
         }.getOrElse {
             _status.value = EngineStatus.Failed(notStarting = false)
             return
         }
-        search = id
+        val s = Search(id, pos)
+        search = s
         _status.value = EngineStatus.Thinking
         timer?.cancel()
         if (prefs.engineSeconds > 0) {
             timer = scope.launch {
                 delay(prefs.engineSeconds * 1000L)
                 lock.withLock {
-                    if (search == id && analyzer === a) {
+                    if (search == s && analyzer === a) {
                         withContext(Dispatchers.IO) { a.stop() }
                         _status.value = EngineStatus.Paused
                     }
@@ -146,13 +197,17 @@ class EngineSession(private val files: EngineFiles, private val scope: Coroutine
 
     private suspend fun poll(a: Analyzer) {
         while (scope.isActive && analyzer === a) {
+            // A short wait: analyze() waits for the engine handle while this holds it.
             val snapshot = try {
-                a.poll(150u)
+                a.poll(40u)
             } catch (e: Exception) {
                 if (analyzer === a) _status.value = EngineStatus.Failed(notStarting = false)
                 return
             }
-            if (snapshot != null && snapshot.search == search && analyzer === a) _analysis.value = snapshot
+            val s = search
+            if (snapshot != null && s != null && snapshot.search == s.id && analyzer === a) {
+                _analysis.value = EngineView(s.position, snapshot)
+            }
         }
     }
 }
