@@ -2,6 +2,16 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-10-22
+
+The 0.8 series together — the reference tab, games from Lichess and Chess.com, self-update,
+translated comments, move notation and piece animation — with these fixes:
+
+- Symbols that had no glyph and showed as empty boxes now render: the "✕" beside the
+  Chess.com nickname, the start-position mark in board search, the check marks of the
+  translation texts. A test checks every character the interface shows against the bundled
+  fonts.
+
 ## [0.8.6] — 2026-10-21
 
 - The side panel no longer widens by itself while a game's comments are translated (the mark
