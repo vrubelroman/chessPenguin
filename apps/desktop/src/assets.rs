@@ -153,6 +153,31 @@ pub fn install(ctx: &egui::Context) {
     for (name, bytes) in TEXTURES {
         ctx.include_bytes(format!("bytes://boards/{name}"), *bytes);
     }
+    // Arrows (→ ⇄ ↔) are only in egui's monospace font, and three evaluation signs
+    // (⩲ ⩱ ⌓) in none: the last fallbacks of the text.
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "nag-symbols".into(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/fonts/NotoSansMath-nag.ttf"
+        ))),
+    );
+    let mono = fonts
+        .families
+        .get(&egui::FontFamily::Monospace)
+        .and_then(|f| f.first())
+        .cloned();
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        if let Some(list) = fonts.families.get_mut(&family) {
+            if let Some(m) = &mono
+                && !list.contains(m)
+            {
+                list.push(m.clone());
+            }
+            list.push("nag-symbols".into());
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

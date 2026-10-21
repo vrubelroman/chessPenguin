@@ -14,6 +14,7 @@ pub enum Tab {
     Board,
     Sound,
     Interface,
+    Translation,
     About,
 }
 
@@ -61,7 +62,12 @@ impl SettingsWindow {
     }
 
     /// Returns actions and whether settings changed (to be saved).
-    pub fn show(&mut self, ctx: &egui::Context, s: &mut Settings) -> (Vec<SettingsAction>, bool) {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        s: &mut Settings,
+        translation: &mut crate::translate_ui::Hub,
+    ) -> (Vec<SettingsAction>, bool) {
         let mut actions = Vec::new();
         let mut changed = false;
         let mut open = self.open;
@@ -78,12 +84,14 @@ impl SettingsWindow {
                     ui.selectable_value(&mut self.tab, Tab::Board, tr("Board & pieces"));
                     ui.selectable_value(&mut self.tab, Tab::Sound, tr("Sound"));
                     ui.selectable_value(&mut self.tab, Tab::Interface, tr("Interface"));
+                    ui.selectable_value(&mut self.tab, Tab::Translation, tr("Translation"));
                     ui.selectable_value(&mut self.tab, Tab::About, tr("About"));
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                     Tab::Engines => self.engines(ui, s, &mut actions, &mut changed),
                     Tab::Board => board_tab(ui, s, &mut changed),
+                    Tab::Translation => changed |= translation.settings_tab(ui, s),
                     Tab::Sound => sound_tab(ui, s, &mut actions, &mut changed),
                     Tab::About => {
                         let (status, available) =

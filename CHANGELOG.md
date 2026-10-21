@@ -4,6 +4,15 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Translation of game comments: when a game's comments are in another language, ChessPenguin
+  offers to translate them into yours. Sign in with your ChatGPT Plus or Pro subscription (no
+  key), or use an API key — DeepSeek, OpenAI, Google Gemini — or a model on this computer
+  (Ollama, LM Studio). After the first consent, games in other languages are translated as you
+  open them; [Original | Translation] (Ctrl+Shift+T) switches back. Moves are never translated:
+  a translation that changes a move is not shown. The translation is never written to the PGN;
+  a local cache keeps it, so a game opens translated again without the network. Settings ›
+  Translation: the target language, when to translate, the connection, permissions, the cache.
+- Arrows (→, ⇄) and the evaluation signs ⩲ ⩱ ⌓, shown as empty boxes before, now render.
 - Piece animation, as on Lichess: a move slides on the board (castling moves both king and
   rook; jumping several moves slides every piece once), a captured piece fades out. Speed in
   Settings → Board: Off, Fast (120 ms), Normal (250 ms, the default), Slow (500 ms). A piece

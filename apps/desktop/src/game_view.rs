@@ -61,6 +61,10 @@ pub struct GameView {
     pub previous: Option<String>,
     /// A newer version to offer (its number), next to Settings.
     pub update: Option<String>,
+    /// Comments in another language, translated for reading (never into the PGN).
+    translation: crate::translate_ui::GameTranslation,
+    /// "Translate comments" was chosen (menu, Ctrl+Shift+T): done once the settings are at hand.
+    translate_now: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,6 +104,8 @@ pub enum GameAction {
     ReturnToPrevious,
     /// The window offering a newer version.
     OpenUpdate,
+    /// Settings → Translation.
+    OpenTranslationSettings,
 }
 
 impl GameView {
@@ -126,7 +132,24 @@ impl GameView {
             },
             previous: None,
             update: None,
+            translation: Default::default(),
+            translate_now: false,
         }
+    }
+
+    /// The game is put aside (another one opened): its translation stops.
+    pub fn suspend(&mut self) {
+        self.translation.suspend();
+    }
+
+    /// Copying the PGN always copies the original comments; say so when the translation is shown.
+    fn copy_pgn(&self) -> GameAction {
+        let note = if self.translation.shown().is_some() {
+            tr("PGN copied (comments in the original)")
+        } else {
+            tr("PGN copied")
+        };
+        GameAction::CopyText(self.game.to_pgn(), note)
     }
 
     pub fn title(&self) -> String {
@@ -229,9 +252,11 @@ impl GameView {
         settings: &mut Settings,
         analysis: &mut Analysis,
         reference: &mut crate::reference::Reference,
+        hub: &mut crate::translate_ui::Hub,
         input_enabled: bool,
     ) -> Vec<GameAction> {
         let mut actions = Vec::new();
+        self.translation.update(ui.ctx(), &self.game, settings, hub);
         if self.review.poll() {
             actions.push(GameAction::ResumeLive);
             if let Some(e) = &self.review.error {
@@ -281,7 +306,7 @@ impl GameView {
             .default_size(side_width)
             .size_range(least.min(width * 0.5).min(max)..=max)
             .show(ui, |ui| {
-                self.side_panel(ui, settings, analysis, reference, &mut actions)
+                self.side_panel(ui, settings, analysis, reference, hub, &mut actions)
             });
         self.sync_analysis(analysis);
         let hover = (self.side_tab == SideTab::Reference)
@@ -734,6 +759,7 @@ impl GameView {
         settings: &mut Settings,
         analysis: &mut Analysis,
         reference: &mut crate::reference::Reference,
+        hub: &mut crate::translate_ui::Hub,
         actions: &mut Vec<GameAction>,
     ) {
         egui::Panel::bottom("game_toolbar").show(ui, |ui| self.toolbar(ui, actions));
@@ -804,6 +830,18 @@ impl GameView {
                 }
                 return;
             }
+            match self.translation.strip(ui, settings, hub) {
+                Some(crate::translate_ui::StripAction::OpenSettings) => {
+                    actions.push(GameAction::OpenTranslationSettings)
+                }
+                Some(crate::translate_ui::StripAction::Toast(t)) => {
+                    actions.push(GameAction::Toast(t))
+                }
+                None => {}
+            }
+            if std::mem::take(&mut self.translate_now) {
+                self.translation.translate(ui.ctx(), settings, hub);
+            }
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| {
@@ -816,6 +854,7 @@ impl GameView {
                             .preview
                             .as_ref()
                             .map(|p| (p.base, p.san.as_slice(), p.shown)),
+                        translations: self.translation.shown(),
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
@@ -1121,7 +1160,7 @@ impl GameView {
             ui.separator();
             ui.menu_button(big("☰"), |ui| {
                 if ui.button(tr("Copy PGN")).clicked() {
-                    actions.push(GameAction::CopyText(self.game.to_pgn(), tr("PGN copied")));
+                    actions.push(self.copy_pgn());
                     ui.close();
                 }
                 if ui.button(tr("Copy FEN")).clicked() {
@@ -1138,13 +1177,35 @@ impl GameView {
                     self.show_diagnostics = true;
                     ui.close();
                 }
+                ui.separator();
+                if self.translation.can_translate() && ui.button(tr("Translate comments")).clicked()
+                {
+                    self.translate_now = true;
+                    self.side_tab = SideTab::Notation;
+                    ui.close();
+                }
+                if self.translation.has_translation() {
+                    let label = if self.translation.original {
+                        tr("Show the translation (Ctrl+Shift+T)")
+                    } else {
+                        tr("Show the original (Ctrl+Shift+T)")
+                    };
+                    if ui.button(label).clicked() {
+                        self.translation.toggle();
+                        ui.close();
+                    }
+                }
+                if ui.button(tr("Translation settings…")).clicked() {
+                    actions.push(GameAction::OpenTranslationSettings);
+                    ui.close();
+                }
             });
             if ui
                 .button(big("📋"))
                 .on_hover_text(tr("Copy PGN (Ctrl+Shift+C)"))
                 .clicked()
             {
-                actions.push(GameAction::CopyText(self.game.to_pgn(), tr("PGN copied")));
+                actions.push(self.copy_pgn());
             }
             ui.separator();
             self.review_button(ui, actions);
@@ -1332,6 +1393,9 @@ impl GameView {
             if i.consume_shortcut(&ctrl_shift(Key::F)) {
                 cmds.push("find");
             }
+            if i.consume_shortcut(&ctrl_shift(Key::T)) {
+                cmds.push("translate");
+            }
             if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::A)) {
                 cmds.push("review");
             }
@@ -1357,7 +1421,7 @@ impl GameView {
             match cmd {
                 "undo" => self.undo(),
                 "redo" => self.redo(),
-                "copy" => actions.push(GameAction::CopyText(self.game.to_pgn(), tr("PGN copied"))),
+                "copy" => actions.push(self.copy_pgn()),
                 "save" => actions.push(GameAction::SaveAs),
                 "back" => actions.push(GameAction::Back),
                 "find" if self.search_line().is_some() => {
@@ -1385,6 +1449,14 @@ impl GameView {
                     self.goto(end);
                 }
                 "flip" => self.flipped = !self.flipped,
+                "translate" => {
+                    if self.translation.has_translation() {
+                        self.translation.toggle();
+                    } else if self.translation.can_translate() {
+                        self.translate_now = true;
+                        self.side_tab = SideTab::Notation;
+                    }
+                }
                 "engine" => actions.push(GameAction::ToggleEngine),
                 "review" => {
                     if self.review.has_data() || self.review.running() {

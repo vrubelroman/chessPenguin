@@ -55,6 +55,8 @@ pub struct App {
     /// Lichess / Chess.com: which answered at start, and the download window.
     online_probe: crate::online::Probe,
     online: crate::online_ui::OnlineDialog,
+    /// Translating comments: the setup and consent windows, the ChatGPT sign-in.
+    translation: crate::translate_ui::Hub,
     /// A position to find in a database once the game is closed.
     find_after_close: Option<(PathBuf, shakmaty::Chess, Vec<shakmaty::Move>, bool)>,
     /// Games left for one opened from the reference tab ("⬅ Back to …"), kept as they
@@ -180,6 +182,7 @@ impl App {
             offer_hook_done: false,
             online_probe: crate::online::Probe::start(ctx),
             online: crate::online_ui::OnlineDialog::from_env(),
+            translation: Default::default(),
             allow_quit: false,
             applied_dark: None,
             debug: DebugStartup::from_env(),
@@ -202,8 +205,14 @@ impl App {
             match tab.as_str() {
                 "board" => self.settings_ui.tab = Tab::Board,
                 "about" => self.settings_ui.tab = Tab::About,
+                "translation" => self.settings_ui.tab = Tab::Translation,
                 _ => {}
             }
+        }
+        // `CP_TRANSLATE_SETUP=1`: the "How to translate?" window (`=key`: with an API key chosen).
+        if let Ok(v) = std::env::var("CP_TRANSLATE_SETUP") {
+            self.translation
+                .debug_open_setup(&self.settings.translation, v == "key");
         }
         self
     }
@@ -811,6 +820,7 @@ impl eframe::App for App {
                 &mut self.settings,
                 &mut self.analysis,
                 &mut self.reference,
+                &mut self.translation,
                 input_enabled,
             );
             self.reference_tab = game.reference_tab();
@@ -824,8 +834,9 @@ impl eframe::App for App {
                     }
                     GameAction::ReferenceLoad(p) => self.library.load(&p, &ctx),
                     GameAction::OpenGame(path, index, at) => {
-                        if let Some(prev) = self.game.take() {
+                        if let Some(mut prev) = self.game.take() {
                             let title = prev.title();
+                            prev.suspend();
                             self.previous_games.push(prev);
                             self.open_game(&ctx, path, index, Some(at));
                             match &mut self.game {
@@ -875,6 +886,10 @@ impl eframe::App for App {
                         self.settings_ui.tab = Tab::Engines;
                     }
                     GameAction::OpenSettings => self.settings_ui.open = !self.settings_ui.open,
+                    GameAction::OpenTranslationSettings => {
+                        self.settings_ui.open = true;
+                        self.settings_ui.tab = Tab::Translation;
+                    }
                     GameAction::Toast(m) => self.toast(&ctx, m),
                     GameAction::PauseLive => {
                         if self.analysis.is_on() {
@@ -995,7 +1010,15 @@ impl eframe::App for App {
         };
 
         self.settings_ui.download = self.engine_offer.stage();
-        let (actions, changed) = self.settings_ui.show(&ctx, &mut self.settings);
+        self.settings_dirty |= self.translation.poll(&ctx, &mut self.settings);
+        self.settings_dirty |= self.translation.windows(&ctx, &mut self.settings);
+        if std::mem::take(&mut self.translation.open_settings) {
+            self.settings_ui.open = true;
+            self.settings_ui.tab = Tab::Translation;
+        }
+        let (actions, changed) =
+            self.settings_ui
+                .show(&ctx, &mut self.settings, &mut self.translation);
         self.settings_dirty |= changed;
         for a in actions {
             match a {

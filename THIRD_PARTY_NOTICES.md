@@ -95,4 +95,9 @@ platform into the user's data directory and checks its SHA-256 (pinned in
 
 Dependency licenses are recorded by `Cargo.lock`; key ones: shakmaty / pgn-reader (GPL-3.0-or-later),
 egui / eframe (MIT OR Apache-2.0), zip (MIT), sevenz-rust2 (Apache-2.0), sysinfo (MIT),
-sys-locale (MIT OR Apache-2.0).
+sys-locale (MIT OR Apache-2.0), whatlang (MIT, detecting the language of comments).
+
+egui's bundled fonts are part of the program: Ubuntu Light (Ubuntu Font Licence 1.0), Hack
+(MIT and Bitstream Vera licence), Noto Emoji (SIL OFL 1.1), emoji-icon-font (MIT).
+Three evaluation signs (⩲ ⩱ ⌓) come from Noto Sans Math (Copyright 2022 Google LLC, SIL OFL 1.1),
+cut down to those glyphs: `apps/desktop/assets/fonts/NotoSansMath-nag.ttf`, licence beside it.

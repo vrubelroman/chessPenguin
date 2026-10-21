@@ -102,6 +102,8 @@ pub struct Settings {
     pub show_coords: bool,
     /// How fast moves slide on the board.
     pub animation: Animation,
+    /// Translating game comments (docs/design/translation.md).
+    pub translation: crate::translate::TranslationSettings,
     pub sound_enabled: bool,
     pub sound_set: SoundSet,
     pub volume: f32,
@@ -168,6 +170,7 @@ impl Default for Settings {
             board_theme: BoardThemeId::default(),
             show_coords: true,
             animation: Animation::default(),
+            translation: Default::default(),
             sound_enabled: true,
             sound_set: SoundSet::default(),
             volume: 0.7,

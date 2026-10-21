@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::i18n::tr;
 use crate::review::{Mark, judgement_color, judgement_name, judgement_symbol};
+use crate::translate_ui::Mark as Translated;
 use chess_core::shakmaty::{Color, Position};
 use chess_core::{CommentPart, Game, Nag, NodeId, parse_comment};
 use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, Ui, vec2};
@@ -17,6 +18,8 @@ pub struct Notation<'a> {
     pub marks: Option<&'a HashMap<NodeId, Mark>>,
     /// Engine line shown on the board: (start node, SAN moves, moves played so far).
     pub preview: Option<(NodeId, &'a [String], usize)>,
+    /// Translated comments by their original text (none: the original is shown).
+    pub translations: Option<&'a HashMap<String, Translated>>,
 }
 
 /// Result of a frame of the notation panel.
@@ -49,7 +52,7 @@ impl Notation<'_> {
                 .unwrap_or(&[]),
         );
         if !root_comments.is_empty() {
-            comment_block(ui, &root_comments);
+            comment_block(ui, &self, &root_comments);
         }
 
         let mut row = Row::default();
@@ -59,7 +62,7 @@ impl Notation<'_> {
             let before = comment_text(n.comments_before());
             if !before.is_empty() {
                 row.flush(ui, &self, &mut out);
-                comment_block(ui, &before);
+                comment_block(ui, &self, &before);
             }
             let (num, color) = game.move_number(child).unwrap_or((0, Color::White));
             if color == Color::White {
@@ -83,7 +86,7 @@ impl Notation<'_> {
                     mark_block(ui, &self, child, mark, &mut out);
                 }
                 if !after.is_empty() {
-                    comment_block(ui, &after);
+                    comment_block(ui, &self, &after);
                 }
                 for u in n.unparsed() {
                     unparsed_block(ui, u);
@@ -357,7 +360,7 @@ fn move_glyph(nags: &[Nag]) -> (String, Option<Color32>) {
     (s, color)
 }
 
-fn comment_text(comments: &[String]) -> String {
+pub fn comment_text(comments: &[String]) -> String {
     let mut out = String::new();
     for c in comments {
         for part in parse_comment(c) {
@@ -397,10 +400,79 @@ fn block_frame(ui: &Ui) -> egui::Frame {
         ))
 }
 
-fn comment_block(ui: &mut Ui, text: &str) {
+/// The text to show for a comment and its translation mark.
+fn translated<'a>(n: &'a Notation, text: &'a str) -> (&'a str, Option<&'a Translated>) {
+    match n.translations.and_then(|t| t.get(text)) {
+        Some(m @ Translated::Translated(t)) => (t.as_str(), Some(m)),
+        m => (text, m),
+    }
+}
+
+/// "⇄" (machine translation, the original in the tooltip), "⋯" (on its way), "⚠" (failed).
+fn translation_mark(ui: &mut Ui, mark: &Translated, original: &str) {
+    let (sym, color, tip, name) = match mark {
+        Translated::Translated(_) => {
+            let mut o: String = original.chars().take(1000).collect();
+            if original.chars().count() > 1000 {
+                o.push('…');
+            }
+            (
+                "⇄",
+                ui.visuals().weak_text_color(),
+                format!("{}\n{o}", tr("Machine translation. Original:")),
+                tr("Machine translation"),
+            )
+        }
+        Translated::Pending => (
+            "⋯",
+            ui.visuals().weak_text_color(),
+            tr("Translating…").to_owned(),
+            tr("Translating…"),
+        ),
+        Translated::Bad => (
+            "⚠",
+            ui.visuals().warn_fg_color,
+            tr("This comment could not be translated — the original is shown. Press “Retry” in the line above the notation.").to_owned(),
+            tr("Not translated"),
+        ),
+    };
+    let r =
+        ui.add(egui::Label::new(RichText::new(sym).size(13.0).color(color)).sense(Sense::hover()));
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
+    r.on_hover_ui(|ui| {
+        ui.set_max_width(360.0);
+        ui.label(tip);
+    });
+}
+
+fn comment_block(ui: &mut Ui, n: &Notation, text: &str) {
+    let (shown, mark) = translated(n, text);
     block_frame(ui).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        ui.label(RichText::new(text).color(comment_color(ui)).size(14.5));
+        match mark {
+            Some(m) => {
+                ui.horizontal_top(|ui| {
+                    // A slot of its own for the mark: ⚠ is wider than ⇄.
+                    let w = ui.available_width() - 16.0 - ui.spacing().item_spacing.x;
+                    ui.allocate_ui_with_layout(
+                        vec2(w, 0.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(w);
+                            ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        vec2(16.0, 18.0),
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| translation_mark(ui, m, text),
+                    );
+                });
+            }
+            None => {
+                ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
+            }
+        }
     });
 }
 
@@ -443,7 +515,11 @@ fn inline_line(ui: &mut Ui, n: &Notation, first: NodeId, out: &mut NotationRespo
         let Some(nd) = game.node(node) else { return };
         let before = comment_text(nd.comments_before());
         if !before.is_empty() {
-            ui.label(RichText::new(before).color(comment_color(ui)));
+            let (shown, mark) = translated(n, &before);
+            ui.label(RichText::new(shown).color(comment_color(ui)));
+            if let Some(m) = mark {
+                translation_mark(ui, m, &before);
+            }
             need_number = true;
         }
         let (num, color) = game.move_number(node).unwrap_or((0, Color::White));
@@ -476,7 +552,11 @@ fn inline_line(ui: &mut Ui, n: &Notation, first: NodeId, out: &mut NotationRespo
 
         let after = comment_text(nd.comments_after());
         if !after.is_empty() {
-            ui.label(RichText::new(after).color(comment_color(ui)));
+            let (shown, mark) = translated(n, &after);
+            ui.label(RichText::new(shown).color(comment_color(ui)));
+            if let Some(m) = mark {
+                translation_mark(ui, m, &after);
+            }
             need_number = true;
         }
         for u in nd.unparsed() {
