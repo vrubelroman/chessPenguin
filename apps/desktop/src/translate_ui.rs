@@ -228,11 +228,7 @@ impl Hub {
             let (models, model) = match connection {
                 Connection::ChatGpt => match crate::chatgpt::models() {
                     Ok(m) => {
-                        let pick = if m.contains(&wanted) {
-                            Some(wanted)
-                        } else {
-                            crate::chatgpt::default_model(&m)
-                        };
+                        let pick = crate::chatgpt::default_model(&m).or(Some(wanted));
                         (m, pick.unwrap_or_default())
                     }
                     Err(e) => {
@@ -371,6 +367,9 @@ impl Hub {
                 }
             }
             let ok = c.result.is_ok();
+            if let Err(e) = &c.result {
+                crate::graphics::log(&format!("translation check via {}: {e}", s.service_id()));
+            }
             self.check_result = Some(c.result);
             let flow = self.resume || (self.setup_open && self.step == Step::Checking);
             self.resume = false;
@@ -1142,6 +1141,12 @@ impl Hub {
                 });
             }
             ChatGptState::SignedOut | ChatGptState::Unknown => {
+                if let Some(Err(e)) = &self.check_result
+                    && active
+                {
+                    ui.label(RichText::new(failure_text(e, s)).color(warn))
+                        .on_hover_text(e.to_string());
+                }
                 if active && ui.button(tr("Check")).clicked() {
                     self.start_check(ui.ctx(), s, now);
                 }
@@ -1635,6 +1640,7 @@ impl GameTranslation {
                     }
                 }
                 Event::Failed(f) => {
+                    crate::graphics::log(&format!("translation via {}: {f}", self.job_service));
                     match f {
                         Failure::PlanLimit => hub.chatgpt = ChatGptState::Limit,
                         Failure::SignedOut => hub.chatgpt = ChatGptState::SignedOut,

@@ -504,27 +504,61 @@ pub fn models() -> Result<Vec<String>, Failure> {
     }
     let v: Value =
         serde_json::from_str(&body).map_err(|e| Failure::Service(status, e.to_string()))?;
-    let mut ids: Vec<String> = v
-        .get("data")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|m| {
-            m.get("visibility")
+    Ok(model_list(&v))
+}
+
+/// The listed models, OpenAI's preferred first. The plan's answer is
+/// `{"models": [{"slug", "visibility", "priority", "supported_in_api"}]}`; the API's
+/// usual `{"data": [{"id"}]}` is read too.
+fn model_list(v: &Value) -> Vec<String> {
+    let mut found: Vec<(i64, String)> = Vec::new();
+    for (key, name) in [("models", "slug"), ("data", "id")] {
+        for m in v.get(key).and_then(Value::as_array).into_iter().flatten() {
+            let listed = m
+                .get("visibility")
                 .and_then(Value::as_str)
-                .is_none_or(|s| s == "list")
-        })
-        .filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_owned))
-        .collect();
-    ids.sort();
-    Ok(ids)
+                .is_none_or(|s| s == "list");
+            let api = m
+                .get("supported_in_api")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            if let (true, true, Some(id)) = (listed, api, m.get(name).and_then(Value::as_str)) {
+                let priority = m
+                    .get("priority")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(i64::MAX);
+                found.push((priority, id.to_owned()));
+            }
+        }
+    }
+    found.sort_by_key(|(p, _)| *p);
+    found.into_iter().map(|(_, id)| id).collect()
 }
 
 /// The model to start with: a small fast one if listed (translation needs no more).
 pub fn default_model(models: &[String]) -> Option<String> {
-    ["mini", "fast", "flash"]
+    // OpenAI's preferred chat model (the list comes in its order); models for other
+    // work (code review, search, sound, pictures) do not take a plain text request.
+    const OTHER: [&str; 12] = [
+        "codex",
+        "search",
+        "research",
+        "audio",
+        "realtime",
+        "image",
+        "tts",
+        "transcribe",
+        "embedding",
+        "moderation",
+        "computer",
+        "review",
+    ];
+    models
         .iter()
-        .find_map(|w| models.iter().find(|m| m.contains(w)))
+        .find(|m| {
+            let m = m.to_lowercase();
+            !OTHER.iter().any(|w| m.contains(w))
+        })
         .or_else(|| models.first())
         .cloned()
 }
@@ -707,6 +741,31 @@ mod tests {
         let t = format!("x.{payload}.y");
         assert_eq!(email_of(&t).as_deref(), Some("a@b.c"));
         assert_eq!(nonce_of(&t).as_deref(), Some("n1"));
+    }
+
+    #[test]
+    fn the_plan_model_list_is_read() {
+        // The shape the plan's /v1/models answers with (seen 2026-10-21).
+        let v: Value = serde_json::from_str(
+            r#"{"models": [
+                {"slug": "gpt-6-luna", "visibility": "list", "priority": 5, "supported_in_api": true},
+                {"slug": "codex-auto-review", "visibility": "hide", "priority": 0, "supported_in_api": true},
+                {"slug": "gpt-6.1-sol", "visibility": "list", "priority": 1, "supported_in_api": true},
+                {"slug": "gpt-reserve", "visibility": "hide", "priority": 3}
+            ]}"#,
+        )
+        .unwrap();
+        let list = model_list(&v);
+        assert_eq!(list, vec!["gpt-6.1-sol", "gpt-6-luna"]);
+        assert_eq!(default_model(&list).as_deref(), Some("gpt-6.1-sol"));
+        let api: Value = serde_json::from_str(r#"{"data": [{"id": "gpt-x"}]}"#).unwrap();
+        assert_eq!(model_list(&api), vec!["gpt-x"]);
+        let m = |v: &[&str]| default_model(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            m(&["gpt-6.1-codex", "gpt-6.1-sol"]),
+            Some("gpt-6.1-sol".into())
+        );
+        assert_eq!(m(&[]), None);
     }
 
     #[test]

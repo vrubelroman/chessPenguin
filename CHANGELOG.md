@@ -2,6 +2,15 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.8.5] — 2026-10-21
+
+- Translation with a ChatGPT subscription works: the list of models the subscription answers
+  with is now understood (it differs from the API's), so requests no longer go out without a
+  model and fail with "error 400". OpenAI's preferred model is used. A failed check now shows
+  in Settings › Translation, and translation errors are written to chesspenguin.log.
+- Comments of a sentence or two in another language are offered for translation too, and text
+  in brackets ("[source: …]") is translated as well.
+
 ## [0.8.4] — 2026-10-21
 
 - Move notation (Settings › Board & pieces): Latin letters (Nf3), figurines as on Lichess

@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.8.5" date="2026-10-21">
+      <description>
+        <p>Translation with a ChatGPT subscription works; short comments and text in brackets are translated too.</p>
+      </description>
+    </release>
     <release version="0.8.4" date="2026-10-21">
       <description>
         <p>Comments in another language are translated into yours — with a ChatGPT Plus or Pro subscription, an API key, or a model on this computer; moves are never changed and nothing is written to the PGN. Moves can be shown as figurines or in the letters of your language. Pieces slide on the board, as on Lichess.</p>

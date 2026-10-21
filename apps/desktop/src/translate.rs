@@ -430,7 +430,7 @@ pub fn plan(texts: &[String], target: Lang) -> Option<Plan> {
         .map(|(i, _)| i)
         .collect();
     let foreign_letters: usize = foreign.iter().map(|&i| detected[i].0).sum();
-    if foreign.len() < 3 && foreign_letters < 150 {
+    if foreign.len() < 3 && foreign_letters < 60 {
         return None;
     }
     let source = letters
@@ -595,7 +595,7 @@ fn instructions(target: Lang) -> String {
          Rules:\n\
          1. Translate only the natural-language text of each comment into {lang}.\n\
          2. Copy every chess move and square exactly as written, character for character: e4, Nf3, Bxe5+, exd8=Q#, O-O, O-O-O, 12.Nf3, 12...Nf6, the d-file, the e5-square. Never translate, transliterate or replace the piece letters K, Q, R, B, N inside moves, and never add or remove moves.\n\
-         3. Keep the names of people, events and places as written; keep numbers, results (1-0, ½-½), evaluation symbols (+-, =, ±, ∓, !, ?, !?, ?!), URLs and anything in square brackets.\n\
+         3. Keep the names of people, events and places as written; keep numbers, results (1-0, ½-½), evaluation symbols (+-, =, ±, ∓, !, ?, !?, ?!) and URLs. Text in brackets is text: translate it too.\n\
          4. A part that is already in {lang} stays as it is.\n\
          5. Use the chess terms {lang}-speaking players use. Glossary: {glossary}.\n\
          6. Do not add, drop, explain, summarize or comment on anything. Keep the tone, the paragraph breaks and the meaning.\n\
@@ -1012,7 +1012,7 @@ fn lang_code(l: Lang) -> &'static str {
 /// The format version is part of the key: new instructions give new translations.
 fn key(text: &str) -> String {
     let mut h = Sha256::new();
-    h.update(b"v1\0");
+    h.update(b"v2\0");
     h.update(text.as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -1186,6 +1186,24 @@ fn run(
             }
         }
     }
+    // ChatGPT without a model yet (the check after the sign-in did not get that far).
+    if let Backend::ChatGpt { model } = &mut backend
+        && model.is_empty()
+    {
+        match crate::chatgpt::models() {
+            Ok(m) => match crate::chatgpt::default_model(&m) {
+                Some(d) => *model = d,
+                None => {
+                    let _ = tx.send(Event::Failed(Failure::NoModel(String::new())));
+                    return;
+                }
+            },
+            Err(e) => {
+                let _ = tx.send(Event::Failed(e));
+                return;
+            }
+        }
+    }
     let backend = &backend;
     let mut batches: Vec<Vec<(usize, &str)>> = Vec::new();
     let mut chars = 0;
@@ -1261,6 +1279,12 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "prints the instructions for a manual check"]
+    fn print_instructions() {
+        println!("{}", instructions(Lang::Ru));
+    }
 
     #[test]
     fn moves_are_found_in_text() {
