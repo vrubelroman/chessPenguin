@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.4] — 2026-10-21
 
 - Move notation (Settings › Board & pieces): Latin letters (Nf3), figurines as on Lichess
   (♘f3), or the piece letters of the interface language — Russian Кр Ф Л С К, German
