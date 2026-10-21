@@ -26,4 +26,5 @@ chess-core.workspace = true
 chess-import.workspace = true
 shakmaty.workspace = true
 thiserror.workspace = true
+uci.workspace = true
 uniffi = "0.32.2"

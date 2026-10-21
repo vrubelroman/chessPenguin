@@ -2405,6 +2405,7 @@ dependencies = [
  "chess-import",
  "shakmaty",
  "thiserror 2.0.21",
+ "uci",
  "uniffi",
 ]
 

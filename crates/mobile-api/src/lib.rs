@@ -10,6 +10,10 @@ use std::sync::atomic::AtomicBool;
 
 use chess_core::{Game, MoveKind, NodeId};
 
+mod engine;
+
+pub use engine::{Analysis, Analyzer, EngineFailure, EngineLine, LineStep};
+
 uniffi::setup_scaffolding!();
 
 /// What went wrong opening or reading a database, in words for the user (the Kotlin
@@ -17,14 +21,14 @@ uniffi::setup_scaffolding!();
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ApiError {
     /// The file could not be read.
-    #[error("{message}")]
-    Io { message: String },
+    #[error("{detail}")]
+    Io { detail: String },
     /// A known format that cannot be read (password, ChessBase 2CBH).
-    #[error("{message}")]
-    Unsupported { message: String },
+    #[error("{detail}")]
+    Unsupported { detail: String },
     /// The file is damaged or not a database.
-    #[error("{message}")]
-    Corrupt { message: String },
+    #[error("{detail}")]
+    Corrupt { detail: String },
     /// An archive without a database inside.
     #[error("no PGN or ChessBase database in the archive")]
     Empty,
@@ -38,15 +42,15 @@ impl From<chess_import::ImportError> for ApiError {
         use chess_import::ImportError as E;
         match e {
             E::Io { source, .. } => ApiError::Io {
-                message: source.to_string(),
+                detail: source.to_string(),
             },
             E::Unsupported(u) => ApiError::Unsupported {
-                message: u.to_string(),
+                detail: u.to_string(),
             },
-            E::Corrupt(m) => ApiError::Corrupt { message: m },
+            E::Corrupt(m) => ApiError::Corrupt { detail: m },
             E::Empty => ApiError::Empty,
             E::Cancelled => ApiError::Io {
-                message: "cancelled".into(),
+                detail: "cancelled".into(),
             },
         }
     }
@@ -109,8 +113,22 @@ pub struct MoveNode {
     pub to_square: Option<String>,
     /// A null move ("--") of a study.
     pub null_move: bool,
+    /// The move in UCI notation, for the engine's history; empty for the root and a
+    /// null move (after which the engine gets the position as a FEN).
+    pub uci: String,
+    /// Arrows (`[%cal]`) and marked squares (`[%csl]`) of the comments after the move.
+    pub marks: Vec<Mark>,
     /// On the main line of the game (not inside a variation).
     pub main_line: bool,
+}
+
+/// An arrow (`to` set) or a marked square of a comment, in a comment color:
+/// 'R', 'G', 'B', 'Y' or another letter.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Mark {
+    pub color: String,
+    pub from: String,
+    pub to: Option<String>,
 }
 
 /// A game ready to show.
@@ -152,7 +170,7 @@ fn read_fd(fd: i32) -> Result<Vec<u8>, ApiError> {
     use std::os::fd::FromRawFd;
     if fd < 0 {
         return Err(ApiError::Io {
-            message: "no file".into(),
+            detail: "no file".into(),
         });
     }
     // SAFETY: the caller hands the descriptor over (detached from its owner); the File
@@ -160,7 +178,7 @@ fn read_fd(fd: i32) -> Result<Vec<u8>, ApiError> {
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(|e| ApiError::Io {
-        message: e.to_string(),
+        detail: e.to_string(),
     })?;
     Ok(bytes)
 }
@@ -256,20 +274,44 @@ impl Database {
             .iter()
             .skip(start as usize)
             .take(count as usize)
-            .map(|e| {
-                let tag = |name: &str| e.tag(name).unwrap_or("").to_owned();
-                GameRow {
-                    index: e.index as u32,
-                    white: tag("White"),
-                    black: tag("Black"),
-                    result: tag("Result"),
-                    date: tag("Date"),
-                    event: tag("Event"),
-                    eco: tag("ECO"),
-                    white_elo: tag("WhiteElo"),
-                    black_elo: tag("BlackElo"),
+            .map(row)
+            .collect()
+    }
+
+    /// The numbers of the games whose players, event, site or date contain every word
+    /// of `text` (case does not matter); all games for an empty text.
+    pub fn find(&self, text: String) -> Vec<u32> {
+        let Some(pgn) = self.db.as_pgn() else {
+            return Vec::new();
+        };
+        let words: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
+        pgn.entries()
+            .iter()
+            .filter(|e| {
+                words.is_empty() || {
+                    let hay = ["White", "Black", "Event", "Site", "Date"]
+                        .iter()
+                        .filter_map(|t| e.tag(t))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase();
+                    words.iter().all(|w| hay.contains(w.as_str()))
                 }
             })
+            .map(|e| e.index as u32)
+            .collect()
+    }
+
+    /// The rows of these games (from [`Database::find`]), in this order.
+    pub fn rows_of(&self, indices: Vec<u32>) -> Vec<GameRow> {
+        let Some(pgn) = self.db.as_pgn() else {
+            return Vec::new();
+        };
+        let entries = pgn.entries();
+        indices
+            .iter()
+            .filter_map(|&i| entries.get(i as usize))
+            .map(row)
             .collect()
     }
 
@@ -283,6 +325,58 @@ impl Database {
     }
 }
 
+fn row(e: &chess_core::GameEntry) -> GameRow {
+    let tag = |name: &str| e.tag(name).unwrap_or("").to_owned();
+    GameRow {
+        index: e.index as u32,
+        white: tag("White"),
+        black: tag("Black"),
+        result: tag("Result"),
+        date: tag("Date"),
+        event: tag("Event"),
+        eco: tag("ECO"),
+        white_elo: tag("WhiteElo"),
+        black_elo: tag("BlackElo"),
+    }
+}
+
+fn marks(comments: &[String]) -> Vec<Mark> {
+    use chess_core::{Annotation, CommentPart, ShapeColor};
+    let letter = |c: ShapeColor| {
+        match c {
+            ShapeColor::Red => 'R',
+            ShapeColor::Green => 'G',
+            ShapeColor::Blue => 'B',
+            ShapeColor::Yellow => 'Y',
+            ShapeColor::Other(c) => c,
+        }
+        .to_string()
+    };
+    let mut out = Vec::new();
+    for c in comments {
+        for part in chess_core::parse_comment(c) {
+            match part {
+                CommentPart::Annotation(Annotation::Arrows(list)) => {
+                    out.extend(list.into_iter().map(|(c, from, to)| Mark {
+                        color: letter(c),
+                        from: from.to_string(),
+                        to: Some(to.to_string()),
+                    }))
+                }
+                CommentPart::Annotation(Annotation::Squares(list)) => {
+                    out.extend(list.into_iter().map(|(c, sq)| Mark {
+                        color: letter(c),
+                        from: sq.to_string(),
+                        to: None,
+                    }))
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 fn game_data(game: &Game, diagnostics: &[chess_core::Diagnostic]) -> GameData {
     // Ids in tree order (the root first, each line before its variations' tails), mapped
     // to their places in the list.
@@ -293,7 +387,12 @@ fn game_data(game: &Game, diagnostics: &[chess_core::Diagnostic]) -> GameData {
         order.extend(game.children(id).iter().copied());
         i += 1;
     }
-    let place = |id: NodeId| order.iter().position(|x| *x == id).map(|p| p as u32);
+    let places: std::collections::HashMap<NodeId, u32> = order
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (*id, i as u32))
+        .collect();
+    let place = |id: NodeId| places.get(&id).copied();
     let main: std::collections::HashSet<NodeId> = game.mainline().into_iter().collect();
     let nodes = order
         .iter()
@@ -336,6 +435,8 @@ fn game_data(game: &Game, diagnostics: &[chess_core::Diagnostic]) -> GameData {
                 from_square: squares.as_ref().map(|s| s.0.clone()),
                 to_square: squares.map(|s| s.1),
                 null_move: mv.is_some_and(|m| matches!(m.kind, MoveKind::Null)),
+                uci: uci.clone().unwrap_or_default(),
+                marks: node.map(|n| marks(n.comments_after())).unwrap_or_default(),
                 main_line: id == NodeId::ROOT || main.contains(&id),
             }
         })
@@ -374,6 +475,44 @@ mod tests {
         assert!(!first[0].white.is_empty());
         assert_eq!(db.rows(1, 100).len() as u32, db.len() - 1);
         assert!(db.rows(db.len(), 10).is_empty());
+    }
+
+    #[test]
+    fn comment_marks_and_uci_moves_reach_the_app() {
+        let pgn = b"[Event \"t\"]\n\n1. e4 {[%cal Ge2e4,Rd7d5] [%csl Yd5] Center} e5 *\n".to_vec();
+        let db = open_bytes("t.pgn".into(), pgn).unwrap();
+        let g = db.game(0).unwrap();
+        let e4 = &g.nodes[1];
+        assert_eq!(e4.uci, "e2e4");
+        assert_eq!(e4.comment_after, "Center");
+        let m = |c: &str, f: &str, t: Option<&str>| Mark {
+            color: c.into(),
+            from: f.into(),
+            to: t.map(Into::into),
+        };
+        assert_eq!(
+            e4.marks,
+            vec![
+                m("G", "e2", Some("e4")),
+                m("R", "d7", Some("d5")),
+                m("Y", "d5", None)
+            ]
+        );
+        assert!(g.nodes[0].uci.is_empty());
+    }
+
+    #[test]
+    fn games_are_found_by_words() {
+        let db = classics();
+        assert_eq!(db.find(String::new()).len() as u32, db.len());
+        let morphy = db.find("MORPHY opera".into());
+        assert!(!morphy.is_empty());
+        let rows = db.rows_of(morphy.clone());
+        assert!(
+            rows.iter()
+                .all(|r| r.white.contains("Morphy") || r.black.contains("Morphy"))
+        );
+        assert!(db.find("no such player anywhere".into()).is_empty());
     }
 
     #[test]
