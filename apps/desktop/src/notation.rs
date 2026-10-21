@@ -7,7 +7,7 @@ use crate::i18n::tr;
 use crate::review::{Mark, judgement_color, judgement_name, judgement_symbol};
 use crate::translate_ui::Mark as Translated;
 use chess_core::shakmaty::{Color, Position};
-use chess_core::{CommentPart, Game, Nag, NodeId, parse_comment};
+use chess_core::{Game, Nag, NodeId};
 use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, Ui, vec2};
 
 pub struct Notation<'a> {
@@ -362,34 +362,9 @@ fn move_glyph(nags: &[Nag]) -> (String, Option<Color32>) {
     (s, color)
 }
 
+/// The text of comments as shown (see [`chess_core::comment_display_text`]).
 pub fn comment_text(comments: &[String]) -> String {
-    let mut out = String::new();
-    for c in comments {
-        for part in parse_comment(c) {
-            if let CommentPart::Text(t) = part {
-                // Single line breaks are formatting, not content: reflow to the panel width.
-                // A blank line starts a new paragraph (book chapters imported from ChessBase).
-                let mut blank = false;
-                for line in t.lines() {
-                    if line.trim().is_empty() {
-                        blank = true;
-                        continue;
-                    }
-                    if blank && !out.is_empty() {
-                        out.push_str("\n\n");
-                    }
-                    blank = false;
-                    for word in line.split_whitespace() {
-                        if !out.is_empty() && !out.ends_with('\n') {
-                            out.push(' ');
-                        }
-                        out.push_str(word);
-                    }
-                }
-            }
-        }
-    }
-    out
+    chess_core::comment_display_text(comments)
 }
 
 fn block_frame(ui: &Ui) -> egui::Frame {

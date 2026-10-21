@@ -1,0 +1,29 @@
+[package]
+name = "mobile-api"
+description = "The ChessPenguin core for the Android app: databases, game lists, games (UniFFI)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "mobile_api"
+
+[[bin]]
+# Generates the Kotlin bindings from the built library (`cargo run --bin uniffi-bindgen`).
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+chess-core.workspace = true
+chess-import.workspace = true
+shakmaty.workspace = true
+thiserror.workspace = true
+uniffi = "0.32.2"

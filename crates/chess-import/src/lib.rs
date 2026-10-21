@@ -363,6 +363,73 @@ pub fn open(
     })
 }
 
+/// Opens a database given as its content, without the file system (Android hands
+/// over file descriptors, not paths): PGN, `.zip`, `.7z` and `.cbv`; `name` is the file
+/// name, for its extension. A ChessBase database is several files: see
+/// [`open_chessbase_files`].
+pub fn open_bytes(
+    name: &str,
+    bytes: Vec<u8>,
+    progress: &mut dyn FnMut(ScanProgress),
+    cancel: &AtomicBool,
+) -> Result<Opened, ImportError> {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "cbz" => return Err(ImportError::Unsupported(Unsupported::Encrypted)),
+        "2cbh" => return Err(ImportError::Unsupported(Unsupported::ChessBase2)),
+        "cbh" => {
+            return Err(ImportError::Corrupt(
+                "a ChessBase database is several files: open its folder".into(),
+            ));
+        }
+        _ => {}
+    }
+    if let Some(kind) = archive::sniff(&bytes) {
+        let format = match kind {
+            archive::Kind::Zip => Format::Zip,
+            archive::Kind::SevenZip => Format::SevenZip,
+        };
+        let (pgn, notes) = open_archive(&bytes, kind, cancel)?;
+        return finish(pgn, format, notes, progress, cancel);
+    }
+    if ext == "cbv" || cbv::looks_like_cbv(&bytes) && ext != "pgn" {
+        let part = open_cbv(&bytes)?;
+        return finish(
+            part.pgn,
+            Format::ChessBaseArchive,
+            part.notes,
+            progress,
+            cancel,
+        );
+    }
+    let db = PgnDatabase::from_bytes(bytes, None, progress, cancel)?;
+    Ok(Opened {
+        db: Database::Pgn(PgnDb::new(db)),
+        format: Format::Pgn,
+        notes: Vec::new(),
+    })
+}
+
+/// Opens a ChessBase database from the contents of its files (`<name>.cbh`, `.cbg`,
+/// `.cba`, …: `files` are (file name, content)), converted into PGN in memory like the
+/// databases inside archives. Meant for databases of a phone's size, not Mega.
+pub fn open_chessbase_files(
+    cbh_name: &str,
+    files: &[(String, Vec<u8>)],
+    progress: &mut dyn FnMut(ScanProgress),
+    cancel: &AtomicBool,
+) -> Result<Opened, ImportError> {
+    let members = chessbase::Files::from_members(
+        cbh_name,
+        files.iter().map(|(n, d)| (n.as_str(), d.as_slice())),
+    );
+    let part = convert_chessbase(&members)?;
+    finish(part.pgn, Format::ChessBase, part.notes, progress, cancel)
+}
+
 /// A converted part of a database: UTF-8 PGN and notes.
 struct Part {
     pgn: String,

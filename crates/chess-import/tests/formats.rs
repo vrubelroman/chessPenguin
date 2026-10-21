@@ -47,6 +47,28 @@ fn plain_pgn_is_unchanged() {
 }
 
 #[test]
+fn pgn_and_archives_open_from_bytes() {
+    let never = AtomicBool::new(false);
+    let pgn = chess_import::open_bytes("game.pgn", GAME.as_bytes().to_vec(), &mut |_| {}, &never)
+        .expect("opens");
+    assert_eq!(pgn.format, Format::Pgn);
+    assert_eq!(pgn.db.len(), 1);
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("one.pgn", zip::write::SimpleFileOptions::default())
+        .expect("entry");
+    zip.write_all(GAME.as_bytes()).expect("data");
+    let bytes = zip.finish().expect("zip").into_inner();
+    let z = chess_import::open_bytes("games.zip", bytes, &mut |_| {}, &never).expect("opens");
+    assert_eq!(z.format, Format::Zip);
+    assert_eq!(z.db.raw_text(0), pgn.db.raw_text(0));
+    // A .cbh alone is not a database.
+    assert!(matches!(
+        chess_import::open_bytes("base.cbh", vec![0; 46], &mut |_| {}, &never),
+        Err(ImportError::Corrupt(_))
+    ));
+}
+
+#[test]
 fn zip_with_legacy_pgn_and_folders() {
     let dir = TempDir::new("zip");
     let p = dir.0.join("games.zip");
@@ -150,6 +172,41 @@ fn unpacked_chessbase_database_matches_its_archive() {
     assert_eq!(from_disk.format, Format::ChessBase);
     let from_archive = open(&archive).expect("opens");
     assert_eq!(from_disk.db.len(), from_archive.db.len());
+    // The same without the file system (Android): the archive as bytes, the database
+    // as the contents of its files.
+    let never = AtomicBool::new(false);
+    let name = archive.file_name().unwrap().to_string_lossy().into_owned();
+    let bytes = std::fs::read(&archive).expect("read");
+    let archive_bytes = chess_import::open_bytes(&name, bytes, &mut |_| {}, &never).expect("opens");
+    let files: Vec<(String, Vec<u8>)> = std::fs::read_dir(&dir.0)
+        .expect("dir")
+        .flatten()
+        .map(|e| {
+            let p = e.path();
+            (
+                p.file_name().unwrap().to_string_lossy().into_owned(),
+                std::fs::read(&p).expect("read"),
+            )
+        })
+        .collect();
+    let cbh_name = cbh.file_name().unwrap().to_string_lossy().into_owned();
+    let from_files =
+        chess_import::open_chessbase_files(&cbh_name, &files, &mut |_| {}, &never).expect("opens");
+    assert_eq!(from_files.format, Format::ChessBase);
+    assert_eq!(from_files.db.len(), from_disk.db.len());
+    assert_eq!(archive_bytes.db.len(), from_archive.db.len());
+    for i in 0..from_disk.db.len() {
+        assert_eq!(
+            from_files.db.raw_text(i),
+            from_disk.db.raw_text(i),
+            "record {i}"
+        );
+        assert_eq!(
+            archive_bytes.db.raw_text(i),
+            from_archive.db.raw_text(i),
+            "record {i}"
+        );
+    }
     for i in 0..from_disk.db.len() {
         assert_eq!(
             from_disk.db.raw_text(i),

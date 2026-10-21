@@ -127,6 +127,37 @@ fn command(name: &str, payload: &str) -> Annotation {
     }
 }
 
+/// The text of a node's comments as a reader sees it: board commands (`[%cal]`,
+/// `[%clk]`, …) left out, single line breaks reflowed (they are formatting), a blank
+/// line kept as a paragraph break (book chapters imported from ChessBase).
+pub fn comment_display_text(comments: &[String]) -> String {
+    let mut out = String::new();
+    for c in comments {
+        for part in parse_comment(c) {
+            if let CommentPart::Text(t) = part {
+                let mut blank = false;
+                for line in t.lines() {
+                    if line.trim().is_empty() {
+                        blank = true;
+                        continue;
+                    }
+                    if blank && !out.is_empty() {
+                        out.push_str("\n\n");
+                    }
+                    blank = false;
+                    for word in line.split_whitespace() {
+                        if !out.is_empty() && !out.ends_with('\n') {
+                            out.push(' ');
+                        }
+                        out.push_str(word);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

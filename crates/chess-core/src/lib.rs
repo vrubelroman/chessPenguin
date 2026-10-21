@@ -14,7 +14,7 @@ pub mod pgn;
 pub mod repair;
 pub mod start;
 
-pub use comment::{Annotation, CommentPart, ShapeColor, parse_comment};
+pub use comment::{Annotation, CommentPart, ShapeColor, comment_display_text, parse_comment};
 pub use database::{OpenError, PgnDatabase, SourceFingerprint};
 pub use diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceLocation};
 pub use edit::{EditError, EditOutcome};
