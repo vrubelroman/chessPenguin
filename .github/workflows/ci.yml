@@ -29,9 +29,37 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked -p chesspenguin
+      - run: cargo build --release --locked -p chesspenguin
       # Self-update: replacing the running executable (the Windows rename scheme).
-      - run: "cargo test --locked -p chesspenguin update::"
+      - run: "cargo test --release --locked -p chesspenguin update::"
+      # The C runtime is inside the executable (.cargo/config.toml): no VCRUNTIME140.dll.
+      - name: No Visual C++ runtime needed
+        shell: pwsh
+        run: |
+          $bytes = [IO.File]::ReadAllBytes("target/release/chesspenguin.exe")
+          $text = [Text.Encoding]::ASCII.GetString($bytes)
+          if ($text -match "(?i)vcruntime140\.dll") { throw "chesspenguin.exe imports VCRUNTIME140.dll" }
+      # The window starts on a machine without a graphics card (the runner): the log says
+      # which graphics mode it took. Informational for now.
+      - name: Start the window
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $env:CP_SCREENSHOT = "$PWD/start.png"
+          $env:CP_SCREENSHOT_DELAY = "5"
+          $p = Start-Process target/release/chesspenguin.exe -PassThru
+          $p | Wait-Process -Timeout 90 -ErrorAction SilentlyContinue
+          Get-Process chesspenguin -ErrorAction SilentlyContinue | Stop-Process -Force
+          $log = "$env:APPDATA/vrubelroman/ChessPenguin/config/chesspenguin.log"
+          if (Test-Path $log) { Get-Content $log }
+          Get-Content "$env:APPDATA/vrubelroman/ChessPenguin/config/graphics" -ErrorAction SilentlyContinue
+          if (-not (Test-Path start.png)) { throw "no screenshot: the window did not start" }
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-start
+          path: start.png
+          if-no-files-found: ignore
 
   # Apple Silicon: the build and the app bundle (decision 15).
   macos-build:

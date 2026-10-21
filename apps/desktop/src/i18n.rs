@@ -342,6 +342,22 @@ const ROWS: &[[&str; 6]] = &[
         "Dettagli",
     ],
     [
+        "ChessPenguin could not start.",
+        "ChessPenguin не удалось запустить.",
+        "ChessPenguin n’a pas pu démarrer.",
+        "ChessPenguin konnte nicht starten.",
+        "ChessPenguin no pudo iniciarse.",
+        "ChessPenguin non è riuscito ad avviarsi.",
+    ],
+    [
+        "Details are in {path}",
+        "Подробности в файле {path}",
+        "Les détails sont dans {path}",
+        "Details stehen in {path}",
+        "Los detalles están en {path}",
+        "I dettagli sono in {path}",
+    ],
+    [
         "A stockfish package of your distribution is found by ChessPenguin too.",
         "Пакет stockfish вашего дистрибутива ChessPenguin тоже находит сам.",
         "ChessPenguin trouve aussi le paquet stockfish de votre distribution.",
@@ -4344,6 +4360,7 @@ mod tests {
             include_str!("board.rs"),
             include_str!("engine_download.rs"),
             include_str!("main.rs"),
+            include_str!("graphics.rs"),
         ];
         let mut missing = Vec::new();
         let mut found = 0;

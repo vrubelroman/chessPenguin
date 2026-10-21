@@ -11,6 +11,7 @@ mod engine_offer;
 mod engines;
 mod examples;
 mod game_view;
+mod graphics;
 mod i18n;
 mod large_db;
 mod library;
@@ -49,6 +50,9 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
+    crate::i18n::set_lang(settings::Settings::load().language);
+    graphics::install_panic_hook();
+    let mode = graphics::choose();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_app_id("io.github.vrubelroman.chessPenguin")
@@ -60,14 +64,22 @@ fn main() -> eframe::Result {
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))
                     .unwrap_or_default(),
             ),
+        wgpu_options: graphics::options(mode),
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         "ChessPenguin",
         options,
         Box::new(|cc| {
             assets::install(&cc.egui_ctx);
             Ok(Box::new(app::App::new(&cc.egui_ctx)))
         }),
-    )
+    );
+    if let Err(e) = &result {
+        if graphics::retry(&e.to_string()) {
+            return Ok(());
+        }
+        graphics::fatal(&e.to_string());
+    }
+    result
 }

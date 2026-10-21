@@ -726,6 +726,10 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // The window has shown its first frame: this graphics mode works.
+        if ui.ctx().cumulative_frame_nr() >= 1 {
+            crate::graphics::started();
+        }
         let ctx = ui.ctx().clone();
         if self.applied_dark != Some(self.settings.dark_mode) {
             ctx.set_visuals(if self.settings.dark_mode {

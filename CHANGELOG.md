@@ -4,6 +4,12 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Windows: ChessPenguin no longer quits silently on a machine whose graphics do not
+  cooperate (an old driver, a broken Vulkan, a virtual machine). A start that fails or dies
+  before its first frame tries again without Vulkan, then with OpenGL, then with software
+  drawing, and keeps the mode that worked. What still prevents the start is shown in a
+  message and written to chesspenguin.log beside the settings. The C runtime is now inside
+  the executable, so the Visual C++ Redistributable is not needed.
 - The window "Games from Lichess and Chess.com" opens with an empty nickname, the cursor in
   it: the next search is usually for another player (a database already downloaded fetches
   its new games with "⟳ New games").
