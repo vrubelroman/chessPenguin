@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.8.6" date="2026-10-21">
+      <description>
+        <p>The side panel no longer widens by itself while comments are translated; comments in variations have the usual size; no scroll bar pops up over the engine lines.</p>
+      </description>
+    </release>
     <release version="0.8.5" date="2026-10-21">
       <description>
         <p>Translation with a ChatGPT subscription works; short comments and text in brackets are translated too.</p>

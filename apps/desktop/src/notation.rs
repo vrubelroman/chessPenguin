@@ -411,8 +411,44 @@ fn translated<'a>(n: &'a Notation, text: &'a str) -> (&'a str, Option<&'a Transl
 }
 
 /// "⇄" (machine translation, the original in the tooltip), "⋯" (on its way), "⚠" (failed).
-fn translation_mark(ui: &mut Ui, mark: &Translated, original: &str) {
-    let (sym, color, tip, name) = match mark {
+/// "⇄" (machine translation, the original in the tooltip), "⋯" (on its way), "⚠" (failed),
+/// drawn at `at` without taking part in the layout (it may not widen the panel).
+fn translation_mark(ui: &mut Ui, at: egui::Pos2, mark: &Translated, original: &str) {
+    let (sym, color, tip, name) = mark_info(ui, mark, original);
+    let rect = ui.painter().text(
+        at,
+        Align2::RIGHT_TOP,
+        sym,
+        FontId::proportional(13.0),
+        color,
+    );
+    let id = ui.id().with(("mark", at.x as i32, at.y as i32));
+    let r = ui.interact(rect.expand(2.0), id, Sense::hover());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
+    r.on_hover_ui(|ui| {
+        ui.set_max_width(360.0);
+        ui.label(tip);
+    });
+}
+
+/// The mark after a comment inside a line of text (a variation): part of the flow.
+fn inline_mark(ui: &mut Ui, mark: &Translated, original: &str) {
+    let (sym, color, tip, name) = mark_info(ui, mark, original);
+    let r =
+        ui.add(egui::Label::new(RichText::new(sym).size(13.0).color(color)).sense(Sense::hover()));
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
+    r.on_hover_ui(|ui| {
+        ui.set_max_width(360.0);
+        ui.label(tip);
+    });
+}
+
+fn mark_info(
+    ui: &Ui,
+    mark: &Translated,
+    original: &str,
+) -> (&'static str, Color32, String, &'static str) {
+    match mark {
         Translated::Translated(_) => {
             let mut o: String = original.chars().take(1000).collect();
             if original.chars().count() > 1000 {
@@ -437,45 +473,31 @@ fn translation_mark(ui: &mut Ui, mark: &Translated, original: &str) {
             tr("This comment could not be translated — the original is shown. Press “Retry” in the line above the notation.").to_owned(),
             tr("Not translated"),
         ),
-    };
-    let r =
-        ui.add(egui::Label::new(RichText::new(sym).size(13.0).color(color)).sense(Sense::hover()));
-    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
-    r.on_hover_ui(|ui| {
-        ui.set_max_width(360.0);
-        ui.label(tip);
-    });
+    }
 }
+
+/// Room kept on the right of a comment for its translation mark.
+const MARK_ROOM: f32 = 18.0;
 
 fn comment_block(ui: &mut Ui, n: &Notation, text: &str) {
     let (shown, mark) = translated(n, text);
-    block_frame(ui).show(ui, |ui| {
+    let mut frame = block_frame(ui);
+    if mark.is_some() {
+        frame = frame.inner_margin(egui::Margin {
+            left: 10,
+            right: 10 + MARK_ROOM as i8,
+            top: 6,
+            bottom: 6,
+        });
+    }
+    let r = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
-        match mark {
-            Some(m) => {
-                ui.horizontal_top(|ui| {
-                    // A slot of its own for the mark: ⚠ is wider than ⇄.
-                    let w = ui.available_width() - 16.0 - ui.spacing().item_spacing.x;
-                    ui.allocate_ui_with_layout(
-                        vec2(w, 0.0),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.set_width(w);
-                            ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
-                        },
-                    );
-                    ui.allocate_ui_with_layout(
-                        vec2(16.0, 18.0),
-                        egui::Layout::top_down(egui::Align::Center),
-                        |ui| translation_mark(ui, m, text),
-                    );
-                });
-            }
-            None => {
-                ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
-            }
-        }
+        ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
     });
+    if let Some(m) = mark {
+        let at = r.response.rect.right_top() + vec2(-8.0, 7.0);
+        translation_mark(ui, at, m, text);
+    }
 }
 
 fn unparsed_block(ui: &mut Ui, text: &str) {
@@ -518,9 +540,9 @@ fn inline_line(ui: &mut Ui, n: &Notation, first: NodeId, out: &mut NotationRespo
         let before = comment_text(nd.comments_before());
         if !before.is_empty() {
             let (shown, mark) = translated(n, &before);
-            ui.label(RichText::new(shown).color(comment_color(ui)));
+            ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
             if let Some(m) = mark {
-                translation_mark(ui, m, &before);
+                inline_mark(ui, m, &before);
             }
             need_number = true;
         }
@@ -556,9 +578,9 @@ fn inline_line(ui: &mut Ui, n: &Notation, first: NodeId, out: &mut NotationRespo
         let after = comment_text(nd.comments_after());
         if !after.is_empty() {
             let (shown, mark) = translated(n, &after);
-            ui.label(RichText::new(shown).color(comment_color(ui)));
+            ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
             if let Some(m) = mark {
-                translation_mark(ui, m, &after);
+                inline_mark(ui, m, &after);
             }
             need_number = true;
         }

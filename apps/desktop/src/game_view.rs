@@ -1004,8 +1004,11 @@ impl GameView {
                             .monospace(),
                     );
                     let start_num = root.as_ref().map(|p| (p.fullmoves().get(), p.turn()));
+                    // No bar popping up over the next line: a long line is cut at the
+                    // edge (it still scrolls with Shift+wheel or by dragging).
                     egui::ScrollArea::horizontal()
                         .id_salt(("pv", line.multipv))
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 for (i, san) in line.san.iter().enumerate().take(14) {

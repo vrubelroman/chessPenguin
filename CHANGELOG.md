@@ -2,8 +2,14 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.8.6] — 2026-10-21
 
+- The side panel no longer widens by itself while a game's comments are translated (the mark
+  of a translated comment made its row a pixel wider than the panel, frame after frame), so
+  moves in comments no longer jump when the mouse moves over them.
+- Comments inside variations have the same size as the other comments.
+- No scroll bar pops up over the engine lines: a long line is cut at the edge (it still scrolls
+  with Shift+wheel or by dragging).
 - A game whose comments go in one request shows just "Translating…": the count
   ("12 of 40") is kept for long games sent in several parts.
 
