@@ -1,0 +1,3 @@
+# Kotlin bindings for Android: the cleaner of the system on Android 13+, JNA before.
+[bindings.kotlin]
+android = true

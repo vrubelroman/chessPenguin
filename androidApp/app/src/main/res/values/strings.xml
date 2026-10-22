@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">ChessPenguin</string>
+    <string name="app_name" translatable="false">ChessPenguin</string>
     <string name="sample_classics">Classic games</string>
     <string name="sample_alekhine">Alekhine</string>
 
@@ -25,7 +25,6 @@
 
     <string name="reading">Reading…</string>
     <string name="open_failed">Could not open the database</string>
-    <string name="no_access">No access to the file. Add it again.</string>
     <string name="search">Search</string>
     <string name="search_hint">Player, event, year</string>
     <string name="nothing_found">Nothing found</string>
@@ -71,11 +70,11 @@
     <string name="download_cancelled">Download cancelled</string>
     <string name="engine_ready">The engine is ready</string>
     <string name="no_internet">No internet. Connect to a network and try again.</string>
-    <string name="interrupted">The download was interrupted. The downloaded part is kept.</string>
+    <string name="download_title">ChessPenguin: Stockfish engine</string>
+    <string name="interrupted">The download stopped. Please try again.</string>
     <string name="no_space">Not enough space: %1$d MB needed.</string>
     <string name="corrupt">The engine file was damaged during the download. Download it again.</string>
     <string name="retry">Try again</string>
-    <string name="resume">Continue</string>
     <string name="download_again">Download again</string>
     <string name="ok">OK</string>
     <string name="preparing_engine">Preparing the engine…</string>

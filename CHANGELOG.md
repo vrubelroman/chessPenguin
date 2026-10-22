@@ -9,7 +9,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   games with a search, the game with the notation under the board (variations, comments, NAG,
   comment arrows), paging games, and Stockfish 19 with its evaluation, lines and a preview of
   a line on the board. Two APKs: Stockfish built in, or Stockfish downloaded in the app.
-  Files are only read, never changed.
+  Files are only read, never changed. The engine's download goes on in the background, with
+  the app closed too. In English, Russian, German, French, Spanish and Italian.
 
 ## [0.9.0] — 2026-10-22
 

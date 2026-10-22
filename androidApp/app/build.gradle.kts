@@ -54,6 +54,7 @@ val uniffiBindings = tasks.register<Exec>("uniffiBindings") {
         "--out-dir", bindings.get().asFile.path,
     )
     inputs.dir(rustLibs)
+    inputs.file(repo.resolve("crates/mobile-api/uniffi.toml"))
     outputs.dir(bindings)
 }
 
@@ -145,7 +146,7 @@ android {
     }
     // The languages of the interface; the libraries' other translations stay out.
     androidResources {
-        localeFilters += listOf("en", "ru")
+        localeFilters += listOf("en", "ru", "de", "fr", "es", "it")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

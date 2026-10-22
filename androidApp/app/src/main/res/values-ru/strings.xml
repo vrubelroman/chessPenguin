@@ -26,7 +26,6 @@
 
     <string name="reading">Читаю…</string>
     <string name="open_failed">Не удалось открыть базу</string>
-    <string name="no_access">Нет доступа к файлу. Добавьте его заново.</string>
     <string name="search">Поиск</string>
     <string name="search_hint">Игрок, турнир, год</string>
     <string name="nothing_found">Ничего не найдено</string>
@@ -72,11 +71,11 @@
     <string name="download_cancelled">Загрузка отменена</string>
     <string name="engine_ready">Движок готов</string>
     <string name="no_internet">Нет интернета. Подключитесь к сети и попробуйте ещё раз.</string>
-    <string name="interrupted">Загрузка прервалась. Скачанное сохранено.</string>
+    <string name="download_title">ChessPenguin: движок Stockfish</string>
+    <string name="interrupted">Загрузка остановилась. Попробуйте ещё раз.</string>
     <string name="no_space">Не хватает места: нужно %1$d МБ.</string>
     <string name="corrupt">Файл движка повреждён при загрузке. Скачайте его ещё раз.</string>
     <string name="retry">Повторить</string>
-    <string name="resume">Продолжить</string>
     <string name="download_again">Скачать снова</string>
     <string name="ok">Понятно</string>
     <string name="preparing_engine">Готовлю движок…</string>

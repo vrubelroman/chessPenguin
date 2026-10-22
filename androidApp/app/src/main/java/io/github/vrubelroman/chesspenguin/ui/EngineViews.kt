@@ -275,8 +275,7 @@ fun EngineSheet(state: NetState, metered: Boolean, onDownload: () -> Unit, onCan
                         if (state.problem != NetProblem.NoSpace) TextButton(onClick = onDismiss) { Text(stringResource(R.string.not_now)) }
                         when (state.problem) {
                             NetProblem.NoSpace -> Button(onClick = onDismiss) { Text(stringResource(R.string.ok)) }
-                            NetProblem.NoInternet -> Button(onClick = onDownload) { Text(stringResource(R.string.retry)) }
-                            NetProblem.Interrupted -> Button(onClick = onDownload) { Text(stringResource(R.string.resume)) }
+                            NetProblem.NoInternet, NetProblem.Interrupted -> Button(onClick = onDownload) { Text(stringResource(R.string.retry)) }
                             NetProblem.Corrupt -> Button(onClick = onDownload) { Text(stringResource(R.string.download_again)) }
                         }
                     }
