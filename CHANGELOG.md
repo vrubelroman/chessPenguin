@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.12.0] — 2026-10-23
 
 - Android: **paste PGN** — when the clipboard holds text, «Add a database» offers to paste
   it: the games are kept in the app as a database and opened (one game on the board at
