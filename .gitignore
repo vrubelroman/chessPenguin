@@ -7,3 +7,6 @@
 
 # Third-party reference screenshots (kept locally, not published)
 /designExample/
+
+# A local run of the website from the repository root (website/README.md runs it from server/).
+/data-dev/

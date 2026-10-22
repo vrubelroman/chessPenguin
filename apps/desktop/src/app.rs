@@ -25,6 +25,24 @@ enum Async {
     EngineChecked(Result<(PathBuf, String), String>),
 }
 
+/// The id of the toast: a passing message, never in the way of the keyboard.
+pub const TOAST: &str = "toast";
+
+/// Something is open over the screen — a window, a menu, a dialog — in this frame or the
+/// last one: Escape is meant for it (it closes itself), not for leaving the screen.
+pub fn overlay_open(ctx: &egui::Context) -> bool {
+    let passive = [
+        egui::Id::new(TOAST),
+        egui::Id::new(crate::engine_offer::DOWNLOAD_INDICATOR),
+    ];
+    ctx.memory(|m| m.areas().visible_layer_ids())
+        .iter()
+        .any(|l| {
+            matches!(l.order, egui::Order::Middle | egui::Order::Foreground)
+                && !passive.contains(&l.id)
+        })
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum CloseIntent {
     BackToLibrary,
@@ -80,7 +98,9 @@ pub struct App {
 /// Dev-only startup automation for screenshots/manual QA (see docs/dev/desktop.md):
 /// `CP_OPEN=<game index>` opens a game from the first database, `CP_PLY=<n>` steps
 /// along the main line, `CP_ANALYZE=1` starts the engine, `CP_SETTINGS=1` opens settings (`=board`, `=about`: that tab),
-/// `CP_REVIEW=1` starts the whole-game analysis (`=dialog` only opens its dialog).
+/// `CP_REVIEW=1` starts the whole-game analysis (`=dialog` only opens its dialog),
+/// `CP_KEYS="ArrowDown Shift+ArrowUp Escape"` presses these keys, one every half second
+/// from the second second.
 #[derive(Default)]
 struct DebugStartup {
     open: Option<usize>,
@@ -92,6 +112,8 @@ struct DebugStartup {
     screenshot_delay: f64,
     screenshot_requested: bool,
     open_settings: bool,
+    keys: std::collections::VecDeque<(Modifiers, Key)>,
+    next_key: f64,
 }
 
 impl DebugStartup {
@@ -108,6 +130,18 @@ impl DebugStartup {
                 .unwrap_or(4.0),
             screenshot_requested: false,
             open_settings: false,
+            keys: std::env::var("CP_KEYS")
+                .unwrap_or_default()
+                .split_whitespace()
+                .filter_map(|k| {
+                    let (shift, name) = match k.strip_prefix("Shift+") {
+                        Some(name) => (Modifiers::SHIFT, name),
+                        None => (Modifiers::NONE, k),
+                    };
+                    Key::from_name(name).map(|key| (shift, key))
+                })
+                .collect(),
+            next_key: 2.0,
         }
     }
 }
@@ -215,6 +249,29 @@ impl App {
                 .debug_open_setup(&self.settings.translation, v == "key");
         }
         self
+    }
+
+    fn debug_keys(&mut self, ctx: &egui::Context) {
+        if self.debug.keys.is_empty() {
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        if now >= self.debug.next_key
+            && let Some((modifiers, key)) = self.debug.keys.pop_front()
+        {
+            self.debug.next_key = now + 0.5;
+            ctx.input_mut(|i| {
+                i.modifiers = modifiers;
+                i.events.push(egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                });
+            });
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
 
     fn debug_screenshot(&mut self, ctx: &egui::Context) {
@@ -781,6 +838,7 @@ impl eframe::App for App {
         }
         self.offer_events(&ctx);
         self.debug_step(&ctx);
+        self.debug_keys(&ctx);
         self.debug_screenshot(&ctx);
         self.analysis.poll();
 
@@ -1064,7 +1122,7 @@ impl eframe::App for App {
             if now > *until {
                 self.toast = None;
             } else {
-                egui::Area::new(egui::Id::new("toast"))
+                egui::Area::new(egui::Id::new(TOAST))
                     .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -24.0))
                     .order(egui::Order::Foreground)
                     .show(&ctx, |ui| {

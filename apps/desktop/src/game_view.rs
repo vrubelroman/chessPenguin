@@ -448,7 +448,11 @@ impl GameView {
         ui.horizontal(|ui| {
             if ui
                 .button(tr("⬅ Library"))
-                .on_hover_text(tr("Back to the game list (Ctrl+W)"))
+                .on_hover_text(if self.previous.is_some() {
+                    tr("Back to the game list (Ctrl+W)")
+                } else {
+                    tr("Back to the game list (Esc, Ctrl+W)")
+                })
                 .clicked()
             {
                 actions.push(GameAction::Back);
@@ -456,7 +460,7 @@ impl GameView {
             if let Some(t) = &self.previous
                 && ui
                     .button(trf("⬅ Back to {game}", &[("game", t)]))
-                    .on_hover_text(tr("The game this one was opened from, as you left it"))
+                    .on_hover_text(tr("The game this one was opened from, as you left it (Esc)"))
                     .clicked()
             {
                 actions.push(GameAction::ReturnToPrevious);
@@ -1403,12 +1407,18 @@ impl GameView {
             if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::A)) {
                 cmds.push("review");
             }
+            if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::ArrowUp)) {
+                cmds.push("prev_var");
+            }
+            if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::ArrowDown)) {
+                cmds.push("next_var");
+            }
             if i.modifiers.is_none() {
                 for (key, cmd) in [
                     (Key::ArrowLeft, "back1"),
                     (Key::ArrowRight, "fwd1"),
-                    (Key::ArrowUp, "prev_var"),
-                    (Key::ArrowDown, "next_var"),
+                    (Key::ArrowUp, "end"),
+                    (Key::ArrowDown, "home"),
                     (Key::Home, "home"),
                     (Key::End, "end"),
                     (Key::F, "flip"),
@@ -1469,11 +1479,21 @@ impl GameView {
                         self.review.dialog_open = true;
                     }
                 }
+                // Escape cancels what is going on first (a preview of an engine line, a
+                // piece picked up); then it leaves the game: to the game this one was
+                // opened from, or to the library. A window, menu or dialog open over the
+                // game takes the key itself.
                 "esc" => {
                     if self.preview.is_some() {
                         self.preview = None;
-                    } else {
+                    } else if self.board.is_busy() {
                         self.board.clear();
+                    } else if !crate::app::overlay_open(ui.ctx()) {
+                        actions.push(if self.previous.is_some() {
+                            GameAction::ReturnToPrevious
+                        } else {
+                            GameAction::Back
+                        });
                     }
                 }
                 _ => {}

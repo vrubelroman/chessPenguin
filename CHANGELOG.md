@@ -2,6 +2,14 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Keys in a game: ↑ goes to the end, ↓ to the start (as End and Home); variations are
+  switched with Shift+↑/↓. Escape first closes what is open (a preview of an engine line,
+  a picked-up piece); then it goes back to the game this one was opened from, or to the
+  library. A window, menu or dialog over the game keeps Escape for itself, and a game with
+  unsaved changes still asks first.
+
 ## [0.10.0] — 2026-10-22
 
 - **ChessPenguin for Android, alpha** (12 and newer): add databases of the same formats (PGN, ChessBase

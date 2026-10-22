@@ -43,6 +43,11 @@ impl BoardState {
         self.drag = None;
         self.promotion = None;
     }
+
+    /// A piece is selected or dragged, or a promotion is being chosen.
+    pub fn is_busy(&self) -> bool {
+        self.selected.is_some() || self.drag.is_some() || self.promotion.is_some()
+    }
 }
 
 /// Pieces moving from one position to the next, as on Lichess (chessground): each piece

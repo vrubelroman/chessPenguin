@@ -11,6 +11,9 @@ use crate::engine_download::{self, Download, Failure, Stage};
 use crate::i18n::{tr, trf};
 use crate::settings::Settings;
 
+/// The id of the download indicator in the corner (it is never in the way of Escape).
+pub const DOWNLOAD_INDICATOR: &str = "download_indicator";
+
 /// What the user wanted to do when the engine turned out to be missing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pending {
@@ -399,7 +402,7 @@ impl EngineOffer {
             Some(_) => "⬇ Stockfish…".to_string(),
             None => tr("⚠ Stockfish wasn't downloaded").to_string(),
         };
-        egui::Area::new(egui::Id::new("download_indicator"))
+        egui::Area::new(egui::Id::new(DOWNLOAD_INDICATOR))
             .anchor(egui::Align2::RIGHT_BOTTOM, vec2(-12.0, -12.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {

@@ -3402,6 +3402,14 @@ const ROWS: &[[&str; 6]] = &[
         "La partita da cui è stata aperta questa, come l'hai lasciata",
     ],
     [
+        "The game this one was opened from, as you left it (Esc)",
+        "Партия, из которой открыта эта, — в том виде, как вы её оставили (Esc)",
+        "La partie d'où celle-ci a été ouverte, telle que vous l'avez laissée (Esc)",
+        "Die Partie, aus der diese geöffnet wurde, so wie Sie sie verlassen haben (Esc)",
+        "La partida desde la que se abrió esta, tal como la dejaste (Esc)",
+        "La partita da cui è stata aperta questa, come l'hai lasciata (Esc)",
+    ],
+    [
         "⬅ Back to {game}",
         "⬅ К партии {game}",
         "⬅ Retour à {game}",
@@ -4840,6 +4848,14 @@ const ROWS: &[[&str; 6]] = &[
         "Zurück zur Partienliste (Ctrl+W)",
         "Volver a la lista de partidas (Ctrl+W)",
         "Torna all'elenco delle partite (Ctrl+W)",
+    ],
+    [
+        "Back to the game list (Esc, Ctrl+W)",
+        "Вернуться к списку партий (Esc, Ctrl+W)",
+        "Retour à la liste des parties (Esc, Ctrl+W)",
+        "Zurück zur Partienliste (Esc, Ctrl+W)",
+        "Volver a la lista de partidas (Esc, Ctrl+W)",
+        "Torna all'elenco delle partite (Esc, Ctrl+W)",
     ],
     [
         "PGN compatibility notes",
