@@ -219,4 +219,16 @@
     <string name="board">Доска</string>
     <string name="pieces_tab">Фигуры</string>
     <string name="game_number">№ %1$s</string>
+    <string name="add_paste">Вставить PGN из буфера</string>
+    <string name="add_paste_hint">Партии, скопированные в другом приложении</string>
+    <string name="paste_none">В буфере нет партий в формате PGN</string>
+    <string name="paste_db">Из буфера, %1$s</string>
+    <string name="opening_file">Открываю файл…</string>
+    <string name="file_failed">Файл не открылся</string>
+    <string name="file_no_games">В этом файле нет шахматных партий.</string>
+    <string name="file_unreadable">Файл не прочитался: его уже нет или приложение, из которого он открыт, не дало к нему доступа. Попробуйте открыть его ещё раз.</string>
+    <string name="file_chessbase_part">База ChessBase (.cbh) состоит из нескольких файлов, а пришёл один. Добавьте папку, где она лежит: «Добавить базу» → «Папка».</string>
+    <string name="file_copy_failed">Приложению не удалось сохранить копию файла. Проверьте, есть ли на телефоне свободное место.</string>
+    <string name="db_copy">копия</string>
+    <string name="removed_copy">База удалена из ChessPenguin</string>
 </resources>

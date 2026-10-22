@@ -1,5 +1,6 @@
 package io.github.vrubelroman.chesspenguin.data
 
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -196,6 +197,9 @@ class EngineSession(private val files: EngineFiles, private val scope: Coroutine
     }
 
     private suspend fun poll(a: Analyzer) {
+        // What the engine said last and was not shown yet.
+        var held: EngineView? = null
+        var shown = 0L
         while (scope.isActive && analyzer === a) {
             // A short wait: analyze() waits for the engine handle while this holds it.
             val snapshot = try {
@@ -206,8 +210,21 @@ class EngineSession(private val files: EngineFiles, private val scope: Coroutine
             }
             val s = search
             if (snapshot != null && s != null && snapshot.search == s.id && analyzer === a) {
-                _analysis.value = EngineView(s.position, snapshot)
+                held = EngineView(s.position, snapshot)
+            }
+            // The screen follows the engine a few times a second, not at every word of
+            // it; the first words about a new position are shown at once.
+            val next = held ?: continue
+            val now = SystemClock.uptimeMillis()
+            if (now - shown >= SHOW_EVERY_MS || next.position != _analysis.value?.position) {
+                _analysis.value = next
+                held = null
+                shown = now
             }
         }
+    }
+
+    private companion object {
+        const val SHOW_EVERY_MS = 200L
     }
 }

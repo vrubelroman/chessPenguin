@@ -78,6 +78,9 @@ pub struct EngineConfig {
     /// (engines often look for weights/books next to themselves).
     pub working_dir: Option<PathBuf>,
     pub timeouts: Timeouts,
+    /// Added to the engine's nice value on Unix (0 = as the app): a phone keeps its
+    /// interface smooth while the engine thinks. Every thread of the engine has it.
+    pub nice: i32,
 }
 
 impl EngineConfig {
@@ -87,6 +90,7 @@ impl EngineConfig {
             args: Vec::new(),
             working_dir: None,
             timeouts: Timeouts::default(),
+            nice: 0,
         }
     }
 }
@@ -390,6 +394,19 @@ fn spawn_impl(cfg: EngineConfig, waker: Waker) -> Result<EngineHandle, EngineErr
         .stderr(Stdio::piped());
     if let Some(dir) = workdir {
         command.current_dir(dir);
+    }
+    #[cfg(unix)]
+    if cfg.nice != 0 {
+        use std::os::unix::process::CommandExt;
+        let nice = cfg.nice;
+        // SAFETY: nice(2) is async-signal-safe and touches no memory of the parent. Its
+        // result is not checked: an engine at the app's priority still works.
+        unsafe {
+            command.pre_exec(move || {
+                libc::nice(nice);
+                Ok(())
+            });
+        }
     }
     #[cfg(windows)]
     {

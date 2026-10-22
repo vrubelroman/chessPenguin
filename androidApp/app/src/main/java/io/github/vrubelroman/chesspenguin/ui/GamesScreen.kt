@@ -215,7 +215,8 @@ private fun Message(title: String, detail: String, action: (@Composable () -> Un
 
 /// Why a database did not open, in plain words with the next step (§11).
 @Composable
-private fun openProblem(e: Throwable): String = when (e) {
+fun openProblem(e: Throwable): String = when (e) {
+    is io.github.vrubelroman.chesspenguin.data.NoGames -> stringResource(R.string.file_no_games)
     is io.github.vrubelroman.chesspenguin.data.MissingPart -> stringResource(R.string.open_missing_part, e.file)
     is SecurityException, is java.io.FileNotFoundException, is ApiException.Io -> stringResource(R.string.open_no_access)
     is ApiException.Corrupt -> stringResource(R.string.open_corrupt)

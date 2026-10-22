@@ -12,12 +12,36 @@
         android:theme="@style/Theme.ChessPenguin"
         android:localeConfig="@xml/locales_config"
         android:enableOnBackInvokedCallback="true">
+        <!-- One task: a file opened from another app comes to the app already open. -->
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- "Open with": PGN, ZIP, 7z, and files of no known type (.cbv, and .pgn
+                 from apps that do not know it). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/x-chess-pgn" />
+                <data android:mimeType="application/vnd.chess-pgn" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <!-- "Share" with a file of the same kinds. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-chess-pgn" />
+                <data android:mimeType="application/vnd.chess-pgn" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
     </application>

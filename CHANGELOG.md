@@ -4,7 +4,18 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Android: **paste PGN** — when the clipboard holds text, «Add a database» offers to paste
+  it: the games are kept in the app as a database and opened (one game on the board at
+  once). Text with no game in it is said so.
+- Android: **open with ChessPenguin** — PGN, ZIP, 7z and ChessBase archives (`.cbv`) open
+  from other apps (Telegram, a file manager, «Share»): the file is copied into the app,
+  put on the list and opened. The same file again opens the same database.
 - Android: the engine button turns the engine off again (in 0.11.1 it only turned it on).
+- Android: a smoother screen while the engine thinks — its words are shown up to five
+  times a second and redraw only the engine strip and the arrows; Stockfish runs below the
+  app's priority and takes 2 threads by default (a value chosen in Settings stays).
+- PGN: a game whose tags follow the previous game's result on the same line (`… 1-0
+  [Event "B"]`, as pasted text often has it) now shows its players in the games list too.
 
 ## [0.11.1] — 2026-10-23
 

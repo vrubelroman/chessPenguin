@@ -1,5 +1,7 @@
 package io.github.vrubelroman.chesspenguin.ui
 
+import android.content.ClipboardManager
+import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -57,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -69,17 +72,19 @@ import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.FolderScan
 import io.github.vrubelroman.chesspenguin.data.Source
+import uniffi.mobile_api.Database
 import kotlinx.coroutines.launch
 
 /// The first screen: the databases on the list (android-ui.md §3).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
+fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSettings: () -> Unit) {
     val library = app().library
     val entries by library.entries.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val removedText = stringResource(R.string.removed)
+    val removedCopyText = stringResource(R.string.removed_copy)
     val undoText = stringResource(R.string.undo)
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onOpen(library.addFile(uri).id)
@@ -158,11 +163,17 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
                             val removed = library.remove(e.id) ?: return@DatabaseRow
                             scope.launch {
                                 snackbar.currentSnackbarData?.dismiss()
-                                val r = snackbar.showSnackbar(removedText, undoText, withDismissAction = false)
-                                if (r == SnackbarResult.ActionPerformed) {
-                                    library.restore(removed.first, removed.second)
-                                } else {
-                                    library.forget(removed.second)
+                                var restored = false
+                                try {
+                                    // A copy is deleted, not only taken off the list.
+                                    val text = if (e.source == Source.Copy) removedCopyText else removedText
+                                    if (snackbar.showSnackbar(text, undoText, withDismissAction = false) == SnackbarResult.ActionPerformed) {
+                                        library.restore(removed.first, removed.second)
+                                        restored = true
+                                    }
+                                } finally {
+                                    // Also when the screen goes away while "Undo" is offered.
+                                    if (!restored) library.forget(removed.second)
                                 }
                             }
                         },
@@ -173,7 +184,11 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
         }
     }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val pasteNone = stringResource(R.string.paste_none)
+    val resources = LocalResources.current
     if (choosing) {
+        val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
+        val hasText = remember { clipboard.primaryClipDescription?.hasMimeType("text/*") == true }
         AddSheet(
             onFile = {
                 choosing = false
@@ -182,6 +197,24 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
             onFolder = {
                 choosing = false
                 pickFolder.launch(null)
+            },
+            onPaste = if (!hasText) null else {
+                {
+                    choosing = false
+                    val text = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                    val dated = resources.getString(
+                        R.string.paste_db,
+                        DateUtils.formatDateTime(context, System.currentTimeMillis(), DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH),
+                    )
+                    scope.launch {
+                        runCatching {
+                            library.addCopy("clipboard.pgn", text.byteInputStream()) { db -> pastedName(db, dated) }
+                        }.onSuccess(onAdded).onFailure {
+                            snackbar.currentSnackbarData?.dismiss()
+                            snackbar.showSnackbar(pasteNone)
+                        }
+                    }
+                }
             },
             onDismiss = { choosing = false },
         )
@@ -196,7 +229,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
                 val n = chosen.count { !it.added && !it.incomplete }
                 scope.launch {
                     snackbar.currentSnackbarData?.dismiss()
-                    snackbar.showSnackbar(context.resources.getQuantityString(R.plurals.added_count, n, n))
+                    snackbar.showSnackbar(resources.getQuantityString(R.plurals.added_count, n, n))
                 }
                 // Nothing added: the folder's permission goes back.
                 if (n == 0) library.forgetFolder(s.tree)
@@ -256,6 +289,8 @@ private fun DatabaseRow(e: DbEntry, onOpen: () -> Unit, onRename: () -> Unit, on
     val subtitle = e.games?.let {
         stringResource(R.string.games_with_format, pluralStringResource(R.plurals.games_count, it, groupDigits(it)), e.format ?: format)
     } ?: stringResource(R.string.not_opened, formatName(e))
+    // A copy kept in the app says so: removing it deletes it.
+    val shownSubtitle = if (e.source == Source.Copy) subtitle + " · " + stringResource(R.string.db_copy) else subtitle
     Row(
         modifier
             .fillMaxWidth()
@@ -268,7 +303,7 @@ private fun DatabaseRow(e: DbEntry, onOpen: () -> Unit, onRename: () -> Unit, on
         Column(Modifier.weight(1f).padding(start = 16.dp)) {
             Text(displayName(e), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                subtitle,
+                shownSubtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -309,4 +344,17 @@ private fun RenameDialog(name: String, onDismiss: () -> Unit, onSave: (String) -
         confirmButton = { TextButton(onClick = { onSave(trimmed) }, enabled = trimmed.isNotEmpty()) { Text(stringResource(R.string.save)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
+}
+
+/// The name of pasted games: one game by its players, games of one event by it, others by
+/// when they were pasted (`dated`), so that two pastes differ.
+private fun pastedName(db: Database, dated: String): String {
+    val rows = db.rowsOf((0u until db.len()).toList())
+    if (rows.size == 1) {
+        val (white, black) = shortName(rows[0].white) to shortName(rows[0].black)
+        if (white != "?" || black != "?") return "$white – $black"
+    } else {
+        rows.map { it.event.trim() }.distinct().singleOrNull()?.takeIf { it.isNotEmpty() && it != "?" }?.let { return it }
+    }
+    return dated
 }

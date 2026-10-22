@@ -112,7 +112,12 @@ impl Analyzer {
         let start = |e: uci::EngineError| EngineFailure::Start {
             detail: e.to_string(),
         };
-        let handle = Engine::spawn_with(EngineConfig::new(path), Box::new(|| {})).map_err(start)?;
+        // Below the app (nice 10): the phone's interface comes first while it thinks.
+        let config = EngineConfig {
+            nice: 10,
+            ..EngineConfig::new(path)
+        };
+        let handle = Engine::spawn_with(config, Box::new(|| {})).map_err(start)?;
         if !eval_file.is_empty() {
             handle
                 .set_option("EvalFile", Some(&eval_file))

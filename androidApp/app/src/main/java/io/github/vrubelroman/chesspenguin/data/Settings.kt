@@ -26,16 +26,21 @@ data class Prefs(
     val engineHashMb: Int = 64,
 )
 
-/// Half the cores, at most 4 (§9).
-fun defaultThreads(): Int = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 4)
+/// Half the cores, at most 2: the engine leaves the phone's interface room (§9).
+fun defaultThreads(): Int = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 2)
 
 class Settings(context: Context) {
     private val store = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val _prefs = MutableStateFlow(read())
 
     init {
-        // The engine button was kept here up to 0.11 (it is not remembered any more).
-        store.edit().remove("engineOn").apply()
+        // Up to 0.11 the engine button was kept here (it is not remembered any more), and
+        // the threads were half the cores up to 4: that default becomes the new one.
+        if (store.getInt("version", 1) < 2) {
+            val oldDefault = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(1, 4)
+            if (store.getInt("engineThreads", oldDefault) == oldDefault) update { it.copy(engineThreads = defaultThreads()) }
+            store.edit().remove("engineOn").putInt("version", 2).apply()
+        }
     }
     val prefs: StateFlow<Prefs> = _prefs.asStateFlow()
 

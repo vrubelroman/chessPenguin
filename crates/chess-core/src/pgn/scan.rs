@@ -242,6 +242,7 @@ pub fn scan_games(
                 }
                 if depth == 0 && matches!(w, b"1-0" | b"0-1" | b"1/2-1/2" | b"*") {
                     result_seen = true;
+                    lx.allow_tag();
                 }
             }
         }
@@ -290,6 +291,14 @@ mod tests {
         let e = scan("1. e4 e5 1-0\n\n1. d4 d5 *\n");
         assert_eq!(e.len(), 2);
         assert!(e[0].tags.is_empty());
+    }
+
+    #[test]
+    fn a_header_on_the_line_of_the_last_result_starts_the_next_game() {
+        let e = scan("[White \"Aaa\"] 1. e4 e5 * [White \"Ccc\"][Black \"Ddd\"] 1. d4 d5 *\n");
+        assert_eq!(e.len(), 2);
+        assert_eq!(e[1].white(), Some("Ccc"));
+        assert_eq!(e[1].black(), Some("Ddd"));
     }
 
     #[test]

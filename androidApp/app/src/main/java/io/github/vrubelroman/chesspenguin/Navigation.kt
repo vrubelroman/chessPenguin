@@ -1,6 +1,32 @@
 package io.github.vrubelroman.chesspenguin
 
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.semantics.semantics
+import io.github.vrubelroman.chesspenguin.data.DbEntry
+import io.github.vrubelroman.chesspenguin.data.NoGames
+import uniffi.mobile_api.ApiException
+import java.io.FileNotFoundException
+import io.github.vrubelroman.chesspenguin.ui.app
+import io.github.vrubelroman.chesspenguin.ui.openProblem
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
@@ -30,12 +56,45 @@ import kotlinx.serialization.Serializable
 @Composable
 fun MainNavigation() {
     val backStack = rememberNavBackStack(Databases)
+    // A database just added from outside (the clipboard, another app): its list, or its
+    // only game at once, over the list of databases.
+    fun show(entry: DbEntry) {
+        while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+        backStack.add(Games(entry.id))
+        if (entry.games == 1) backStack.add(GameAt(entry.id, 0))
+    }
+    val app = app()
+    val incoming by app.incoming.collectAsState()
+    LaunchedEffect(incoming) {
+        (incoming as? Incoming.Opened)?.let {
+            app.incoming.value = null
+            show(it.entry)
+        }
+    }
+    when (val i = incoming) {
+        Incoming.Opening -> Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
+            Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Row(Modifier.padding(24.dp).semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp)
+                    Spacer(Modifier.size(16.dp))
+                    Text(stringResource(R.string.opening_file), style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+        is Incoming.Failed -> AlertDialog(
+            onDismissRequest = { app.incoming.value = null },
+            title = { Text(stringResource(R.string.file_failed)) },
+            text = { Text(incomingProblem(i.error)) },
+            confirmButton = { TextButton(onClick = { app.incoming.value = null }) { Text(stringResource(R.string.ok)) } },
+        )
+        else -> {}
+    }
     NavDisplay(
         backStack = backStack,
         onBack = { backStack.removeLastOrNull() },
         entryProvider = entryProvider {
             entry<Databases> {
-                DatabasesScreen(onOpen = { backStack.add(Games(it)) }, onSettings = { backStack.add(SettingsKey) })
+                DatabasesScreen(onOpen = { backStack.add(Games(it)) }, onAdded = ::show, onSettings = { backStack.add(SettingsKey) })
             }
             entry<Games> { key ->
                 GamesScreen(key.db, onBack = { backStack.removeLastOrNull() }, onGame = { place, query -> backStack.add(GameAt(key.db, place, query)) })
@@ -58,4 +117,15 @@ fun MainNavigation() {
             }
         },
     )
+}
+
+/// Why a file from another app did not open; it never got on the list, so the advice is
+/// not that of a database on it (openProblem).
+@Composable
+private fun incomingProblem(e: Throwable): String = when (e) {
+    is ChessBasePart -> stringResource(R.string.file_chessbase_part)
+    is NoGames -> stringResource(R.string.file_no_games)
+    is SecurityException, is FileNotFoundException, is ApiException.Io -> stringResource(R.string.file_unreadable)
+    is ApiException -> openProblem(e).ifEmpty { stringResource(R.string.open_corrupt) }
+    else -> stringResource(R.string.file_copy_failed)
 }

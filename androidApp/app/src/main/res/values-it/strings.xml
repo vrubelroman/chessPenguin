@@ -215,4 +215,16 @@
     <string name="board">Scacchiera</string>
     <string name="pieces_tab">Pezzi</string>
     <string name="game_number">N. %1$s</string>
+    <string name="add_paste">Incolla PGN dagli appunti</string>
+    <string name="add_paste_hint">Partite copiate in un’altra app</string>
+    <string name="paste_none">Nessuna partita PGN negli appunti</string>
+    <string name="paste_db">Incollato il %1$s</string>
+    <string name="opening_file">Apertura del file…</string>
+    <string name="file_failed">Impossibile aprire il file</string>
+    <string name="file_no_games">Questo file non contiene partite a scacchi.</string>
+    <string name="file_unreadable">Impossibile leggere il file: non esiste più o l’app da cui proviene non ha concesso l’accesso. Riaprilo.</string>
+    <string name="file_chessbase_part">Un database ChessBase (.cbh) è fatto di più file, ma ne è arrivato solo uno. Aggiungi la sua cartella: «Aggiungi database» → «Cartella».</string>
+    <string name="file_copy_failed">L’app non è riuscita a salvare una copia del file. Controlla che sul telefono ci sia spazio libero.</string>
+    <string name="db_copy">copia</string>
+    <string name="removed_copy">Database eliminato da ChessPenguin</string>
 </resources>

@@ -160,7 +160,9 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val netState by files.state.collectAsState()
     val session = remember { EngineSession(files, app.scope) }
     val status by session.status.collectAsState()
-    val engineView by session.analysis.collectAsState()
+    // Read only where it is shown (the strip, the arrows): the engine speaks several
+    // times a second, the rest of the screen is not drawn again for it.
+    val engineView = session.analysis.collectAsState()
     var visible by remember { mutableStateOf(true) }
     var sheet by rememberSaveable { mutableStateOf(false) }
     var wantEngine by rememberSaveable { mutableStateOf(false) }
@@ -214,7 +216,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val engineOn = engineWanted && engineReady
     val position = remember(g, current) { g?.let { enginePosition(it, current) } }
     // Only what the engine said about the position on the board.
-    val analysis = engineView?.takeIf { it.position == position }?.analysis
+    fun analysis() = engineView.value?.takeIf { it.position == position }?.analysis
     // Mate and stalemate need no engine: the strip says what it is (§7.3).
     val ending = when (node?.end) {
         "checkmate" -> stringResource(R.string.checkmate) + (g?.let { " · " + shortResult(it.result) }?.takeIf { !it.endsWith("*") } ?: "")
@@ -338,7 +340,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             } else {
                 node?.marks?.forEach { m -> m.to?.let { add(BoardArrow(m.from, it, markColor(m.color), 0.9f)) } }
                 if (engineOn && prefs.bestArrow) {
-                    analysis?.lines?.take(2)?.forEachIndexed { i, l ->
+                    analysis()?.lines?.take(2)?.forEachIndexed { i, l ->
                         val f = l.fromSquare
                         val t = l.toSquare
                         if (f != null && t != null) {
@@ -374,22 +376,24 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         Column(sideModifier.fillMaxWidth()) {
             val p = preview
             if (engineOn) {
-                EngineStrip(
-                    ending = ending,
-                    status = status,
-                    analysis = analysis,
-                    flipped = flipped,
-                    lines = prefs.engineLines,
-                    expanded = expanded,
-                    onExpand = { expanded = !expanded },
-                    onLine = { l -> if (l.steps.isNotEmpty()) preview = Preview(l, 0) },
-                    onDeeper = { session.deeper() },
-                    onRestart = {
-                        session.shutdown()
-                        position?.let { session.show(it, prefs) }
-                    },
-                    notation = line,
-                )
+                Live {
+                    EngineStrip(
+                        ending = ending,
+                        status = status,
+                        analysis = analysis(),
+                        flipped = flipped,
+                        lines = prefs.engineLines,
+                        expanded = expanded,
+                        onExpand = { expanded = !expanded },
+                        onLine = { l -> if (l.steps.isNotEmpty()) preview = Preview(l, 0) },
+                        onDeeper = { session.deeper() },
+                        onRestart = {
+                            session.shutdown()
+                            position?.let { session.show(it, prefs) }
+                        },
+                        notation = line,
+                    )
+                }
             } else if (wantEngine && files.builtIn && netState is NetState.Loading) {
                 Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -722,3 +726,7 @@ private fun firstBoardTouch(context: Context): Boolean {
     prefs.edit().putBoolean("board", true).apply()
     return true
 }
+
+/// A scope of its own: what is read in it is drawn again without its surroundings.
+@Composable
+private fun Live(content: @Composable () -> Unit) = content()

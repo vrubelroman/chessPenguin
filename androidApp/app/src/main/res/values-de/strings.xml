@@ -211,4 +211,16 @@
     <string name="board">Brett</string>
     <string name="pieces_tab">Figuren</string>
     <string name="game_number">Nr. %1$s</string>
+    <string name="add_paste">PGN aus der Zwischenablage einfügen</string>
+    <string name="add_paste_hint">In einer anderen App kopierte Partien</string>
+    <string name="paste_none">Keine PGN-Partien in der Zwischenablage</string>
+    <string name="paste_db">Eingefügt am %1$s</string>
+    <string name="opening_file">Datei wird geöffnet…</string>
+    <string name="file_failed">Die Datei ließ sich nicht öffnen</string>
+    <string name="file_no_games">Diese Datei enthält keine Schachpartien.</string>
+    <string name="file_unreadable">Die Datei ließ sich nicht lesen: Sie existiert nicht mehr, oder die App, aus der sie stammt, hat keinen Zugriff gewährt. Öffnen Sie sie erneut.</string>
+    <string name="file_chessbase_part">Eine ChessBase-Datenbank (.cbh) besteht aus mehreren Dateien, gekommen ist nur eine. Fügen Sie ihren Ordner hinzu: „Datenbank hinzufügen“ → „Ordner“.</string>
+    <string name="file_copy_failed">Die App konnte keine Kopie der Datei speichern. Prüfen Sie, ob auf dem Telefon Platz frei ist.</string>
+    <string name="db_copy">Kopie</string>
+    <string name="removed_copy">Datenbank aus ChessPenguin gelöscht</string>
 </resources>

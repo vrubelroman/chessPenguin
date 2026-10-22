@@ -114,6 +114,12 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// After a game's result a header may follow on the same line (`… 1-0 [Event "B"]`,
+    /// as pasted or joined text has it): a tag there counts as at a line's start.
+    pub fn allow_tag(&mut self) {
+        self.line_blank = true;
+    }
+
     /// Is there a tag-looking line (`[Name "`) at `i`?
     fn tag_like_at(&self, mut i: usize) -> bool {
         if self.at(i) != Some(b'[') {

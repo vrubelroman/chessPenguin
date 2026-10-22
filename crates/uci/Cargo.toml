@@ -9,6 +9,10 @@ description = "UCI chess engine process supervisor (no UI dependencies)"
 [dependencies]
 thiserror.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# nice(2) for EngineConfig::nice (std has no way to lower a child's priority).
+libc = "0.2"
+
 # Test helper: deterministic fake UCI engine used by tests/ via CARGO_BIN_EXE_fake_uci.
 [[bin]]
 name = "fake_uci"

@@ -35,6 +35,10 @@ enum class Source {
 
     /// A ChessBase database (`.cbh` with `.cbg`, `.cba`, … beside it) in a picked folder.
     ChessBase,
+
+    /// A copy kept inside the app (`files/copies/`): games pasted from the clipboard, a
+    /// file opened from another app, which gives access to it only for a while.
+    Copy,
 }
 
 /// A database on the list. The file itself is never changed.
@@ -44,7 +48,7 @@ data class DbEntry(
     val name: String,
     val source: Source,
     /// The asset path of a sample, the content URI of a file; for a ChessBase database,
-    /// the URI of the folder it is in.
+    /// the URI of the folder it is in; for a copy, its file's name in `files/copies/`.
     val location: String,
     /// The file's name, for its extension (PGN, .zip, .7z, .cbv, .cbh).
     val fileName: String,
@@ -57,7 +61,12 @@ data class DbEntry(
     val format: String? = null,
     /// A sample shows the name of the current language until it is renamed (displayName).
     val renamed: Boolean = false,
+    /// A copy's SHA-256: the same file opened again is not copied twice.
+    val sha256: String? = null,
 )
+
+/// Text or a file with no games in it.
+class NoGames : Exception()
 
 /// A database found in a picked folder, offered to be added.
 data class Found(
@@ -101,6 +110,7 @@ data class FolderScan(val tree: Uri, val name: String, val found: List<Found>)
 /// The databases on the list and the open ones (docs/design/android-ui.md §3).
 class Library(private val context: Context) {
     private val file = File(context.filesDir, "library.json")
+    private val copies = File(context.filesDir, "copies")
     private val json = Json { ignoreUnknownKeys = true }
     private val _entries = MutableStateFlow(load())
     val entries: StateFlow<List<DbEntry>> = _entries.asStateFlow()
@@ -120,7 +130,9 @@ class Library(private val context: Context) {
     /// folder picked, then the app closed before anything was added from it; the app
     /// closed while "Undo" was offered).
     private fun releaseUnused() {
-        val used = _entries.value.mapNotNull { it.tree ?: it.location.takeIf { _ -> it.source != Source.Sample } }.toSet()
+        val kept = _entries.value.filter { it.source == Source.Copy }.map { it.location }.toSet()
+        copies.listFiles()?.filter { it.name !in kept }?.forEach { it.delete() }
+        val used = _entries.value.mapNotNull { it.tree ?: it.location.takeIf { _ -> it.source == Source.File || it.source == Source.ChessBase } }.toSet()
         for (p in context.contentResolver.persistedUriPermissions) {
             if (p.uri.toString() !in used) {
                 runCatching { context.contentResolver.releasePersistableUriPermission(p.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -188,6 +200,69 @@ class Library(private val context: Context) {
         return entry
     }
 
+    /// Keeps a copy of `input` (named `fileName`, for its format) in the app and puts it
+    /// on the list, or gives the entry of the same copy already there. Throws [NoGames]
+    /// when there is no game in it, or the core's error when it cannot be read; nothing
+    /// stays behind then.
+    suspend fun addCopy(fileName: String, input: java.io.InputStream, name: (Database) -> String): DbEntry = withContext(Dispatchers.IO) {
+        copies.mkdirs()
+        val ext = fileName.substringAfterLast('.', "pgn").lowercase()
+        val tmp = File(copies, "incoming-${UUID.randomUUID()}.$ext")
+        try {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            tmp.outputStream().use { out ->
+                val buf = ByteArray(256 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    digest.update(buf, 0, n)
+                }
+            }
+            val sum = digest.digest().joinToString("") { "%02x".format(it) }
+            lock.withLock {
+                _entries.value.firstOrNull { it.source == Source.Copy && it.sha256 == sum }?.let { return@withContext it }
+            }
+            val id = UUID.randomUUID().toString()
+            val kept = File(copies, "$id.$ext")
+            if (!tmp.renameTo(kept)) throw java.io.IOException("cannot keep the copy")
+            val db = try {
+                openFile(fileName, android.os.ParcelFileDescriptor.open(kept, android.os.ParcelFileDescriptor.MODE_READ_ONLY).detachFd())
+            } catch (e: ApiException.Empty) {
+                kept.delete()
+                throw NoGames()
+            } catch (t: Throwable) {
+                kept.delete()
+                throw t
+            }
+            // PGN reading is lenient: any text is one "game" of a comment. A game counts
+            // when it has a tag or a move.
+            if (db.len() == 0u || (db.len() == 1u && db.game(0u).let { it.tags.isEmpty() && it.nodes.size <= 1 })) {
+                db.close()
+                kept.delete()
+                throw NoGames()
+            }
+            val entry = DbEntry(
+                id = id,
+                name = name(db),
+                source = Source.Copy,
+                location = kept.name,
+                fileName = fileName,
+                size = kept.length(),
+                games = db.len().toInt(),
+                format = db.format(),
+                sha256 = sum,
+            )
+            lock.withLock {
+                open[id] = db
+                update { it + entry }
+            }
+            entry
+        } finally {
+            tmp.delete()
+        }
+    }
+
     fun rename(id: String, name: String) = update { list -> list.map { if (it.id == id) it.copy(name = name, renamed = true) else it } }
 
     /// Takes the database off the list (the file stays where it is). Returns its place,
@@ -207,6 +282,10 @@ class Library(private val context: Context) {
     fun forget(entry: DbEntry) {
         pending.remove(entry)
         if (entry.source == Source.Sample) return
+        if (entry.source == Source.Copy) {
+            File(copies, entry.location).delete()
+            return
+        }
         // The permission of a folder is given back with the last of its databases, also
         // counting those whose "Undo" is still offered.
         val granted = entry.tree ?: entry.location
@@ -383,6 +462,10 @@ class Library(private val context: Context) {
                     Source.Sample -> openBytes(e.fileName, context.assets.open(e.location).use { it.readBytes() })
                     Source.File -> openFile(e.fileName, openDocument(Uri.parse(e.location)).detachFd())
                     Source.ChessBase -> openChessBase(e)
+                    Source.Copy -> openFile(
+                        e.fileName,
+                        android.os.ParcelFileDescriptor.open(File(copies, e.location), android.os.ParcelFileDescriptor.MODE_READ_ONLY).detachFd(),
+                    )
                 }
             }
         }

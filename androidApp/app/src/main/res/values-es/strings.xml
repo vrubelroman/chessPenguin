@@ -215,4 +215,16 @@
     <string name="board">Tablero</string>
     <string name="pieces_tab">Piezas</string>
     <string name="game_number">N.º %1$s</string>
+    <string name="add_paste">Pegar PGN del portapapeles</string>
+    <string name="add_paste_hint">Partidas copiadas en otra aplicación</string>
+    <string name="paste_none">No hay partidas PGN en el portapapeles</string>
+    <string name="paste_db">Pegado el %1$s</string>
+    <string name="opening_file">Abriendo el archivo…</string>
+    <string name="file_failed">No se pudo abrir el archivo</string>
+    <string name="file_no_games">Este archivo no contiene partidas de ajedrez.</string>
+    <string name="file_unreadable">No se pudo leer el archivo: ya no existe o la aplicación de la que viene no dio acceso. Ábralo otra vez.</string>
+    <string name="file_chessbase_part">Una base de ChessBase (.cbh) consta de varios archivos y solo llegó uno. Añada su carpeta: «Añadir base» → «Carpeta».</string>
+    <string name="file_copy_failed">La aplicación no pudo guardar una copia del archivo. Compruebe que el teléfono tiene espacio libre.</string>
+    <string name="db_copy">copia</string>
+    <string name="removed_copy">Base eliminada de ChessPenguin</string>
 </resources>

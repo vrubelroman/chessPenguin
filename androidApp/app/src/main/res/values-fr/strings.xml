@@ -3,7 +3,7 @@
     <string name="sample_alekhine">Alekhine</string>
 
     <string name="empty_title">Vos bases apparaîtront ici</string>
-    <string name="empty_text">Ajoutez un fichier ou un dossier de bases : PGN, ChessBase, archives .zip et .7z — depuis votre téléphone ou le cloud.</string>
+    <string name="empty_text">Ajoutez un fichier ou un dossier de bases : PGN, ChessBase, archives .zip et .7z — depuis votre téléphone ou le cloud.</string>
     <string name="add_database">Ajouter une base</string>
     <string name="open_samples">Ouvrir les parties d’exemple</string>
     <string name="not_opened">pas encore ouverte · %1$s</string>
@@ -157,9 +157,9 @@
     <string name="add_folder_hint">Toutes les bases d’un dossier, y compris ChessBase (.cbh)</string>
     <string name="folder_scanning">Recherche des bases…</string>
     <string name="folder_empty_title">Aucune base dans ce dossier</string>
-    <string name="folder_empty_text">Sont recherchés : fichiers PGN, bases ChessBase (.cbh, .cbv) et archives .zip ou .7z, dans le dossier et deux niveaux de sous-dossiers.</string>
+    <string name="folder_empty_text">Sont recherchés : fichiers PGN, bases ChessBase (.cbh, .cbv) et archives .zip ou .7z, dans le dossier et deux niveaux de sous-dossiers.</string>
     <string name="folder_added">déjà dans la liste</string>
-    <string name="folder_incomplete">le fichier .cbg manque : les parties ne s’ouvrent pas</string>
+    <string name="folder_incomplete">le fichier .cbg manque : les parties ne s’ouvrent pas</string>
     <plurals name="folder_found">
         <item quantity="one">%1$d base dans « %2$s »</item>
         <item quantity="many">%1$d de bases dans « %2$s »</item>
@@ -181,7 +181,7 @@
     <string name="add">Ajouter</string>
     <string name="choose_all">Tout cocher</string>
     <string name="choose_none">Tout décocher</string>
-    <string name="open_missing_part">Le fichier %1$s n’est plus à côté de la base : il a été déplacé ou supprimé.</string>
+    <string name="open_missing_part">Le fichier %1$s n’est plus à côté de la base : il a été déplacé ou supprimé.</string>
     <string name="board_and_pieces">Échiquier et pièces</string>
     <string name="board_brown">Marron</string>
     <string name="board_blue">Bleu</string>
@@ -215,4 +215,16 @@
     <string name="board">Échiquier</string>
     <string name="pieces_tab">Pièces</string>
     <string name="game_number">N° %1$s</string>
+    <string name="add_paste">Coller le PGN du presse-papiers</string>
+    <string name="add_paste_hint">Parties copiées dans une autre application</string>
+    <string name="paste_none">Aucune partie PGN dans le presse-papiers</string>
+    <string name="paste_db">Collé le %1$s</string>
+    <string name="opening_file">Ouverture du fichier…</string>
+    <string name="file_failed">Impossible d’ouvrir le fichier</string>
+    <string name="file_no_games">Ce fichier ne contient aucune partie d’échecs.</string>
+    <string name="file_unreadable">Impossible de lire le fichier : il n’existe plus, ou l’application d’origine n’y a pas donné accès. Réessayez de l’ouvrir.</string>
+    <string name="file_chessbase_part">Une base ChessBase (.cbh) se compose de plusieurs fichiers, et un seul est arrivé. Ajoutez son dossier : « Ajouter une base » → « Dossier ».</string>
+    <string name="file_copy_failed">L’application n’a pas pu garder une copie du fichier. Vérifiez qu’il reste de la place sur le téléphone.</string>
+    <string name="db_copy">copie</string>
+    <string name="removed_copy">Base supprimée de ChessPenguin</string>
 </resources>

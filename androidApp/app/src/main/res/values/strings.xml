@@ -214,4 +214,16 @@
     <string name="board_ncf" translatable="false">NCF</string>
     <string name="pieces_tab">Pieces</string>
     <string name="game_number">No. %1$s</string>
+    <string name="add_paste">Paste PGN from the clipboard</string>
+    <string name="add_paste_hint">Games copied in another app</string>
+    <string name="paste_none">No PGN games in the clipboard</string>
+    <string name="paste_db">Pasted %1$s</string>
+    <string name="opening_file">Opening the file…</string>
+    <string name="file_failed">Couldn’t open the file</string>
+    <string name="file_no_games">There are no chess games in this file.</string>
+    <string name="file_unreadable">The file could not be read: it may be gone, or the app it came from did not give access to it. Try opening it again.</string>
+    <string name="file_chessbase_part">A ChessBase database (.cbh) is made of several files, and only one came. Add the folder it is in: \"Add database\" → \"Folder\".</string>
+    <string name="file_copy_failed">The app could not keep a copy of the file. Check that the phone has free space.</string>
+    <string name="db_copy">copy</string>
+    <string name="removed_copy">Database deleted from ChessPenguin</string>
 </resources>

@@ -644,3 +644,35 @@ fn invalid_positions_are_rejected_before_sending() {
     ));
     assert!(h.recv_timeout(Duration::from_millis(100)).is_none());
 }
+
+/// The nice value of a process (field 19 of /proc/<pid>/stat, after the name).
+#[cfg(target_os = "linux")]
+fn nice_of(pid: u32) -> i32 {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("stat");
+    let after_name = &stat[stat.rfind(')').expect("name") + 2..];
+    after_name
+        .split(' ')
+        .nth(16)
+        .expect("nice")
+        .parse()
+        .expect("number")
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_engine_can_run_below_the_app() {
+    let ours = nice_of(std::process::id());
+    let calm = Engine::spawn_with(
+        EngineConfig {
+            nice: 10,
+            ..config(&[])
+        },
+        Box::new(|| {}),
+    )
+    .expect("spawn");
+    let plain = spawn(&[]);
+    assert_eq!(nice_of(calm.pid()), (ours + 10).min(19));
+    assert_eq!(nice_of(plain.pid()), ours);
+    calm.quit();
+    plain.quit();
+}
