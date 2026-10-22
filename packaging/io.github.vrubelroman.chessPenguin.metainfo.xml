@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.11.1" date="2026-10-23">
+      <description>
+        <p>The Android app gets the boards and piece sets of the desktop app, numbers in the games list, an engine that turns on only with its button, and a fix for the engine download that said there was not enough space. The desktop app is unchanged.</p>
+      </description>
+    </release>
     <release version="0.11.0" date="2026-10-22">
       <description>
         <p>In a game, Up goes to the end and Down to the start, Shift+Up/Down switch variations, and Escape goes back to the previous game or the library once nothing else is open. The Android app adds whole folders of databases, ChessBase databases too.</p>

@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.11.1] — 2026-10-23
 
 - Android: **boards and pieces** — Settings → «Board and pieces» offers the 37 boards and
   17 piece sets of the desktop app, seen at once on a board above them.
