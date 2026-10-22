@@ -169,7 +169,6 @@ pub fn open_file(name: String, fd: i32) -> Result<Arc<Database>, ApiError> {
 
 #[cfg(unix)]
 fn read_fd(fd: i32) -> Result<Vec<u8>, ApiError> {
-    use std::io::Read;
     use std::os::fd::FromRawFd;
     if fd < 0 {
         return Err(ApiError::Io {
@@ -178,7 +177,11 @@ fn read_fd(fd: i32) -> Result<Vec<u8>, ApiError> {
     }
     // SAFETY: the caller hands the descriptor over (detached from its owner); the File
     // owns and closes it.
-    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    read_all(unsafe { std::fs::File::from_raw_fd(fd) })
+}
+
+fn read_all(mut file: std::fs::File) -> Result<Vec<u8>, ApiError> {
+    use std::io::Read;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(|e| ApiError::Io {
         detail: e.to_string(),
@@ -212,14 +215,23 @@ pub fn open_chessbase(cbh_name: String, files: Vec<FolderFile>) -> Result<Arc<Da
     let stem = cbh_name
         .rsplit_once('.')
         .map_or(cbh_name.as_str(), |(s, _)| s);
+    // Every descriptor is owned (and so closed) from here on, also when one fails.
+    let owned: Vec<(String, Option<std::fs::File>)> = files
+        .into_iter()
+        .map(|f| (f.name, owned_fd(f.fd)))
+        .collect();
     let mut contents = Vec::new();
-    for f in files {
-        let same = f.name.rsplit_once('.').is_some_and(|(s, _)| s == stem);
-        if same {
-            contents.push((f.name, read_fd(f.fd)?));
-        } else {
-            // Closed without reading.
-            drop(read_fd_closed(f.fd));
+    for (name, file) in owned {
+        if name
+            .rsplit_once('.')
+            .is_some_and(|(s, _)| s.to_lowercase() == stem.to_lowercase())
+        {
+            let Some(file) = file else {
+                return Err(ApiError::Io {
+                    detail: format!("no file {name}"),
+                });
+            };
+            contents.push((name, read_all(file)?));
         }
     }
     Ok(wrap(chess_import::open_chessbase_files(
@@ -231,7 +243,7 @@ pub fn open_chessbase(cbh_name: String, files: Vec<FolderFile>) -> Result<Arc<Da
 }
 
 #[cfg(unix)]
-fn read_fd_closed(fd: i32) -> Option<std::fs::File> {
+fn owned_fd(fd: i32) -> Option<std::fs::File> {
     use std::os::fd::FromRawFd;
     // SAFETY: as in `read_fd`: the descriptor is ours to close.
     (fd >= 0).then(|| unsafe { std::fs::File::from_raw_fd(fd) })

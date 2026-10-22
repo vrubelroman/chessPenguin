@@ -52,6 +52,15 @@ fun badge(e: DbEntry): String {
     }
 }
 
+/// The format of a database in words, as the core names it once it is opened.
+fun formatName(e: DbEntry): String = when (e.fileName.substringAfterLast('.', "").lowercase()) {
+    "cbh" -> "ChessBase"
+    "cbv" -> "ChessBase CBV"
+    "zip" -> "ZIP"
+    "7z" -> "7z"
+    else -> "PGN"
+}
+
 @Composable
 fun FormatBadge(text: String, error: Boolean = false) {
     Box(

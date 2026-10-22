@@ -4,7 +4,12 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
-- Keys in a game: ↑ goes to the end, ↓ to the start (as End and Home); variations are
+- Android: **add a folder** — every database in it and in the folders inside it (two
+  levels) is offered with a tick box: PGN files, archives, ChessBase archives (`.cbv`) and
+  ChessBase databases (`.cbh` with the files beside it), which a single picked file could
+  not open. A ChessBase database without its `.cbg` is shown but not added; databases
+  already on the list are marked. Picking the folder again offers what is new.
+- Desktop, keys in a game: ↑ goes to the end, ↓ to the start (as End and Home); variations are
   switched with Shift+↑/↓. Escape first closes what is open (a preview of an engine line,
   a picked-up piece); then it goes back to the game this one was opened from, or to the
   library. A window, menu or dialog over the game keeps Escape for itself, and a game with

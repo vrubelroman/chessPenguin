@@ -3,7 +3,7 @@
     <string name="sample_alekhine">Алехин</string>
 
     <string name="empty_title">Здесь будут ваши базы</string>
-    <string name="empty_text">Добавьте файл PGN или архив .zip/.7z — с телефона или из облака.</string>
+    <string name="empty_text">Добавьте файл или папку с базами: PGN, ChessBase, архивы .zip и .7z — с телефона или из облака.</string>
     <string name="add_database">Добавить базу</string>
     <string name="open_samples">Открыть примеры партий</string>
     <string name="not_opened">ещё не открывалась · %1$s</string>
@@ -152,4 +152,38 @@
     <string name="open_corrupt">Файл повреждён или это не шахматная база.</string>
     <string name="open_empty">В архиве нет базы PGN или ChessBase.</string>
     <string name="open_unsupported">Такую базу прочитать нельзя: %1$s</string>
+    <string name="add_file">Файл</string>
+    <string name="add_file_hint">PGN, .cbv, .zip или .7z</string>
+    <string name="add_folder">Папка</string>
+    <string name="add_folder_hint">Все базы в папке, в том числе ChessBase (.cbh)</string>
+    <string name="folder_scanning">Ищу базы…</string>
+    <string name="folder_empty_title">В папке нет баз</string>
+    <string name="folder_empty_text">Подходят файлы PGN, базы ChessBase (.cbh, .cbv) и архивы .zip и .7z — в самой папке и во вложенных папках на два уровня.</string>
+    <string name="folder_added">уже в списке</string>
+    <string name="folder_incomplete">нет файла .cbg — партии не открыть</string>
+    <plurals name="folder_found">
+        <item quantity="one">В папке «%2$s» найдена %1$d база</item>
+        <item quantity="few">В папке «%2$s» найдены %1$d базы</item>
+        <item quantity="many">В папке «%2$s» найдено %1$d баз</item>
+        <item quantity="other">В папке «%2$s» найдено %1$d базы</item>
+    </plurals>
+    <plurals name="add_chosen">
+        <item quantity="one">Добавить %1$d</item>
+        <item quantity="few">Добавить %1$d</item>
+        <item quantity="many">Добавить %1$d</item>
+        <item quantity="other">Добавить %1$d</item>
+    </plurals>
+    <plurals name="added_count">
+        <item quantity="one">Добавлена %1$d база</item>
+        <item quantity="few">Добавлены %1$d базы</item>
+        <item quantity="many">Добавлено %1$d баз</item>
+        <item quantity="other">Добавлено %1$d базы</item>
+    </plurals>
+    <string name="add_tree_hint">Корень памяти и саму «Загрузки» выбрать нельзя — только папку внутри них.</string>
+    <string name="pick_another">Выбрать другую</string>
+    <string name="done">Готово</string>
+    <string name="add">Добавить</string>
+    <string name="choose_all">Отметить все</string>
+    <string name="choose_none">Снять все</string>
+    <string name="open_missing_part">Рядом с базой больше нет файла %1$s: его переместили или удалили.</string>
 </resources>

@@ -50,6 +50,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.DbEntry
+import io.github.vrubelroman.chesspenguin.data.FolderScan
 import io.github.vrubelroman.chesspenguin.data.Source
 import kotlinx.coroutines.launch
 
@@ -80,7 +84,25 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onOpen(library.addFile(uri).id)
     }
-    val add = { pick.launch(arrayOf("*/*")) }
+    var choosing by remember { mutableStateOf(false) }
+    // The folder sheet: shown while `folderOpen`, `scan` null while looking through it.
+    // The picked folder outlives a rotation; it is then looked through again.
+    var folderOpen by rememberSaveable { mutableStateOf(false) }
+    var folder by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+    var scan by remember { mutableStateOf<FolderScan?>(null) }
+    LaunchedEffect(folderOpen, folder) {
+        val tree = folder
+        if (folderOpen && tree != null && scan?.tree != tree) scan = library.scanFolder(tree)
+    }
+    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        if (tree != null) {
+            scan = null
+            library.keepFolder(tree)
+            folder = tree
+            folderOpen = true
+        }
+    }
+    val add = { choosing = true }
     var renaming by remember { mutableStateOf<DbEntry?>(null) }
     val list = rememberLazyListState()
     val expanded by remember { derivedStateOf { list.firstVisibleItemIndex == 0 } }
@@ -104,7 +126,10 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (entries.isNotEmpty()) {
+                val addLabel = stringResource(R.string.add_database)
                 ExtendedFloatingActionButton(
+                    // Folded while the list is scrolled: its label is still read out.
+                    modifier = Modifier.semantics { contentDescription = addLabel },
                     onClick = add,
                     expanded = expanded,
                     icon = { Icon(Icons.Rounded.Add, null) },
@@ -146,6 +171,46 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onSettings: () -> Unit) {
                 }
             }
         }
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    if (choosing) {
+        AddSheet(
+            onFile = {
+                choosing = false
+                pick.launch(arrayOf("*/*"))
+            },
+            onFolder = {
+                choosing = false
+                pickFolder.launch(null)
+            },
+            onDismiss = { choosing = false },
+        )
+    }
+    if (folderOpen) {
+        FolderSheet(
+            scan,
+            onAdd = { chosen ->
+                val s = scan ?: return@FolderSheet
+                library.addFound(s.tree, chosen)
+                folderOpen = false
+                val n = chosen.count { !it.added && !it.incomplete }
+                scope.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    snackbar.showSnackbar(context.resources.getQuantityString(R.plurals.added_count, n, n))
+                }
+                // Nothing added: the folder's permission goes back.
+                if (n == 0) library.forgetFolder(s.tree)
+            },
+            onPickAnother = {
+                folderOpen = false
+                folder?.let { library.forgetFolder(it) }
+                pickFolder.launch(null)
+            },
+            onDismiss = {
+                folderOpen = false
+                folder?.let { library.forgetFolder(it) }
+            },
+        )
     }
     renaming?.let { e ->
         RenameDialog(displayName(e), onDismiss = { renaming = null }, onSave = {
@@ -190,7 +255,7 @@ private fun DatabaseRow(e: DbEntry, onOpen: () -> Unit, onRename: () -> Unit, on
     val format = badge(e)
     val subtitle = e.games?.let {
         stringResource(R.string.games_with_format, pluralStringResource(R.plurals.games_count, it, groupDigits(it)), e.format ?: format)
-    } ?: stringResource(R.string.not_opened, format)
+    } ?: stringResource(R.string.not_opened, formatName(e))
     Row(
         modifier
             .fillMaxWidth()

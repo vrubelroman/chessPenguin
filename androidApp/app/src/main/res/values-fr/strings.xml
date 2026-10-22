@@ -3,7 +3,7 @@
     <string name="sample_alekhine">Alekhine</string>
 
     <string name="empty_title">Vos bases apparaîtront ici</string>
-    <string name="empty_text">Ajoutez un fichier PGN ou une archive .zip/.7z — depuis votre téléphone ou le cloud.</string>
+    <string name="empty_text">Ajoutez un fichier ou un dossier de bases : PGN, ChessBase, archives .zip et .7z — depuis votre téléphone ou le cloud.</string>
     <string name="add_database">Ajouter une base</string>
     <string name="open_samples">Ouvrir les parties d’exemple</string>
     <string name="not_opened">pas encore ouverte · %1$s</string>
@@ -151,4 +151,35 @@
     <string name="open_corrupt">Le fichier est endommagé ou n’est pas une base d’échecs.</string>
     <string name="open_empty">L’archive ne contient aucune base PGN ou ChessBase.</string>
     <string name="open_unsupported">Ce type de base ne peut pas être lu : %1$s</string>
+    <string name="add_file">Fichier</string>
+    <string name="add_file_hint">PGN, .cbv, .zip ou .7z</string>
+    <string name="add_folder">Dossier</string>
+    <string name="add_folder_hint">Toutes les bases d’un dossier, y compris ChessBase (.cbh)</string>
+    <string name="folder_scanning">Recherche des bases…</string>
+    <string name="folder_empty_title">Aucune base dans ce dossier</string>
+    <string name="folder_empty_text">Sont recherchés : fichiers PGN, bases ChessBase (.cbh, .cbv) et archives .zip ou .7z, dans le dossier et deux niveaux de sous-dossiers.</string>
+    <string name="folder_added">déjà dans la liste</string>
+    <string name="folder_incomplete">le fichier .cbg manque : les parties ne s’ouvrent pas</string>
+    <plurals name="folder_found">
+        <item quantity="one">%1$d base dans « %2$s »</item>
+        <item quantity="many">%1$d de bases dans « %2$s »</item>
+        <item quantity="other">%1$d bases dans « %2$s »</item>
+    </plurals>
+    <plurals name="add_chosen">
+        <item quantity="one">Ajouter %1$d</item>
+        <item quantity="many">Ajouter %1$d</item>
+        <item quantity="other">Ajouter %1$d</item>
+    </plurals>
+    <plurals name="added_count">
+        <item quantity="one">%1$d base ajoutée</item>
+        <item quantity="many">%1$d de bases ajoutées</item>
+        <item quantity="other">%1$d bases ajoutées</item>
+    </plurals>
+    <string name="add_tree_hint">Android ne laisse choisir ni la racine du stockage ni « Téléchargements » lui-même — seulement un dossier à l’intérieur.</string>
+    <string name="pick_another">Choisir un autre</string>
+    <string name="done">Terminé</string>
+    <string name="add">Ajouter</string>
+    <string name="choose_all">Tout cocher</string>
+    <string name="choose_none">Tout décocher</string>
+    <string name="open_missing_part">Le fichier %1$s n’est plus à côté de la base : il a été déplacé ou supprimé.</string>
 </resources>

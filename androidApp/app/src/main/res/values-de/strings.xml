@@ -3,7 +3,7 @@
     <string name="sample_alekhine">Aljechin</string>
 
     <string name="empty_title">Hier erscheinen Ihre Datenbanken</string>
-    <string name="empty_text">Fügen Sie eine PGN-Datei oder ein .zip/.7z-Archiv hinzu — vom Telefon oder aus der Cloud.</string>
+    <string name="empty_text">Fügen Sie eine Datei oder einen Ordner mit Datenbanken hinzu: PGN, ChessBase, .zip- und .7z-Archive — vom Telefon oder aus der Cloud.</string>
     <string name="add_database">Datenbank hinzufügen</string>
     <string name="open_samples">Beispielpartien öffnen</string>
     <string name="not_opened">noch nicht geöffnet · %1$s</string>
@@ -150,4 +150,32 @@
     <string name="open_corrupt">Die Datei ist beschädigt oder keine Schachdatenbank.</string>
     <string name="open_empty">Im Archiv ist keine PGN- oder ChessBase-Datenbank.</string>
     <string name="open_unsupported">Diese Art von Datenbank kann nicht gelesen werden: %1$s</string>
+    <string name="add_file">Datei</string>
+    <string name="add_file_hint">PGN, .cbv, .zip oder .7z</string>
+    <string name="add_folder">Ordner</string>
+    <string name="add_folder_hint">Alle Datenbanken in einem Ordner, auch ChessBase (.cbh)</string>
+    <string name="folder_scanning">Datenbanken werden gesucht…</string>
+    <string name="folder_empty_title">Keine Datenbanken in diesem Ordner</string>
+    <string name="folder_empty_text">Gefunden werden PGN-Dateien, ChessBase-Datenbanken (.cbh, .cbv) und .zip- oder .7z-Archive – im Ordner und in zwei Ebenen von Unterordnern.</string>
+    <string name="folder_added">schon in der Liste</string>
+    <string name="folder_incomplete">die .cbg-Datei fehlt: die Partien lassen sich nicht öffnen</string>
+    <plurals name="folder_found">
+        <item quantity="one">%1$d Datenbank in „%2$s“</item>
+        <item quantity="other">%1$d Datenbanken in „%2$s“</item>
+    </plurals>
+    <plurals name="add_chosen">
+        <item quantity="one">%1$d hinzufügen</item>
+        <item quantity="other">%1$d hinzufügen</item>
+    </plurals>
+    <plurals name="added_count">
+        <item quantity="one">%1$d Datenbank hinzugefügt</item>
+        <item quantity="other">%1$d Datenbanken hinzugefügt</item>
+    </plurals>
+    <string name="add_tree_hint">Android lässt weder den Speicherstamm noch „Downloads“ selbst auswählen — nur einen Ordner darin.</string>
+    <string name="pick_another">Anderen wählen</string>
+    <string name="done">Fertig</string>
+    <string name="add">Hinzufügen</string>
+    <string name="choose_all">Alle auswählen</string>
+    <string name="choose_none">Keine auswählen</string>
+    <string name="open_missing_part">Die Datei %1$s liegt nicht mehr neben der Datenbank: Sie wurde verschoben oder gelöscht.</string>
 </resources>

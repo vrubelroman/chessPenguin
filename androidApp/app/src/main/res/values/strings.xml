@@ -4,7 +4,7 @@
     <string name="sample_alekhine">Alekhine</string>
 
     <string name="empty_title">Your databases will appear here</string>
-    <string name="empty_text">Add a PGN file or a .zip/.7z archive — from your phone or the cloud.</string>
+    <string name="empty_text">Add a file or a folder of databases: PGN, ChessBase, .zip and .7z archives — from your phone or the cloud.</string>
     <string name="add_database">Add database</string>
     <string name="open_samples">Open sample games</string>
     <string name="not_opened">not opened yet · %1$s</string>
@@ -151,4 +151,32 @@
     <string name="open_corrupt">The file is damaged or is not a chess database.</string>
     <string name="open_empty">There is no PGN or ChessBase database in the archive.</string>
     <string name="open_unsupported">This kind of database cannot be read: %1$s</string>
+    <string name="add_file">File</string>
+    <string name="add_file_hint">PGN, .cbv, .zip or .7z</string>
+    <string name="add_folder">Folder</string>
+    <string name="add_folder_hint">Every database in a folder, ChessBase (.cbh) too</string>
+    <string name="folder_scanning">Looking for databases…</string>
+    <string name="folder_empty_title">No databases in this folder</string>
+    <string name="folder_empty_text">Looks for PGN files, ChessBase databases (.cbh, .cbv) and .zip or .7z archives in the folder and two levels of folders inside it.</string>
+    <string name="folder_added">already on the list</string>
+    <string name="folder_incomplete">no .cbg file — the games can’t be opened</string>
+    <plurals name="folder_found">
+        <item quantity="one">%1$d database in “%2$s”</item>
+        <item quantity="other">%1$d databases in “%2$s”</item>
+    </plurals>
+    <plurals name="add_chosen">
+        <item quantity="one">Add %1$d</item>
+        <item quantity="other">Add %1$d</item>
+    </plurals>
+    <plurals name="added_count">
+        <item quantity="one">%1$d database added</item>
+        <item quantity="other">%1$d databases added</item>
+    </plurals>
+    <string name="add_tree_hint">Android won’t let apps pick the storage root or Downloads itself — only a folder inside them.</string>
+    <string name="pick_another">Pick another</string>
+    <string name="done">Done</string>
+    <string name="add">Add</string>
+    <string name="choose_all">Tick all</string>
+    <string name="choose_none">Untick all</string>
+    <string name="open_missing_part">The file %1$s is not beside the database any more: it was moved or deleted.</string>
 </resources>

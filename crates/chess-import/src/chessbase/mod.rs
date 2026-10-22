@@ -74,8 +74,9 @@ impl Files {
             files: HashMap::new(),
         };
         for (name, data) in members {
+            // Names differ in case in sets copied from Windows ("Base.CBH", "base.cbg").
             if let Some(ext) = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase())
-                && stem_of(name) == stem
+                && stem_of(name).to_lowercase() == stem.to_lowercase()
                 && USED.contains(&ext.as_str())
             {
                 files.files.insert(ext, data.to_vec());
@@ -236,4 +237,24 @@ fn be(bytes: &[u8], at: usize, n: usize) -> Option<u32> {
 fn le_i32(bytes: &[u8], at: usize) -> Option<i32> {
     let s = bytes.get(at..at + 4)?;
     Some(i32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn members_whose_names_differ_in_case_belong_to_the_database() {
+        let members = [
+            ("Base.CBH", &b"h"[..]),
+            ("base.cbg", &b"g"[..]),
+            ("BASE.Cba", &b"a"[..]),
+            ("Other.cbg", &b"x"[..]),
+        ];
+        let files = Files::from_members("Base.CBH", members);
+        assert_eq!(files.get("cbh"), Some(&b"h"[..]));
+        assert_eq!(files.get("cbg"), Some(&b"g"[..]));
+        assert_eq!(files.get("cba"), Some(&b"a"[..]));
+        assert_eq!(files.files.len(), 3);
+    }
 }

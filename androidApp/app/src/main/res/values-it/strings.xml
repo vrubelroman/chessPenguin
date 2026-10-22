@@ -3,7 +3,7 @@
     <string name="sample_alekhine">Alekhine</string>
 
     <string name="empty_title">Qui compariranno i tuoi database</string>
-    <string name="empty_text">Aggiungi un file PGN o un archivio .zip/.7z — dal telefono o dal cloud.</string>
+    <string name="empty_text">Aggiungi un file o una cartella di database: PGN, ChessBase, archivi .zip e .7z — dal telefono o dal cloud.</string>
     <string name="add_database">Aggiungi database</string>
     <string name="open_samples">Apri le partite di esempio</string>
     <string name="not_opened">non ancora aperto · %1$s</string>
@@ -151,4 +151,35 @@
     <string name="open_corrupt">Il file è danneggiato o non è un database scacchistico.</string>
     <string name="open_empty">Nell\'archivio non c\'è alcun database PGN o ChessBase.</string>
     <string name="open_unsupported">Questo tipo di database non può essere letto: %1$s</string>
+    <string name="add_file">File</string>
+    <string name="add_file_hint">PGN, .cbv, .zip o .7z</string>
+    <string name="add_folder">Cartella</string>
+    <string name="add_folder_hint">Tutti i database di una cartella, anche ChessBase (.cbh)</string>
+    <string name="folder_scanning">Cerco i database…</string>
+    <string name="folder_empty_title">Nessun database in questa cartella</string>
+    <string name="folder_empty_text">Vengono trovati file PGN, database ChessBase (.cbh, .cbv) e archivi .zip o .7z, nella cartella e in due livelli di sottocartelle.</string>
+    <string name="folder_added">già nell’elenco</string>
+    <string name="folder_incomplete">manca il file .cbg: le partite non si possono aprire</string>
+    <plurals name="folder_found">
+        <item quantity="one">%1$d database in «%2$s»</item>
+        <item quantity="many">%1$d di database in «%2$s»</item>
+        <item quantity="other">%1$d database in «%2$s»</item>
+    </plurals>
+    <plurals name="add_chosen">
+        <item quantity="one">Aggiungi %1$d</item>
+        <item quantity="many">Aggiungi %1$d</item>
+        <item quantity="other">Aggiungi %1$d</item>
+    </plurals>
+    <plurals name="added_count">
+        <item quantity="one">%1$d database aggiunto</item>
+        <item quantity="many">%1$d di database aggiunti</item>
+        <item quantity="other">%1$d database aggiunti</item>
+    </plurals>
+    <string name="add_tree_hint">Android non permette di scegliere la radice della memoria né «Download» stessa: solo una cartella al loro interno.</string>
+    <string name="pick_another">Scegli un’altra</string>
+    <string name="done">Fatto</string>
+    <string name="add">Aggiungi</string>
+    <string name="choose_all">Seleziona tutti</string>
+    <string name="choose_none">Deseleziona tutti</string>
+    <string name="open_missing_part">Il file %1$s non è più accanto al database: è stato spostato o eliminato.</string>
 </resources>
