@@ -2,13 +2,14 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.11.0] — 2026-10-22
 
 - Android: **add a folder** — every database in it and in the folders inside it (two
   levels) is offered with a tick box: PGN files, archives, ChessBase archives (`.cbv`) and
   ChessBase databases (`.cbh` with the files beside it), which a single picked file could
   not open. A ChessBase database without its `.cbg` is shown but not added; databases
-  already on the list are marked. Picking the folder again offers what is new.
+  already on the list are marked. Picking the folder again offers what is new. Errors say
+  in plain words when a file was moved or a part of a ChessBase database is missing.
 - Desktop, keys in a game: ↑ goes to the end, ↓ to the start (as End and Home); variations are
   switched with Shift+↑/↓. Escape first closes what is open (a preview of an engine line,
   a picked-up piece); then it goes back to the game this one was opened from, or to the

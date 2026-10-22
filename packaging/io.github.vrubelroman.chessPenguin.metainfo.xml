@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.11.0" date="2026-10-22">
+      <description>
+        <p>In a game, Up goes to the end and Down to the start, Shift+Up/Down switch variations, and Escape goes back to the previous game or the library once nothing else is open. The Android app adds whole folders of databases, ChessBase databases too.</p>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-10-22">
       <description>
         <p>The first alpha of ChessPenguin for Android: databases, games and Stockfish on the phone. The desktop app is unchanged.</p>
