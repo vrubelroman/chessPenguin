@@ -2,6 +2,10 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Android: the engine button turns the engine off again (in 0.11.1 it only turned it on).
+
 ## [0.11.1] — 2026-10-23
 
 - Android: **boards and pieces** — Settings → «Board and pieces» offers the 37 boards and

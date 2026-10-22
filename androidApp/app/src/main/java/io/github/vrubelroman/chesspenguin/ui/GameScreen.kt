@@ -277,9 +277,12 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         go(n.id.toInt())
     }
     fun toggleEngine() {
+        // Read from the states now: the button may hold this function as it was when the
+        // screen was first drawn.
+        val ready = files.state.value == NetState.Ready
         when {
-            engineWanted && engineReady -> engineVisit = null
-            engineReady -> engineVisit = app.visit
+            ready && engineVisit == app.visit -> engineVisit = null
+            ready -> engineVisit = app.visit
             files.builtIn -> {
                 wantEngine = true
                 files.prepare()
