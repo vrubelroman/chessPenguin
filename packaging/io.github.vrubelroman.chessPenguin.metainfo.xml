@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.10.0" date="2026-10-22">
+      <description>
+        <p>The first alpha of ChessPenguin for Android: databases, games and Stockfish on the phone. The desktop app is unchanged.</p>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-10-22">
       <description>
         <p>The 0.8 series together: the reference tab, games from Lichess and Chess.com, self-update, translated comments, move notation and piece animation; symbols that showed as empty boxes now render.</p>

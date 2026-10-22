@@ -62,7 +62,7 @@ fun AboutScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge)
             val build = stringResource(if (BuildConfig.NET_BUILT_IN) R.string.build_full else R.string.build_light)
-            Text("${BuildConfig.VERSION_NAME} · $build", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${BuildConfig.VERSION_NAME} ${stringResource(R.string.alpha)} · $build", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(16.dp))
             Text(stringResource(R.string.about_text), style = MaterialTheme.typography.bodyLarge)
             TextButton(onClick = { uri.openUri(SITE) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {

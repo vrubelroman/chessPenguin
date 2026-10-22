@@ -114,6 +114,7 @@
     <string name="about">About</string>
     <string name="build_full">Stockfish built in</string>
     <string name="build_light">Stockfish downloaded in the app</string>
+    <string name="alpha">alpha</string>
     <string name="about_text">A viewer of chess databases: PGN, ChessBase, archives. Files are only read, never changed.</string>
     <string name="licenses">Licenses and authors</string>
     <string name="website">Website and source code</string>

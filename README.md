@@ -63,7 +63,7 @@ Packages for every release are on the [Releases](https://github.com/vrubelroman/
 | Flatpak | `flatpak install --user ChessPenguin-<version>-x86_64.flatpak` |
 | Windows | unzip `ChessPenguin-<version>-windows-x86_64.zip`, run `ChessPenguin.exe` |
 | macOS (Apple Silicon) | open `ChessPenguin-<version>-macos-arm64.dmg`, drag ChessPenguin to Applications |
-| Android 12+ | open `ChessPenguin-<version>-android.apk` (Stockfish built in) or `…-android-noengine.apk` (Stockfish downloaded in the app) on the phone |
+| Android 12+ (alpha) | open `ChessPenguin-<version>-android.apk` (Stockfish built in) or `…-android-noengine.apk` (Stockfish downloaded in the app) on the phone |
 
 On macOS the app is not signed by Apple yet: the first time, right-click ChessPenguin in
 Applications and choose **Open** (on macOS 15: System Settings → Privacy & Security → Open Anyway).
@@ -73,7 +73,7 @@ official Stockfish 19 (about 80 MB, checked before use, installed for your accou
 button is also in **Settings → Engines**. A `stockfish` installed on the system is found
 automatically, any other UCI engine can be added from a file. The Flatpak includes Stockfish.
 
-The **Android app** views databases and games (the same formats), with the notation under
+The **Android app** (alpha) views databases and games (the same formats), with the notation under
 the board and Stockfish. The two APKs install over each other; databases and settings are kept.
 
 ### Build from source

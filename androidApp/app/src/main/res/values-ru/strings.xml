@@ -115,6 +115,7 @@
     <string name="about">О программе</string>
     <string name="build_full">Stockfish уже внутри</string>
     <string name="build_light">Stockfish скачивается в приложении</string>
+    <string name="alpha">альфа</string>
     <string name="about_text">Просмотр шахматных баз: PGN, ChessBase, архивы. Файлы только читаются и никогда не меняются.</string>
     <string name="licenses">Лицензии и авторы</string>
     <string name="website">Сайт и исходный код</string>
