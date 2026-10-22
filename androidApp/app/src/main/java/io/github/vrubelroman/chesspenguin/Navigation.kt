@@ -6,6 +6,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import io.github.vrubelroman.chesspenguin.ui.AboutScreen
+import io.github.vrubelroman.chesspenguin.ui.BoardStyleScreen
 import io.github.vrubelroman.chesspenguin.ui.DatabasesScreen
 import io.github.vrubelroman.chesspenguin.ui.SettingsScreen
 import io.github.vrubelroman.chesspenguin.ui.GameScreen
@@ -24,6 +25,8 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object AboutKey : NavKey
 
+@Serializable data object BoardStyleKey : NavKey
+
 @Composable
 fun MainNavigation() {
     val backStack = rememberNavBackStack(Databases)
@@ -41,7 +44,14 @@ fun MainNavigation() {
                 GameScreen(key.db, key.place, key.query, onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) })
             }
             entry<SettingsKey> {
-                SettingsScreen(onBack = { backStack.removeLastOrNull() }, onAbout = { backStack.add(AboutKey) })
+                SettingsScreen(
+                    onBack = { backStack.removeLastOrNull() },
+                    onAbout = { backStack.add(AboutKey) },
+                    onBoardStyle = { backStack.add(BoardStyleKey) },
+                )
+            }
+            entry<BoardStyleKey> {
+                BoardStyleScreen(onBack = { backStack.removeLastOrNull() })
             }
             entry<AboutKey> {
                 AboutScreen(onBack = { backStack.removeLastOrNull() })

@@ -37,4 +37,10 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStop() {
+        super.onStop()
+        // Gone to the background or closed, not turned.
+        if (!isChangingConfigurations) (application as ChessPenguinApp).leftApp()
+    }
 }

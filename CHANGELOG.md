@@ -2,6 +2,17 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Android: **boards and pieces** — Settings → «Board and pieces» offers the 37 boards and
+  17 piece sets of the desktop app, seen at once on a board above them.
+- Android: the games list shows each game's number in the database (it stays the same
+  when a search narrows the list).
+- Android: the engine turns on only with its button in each game, and turns off when you
+  leave the game or the app goes to the background.
+- Android: the engine download no longer says there is not enough space on a phone with
+  plenty of it (the free space was asked of a folder not made yet).
+
 ## [0.11.0] — 2026-10-22
 
 - Android: **add a folder** — every database in it and in the folders inside it (two

@@ -14,11 +14,11 @@ enum class Notation { Latin, Figurines, Local }
 data class Prefs(
     val theme: Theme = Theme.System,
     val notation: Notation = Notation.Latin,
+    val board: BoardTheme = BoardTheme.Green,
+    val pieces: PieceSet = PieceSet.Merida,
     val vibration: Boolean = true,
     val animation: Boolean = true,
     val bestArrow: Boolean = true,
-    /// The engine button: once turned on, it stays on in the next game (§8.3).
-    val engineOn: Boolean = false,
     val engineLines: Int = 2,
     /// Seconds of thinking per position; 0 = no limit.
     val engineSeconds: Int = 20,
@@ -32,6 +32,11 @@ fun defaultThreads(): Int = (Runtime.getRuntime().availableProcessors() / 2).coe
 class Settings(context: Context) {
     private val store = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val _prefs = MutableStateFlow(read())
+
+    init {
+        // The engine button was kept here up to 0.11 (it is not remembered any more).
+        store.edit().remove("engineOn").apply()
+    }
     val prefs: StateFlow<Prefs> = _prefs.asStateFlow()
 
     private fun read(): Prefs {
@@ -39,10 +44,11 @@ class Settings(context: Context) {
         return Prefs(
             theme = enumValueOrNull<Theme>(store.getString("theme", null)) ?: d.theme,
             notation = enumValueOrNull<Notation>(store.getString("notation", null)) ?: d.notation,
+            board = enumValueOrNull<BoardTheme>(store.getString("board", null)) ?: d.board,
+            pieces = enumValueOrNull<PieceSet>(store.getString("pieces", null)) ?: d.pieces,
             vibration = store.getBoolean("vibration", d.vibration),
             animation = store.getBoolean("animation", d.animation),
             bestArrow = store.getBoolean("bestArrow", d.bestArrow),
-            engineOn = store.getBoolean("engineOn", d.engineOn),
             engineLines = store.getInt("engineLines", d.engineLines),
             engineSeconds = store.getInt("engineSeconds", d.engineSeconds),
             engineThreads = store.getInt("engineThreads", d.engineThreads),
@@ -56,10 +62,11 @@ class Settings(context: Context) {
         store.edit()
             .putString("theme", p.theme.name)
             .putString("notation", p.notation.name)
+            .putString("board", p.board.name)
+            .putString("pieces", p.pieces.name)
             .putBoolean("vibration", p.vibration)
             .putBoolean("animation", p.animation)
             .putBoolean("bestArrow", p.bestArrow)
-            .putBoolean("engineOn", p.engineOn)
             .putInt("engineLines", p.engineLines)
             .putInt("engineSeconds", p.engineSeconds)
             .putInt("engineThreads", p.engineThreads)

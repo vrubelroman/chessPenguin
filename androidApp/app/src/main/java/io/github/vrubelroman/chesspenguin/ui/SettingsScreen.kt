@@ -50,11 +50,11 @@ import io.github.vrubelroman.chesspenguin.data.NetState
 import io.github.vrubelroman.chesspenguin.data.Notation
 import io.github.vrubelroman.chesspenguin.data.Theme
 
-/// One screen of groups, changes apply at once (android-ui.md §9). Boards and piece
-/// sets are not chosen in the first version (§16).
+/// One screen of groups, changes apply at once (android-ui.md §9). The board and the
+/// pieces are chosen on a screen of their own, with a board to see them on.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> Unit) {
     val app = app()
     val prefs by app.settings.prefs.collectAsState()
     val files = app.engineFiles
@@ -115,6 +115,7 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit) {
             Toggle(stringResource(R.string.vibration), prefs.vibration) { v -> set { it.copy(vibration = v) } }
 
             Group(stringResource(R.string.group_look))
+            Item(stringResource(R.string.board_and_pieces), boardLabel(prefs.board) + " · " + prefs.pieces.dir, onBoardStyle)
             Item(stringResource(R.string.theme), themeNames.first { it.first == prefs.theme }.second) {
                 choice = Choice(R.string.theme, themeNames.map { it.second }, themeNames.indexOfFirst { it.first == prefs.theme }) { i ->
                     set { it.copy(theme = themeNames[i].first) }

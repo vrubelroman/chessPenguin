@@ -68,15 +68,20 @@ val stockfish = tasks.register<Exec>("stockfish") {
     outputs.dir(stockfishOut)
 }
 
-/// The sample games of the desktop app and the Merida pieces, as app assets.
+/// The sample games, the piece sets and the board images of the desktop app, as app
+/// assets.
 val bundleAssets = tasks.register<Copy>("bundleAssets") {
     from(File(repo, "examples")) {
         include("*.pgn")
         into("examples")
     }
-    from(File(repo, "apps/desktop/assets/pieces/merida")) {
-        include("*.svg")
-        into("pieces/merida")
+    from(File(repo, "apps/desktop/assets/pieces")) {
+        include("*/*.svg")
+        into("pieces")
+    }
+    from(File(repo, "apps/desktop/assets/boards")) {
+        include("*.jpg", "*.png")
+        into("boards")
     }
     from(stockfishOut.map { it.dir("source") }) {
         into("licenses/stockfish")

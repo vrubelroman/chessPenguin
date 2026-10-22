@@ -32,13 +32,12 @@ val DarkPrimaryContainer = Color(0xFF1A4566)
 val DarkError = Color(0xFFF28B82)
 val DarkErrorContainer = Color(0xFF5C1A14)
 
-/// Colors of the notation and the board that stay ours whatever the theme.
+/// Colors of the notation and the board that stay ours whatever the theme (the
+/// squares are the chosen board's, data/BoardStyle.kt).
 data class ChessColors(
     val dark: Boolean,
     val currentMove: Color,
     val comment: Color,
-    val lightSquare: Color,
-    val darkSquare: Color,
     val lastMove: Color,
 )
 
@@ -46,8 +45,6 @@ val LightChess = ChessColors(
     dark = false,
     currentMove = Color(0xFF90D1FF),
     comment = Color(0xFF2A5B8A),
-    lightSquare = Color(0xFFFFFFDD),
-    darkSquare = Color(0xFF86A666),
     lastMove = Color(0x699BC700),
 )
 

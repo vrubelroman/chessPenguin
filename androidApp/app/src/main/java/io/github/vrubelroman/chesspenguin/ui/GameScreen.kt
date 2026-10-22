@@ -162,8 +162,13 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val status by session.status.collectAsState()
     val engineView by session.analysis.collectAsState()
     var visible by remember { mutableStateOf(true) }
-    var sheet by remember { mutableStateOf(false) }
-    var wantEngine by remember { mutableStateOf(false) }
+    var sheet by rememberSaveable { mutableStateOf(false) }
+    var wantEngine by rememberSaveable { mutableStateOf(false) }
+    // The engine button: off in every game screen opened, on only when pressed, and
+    // only until the app goes to the background (§8.3). Kept while Settings is open over
+    // the game and when the phone is turned.
+    var engineVisit by rememberSaveable { mutableStateOf<String?>(null) }
+    val engineWanted = engineVisit == app.visit
     var expanded by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var info by remember { mutableStateOf(false) }
@@ -206,7 +211,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val node = nodes?.getOrNull(current)
     val notation = rememberLazyListState()
     val engineReady = netState == NetState.Ready
-    val engineOn = prefs.engineOn && engineReady
+    val engineOn = engineWanted && engineReady
     val position = remember(g, current) { g?.let { enginePosition(it, current) } }
     // Only what the engine said about the position on the board.
     val analysis = engineView?.takeIf { it.position == position }?.analysis
@@ -230,7 +235,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         if (netState == NetState.Ready && wantEngine) {
             wantEngine = false
             sheet = false
-            app.settings.update { it.copy(engineOn = true) }
+            engineVisit = app.visit
             if (!files.builtIn) snackbar.showSnackbar(readyText)
         }
     }
@@ -273,8 +278,8 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     }
     fun toggleEngine() {
         when {
-            prefs.engineOn && engineReady -> app.settings.update { it.copy(engineOn = false) }
-            engineReady -> app.settings.update { it.copy(engineOn = true) }
+            engineWanted && engineReady -> engineVisit = null
+            engineReady -> engineVisit = app.visit
             files.builtIn -> {
                 wantEngine = true
                 files.prepare()
@@ -348,6 +353,8 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             lastFrom = step?.fromSquare ?: node?.fromSquare,
             lastTo = step?.toSquare ?: node?.toSquare,
             pieces = pieces,
+            theme = prefs.board,
+            set = prefs.pieces,
             description = description,
             arrows = arrows,
             marks = marks,

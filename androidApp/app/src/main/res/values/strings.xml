@@ -109,7 +109,7 @@
     <string name="threads">Threads</string>
     <string name="memory">Memory</string>
     <string name="megabytes">%1$d MB</string>
-    <string name="engine_battery">The engine uses the battery. It stops by itself when the screen turns off.</string>
+    <string name="engine_battery">The engine uses the battery. It turns off by itself when you leave the game or the app goes to the background.</string>
     <string name="about">About</string>
     <string name="build_full">Stockfish built in</string>
     <string name="build_light">Stockfish downloaded in the app</string>
@@ -179,4 +179,39 @@
     <string name="choose_all">Tick all</string>
     <string name="choose_none">Untick all</string>
     <string name="open_missing_part">The file %1$s is not beside the database any more: it was moved or deleted.</string>
+    <string name="board_and_pieces">Board and pieces</string>
+    <string name="board_brown">Brown</string>
+    <string name="board_blue">Blue</string>
+    <string name="board_green">Green</string>
+    <string name="board_tournament">Tournament</string>
+    <string name="board_sand">Sand</string>
+    <string name="board_coral">Coral</string>
+    <string name="board_grey">Grey</string>
+    <string name="board_purple">Purple</string>
+    <string name="board_ice">Ice</string>
+    <string name="board_navy">Navy</string>
+    <string name="board_mint">Mint</string>
+    <string name="board_emerald">Emerald</string>
+    <string name="board_orange">Orange</string>
+    <string name="board_rose">Rose</string>
+    <string name="board_dusk">Dusk</string>
+    <string name="board_night">Night</string>
+    <string name="board_wood">Wood</string>
+    <string name="board_maple">Maple</string>
+    <string name="board_leather">Leather</string>
+    <string name="board_marble">Marble</string>
+    <string name="board_blue_marble">Blue marble</string>
+    <string name="board_canvas">Canvas</string>
+    <string name="board_metal">Metal</string>
+    <string name="board_olive">Olive</string>
+    <string name="board_stone">Stone</string>
+    <string name="board_green_plastic">Green plastic</string>
+    <string name="board_purple_diag">Purple diagonal</string>
+    <string name="board_pink_pyramid">Pink pyramid</string>
+    <string name="board_sketch">Sketch</string>
+    <string name="board">Board</string>
+    <string name="board_ic" translatable="false">IC</string>
+    <string name="board_ncf" translatable="false">NCF</string>
+    <string name="pieces_tab">Pieces</string>
+    <string name="game_number">No. %1$s</string>
 </resources>

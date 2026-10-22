@@ -2,7 +2,10 @@ package io.github.vrubelroman.chesspenguin.ui
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
 import android.graphics.Canvas
+import android.graphics.Rect
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -11,7 +14,9 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -24,6 +29,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -35,7 +42,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.caverock.androidsvg.SVG
+import io.github.vrubelroman.chesspenguin.data.BoardTheme
+import io.github.vrubelroman.chesspenguin.data.PieceSet
 import io.github.vrubelroman.chesspenguin.theme.LocalChessColors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /// The 64 squares of a FEN's placement, a8 first: the piece letter or ' '.
 fun placement(fen: String): CharArray {
@@ -60,17 +71,20 @@ fun squareIndex(square: String?): Int? {
     return (7 - rank) * 8 + file
 }
 
-/// The Merida pieces of the desktop app, drawn from their SVG at a size once.
+/// The pieces of the desktop app's sets, drawn from their SVG at a size once.
 class Pieces(private val context: Context) {
-    private val svgs = HashMap<Char, SVG>()
-    private val bitmaps = HashMap<Pair<Char, Int>, ImageBitmap>()
+    private val svgs = HashMap<Pair<PieceSet, Char>, SVG>()
+    private val bitmaps = HashMap<Triple<PieceSet, Char, Int>, ImageBitmap>()
 
-    fun bitmap(piece: Char, size: Int): ImageBitmap? {
+    fun bitmap(set: PieceSet, piece: Char, size: Int): ImageBitmap? {
         if (size <= 0) return null
-        return bitmaps.getOrPut(piece to size) {
+        return bitmaps.getOrPut(Triple(set, piece, size)) {
             val name = (if (piece.isUpperCase()) "w" else "b") + piece.uppercaseChar()
-            val svg = svgs.getOrPut(piece) { context.assets.open("pieces/merida/$name.svg").use { SVG.getFromInputStream(it) } }
+            val svg = svgs.getOrPut(set to piece) { context.assets.open("pieces/${set.dir}/$name.svg").use { SVG.getFromInputStream(it) } }
             val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            // Without a viewBox (kiwen-suwi, metaltops) AndroidSVG draws a set at its own
+            // size, whatever size is asked for.
+            if (svg.documentViewBox == null) svg.setDocumentViewBox(0f, 0f, svg.documentWidth, svg.documentHeight)
             svg.setDocumentWidth(size.toFloat())
             svg.setDocumentHeight(size.toFloat())
             svg.renderToCanvas(Canvas(bmp))
@@ -78,6 +92,32 @@ class Pieces(private val context: Context) {
         }
     }
 }
+
+/// A board's image (1024 px) read at about `size` px: a phone's board needs no more, and
+/// the whole image would take 4 MB.
+fun boardImage(context: Context, file: String, size: Int): ImageBitmap? = runCatching {
+    val bytes = context.assets.open("boards/$file").use { it.readBytes() }
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= size) sample *= 2
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+}.getOrNull()
+
+/// The corner of a board's image with a1: 2×2 squares, for the choice of boards.
+fun boardCorner(context: Context, file: String, size: Int): ImageBitmap? = runCatching {
+    context.assets.open("boards/$file").use { input ->
+        val decoder = BitmapRegionDecoder.newInstance(input) ?: return null
+        try {
+            val q = decoder.width / 4
+            var sample = 1
+            while (q / (sample * 2) >= size) sample *= 2
+            decoder.decodeRegion(Rect(0, decoder.height - q, q, decoder.height), BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
+        } finally {
+            decoder.recycle()
+        }
+    }
+}.getOrNull()
 
 /// An arrow on the board: a comment's `[%cal]` or the engine's best move.
 data class BoardArrow(val from: String, val to: String, val color: Color, val weight: Float = 1f)
@@ -97,7 +137,7 @@ fun markColor(letter: String): Color = when (letter) {
 /// The engine's arrows are blue, as on the desktop.
 val EngineArrow = Color(0, 48, 136, 160)
 
-/// The board: full width, the colors of the green theme, the last move lit, the
+/// The board: full width, the chosen board and pieces, the last move lit, the
 /// coordinates inside the edge squares (as on Lichess). It takes no touches in the first
 /// version (docs/design/android-ui.md §7.2). A move slides into place (250 ms).
 @Composable
@@ -107,6 +147,8 @@ fun Board(
     lastFrom: String?,
     lastTo: String?,
     pieces: Pieces,
+    theme: BoardTheme,
+    set: PieceSet,
     description: String,
     modifier: Modifier = Modifier,
     arrows: List<BoardArrow> = emptyList(),
@@ -115,6 +157,14 @@ fun Board(
     animated: Boolean = true,
 ) {
     val colors = LocalChessColors.current
+    val context = LocalContext.current
+    // The image of a textured board, read off the main thread; the flat colors until then.
+    var side by remember { mutableIntStateOf(0) }
+    val texture by produceState<ImageBitmap?>(null, theme, side) {
+        value = null
+        val file = theme.texture ?: return@produceState
+        if (side > 0) value = withContext(Dispatchers.IO) { boardImage(context, file, side) }
+    }
     val measurer = rememberTextMeasurer()
     val squares = remember(fen) { placement(fen) }
     val from = squareIndex(lastFrom)
@@ -138,6 +188,7 @@ fun Board(
     Canvas(
         modifier
             .aspectRatio(1f)
+            .onSizeChanged { side = it.width }
             .semantics { contentDescription = description },
     ) {
         val sq = size.width / 8f
@@ -148,9 +199,14 @@ fun Board(
             val (r, c) = if (flipped) (7 - row) to (7 - col) else row to col
             return Offset(c * sq, r * sq)
         }
+        val image = texture
+        if (image != null) {
+            // The squares of the image are the same seen from either side: it is not turned.
+            drawImage(image, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
+        }
         for (i in 0 until 64) {
             val light = (i / 8 + i % 8) % 2 == 0
-            drawRect(if (light) colors.lightSquare else colors.darkSquare, cell(i), Size(sq, sq))
+            if (image == null) drawRect(if (light) theme.light else theme.dark, cell(i), Size(sq, sq))
             if (i == from || i == to) drawRect(colors.lastMove, cell(i), Size(sq, sq))
         }
         for (m in marks) {
@@ -181,7 +237,7 @@ fun Board(
         for (i in 0 until 64) {
             val p = squares[i]
             if (p == ' ') continue
-            val bmp = pieces.bitmap(p, px) ?: continue
+            val bmp = pieces.bitmap(set, p, px) ?: continue
             var at = cell(i)
             if (animate && i == to && from != null && slide.value < 1f) {
                 val start = cell(from)
@@ -196,9 +252,9 @@ fun Board(
             val rankIndex = if (flipped) k else 7 - k
             val bottomLight = (7 + k) % 2 == 0
             val leftLight = k % 2 == 0
-            drawCoord(measurer, ('a' + fileIndex).toString(), coordStyle.copy(color = if (bottomLight) colors.darkSquare else colors.lightSquare),
+            drawCoord(measurer, ('a' + fileIndex).toString(), coordStyle.copy(color = if (bottomLight) theme.dark else theme.light),
                 Offset((k + 1) * sq - with(density) { 8.sp.toPx() }, 8 * sq - with(density) { 13.sp.toPx() }))
-            drawCoord(measurer, ('1' + rankIndex).toString(), coordStyle.copy(color = if (leftLight) colors.darkSquare else colors.lightSquare),
+            drawCoord(measurer, ('1' + rankIndex).toString(), coordStyle.copy(color = if (leftLight) theme.dark else theme.light),
                 Offset(with(density) { 2.sp.toPx() }, k * sq + with(density) { 1.sp.toPx() }))
         }
         for (a in arrows) {

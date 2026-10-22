@@ -50,6 +50,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -173,7 +175,10 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
                     Text(stringResource(R.string.reading), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 games.isEmpty() -> Message(stringResource(R.string.nothing_found), "")
-                else -> LazyColumn(Modifier.fillMaxSize(), state = list) {
+                else -> {
+                    // Wide enough for the database's largest number.
+                    val numberWidth = numberWidth(database?.len()?.toInt() ?: games.size)
+                    LazyColumn(Modifier.fillMaxSize(), state = list) {
                     items(games.size, key = { games[it].toLong() }) { place ->
                         val chunk = place / CHUNK
                         val loaded = rows[chunk]
@@ -184,8 +189,9 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
                                 rows[chunk] = withContext(Dispatchers.Default) { d.rowsOf(part) }
                             }
                         }
-                        GameRowView(loaded?.getOrNull(place % CHUNK)) { onGame(place, query) }
+                        GameRowView(games[place].toInt() + 1, numberWidth, loaded?.getOrNull(place % CHUNK)) { onGame(place, query) }
                     }
+                }
                 }
             }
         }
@@ -218,18 +224,46 @@ private fun openProblem(e: Throwable): String = when (e) {
     else -> ""
 }
 
-/// One game: "White – Black" and the result, then event · year · ECO (§6.2). An
-/// unfinished game ("*", most book positions) shows no result.
+/// The width of the numbers column: the digits of `count`, grouped as shown.
 @Composable
-private fun GameRowView(row: GameRow?, onClick: () -> Unit) {
-    Column(
+private fun numberWidth(count: Int): androidx.compose.ui.unit.Dp {
+    val style = MaterialTheme.typography.bodySmall.merge(Tabular)
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    return remember(count, style, density) {
+        with(density) { measurer.measure(groupDigits(count.coerceAtLeast(1)), style).size.width.toDp() }
+    }
+}
+
+/// One game: its number in the database, "White – Black" and the result, then event ·
+/// year · ECO (§6.2). An unfinished game ("*", most book positions) shows no result.
+@Composable
+private fun GameRowView(number: Int, numberWidth: androidx.compose.ui.unit.Dp, row: GameRow?, onClick: () -> Unit) {
+    Row(
         Modifier
             .fillMaxWidth()
             .height(64.dp)
             .clickable(enabled = row != null, onClick = onClick)
             .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        val said = stringResource(R.string.game_number, groupDigits(number))
+        Text(
+            groupDigits(number),
+            style = MaterialTheme.typography.bodySmall.merge(Tabular),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            modifier = Modifier.width(numberWidth).semantics { contentDescription = said },
+        )
+        Spacer(Modifier.width(12.dp))
+        GameRowText(row, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun GameRowText(row: GameRow?, modifier: Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.Center) {
         if (row == null) return@Column
         Row(verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f)) {

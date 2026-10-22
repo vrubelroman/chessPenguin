@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.storage.StorageManager
 import io.github.vrubelroman.chesspenguin.BuildConfig
 import io.github.vrubelroman.chesspenguin.R
 import kotlinx.coroutines.CoroutineScope
@@ -89,7 +90,7 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
                 } catch (e: NetFailure) {
                     NetState.Failed(e.problem)
                 } catch (e: IOException) {
-                    NetState.Failed(if (dir.usableSpace < BuildConfig.NET_SIZE) NetProblem.NoSpace else NetProblem.Interrupted)
+                    NetState.Failed(if (freeSpace() < BuildConfig.NET_SIZE) NetProblem.NoSpace else NetProblem.Interrupted)
                 }
                 if (isActive) _state.value = result
             }
@@ -100,7 +101,7 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
             return
         }
         // The file is downloaded next to the app's files, then checked and moved in.
-        if (dir.usableSpace < 2 * BuildConfig.NET_SIZE) {
+        if (freeSpace() < 2 * BuildConfig.NET_SIZE) {
             _state.value = NetState.Failed(NetProblem.NoSpace)
             return
         }
@@ -171,7 +172,7 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
                             } catch (e: NetFailure) {
                                 NetState.Failed(e.problem)
                             } catch (e: IOException) {
-                                NetState.Failed(if (dir.usableSpace < BuildConfig.NET_SIZE) NetProblem.NoSpace else NetProblem.Interrupted)
+                                NetState.Failed(if (freeSpace() < BuildConfig.NET_SIZE) NetProblem.NoSpace else NetProblem.Interrupted)
                             }
                         }
                         downloads.remove(id)
@@ -233,6 +234,16 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
             throw NetFailure(NetProblem.Corrupt)
         }
         if (!part.renameTo(net)) throw IOException("cannot move the network into place")
+    }
+
+    /// The space the app can take, with the caches the system would clear for it. Asked
+    /// of filesDir, which always exists: a folder not made yet (the engine's, before the
+    /// first download) answers 0.
+    private fun freeSpace(): Long = try {
+        val storage = context.getSystemService(StorageManager::class.java)
+        storage.getAllocatableBytes(storage.getUuidForPath(context.filesDir))
+    } catch (e: IOException) {
+        context.filesDir.usableSpace
     }
 
     private fun online(): Boolean {
