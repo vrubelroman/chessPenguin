@@ -142,7 +142,14 @@ android {
     }
 
     buildTypes {
+        // Where the app asks for a newer release: GitHub ("" = the core's address). A debug
+        // build may ask a test server instead (CP_UPDATE_API at build time, e.g.
+        // http://10.0.2.2:8765/latest.json for a server on the emulator's host).
+        debug {
+            buildConfigField("String", "UPDATE_API", "\"${System.getenv("CP_UPDATE_API") ?: ""}\"")
+        }
         release {
+            buildConfigField("String", "UPDATE_API", "\"\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

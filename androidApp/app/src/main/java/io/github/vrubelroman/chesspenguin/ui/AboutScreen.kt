@@ -19,7 +19,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
@@ -58,7 +61,10 @@ private val NOTICES = listOf(
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
     val uri = LocalUriHandler.current
+    val snackbar = remember { SnackbarHostState() }
+    UpdateMessages(snackbar)
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.about)) },
@@ -74,7 +80,10 @@ fun AboutScreen(onBack: () -> Unit) {
             Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge)
             val build = stringResource(if (BuildConfig.NET_BUILT_IN) R.string.build_full else R.string.build_light)
             Text("${BuildConfig.VERSION_NAME} ${stringResource(R.string.alpha)} · $build", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
+            // Right under the version (android-ui.md §25.5).
+            AboutUpdates()
+            Spacer(Modifier.height(24.dp))
             Text(stringResource(R.string.about_text), style = MaterialTheme.typography.bodyLarge)
             TextButton(onClick = { uri.openUri(SITE) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
                 Text(stringResource(R.string.website))

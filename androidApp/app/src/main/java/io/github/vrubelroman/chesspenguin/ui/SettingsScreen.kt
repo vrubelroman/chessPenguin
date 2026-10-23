@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -65,6 +66,8 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
     var sheet by remember { mutableStateOf(false) }
     val lang = uiLanguage()
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
+    UpdateMessages(snackbar)
     val size = (BuildConfig.NET_SIZE / 1_000_000).toInt()
 
     val themeNames = listOf(
@@ -88,6 +91,7 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
 
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings)) },
@@ -115,7 +119,7 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
             Toggle(stringResource(R.string.vibration), prefs.vibration) { v -> set { it.copy(vibration = v) } }
 
             Group(stringResource(R.string.group_look))
-            Item(stringResource(R.string.board_and_pieces), boardLabel(prefs.board) + " · " + prefs.pieces.dir, onBoardStyle)
+            Item(stringResource(R.string.board_and_pieces), boardLabel(prefs.board) + " · " + prefs.pieces.dir, onClick = onBoardStyle)
             Item(stringResource(R.string.theme), themeNames.first { it.first == prefs.theme }.second) {
                 choice = Choice(R.string.theme, themeNames.map { it.second }, themeNames.indexOfFirst { it.first == prefs.theme }) { i ->
                     set { it.copy(theme = themeNames[i].first) }
@@ -169,7 +173,8 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             Spacer(Modifier.height(16.dp))
-            Item(stringResource(R.string.about), null, onAbout)
+            // A newer version of the app, even with its card hidden (android-ui.md §25.5).
+            Item(stringResource(R.string.about), aboutUpdateLine(), valueColor = MaterialTheme.colorScheme.primary, onClick = onAbout)
         }
     }
 
@@ -244,7 +249,7 @@ private fun Group(title: String) {
 }
 
 @Composable
-private fun Item(title: String, value: String?, onClick: (() -> Unit)?) {
+private fun Item(title: String, value: String?, valueColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified, onClick: (() -> Unit)?) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -254,7 +259,9 @@ private fun Item(title: String, value: String?, onClick: (() -> Unit)?) {
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
     ) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
-        if (value != null) Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (value != null) {
+            Text(value, style = MaterialTheme.typography.bodyMedium, color = valueColor.takeOrElse { MaterialTheme.colorScheme.onSurfaceVariant })
+        }
     }
 }
 

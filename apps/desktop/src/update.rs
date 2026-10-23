@@ -20,13 +20,11 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
 
+use releases::Asset;
+pub use releases::{DOWNLOAD_PAGE, Release, parse_version};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-
-const API: &str = "https://api.github.com/repos/vrubelroman/chessPenguin/releases/latest";
-pub const DOWNLOAD_PAGE: &str = "https://chess.vrubel.xyz/";
 
 /// How this copy of ChessPenguin was installed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,50 +190,14 @@ fn package_kind() -> Install {
     Install::Other
 }
 
-/// "0.7.1" / "v0.7.1" → (0, 7, 1).
-pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
-    let mut it = v.trim().trim_start_matches('v').split('.');
-    let n = |s: Option<&str>| -> Option<u32> {
-        s?.chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<String>()
-            .parse()
-            .ok()
-    };
-    Some((n(it.next())?, n(it.next())?, n(it.next()).unwrap_or(0)))
+/// The file of a release for a kind of installation.
+pub trait ReleaseExt {
+    fn asset_for(&self, kind: &Install) -> Option<&Asset>;
 }
 
-pub fn current_version() -> (u32, u32, u32) {
-    parse_version(env!("CARGO_PKG_VERSION")).unwrap_or((0, 0, 0))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Asset {
-    pub name: String,
-    pub url: String,
-    pub size: u64,
-}
-
-/// The latest release.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Release {
-    pub version: String,
-    pub page: String,
-    pub assets: Vec<Asset>,
-}
-
-impl Release {
-    pub fn newer(&self) -> bool {
-        parse_version(&self.version).is_some_and(|v| v > current_version())
-    }
-
-    pub fn asset_for(&self, kind: &Install) -> Option<&Asset> {
-        let suffix = kind.asset_suffix()?;
-        self.assets.iter().find(|a| a.name.ends_with(suffix))
-    }
-
-    fn sums(&self) -> Option<&Asset> {
-        self.assets.iter().find(|a| a.name == "SHA256SUMS.txt")
+impl ReleaseExt for Release {
+    fn asset_for(&self, kind: &Install) -> Option<&Asset> {
+        self.asset_ending(kind.asset_suffix()?)
     }
 }
 
@@ -244,57 +206,22 @@ fn source_dir() -> Option<PathBuf> {
     std::env::var_os("CP_UPDATE_SOURCE").map(PathBuf::from)
 }
 
-fn agent(body_timeout: Option<Duration>) -> ureq::Agent {
-    let config = ureq::Agent::config_builder()
-        .user_agent(format!(
-            "ChessPenguin/{} (+https://chess.vrubel.xyz)",
-            env!("CARGO_PKG_VERSION")
-        ))
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_recv_response(Some(Duration::from_secs(30)))
-        .timeout_recv_body(body_timeout)
-        .build();
-    ureq::Agent::new_with_config(config)
-}
-
-/// The GitHub answer for the latest release, as a [`Release`].
-pub fn parse_release(v: &Value) -> Option<Release> {
-    let tag = v["tag_name"].as_str()?;
-    let assets = v["assets"]
-        .as_array()?
-        .iter()
-        .filter_map(|a| {
-            Some(Asset {
-                name: a["name"].as_str()?.to_owned(),
-                url: a["browser_download_url"].as_str()?.to_owned(),
-                size: a["size"].as_u64().unwrap_or(0),
-            })
-        })
-        .collect();
-    Some(Release {
-        version: tag.trim_start_matches('v').to_owned(),
-        page: v["html_url"].as_str().unwrap_or(DOWNLOAD_PAGE).to_owned(),
-        assets,
-    })
+/// Who asks GitHub.
+fn client() -> String {
+    format!("ChessPenguin/{}", env!("CARGO_PKG_VERSION"))
 }
 
 /// Asks for the latest release. `Err` with a short reason when there is no answer.
 pub fn latest() -> Result<Release, String> {
-    let text = match source_dir() {
-        Some(dir) => std::fs::read_to_string(dir.join("latest.json")).map_err(|e| e.to_string())?,
-        None => agent(Some(Duration::from_secs(30)))
-            .get(API)
-            .header("Accept", "application/vnd.github+json")
-            .call()
-            .map_err(|e| e.to_string())?
-            .body_mut()
-            .with_config()
-            .limit(4 << 20)
-            .read_to_string()
-            .map_err(|e| e.to_string())?,
-    };
-    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    parse_release(&v).ok_or_else(|| "unexpected answer".to_owned())
+    match source_dir() {
+        Some(dir) => {
+            let text =
+                std::fs::read_to_string(dir.join("latest.json")).map_err(|e| e.to_string())?;
+            let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            releases::parse_release(&v).ok_or_else(|| "unexpected answer".to_owned())
+        }
+        None => releases::fetch_latest(releases::API, &client()),
+    }
 }
 
 /// Opens an asset for reading (from GitHub or from the test directory).
@@ -303,14 +230,7 @@ fn open(asset: &Asset) -> Result<Box<dyn Read + Send>, String> {
         Some(dir) => Ok(Box::new(
             std::fs::File::open(dir.join(&asset.name)).map_err(|e| e.to_string())?,
         )),
-        None => {
-            // A whole download within half an hour (a stalled connection ends then).
-            let resp = agent(Some(Duration::from_secs(1800)))
-                .get(&asset.url)
-                .call()
-                .map_err(|e| e.to_string())?;
-            Ok(Box::new(resp.into_body().into_reader()))
-        }
+        None => releases::open(asset, &client()),
     }
 }
 
@@ -322,12 +242,7 @@ fn expected_sum(release: &Release, name: &str) -> Result<String, String> {
         .take(1 << 20)
         .read_to_string(&mut text)
         .map_err(|e| e.to_string())?;
-    text.lines()
-        .find_map(|l| {
-            let (hash, file) = l.split_once(char::is_whitespace)?;
-            (file.trim().trim_start_matches('*') == name).then(|| hash.to_lowercase())
-        })
-        .ok_or_else(|| format!("{name} is not in SHA256SUMS.txt"))
+    releases::sum_in(&text, name).ok_or_else(|| format!("{name} is not in SHA256SUMS.txt"))
 }
 
 /// Downloads `asset` into `to` (a `.part` file first), checking its SHA-256;
@@ -770,18 +685,6 @@ mod tests {
             assert_eq!(r.asset_for(&kind).map(|a| a.name.as_str()), Some(name));
         }
         assert!(r.asset_for(&Install::Aur).is_none());
-    }
-
-    #[test]
-    fn github_answer() {
-        let v: Value = serde_json::from_str(
-            r#"{"tag_name":"v0.7.1","html_url":"https://github.com/x/releases/tag/v0.7.1",
-                "assets":[{"name":"SHA256SUMS.txt","browser_download_url":"https://x/s","size":10}]}"#,
-        )
-        .unwrap();
-        let r = parse_release(&v).unwrap();
-        assert_eq!(r.version, "0.7.1");
-        assert_eq!(r.assets.len(), 1);
     }
 
     #[test]

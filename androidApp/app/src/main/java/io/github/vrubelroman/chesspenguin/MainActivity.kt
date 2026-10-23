@@ -2,6 +2,10 @@ package io.github.vrubelroman.chesspenguin
 
 import android.content.Context
 import android.content.Intent
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import android.net.Uri
 import android.os.Bundle
 import android.graphics.Color
@@ -35,7 +39,20 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // Not again when the activity is made anew (turned): it was taken the first time.
         if (savedInstanceState == null) receive(intent)
-        val settings = (application as ChessPenguinApp).settings
+        val app = application as ChessPenguinApp
+        val settings = app.settings
+        // Android's question «Update this app?» is put on the screen only while the app is
+        // on it (the installer may answer while the user is elsewhere).
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                app.updates.confirm.collect { confirm ->
+                    if (confirm != null) {
+                        app.updates.confirmShown()
+                        startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                }
+            }
+        }
         setContent {
             val prefs by settings.prefs.collectAsState()
             val dark = when (prefs.theme) {
@@ -75,8 +92,21 @@ class MainActivity : ComponentActivity() {
         (application as ChessPenguinApp).receive(uri)
     }
 
+    override fun onStart() {
+        super.onStart()
+        val updates = (application as ChessPenguinApp).updates
+        updates.foreground = true
+        updates.checkIfDue()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        (application as ChessPenguinApp).updates.onResume()
+    }
+
     override fun onStop() {
         super.onStop()
+        (application as ChessPenguinApp).updates.foreground = false
         // Gone to the background or closed, not turned.
         if (!isChangingConfigurations) (application as ChessPenguinApp).leftApp()
     }

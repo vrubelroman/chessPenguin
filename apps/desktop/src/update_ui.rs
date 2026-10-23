@@ -7,7 +7,7 @@ use egui::{RichText, Ui};
 
 use crate::board_search::Background;
 use crate::i18n::{tr, trf};
-use crate::update::{self, Applied, Install, Release};
+use crate::update::{self, Applied, Install, Release, ReleaseExt};
 
 /// What the window asks of the application.
 pub enum UpdateEvent {

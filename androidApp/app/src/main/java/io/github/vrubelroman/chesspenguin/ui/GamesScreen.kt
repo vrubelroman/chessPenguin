@@ -105,6 +105,7 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
     val download = app.downloads.views.collectAsState().value[db]
     val snackbar = remember { SnackbarHostState() }
+    UpdateMessages(snackbar)
     val resources = LocalResources.current
     // How a download of this database ended (§23.3); the list reads it again by itself.
     LaunchedEffect(db) {

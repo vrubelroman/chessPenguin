@@ -91,6 +91,15 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     val scope = rememberCoroutineScope()
     val removedText = stringResource(R.string.removed)
     val removedCopyText = stringResource(R.string.removed_copy)
+    val update = shownUpdate()
+    val hiddenText = stringResource(R.string.upd_hidden_snack)
+    val onUpdateHidden: () -> Unit = {
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(hiddenText)
+        }
+    }
+    UpdateMessages(snackbar)
     val removedOnlineText = stringResource(R.string.online_removed)
     val resourcesForSnack = LocalResources.current
     val openText = stringResource(R.string.online_open_short)
@@ -128,6 +137,13 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     val add = { choosing = true }
     var renaming by remember { mutableStateOf<DbEntry?>(null) }
     val list = rememberLazyListState()
+    // The card comes when GitHub answers, after the list is drawn: a list at its top then
+    // keeps its first database in place and the card lands above the screen. It is
+    // brought into sight; a list scrolled down by the user stays where it is.
+    val cardShown = update != null
+    LaunchedEffect(cardShown) {
+        if (cardShown && list.firstVisibleItemIndex == 1 && list.firstVisibleItemScrollOffset == 0) list.animateScrollToItem(0)
+    }
     val expanded by remember { derivedStateOf { list.firstVisibleItemIndex == 0 } }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
     // The samples are small: read them at once, so their rows show the number of games.
@@ -162,16 +178,21 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
         },
     ) { padding ->
         if (entries.isEmpty()) {
-            Empty(Modifier.padding(padding), onAdd = add, onSamples = {
-                library.addSamples()
-                library.entries.value.firstOrNull()?.let { onOpen(it.id) }
-            })
+            Column(Modifier.padding(padding)) {
+                update?.let { UpdateCard(it, onHidden = onUpdateHidden) }
+                Empty(Modifier.weight(1f), onAdd = add, onSamples = {
+                    library.addSamples()
+                    library.entries.value.firstOrNull()?.let { onOpen(it.id) }
+                })
+            }
         } else {
             LazyColumn(
                 Modifier.fillMaxSize(),
                 state = list,
                 contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 88.dp),
             ) {
+                // A newer version of the app (android-ui.md §25.2): the first item of the list.
+                update?.let { u -> item(key = "update") { UpdateCard(u, onHidden = onUpdateHidden, modifier = Modifier.animateItem()) } }
                 items(entries, key = { it.id }) { e ->
                     DatabaseRow(
                         e,

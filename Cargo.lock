@@ -807,6 +807,7 @@ dependencies = [
  "getrandom 0.3.4",
  "image",
  "online-games",
+ "releases",
  "rfd",
  "rodio",
  "serde",
@@ -2418,6 +2419,7 @@ dependencies = [
  "chess-import",
  "game-review",
  "online-games",
+ "releases",
  "shakmaty",
  "thiserror 2.0.21",
  "uci",
@@ -3547,6 +3549,14 @@ checksum = "60dc65c0ff1a7ae1294b0c67b9f14baf70b644404010370171787bfac1038fc0"
 dependencies = [
  "libredox",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "releases"
+version = "0.14.0"
+dependencies = [
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]

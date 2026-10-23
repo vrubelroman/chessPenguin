@@ -158,6 +158,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     }
     val pieces = remember { Pieces(context) }
     val snackbar = remember { SnackbarHostState() }
+    UpdateMessages(snackbar)
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     val hint = stringResource(R.string.board_hint)

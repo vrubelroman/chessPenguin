@@ -14,6 +14,7 @@ use shakmaty::Position;
 mod engine;
 mod online;
 mod review;
+mod update;
 
 pub use engine::{Analysis, Analyzer, EngineFailure, EngineLine, LineStep};
 pub use online::{
@@ -21,6 +22,7 @@ pub use online::{
     OnlineProblem, OnlineTarget, Site,
 };
 pub use review::{GameReview, MoveJudgement, ReviewMove, ReviewPoint, ReviewState, SideReview};
+pub use update::{ApkFile, AppRelease, ReleaseCheck};
 
 uniffi::setup_scaffolding!();
 

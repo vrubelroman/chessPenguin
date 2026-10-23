@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Games from Lichess and Chess.com, only when asked for (android-ui.md §23). -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Whether there is a network, before a download (the engine's, an update) and a check
+         for updates: in both builds. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The app installs its own updates (android-ui.md §25); the second one lets Android
+         skip its question when the app installed the previous version itself. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <application
         android:name=".ChessPenguinApp"
@@ -46,6 +53,10 @@
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
+        <!-- The package installer's answer to an update (data/AppUpdates.kt). -->
+        <receiver
+            android:name=".data.InstallResult"
+            android:exported="false" />
     </application>
 
 </manifest>

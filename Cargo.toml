@@ -6,6 +6,7 @@ members = [
     "crates/uci",
     "crates/game-review",
     "crates/online-games",
+    "crates/releases",
     "crates/mobile-api",
     "apps/desktop",
 ]
@@ -39,6 +40,7 @@ chess-import = { path = "crates/chess-import" }
 uci = { path = "crates/uci" }
 game-review = { path = "crates/game-review" }
 online-games = { path = "crates/online-games" }
+releases = { path = "crates/releases" }
 
 [profile.dev.package."*"]
 opt-level = 2

@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import android.net.Uri
 import android.provider.OpenableColumns
+import io.github.vrubelroman.chesspenguin.data.AppUpdates
 import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.EngineFiles
 import io.github.vrubelroman.chesspenguin.data.Library
@@ -31,6 +32,8 @@ class ChessPenguinApp : Application() {
     val engineFiles by lazy { EngineFiles(this, scope) }
     /// Games from Lichess and Chess.com being downloaded (android-ui.md §23).
     val downloads by lazy { OnlineDownloads(library, scope) }
+    /// The app's own updates (android-ui.md §25).
+    val updates by lazy { AppUpdates(this, scope, engineFiles) }
 
     /// The games shown on the list of each database (after a search), for paging
     /// games from the game screen: database id → game numbers.

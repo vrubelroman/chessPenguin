@@ -2,6 +2,19 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Android: **the app updates itself.** Once a day (a switch in About turns it off; «Check
+  now» is there too) it asks GitHub for the latest release. A newer one shows as a card
+  over the list of databases: «Update» downloads the small build (about 9 MB; the engine
+  already on the phone stays — the build with Stockfish inside keeps it first), checks it
+  against the release's SHA-256 and hands it to Android to install. The first time Android
+  asks to allow installs from ChessPenguin; the app leads there and back. The download
+  goes on with the app in the background, and the next start says what was updated.
+- The release page on GitHub now lists what is new in that version (from this file); the
+  apps' and the site's «What's new» lead there.
+- The desktop and Android apps share one check for new releases.
+
 ## [0.14.0] — 2026-10-23
 
 - Android: **games from Lichess and Chess.com** — «Add a database» → «Games from Lichess

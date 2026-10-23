@@ -26,6 +26,7 @@ directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 online-games.workspace = true
+releases.workspace = true
 # Downloading the official Stockfish on request (decision 14).
 ureq = "3.4"
 flate2 = "1.1"

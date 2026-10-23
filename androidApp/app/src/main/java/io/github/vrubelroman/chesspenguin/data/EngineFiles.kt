@@ -56,6 +56,9 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
     private var job: Job? = null
 
     init {
+        // A network of another version of Stockfish (kept before an update, §25.6) is of
+        // no use to this one.
+        dir.listFiles()?.filter { it.name != net.name && it.name != part.name }?.forEach { it.delete() }
         when {
             installed() -> _state.value = NetState.Ready
             download() != NO_DOWNLOAD -> {
@@ -121,6 +124,24 @@ class EngineFiles(private val context: Context, private val scope: CoroutineScop
         prefs.edit().putLong(KEY, id).apply()
         _state.value = NetState.Loading(0, BuildConfig.NET_SIZE)
         watch(id)
+    }
+
+    /// Keeps the network of the full build in the app's storage, so that it stays after
+    /// the app is updated to the light build (android-ui.md §25.6). False when it could
+    /// not (no space): the light build then offers the download, as always.
+    suspend fun keepBuiltIn(): Boolean = withContext(Dispatchers.IO) {
+        if (!builtIn || installed()) return@withContext true
+        if (freeSpace() < 2 * BuildConfig.NET_SIZE) return@withContext false
+        try {
+            dir.mkdirs()
+            context.assets.open(BuildConfig.NET_NAME).use { install(it) }
+            _state.value = NetState.Ready
+            true
+        } catch (e: Exception) {
+            part.delete()
+            if (!installed()) _state.value = NetState.Missing
+            false
+        }
     }
 
     /// Stops a download and throws away what came.

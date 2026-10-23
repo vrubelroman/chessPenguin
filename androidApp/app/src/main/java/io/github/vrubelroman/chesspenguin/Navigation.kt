@@ -27,6 +27,7 @@ import uniffi.mobile_api.ApiException
 import java.io.FileNotFoundException
 import io.github.vrubelroman.chesspenguin.ui.app
 import io.github.vrubelroman.chesspenguin.ui.openProblem
+import io.github.vrubelroman.chesspenguin.ui.UpdateSheet
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
@@ -76,6 +77,9 @@ fun MainNavigation() {
             show(it.entry)
         }
     }
+    // The app's update, over any screen (android-ui.md §25.3).
+    val updateSheet by app.updates.sheet.collectAsState()
+    if (updateSheet) UpdateSheet()
     when (val i = incoming) {
         Incoming.Opening -> Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
             Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
