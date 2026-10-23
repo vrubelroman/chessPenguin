@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.16.1" date="2026-10-24">
+      <description>
+        <p>The filter panel keeps its width while a name is typed and its rows are aligned. Escape in a game with unsaved edits asks about saving again.</p>
+      </description>
+    </release>
     <release version="0.16.0" date="2026-10-24">
       <description>
         <p>Every database — PGN files of any size, downloads from Lichess and Chess.com, archives and small ChessBase databases — gets the filters and the position search of a large ChessBase database: players, tournament, years, rating, result, ECO, length, comments, variations, with name suggestions and sorting. A quick search in the header of every database finds each word in any field. Games downloaded from Lichess and Chess.com are shown newest first.</p>

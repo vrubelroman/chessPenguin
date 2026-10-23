@@ -2,6 +2,14 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.16.1] — 2026-10-24
+
+- Desktop: the filter panel no longer widens while a name is typed; the rows of «Game»
+  (years, rating, moves, ECO) are aligned on one grid.
+- Desktop: Escape in a game with unsaved edits asks about saving (the question used to
+  close at once, so Escape seemed to do nothing); Escape in the question goes on without
+  saving, Cancel stays in the game.
+
 ## [0.16.0] — 2026-10-24
 
 - Desktop: **every database gets the filters and the position search of a ChessBase
