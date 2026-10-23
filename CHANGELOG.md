@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.16.0] — 2026-10-24
 
 - Desktop: **every database gets the filters and the position search of a ChessBase
   database** — PGN files of any size, downloads from Lichess and Chess.com, archives and
