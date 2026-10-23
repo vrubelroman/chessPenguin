@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.13.0" date="2026-10-23">
+      <description>
+        <p>The Android app gets the game report of the desktop: inaccuracies, mistakes and blunders in the notation, an evaluation graph, each player's accuracy, and the better move of every error on the board. Both apps now share the same report code and give the same numbers.</p>
+      </description>
+    </release>
     <release version="0.12.0" date="2026-10-23">
       <description>
         <p>A game whose tags follow the previous game's result on the same line now shows its players in the games list. The Android app pastes PGN from the clipboard, opens files from other apps, and stays smooth while the engine thinks.</p>

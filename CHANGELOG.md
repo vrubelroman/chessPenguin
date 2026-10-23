@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.13.0] — 2026-10-23
 
 - Android: **game report** — ⋮ → «Game analysis» lets Stockfish evaluate every move of the
   main line, as on the desktop: inaccuracies, mistakes and blunders marked in the notation,
