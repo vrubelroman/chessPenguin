@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.15.0] — 2026-10-23
 
 - Android: **the app updates itself.** Once a day (a switch in About turns it off; «Check
   now» is there too) it asks GitHub for the latest release. A newer one shows as a card

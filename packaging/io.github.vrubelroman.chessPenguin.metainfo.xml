@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.15.0" date="2026-10-23">
+      <description>
+        <p>The Android app updates itself: it finds a new release, downloads and checks it, and hands it to Android to install. The release page now lists what is new. The desktop app checks for updates with the same shared code; nothing changes for it otherwise.</p>
+      </description>
+    </release>
     <release version="0.14.0" date="2026-10-23">
       <description>
         <p>The Android app downloads any player's games from Lichess and Chess.com by nickname into a database, lists them from the most recent one, and later fetches only the new games. Its status bar follows the theme chosen in the app.</p>
