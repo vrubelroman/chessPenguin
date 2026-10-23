@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -69,6 +70,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.vrubelroman.chesspenguin.R
+import androidx.compose.material3.LinearProgressIndicator
+import io.github.vrubelroman.chesspenguin.data.DownloadView
+import io.github.vrubelroman.chesspenguin.data.Finished
 import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.FolderScan
 import io.github.vrubelroman.chesspenguin.data.Source
@@ -78,13 +82,27 @@ import kotlinx.coroutines.launch
 /// The first screen: the databases on the list (android-ui.md §3).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSettings: () -> Unit) {
+fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSettings: () -> Unit, onOnline: () -> Unit) {
     val library = app().library
+    val downloads = app().downloads
+    val views by downloads.views.collectAsState()
     val entries by library.entries.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val removedText = stringResource(R.string.removed)
     val removedCopyText = stringResource(R.string.removed_copy)
+    val removedOnlineText = stringResource(R.string.online_removed)
+    val resourcesForSnack = LocalResources.current
+    val openText = stringResource(R.string.online_open_short)
+    // How a download ended, said while this screen is shown (android-ui.md §23.3).
+    LaunchedEffect(Unit) {
+        downloads.finished.collect { f ->
+            val text = finishedText(resourcesForSnack, f) ?: return@collect
+            snackbar.currentSnackbarData?.dismiss()
+            val canOpen = f.games > 0 && library.entry(f.id) != null
+            if (snackbar.showSnackbar(text, if (canOpen) openText else null, withDismissAction = false) == SnackbarResult.ActionPerformed) onOpen(f.id)
+        }
+    }
     val undoText = stringResource(R.string.undo)
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onOpen(library.addFile(uri).id)
@@ -157,17 +175,27 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                 items(entries, key = { it.id }) { e ->
                     DatabaseRow(
                         e,
+                        download = views[e.id],
                         onOpen = { onOpen(e.id) },
                         onRename = { renaming = e },
+                        onUpdate = { downloads.update(e) },
+                        onStop = { downloads.cancel(e.id) },
                         onRemove = {
+                            // A download into it stops first: its file goes with it.
+                            downloads.cancel(e.id)
                             val removed = library.remove(e.id) ?: return@DatabaseRow
                             scope.launch {
                                 snackbar.currentSnackbarData?.dismiss()
                                 var restored = false
                                 try {
                                     // A copy is deleted, not only taken off the list.
-                                    val text = if (e.source == Source.Copy) removedCopyText else removedText
-                                    if (snackbar.showSnackbar(text, undoText, withDismissAction = false) == SnackbarResult.ActionPerformed) {
+                                    val text = when (e.source) {
+                                        Source.Copy -> removedCopyText
+                                        Source.Online -> removedOnlineText
+                                        else -> removedText
+                                    }
+                                    // Not for ever: the deleted file goes once "Undo" is gone.
+                                    if (snackbar.showSnackbar(text, undoText, withDismissAction = false, duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) {
                                         library.restore(removed.first, removed.second)
                                         restored = true
                                     }
@@ -215,6 +243,10 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                         }
                     }
                 }
+            },
+            onOnline = {
+                choosing = false
+                onOnline()
             },
             onDismiss = { choosing = false },
         )
@@ -283,45 +315,85 @@ private fun Empty(modifier: Modifier, onAdd: () -> Unit, onSamples: () -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DatabaseRow(e: DbEntry, onOpen: () -> Unit, onRename: () -> Unit, onRemove: () -> Unit, modifier: Modifier) {
+private fun DatabaseRow(
+    e: DbEntry,
+    download: DownloadView?,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onUpdate: () -> Unit,
+    onStop: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier,
+) {
     var menu by remember { mutableStateOf(false) }
     val format = badge(e)
+    val running = download?.state?.running == true
+    val failure = download?.state?.failure?.takeIf { !running }
     val subtitle = e.games?.let {
         stringResource(R.string.games_with_format, pluralStringResource(R.plurals.games_count, it, groupDigits(it)), e.format ?: format)
     } ?: stringResource(R.string.not_opened, formatName(e))
-    // A copy kept in the app says so: removing it deletes it.
-    val shownSubtitle = if (e.source == Source.Copy) subtitle + " · " + stringResource(R.string.db_copy) else subtitle
-    Row(
-        modifier
-            .fillMaxWidth()
-            .height(72.dp)
-            .combinedClickable(onClick = onOpen, onLongClick = { menu = true })
-            .padding(start = 16.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FormatBadge(format)
-        Column(Modifier.weight(1f).padding(start = 16.dp)) {
-            Text(displayName(e), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                shownSubtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+    val shownSubtitle = when {
+        // A copy kept in the app says so: removing it deletes it.
+        e.source == Source.Copy -> subtitle + " · " + stringResource(R.string.db_copy)
+        e.source != Source.Online -> subtitle
+        // A downloaded database: how its download goes, or when it was last brought up to date.
+        running -> stringResource(R.string.online_downloading, groupDigits(((e.games ?: 0) + download.state.added.toInt())))
+        else -> pluralStringResource(R.plurals.games_count, e.games ?: 0, groupDigits(e.games ?: 0)) + " · " + when {
+            // The games stay in the line: the database is not empty because a site failed.
+            failure != null -> onlineProblemShort(failure)
+            e.updated == null -> stringResource(R.string.online_unfinished)
+            System.currentTimeMillis() - e.updated * 1000 < 60_000 -> stringResource(R.string.online_updated_now)
+            else -> stringResource(
+                R.string.online_updated,
+                DateUtils.getRelativeTimeSpanString(e.updated * 1000, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString(),
             )
         }
-        Box {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, stringResource(R.string.menu)) }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, onClick = {
-                    menu = false
-                    onRename()
-                })
-                DropdownMenuItem(text = { Text(stringResource(R.string.remove)) }, onClick = {
-                    menu = false
-                    onRemove()
-                })
+    }
+    Box(modifier) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .combinedClickable(onClick = onOpen, onLongClick = { menu = true })
+                .padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FormatBadge(format)
+            Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                Text(displayName(e), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    shownSubtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (failure != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, stringResource(R.string.menu)) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    if (e.source == Source.Online) {
+                        DropdownMenuItem(text = { Text(stringResource(if (running) R.string.online_stop_download else R.string.online_update)) }, onClick = {
+                            menu = false
+                            if (running) onStop() else onUpdate()
+                        })
+                    }
+                    DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, onClick = {
+                        menu = false
+                        onRename()
+                    })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.remove)) }, onClick = {
+                        menu = false
+                        onRemove()
+                    })
+                }
+            }
+        }
+        // A download going on: a thin bar along the bottom of the row (§23.3).
+        if (running) {
+            val share = downloadShare(download)
+            val bar = Modifier.fillMaxWidth().height(2.dp).align(Alignment.BottomStart)
+            if (share != null) LinearProgressIndicator(progress = { share }, modifier = bar) else LinearProgressIndicator(bar)
         }
     }
 }
@@ -357,4 +429,17 @@ private fun pastedName(db: Database, dated: String): String {
         rows.map { it.event.trim() }.distinct().singleOrNull()?.takeIf { it.isNotEmpty() && it != "?" }?.let { return it }
     }
     return dated
+}
+
+/// The snackbar of a finished download: "“Name”: +12, 1 246 games in all", "“Name”: no
+/// new games", "“Name”: Lichess does not answer"; none when it was stopped or got nothing.
+fun finishedText(res: android.content.res.Resources, f: Finished): String? {
+    val s = f.view.state
+    val games = res.getQuantityString(R.plurals.games_count, f.games, groupDigits(f.games))
+    s.failure?.let { return res.getString(R.string.online_snack_failed, f.name, problemShort(res, it)) }
+    return when {
+        s.cancelled || f.games == 0 -> null
+        s.added == 0UL -> res.getString(R.string.online_snack_none, f.name)
+        else -> res.getString(R.string.online_snack_added, f.name, groupDigits(s.added.toInt()), games)
+    }
 }

@@ -57,6 +57,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.vrubelroman.chesspenguin.R
+import io.github.vrubelroman.chesspenguin.data.Source
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material.icons.rounded.Download
 import io.github.vrubelroman.chesspenguin.theme.Tabular
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -76,7 +83,8 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
     val entry = entries.firstOrNull { it.id == db }
     var database by remember { mutableStateOf<Database?>(null) }
     var failed by remember { mutableStateOf<Throwable?>(null) }
-    LaunchedEffect(db) {
+    // Read again when a download brought new games into it (android-ui.md §23).
+    LaunchedEffect(db, entry?.games, entry?.updated) {
         app.library.database(db).onSuccess { database = it }.onFailure { failed = it }
     }
     var searching by rememberSaveable { mutableStateOf(false) }
@@ -87,7 +95,7 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
     LaunchedEffect(database, query) {
         val d = database ?: return@LaunchedEffect
         if (query.isNotEmpty()) delay(250)
-        val found = withContext(Dispatchers.Default) { d.find(query) }
+        val found = withContext(Dispatchers.Default) { app.library.listed(db, d, query) }
         rows.clear()
         shown = found
         // New results start at the top.
@@ -95,6 +103,18 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
         app.shown[db] = found
     }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    val download = app.downloads.views.collectAsState().value[db]
+    val snackbar = remember { SnackbarHostState() }
+    val resources = LocalResources.current
+    // How a download of this database ended (§23.3); the list reads it again by itself.
+    LaunchedEffect(db) {
+        app.downloads.finished.collect { f ->
+            if (f.id != db) return@collect
+            val text = finishedText(resources, f) ?: return@collect
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(text)
+        }
+    }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     BackHandler(searching) {
@@ -153,13 +173,28 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
                         }) { Icon(Icons.Rounded.Close, stringResource(R.string.clear)) }
                     } else if (database != null) {
                         IconButton(onClick = { searching = true }) { Icon(Icons.Rounded.Search, stringResource(R.string.search)) }
+                        // A downloaded database: its new games from here, where they are
+                        // looked for (android-ui.md §23.3); ✕ while they come.
+                        if (entry?.source == Source.Online) {
+                            if (download?.state?.running == true) {
+                                IconButton(onClick = { app.downloads.cancel(db) }) { Icon(Icons.Rounded.Close, stringResource(R.string.online_stop_download)) }
+                            } else {
+                                IconButton(onClick = { entry.let { app.downloads.update(it) } }) { Icon(Icons.Rounded.Download, stringResource(R.string.online_update)) }
+                            }
+                        }
                     }
                 },
                 scrollBehavior = scroll,
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
+            download?.takeIf { it.state.running }?.let { v ->
+                val share = downloadShare(v)
+                val bar = Modifier.fillMaxWidth().height(2.dp).align(Alignment.TopStart).zIndex(1f)
+                if (share != null) LinearProgressIndicator(progress = { share }, modifier = bar) else LinearProgressIndicator(bar)
+            }
             val games = shown
             when {
                 failed != null -> Message(stringResource(R.string.open_failed), openProblem(failed!!)) {

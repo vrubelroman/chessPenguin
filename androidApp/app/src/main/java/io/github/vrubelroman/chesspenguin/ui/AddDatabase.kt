@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
@@ -52,10 +53,11 @@ import io.github.vrubelroman.chesspenguin.data.FolderScan
 import io.github.vrubelroman.chesspenguin.data.Found
 import io.github.vrubelroman.chesspenguin.data.Source
 
-/// "Add a database": games in the clipboard, a file, or every database in a folder.
+/// "Add a database": games in the clipboard, a file, every database in a folder, or a
+/// player's games from Lichess and Chess.com.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddSheet(onFile: () -> Unit, onFolder: () -> Unit, onPaste: (() -> Unit)?, onDismiss: () -> Unit) {
+fun AddSheet(onFile: () -> Unit, onFolder: () -> Unit, onPaste: (() -> Unit)?, onOnline: () -> Unit, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.navigationBarsPadding().padding(bottom = 24.dp)) {
             Text(
@@ -74,6 +76,13 @@ fun AddSheet(onFile: () -> Unit, onFolder: () -> Unit, onPaste: (() -> Unit)?, o
                     modifier = Modifier.clickable(role = Role.Button, onClick = onPaste).padding(horizontal = 8.dp),
                 )
             }
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.online_title)) },
+                supportingContent = { Text(stringResource(R.string.add_online_hint)) },
+                leadingContent = { Icon(Icons.Outlined.CloudDownload, null) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier.clickable(role = Role.Button, onClick = onOnline).padding(horizontal = 8.dp),
+            )
             ListItem(
                 headlineContent = { Text(stringResource(R.string.add_file)) },
                 supportingContent = { Text(stringResource(R.string.add_file_hint)) },

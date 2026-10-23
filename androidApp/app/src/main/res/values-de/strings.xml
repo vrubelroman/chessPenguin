@@ -3,7 +3,7 @@
     <string name="sample_alekhine">Aljechin</string>
 
     <string name="empty_title">Hier erscheinen Ihre Datenbanken</string>
-    <string name="empty_text">Fügen Sie eine Datei oder einen Ordner mit Datenbanken hinzu: PGN, ChessBase, .zip- und .7z-Archive — vom Telefon oder aus der Cloud.</string>
+    <string name="empty_text">Fügen Sie eine PGN-Datei, eine ChessBase-Datenbank oder ein .zip/.7z-Archiv hinzu – vom Telefon oder aus der Cloud – oder laden Sie Partien von Lichess und Chess.com.</string>
     <string name="add_database">Datenbank hinzufügen</string>
     <string name="open_samples">Beispielpartien öffnen</string>
     <string name="not_opened">noch nicht geöffnet · %1$s</string>
@@ -270,5 +270,62 @@
     <plurals name="review_estimate">
         <item quantity="one">%1$d Stellung, etwa %2$s</item>
         <item quantity="other">%1$d Stellungen, etwa %2$s</item>
+    </plurals>
+    <!-- Games from Lichess and Chess.com (android-ui.md §23) -->
+    <string name="online_title">Partien von Lichess und Chess.com</string>
+    <string name="add_online_hint">Partien beliebiger Spieler per Nickname: eigene, eines Schülers, eines Gegners</string>
+    <string name="online_intro">Die Partien des Spielers werden zu einer Datenbank auf dem Telefon – zum Suchen, Ansehen und Analysieren. Nur der Nickname ist nötig, keine Anmeldung.</string>
+    <string name="online_nick">Nickname des Spielers</string>
+    <string name="online_nick_hint">wie auf der Seite</string>
+    <string name="online_other">Anderer Nickname auf Chess.com</string>
+    <string name="online_other_nick">Nickname auf Chess.com</string>
+    <string name="online_same_nick">Derselbe Nickname</string>
+    <string name="online_nick_rule">Lateinische Buchstaben, Ziffern, _ und -, 2 bis 30 Zeichen</string>
+    <string name="online_find">Suchen</string>
+    <string name="online_searching">Suche auf den Seiten…</string>
+    <string name="online_lichess_found">%1$s · beim ersten Mal etwa %2$d Min.</string>
+    <string name="online_chesscom_found">Monate mit Partien: %1$d</string>
+    <string name="online_not_found">%1$s: kein Spieler mit diesem Nickname – Schreibweise prüfen</string>
+    <string name="online_merge">Beide Seiten in einer Datenbank zusammenführen</string>
+    <string name="online_merge_hint">Sonst bekommt jede Seite eine eigene Datenbank</string>
+    <string name="online_into_new">In die neue Datenbank „%1$s“</string>
+    <string name="online_into_existing">In „%1$s“ (schon %2$s dort; nur neue Partien kommen dazu)</string>
+    <string name="online_download">Herunterladen</string>
+    <string name="online_progress_lichess">Lichess: %1$s von etwa %2$s · noch etwa %3$d Min.</string>
+    <string name="online_progress_count">%1$s: %2$s</string>
+    <string name="online_progress_chesscom">Chess.com: Monat %1$d von %2$d · %3$s</string>
+    <string name="online_stop">Anhalten</string>
+    <string name="online_added">+%1$s, insgesamt %2$s</string>
+    <string name="online_no_new">Keine neuen Partien, %1$s in der Datenbank</string>
+    <string name="online_stopped">Angehalten, %1$s in der Datenbank</string>
+    <string name="online_no_games">Dort gibt es keine Partien im Standardschach.</string>
+    <string name="online_open">Datenbank öffnen</string>
+    <string name="online_try_again">Erneut versuchen</string>
+    <string name="online_err_network">%1$s antwortet nicht. Prüfen Sie die Internetverbindung und versuchen Sie es erneut.</string>
+    <string name="online_err_rate">%1$s bittet um eine Pause: zu viele Anfragen hintereinander. Warten Sie eine Minute und versuchen Sie es erneut; Geladenes bleibt erhalten.</string>
+    <string name="online_err_unexpected">%1$s hat unverständlich geantwortet: die Seite hat sich vielleicht geändert. Versuchen Sie es später oder aktualisieren Sie ChessPenguin.</string>
+    <string name="online_err_disk">Die Datenbank konnte nicht geschrieben werden: auf dem Telefon ist kein Platz mehr.</string>
+    <string name="online_err_busy">Diese Datenbank wird bereits geladen.</string>
+    <string name="online_short_network">%1$s antwortet nicht</string>
+    <string name="online_short_rate">%1$s bittet um eine Pause</string>
+    <string name="online_short_failed">Der Download wurde unterbrochen</string>
+    <string name="online_update">Neue Partien laden</string>
+    <string name="online_stop_download">Download anhalten</string>
+    <string name="online_downloading">Wird geladen · %1$s</string>
+    <string name="online_updated">aktualisiert %1$s</string>
+    <string name="online_unfinished">unvollständig</string>
+    <string name="online_removed">Geladene Datenbank gelöscht</string>
+    <string name="online_nick_lichess">Nickname auf Lichess</string>
+    <string name="online_lichess_quick">%1$s · beim ersten Mal unter einer Minute</string>
+    <string name="online_leave">Sie können diesen Bildschirm verlassen: die Datenbank ist in der Liste, der Download läuft weiter.</string>
+    <string name="online_done">Fertig: %1$s</string>
+    <string name="online_updated_now">gerade aktualisiert</string>
+    <string name="online_snack_added">„%1$s“: +%2$s, insgesamt %3$s</string>
+    <string name="online_snack_none">„%1$s“: keine neuen Partien</string>
+    <string name="online_snack_failed">„%1$s“: %2$s</string>
+    <string name="online_open_short">Öffnen</string>
+    <plurals name="games_up_to">
+        <item quantity="one">bis zu %1$s Partie</item>
+        <item quantity="other">bis zu %1$s Partien</item>
     </plurals>
 </resources>

@@ -145,7 +145,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             return@LaunchedEffect
         }
         // After the process was restarted the list is gone: the same search finds it again.
-        val list = games ?: withContext(Dispatchers.Default) { database.find(query) }.also {
+        val list = games ?: withContext(Dispatchers.Default) { app.library.listed(db, database, query) }.also {
             games = it
             app.shown[db] = it
         }

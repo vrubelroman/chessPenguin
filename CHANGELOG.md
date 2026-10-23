@@ -4,6 +4,17 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Android: **games from Lichess and Chess.com** — «Add a database» → «Games from Lichess
+  and Chess.com»: any player's games by nickname (yours, a pupil's, an opponent's; no login,
+  another nickname for Chess.com if it differs) become a database on the phone, both sites
+  merged into one by default. «Download new games» — in the database's menu and over its
+  games list — fetches only the games played since; a download that was stopped, failed or
+  cut off by a closed app continues where it stopped, without duplicates. The games of such
+  a database are listed from the most recent one. The download goes on when the screen is
+  left; the list shows its progress and says how it ended. Only standard chess is kept. The
+  app asks the sites only when told to (both builds may now use the internet for this).
+- The downloads of games from Lichess and Chess.com are one shared part of the desktop and
+  Android apps.
 - Android: the status bar and the navigation bar follow the theme chosen in the app: with
   the dark theme on a light phone their icons are light again (they stayed dark on dark).
 

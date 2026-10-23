@@ -25,6 +25,7 @@ bindgen = ["uniffi/cli"]
 chess-core.workspace = true
 chess-import.workspace = true
 game-review.workspace = true
+online-games.workspace = true
 shakmaty.workspace = true
 thiserror.workspace = true
 uci.workspace = true

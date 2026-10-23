@@ -73,31 +73,9 @@ pub struct OnlineDialog {
     focus: bool,
 }
 
-/// Where the found accounts go: all into one database (`together`) or each into its
-/// own. A database already holding the accounts is kept (also when one site does not
-/// answer this time: its partner's games still go where they went before).
+/// Where the found accounts go (see [`online_games::targets`]).
 fn targets(start: &[Account], together: bool) -> Vec<(Vec<Account>, PathBuf)> {
-    let groups: Vec<Vec<Account>> = if together {
-        vec![start.to_vec()]
-    } else {
-        start.iter().map(|a| vec![a.clone()]).collect()
-    };
-    // Only one account found: any database holding it (the merged one first).
-    let any = start.len() == 1;
-    groups
-        .into_iter()
-        .filter_map(|g| {
-            let existing = online::holding(&g[0]).into_iter().find(|p| {
-                online::State::load(p).is_some_and(|s| {
-                    let mine = s.accounts();
-                    any || (mine.len() == g.len()
-                        && g.iter().all(|a| mine.iter().any(|m| m.same(a))))
-                })
-            });
-            let path = existing.or_else(|| online::combined_path(&g))?;
-            Some((g, path))
-        })
-        .collect()
+    online::targets(start, together)
 }
 
 /// The file name of a database without the extension.

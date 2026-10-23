@@ -9,6 +9,7 @@ import android.provider.OpenableColumns
 import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.EngineFiles
 import io.github.vrubelroman.chesspenguin.data.Library
+import io.github.vrubelroman.chesspenguin.data.OnlineDownloads
 import io.github.vrubelroman.chesspenguin.data.Settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +29,8 @@ class ChessPenguinApp : Application() {
     val library by lazy { Library(this) }
     val settings by lazy { Settings(this) }
     val engineFiles by lazy { EngineFiles(this, scope) }
+    /// Games from Lichess and Chess.com being downloaded (android-ui.md §23).
+    val downloads by lazy { OnlineDownloads(library, scope) }
 
     /// The games shown on the list of each database (after a search), for paging
     /// games from the game screen: database id → game numbers.

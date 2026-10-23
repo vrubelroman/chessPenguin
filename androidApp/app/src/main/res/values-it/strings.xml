@@ -3,7 +3,7 @@
     <string name="sample_alekhine">Alekhine</string>
 
     <string name="empty_title">Qui compariranno i tuoi database</string>
-    <string name="empty_text">Aggiungi un file o una cartella di database: PGN, ChessBase, archivi .zip e .7z — dal telefono o dal cloud.</string>
+    <string name="empty_text">Aggiungi un file PGN, un database ChessBase o un archivio .zip/.7z — dal telefono o dal cloud — oppure scarica partite da Lichess e Chess.com.</string>
     <string name="add_database">Aggiungi database</string>
     <string name="open_samples">Apri le partite di esempio</string>
     <string name="not_opened">non ancora aperto · %1$s</string>
@@ -275,5 +275,63 @@
         <item quantity="one">%1$d posizione, circa %2$s</item>
         <item quantity="many">%1$d posizioni, circa %2$s</item>
         <item quantity="other">%1$d posizioni, circa %2$s</item>
+    </plurals>
+    <!-- Games from Lichess and Chess.com (android-ui.md §23) -->
+    <string name="online_title">Partite da Lichess e Chess.com</string>
+    <string name="add_online_hint">Partite di qualsiasi giocatore per nickname: le tue, di un allievo, di un avversario</string>
+    <string name="online_intro">Le partite del giocatore diventano una base sul telefono, da cercare, vedere e analizzare. Serve solo il nickname, senza accesso.</string>
+    <string name="online_nick">Nickname del giocatore</string>
+    <string name="online_nick_hint">come sul sito</string>
+    <string name="online_other">Un altro nickname su Chess.com</string>
+    <string name="online_other_nick">Nickname su Chess.com</string>
+    <string name="online_same_nick">Lo stesso nickname</string>
+    <string name="online_nick_rule">Lettere latine, cifre, _ e -, da 2 a 30 caratteri</string>
+    <string name="online_find">Cerca</string>
+    <string name="online_searching">Cerco sui siti…</string>
+    <string name="online_lichess_found">%1$s · la prima volta circa %2$d min</string>
+    <string name="online_chesscom_found">mesi con partite: %1$d</string>
+    <string name="online_not_found">%1$s: nessun giocatore con questo nickname — controlla come è scritto</string>
+    <string name="online_merge">Unire entrambi i siti in una sola base</string>
+    <string name="online_merge_hint">Altrimenti ogni sito avrà la sua base</string>
+    <string name="online_into_new">Nella nuova base «%1$s»</string>
+    <string name="online_into_existing">In «%1$s» (già %2$s; si aggiungono solo le nuove)</string>
+    <string name="online_download">Scarica</string>
+    <string name="online_progress_lichess">Lichess: %1$s di circa %2$s · mancano circa %3$d min</string>
+    <string name="online_progress_count">%1$s: %2$s</string>
+    <string name="online_progress_chesscom">Chess.com: mese %1$d di %2$d · %3$s</string>
+    <string name="online_stop">Ferma</string>
+    <string name="online_added">+%1$s, %2$s in tutto</string>
+    <string name="online_no_new">Nessuna partita nuova, %1$s nella base</string>
+    <string name="online_stopped">Fermato, %1$s nella base</string>
+    <string name="online_no_games">Lì non ci sono partite di scacchi standard.</string>
+    <string name="online_open">Apri la base</string>
+    <string name="online_try_again">Riprova</string>
+    <string name="online_err_network">%1$s non risponde. Controlla la connessione a internet e riprova.</string>
+    <string name="online_err_rate">%1$s chiede una pausa: troppe richieste di fila. Aspetta un minuto e riprova; il già scaricato resta.</string>
+    <string name="online_err_unexpected">%1$s ha risposto in un modo che ChessPenguin non capisce: forse il sito è cambiato. Riprova più tardi o aggiorna ChessPenguin.</string>
+    <string name="online_err_disk">Impossibile scrivere la base: il telefono non ha spazio.</string>
+    <string name="online_err_busy">Questa base è già in download.</string>
+    <string name="online_short_network">%1$s non risponde</string>
+    <string name="online_short_rate">%1$s chiede una pausa</string>
+    <string name="online_short_failed">Il download si è interrotto</string>
+    <string name="online_update">Scarica le partite nuove</string>
+    <string name="online_stop_download">Ferma il download</string>
+    <string name="online_downloading">Download in corso · %1$s</string>
+    <string name="online_updated">aggiornata %1$s</string>
+    <string name="online_unfinished">incompleta</string>
+    <string name="online_removed">Base scaricata eliminata</string>
+    <string name="online_nick_lichess">Nickname su Lichess</string>
+    <string name="online_lichess_quick">%1$s · la prima volta meno di un minuto</string>
+    <string name="online_leave">Puoi uscire da questa schermata: la base è già nell\'elenco e il download continua.</string>
+    <string name="online_done">Fatto: %1$s</string>
+    <string name="online_updated_now">aggiornata adesso</string>
+    <string name="online_snack_added">«%1$s»: +%2$s, %3$s in tutto</string>
+    <string name="online_snack_none">«%1$s»: nessuna partita nuova</string>
+    <string name="online_snack_failed">«%1$s»: %2$s</string>
+    <string name="online_open_short">Apri</string>
+    <plurals name="games_up_to">
+        <item quantity="one">fino a %1$s partita</item>
+        <item quantity="many">fino a %1$s partite</item>
+        <item quantity="other">fino a %1$s partite</item>
     </plurals>
 </resources>

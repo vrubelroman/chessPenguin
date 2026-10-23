@@ -3,7 +3,7 @@
     <string name="sample_alekhine">Алехин</string>
 
     <string name="empty_title">Здесь будут ваши базы</string>
-    <string name="empty_text">Добавьте файл или папку с базами: PGN, ChessBase, архивы .zip и .7z — с телефона или из облака.</string>
+    <string name="empty_text">Добавьте файл PGN, базу ChessBase или архив .zip/.7z — с телефона или из облака — или скачайте партии с Lichess и Chess.com.</string>
     <string name="add_database">Добавить базу</string>
     <string name="open_samples">Открыть примеры партий</string>
     <string name="not_opened">ещё не открывалась · %1$s</string>
@@ -280,5 +280,64 @@
         <item quantity="few">Позиций: %1$d, примерно %2$s</item>
         <item quantity="many">Позиций: %1$d, примерно %2$s</item>
         <item quantity="other">Позиций: %1$d, примерно %2$s</item>
+    </plurals>
+    <!-- Games from Lichess and Chess.com (android-ui.md §23) -->
+    <string name="online_title">Партии с Lichess и Chess.com</string>
+    <string name="add_online_hint">Партии любого игрока по нику: свои, ученика, соперника</string>
+    <string name="online_intro">Партии игрока станут базой на телефоне — искать, смотреть, анализировать. Нужен только ник, входить на сайт не нужно.</string>
+    <string name="online_nick">Ник игрока</string>
+    <string name="online_nick_hint">как на сайте</string>
+    <string name="online_other">На Chess.com другой ник</string>
+    <string name="online_other_nick">Ник на Chess.com</string>
+    <string name="online_same_nick">Тот же ник</string>
+    <string name="online_nick_rule">Латиница, цифры, _ и -, от 2 до 30 символов</string>
+    <string name="online_find">Найти</string>
+    <string name="online_searching">Ищу на сайтах…</string>
+    <string name="online_lichess_found">%1$s · первый раз около %2$d мин</string>
+    <string name="online_chesscom_found">месяцев с партиями: %1$d</string>
+    <string name="online_not_found">%1$s: игрока с таким ником нет — проверьте написание</string>
+    <string name="online_merge">Объединить оба сайта в одну базу</string>
+    <string name="online_merge_hint">Иначе у каждого сайта будет своя база</string>
+    <string name="online_into_new">В новую базу «%1$s»</string>
+    <string name="online_into_existing">В базу «%1$s» (там уже %2$s; добавятся только новые)</string>
+    <string name="online_download">Скачать</string>
+    <string name="online_progress_lichess">Lichess: %1$s из примерно %2$s · осталось около %3$d мин</string>
+    <string name="online_progress_count">%1$s: %2$s</string>
+    <string name="online_progress_chesscom">Chess.com: месяц %1$d из %2$d · %3$s</string>
+    <string name="online_stop">Остановить</string>
+    <string name="online_added">+%1$s, всего %2$s</string>
+    <string name="online_no_new">Новых партий нет, в базе %1$s</string>
+    <string name="online_stopped">Остановлено, в базе %1$s</string>
+    <string name="online_no_games">Партий в обычные шахматы там нет.</string>
+    <string name="online_open">Открыть базу</string>
+    <string name="online_try_again">Попробовать ещё раз</string>
+    <string name="online_err_network">%1$s не отвечает. Проверьте подключение к интернету и попробуйте ещё раз.</string>
+    <string name="online_err_rate">%1$s просит сделать паузу: слишком много запросов подряд. Подождите минуту и попробуйте снова — скачанное сохранится.</string>
+    <string name="online_err_unexpected">%1$s ответил непонятно — возможно, сайт что-то поменял. Попробуйте позже или обновите ChessPenguin.</string>
+    <string name="online_err_disk">Не удалось записать базу: на телефоне не хватает места.</string>
+    <string name="online_err_busy">Эта база уже скачивается.</string>
+    <string name="online_short_network">%1$s не отвечает</string>
+    <string name="online_short_rate">%1$s просит паузу</string>
+    <string name="online_short_failed">Скачивание прервалось</string>
+    <string name="online_update">Скачать новые партии</string>
+    <string name="online_stop_download">Остановить скачивание</string>
+    <string name="online_downloading">Скачивается · %1$s</string>
+    <string name="online_updated">обновлено %1$s</string>
+    <string name="online_unfinished">не докачана</string>
+    <string name="online_removed">Скачанная база удалена</string>
+    <string name="online_nick_lichess">Ник на Lichess</string>
+    <string name="online_lichess_quick">%1$s · первый раз меньше минуты</string>
+    <string name="online_leave">Можно уйти с этого экрана: база уже в списке, скачивание продолжится.</string>
+    <string name="online_done">Готово: %1$s</string>
+    <string name="online_updated_now">обновлено только что</string>
+    <string name="online_snack_added">«%1$s»: +%2$s, всего %3$s</string>
+    <string name="online_snack_none">«%1$s»: новых партий нет</string>
+    <string name="online_snack_failed">«%1$s»: %2$s</string>
+    <string name="online_open_short">Открыть</string>
+    <plurals name="games_up_to">
+        <item quantity="one">до %1$s партии</item>
+        <item quantity="few">до %1$s партий</item>
+        <item quantity="many">до %1$s партий</item>
+        <item quantity="other">до %1$s партии</item>
     </plurals>
 </resources>

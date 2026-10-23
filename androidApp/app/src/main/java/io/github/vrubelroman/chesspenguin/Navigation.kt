@@ -29,6 +29,8 @@ import io.github.vrubelroman.chesspenguin.ui.app
 import io.github.vrubelroman.chesspenguin.ui.openProblem
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
+import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import io.github.vrubelroman.chesspenguin.ui.AboutScreen
@@ -37,6 +39,7 @@ import io.github.vrubelroman.chesspenguin.ui.DatabasesScreen
 import io.github.vrubelroman.chesspenguin.ui.SettingsScreen
 import io.github.vrubelroman.chesspenguin.ui.GameScreen
 import io.github.vrubelroman.chesspenguin.ui.GamesScreen
+import io.github.vrubelroman.chesspenguin.ui.OnlineScreen
 import kotlinx.serialization.Serializable
 
 @Serializable data object Databases : NavKey
@@ -52,6 +55,8 @@ import kotlinx.serialization.Serializable
 @Serializable data object AboutKey : NavKey
 
 @Serializable data object BoardStyleKey : NavKey
+
+@Serializable data object OnlineKey : NavKey
 
 @Composable
 fun MainNavigation() {
@@ -92,9 +97,20 @@ fun MainNavigation() {
     NavDisplay(
         backStack = backStack,
         onBack = { backStack.removeLastOrNull() },
+        // Each screen keeps its own saved state and view models: they go with the screen
+        // when it leaves the stack (the search of the online screen must not outlive it).
+        entryDecorators = listOf(
+            rememberSaveableStateHolderNavEntryDecorator(),
+            rememberViewModelStoreNavEntryDecorator(),
+        ),
         entryProvider = entryProvider {
             entry<Databases> {
-                DatabasesScreen(onOpen = { backStack.add(Games(it)) }, onAdded = ::show, onSettings = { backStack.add(SettingsKey) })
+                DatabasesScreen(
+                    onOpen = { backStack.add(Games(it)) },
+                    onAdded = ::show,
+                    onSettings = { backStack.add(SettingsKey) },
+                    onOnline = { backStack.add(OnlineKey) },
+                )
             }
             entry<Games> { key ->
                 GamesScreen(key.db, onBack = { backStack.removeLastOrNull() }, onGame = { place, query -> backStack.add(GameAt(key.db, place, query)) })
@@ -111,6 +127,16 @@ fun MainNavigation() {
             }
             entry<BoardStyleKey> {
                 BoardStyleScreen(onBack = { backStack.removeLastOrNull() })
+            }
+            entry<OnlineKey> {
+                OnlineScreen(
+                    onBack = { backStack.removeLastOrNull() },
+                    // The downloaded database instead of this screen: "back" goes to the list.
+                    onOpen = { id ->
+                        backStack.removeLastOrNull()
+                        backStack.add(Games(id))
+                    },
+                )
             }
             entry<AboutKey> {
                 AboutScreen(onBack = { backStack.removeLastOrNull() })

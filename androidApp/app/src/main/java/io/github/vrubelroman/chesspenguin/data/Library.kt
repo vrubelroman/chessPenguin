@@ -39,6 +39,10 @@ enum class Source {
     /// A copy kept inside the app (`files/copies/`): games pasted from the clipboard, a
     /// file opened from another app, which gives access to it only for a while.
     Copy,
+
+    /// A player's games downloaded from Lichess and Chess.com (`files/online/`, with the
+    /// state of the download beside it, android-ui.md §23).
+    Online,
 }
 
 /// A database on the list. The file itself is never changed.
@@ -63,6 +67,8 @@ data class DbEntry(
     val renamed: Boolean = false,
     /// A copy's SHA-256: the same file opened again is not copied twice.
     val sha256: String? = null,
+    /// A downloaded database: when its last download finished (Unix seconds).
+    val updated: Long? = null,
 )
 
 /// Text or a file with no games in it.
@@ -111,6 +117,8 @@ data class FolderScan(val tree: Uri, val name: String, val found: List<Found>)
 class Library(private val context: Context) {
     private val file = File(context.filesDir, "library.json")
     private val copies = File(context.filesDir, "copies")
+    /// Downloaded databases (android-ui.md §23).
+    val onlineDir = File(context.filesDir, "online")
     private val json = Json { ignoreUnknownKeys = true }
     private val _entries = MutableStateFlow(load())
     val entries: StateFlow<List<DbEntry>> = _entries.asStateFlow()
@@ -124,6 +132,16 @@ class Library(private val context: Context) {
 
     init {
         releaseUnused()
+        // A download cut short by a closed app wrote games the list does not know of yet.
+        update { list -> list.map(::withOnlineState) }
+    }
+
+    /// A downloaded database with the number of games and the time of its last download
+    /// as its state file has them (they change while the list does not look).
+    private fun withOnlineState(e: DbEntry): DbEntry {
+        if (e.source != Source.Online) return e
+        val info = uniffi.mobile_api.onlineDatabase(onlineFile(e).path) ?: return e
+        return e.copy(games = info.games.toInt(), updated = info.updated ?: e.updated)
     }
 
     /// Gives back the access to files and folders no database on the list uses (a
@@ -132,6 +150,13 @@ class Library(private val context: Context) {
     private fun releaseUnused() {
         val kept = _entries.value.filter { it.source == Source.Copy }.map { it.location }.toSet()
         copies.listFiles()?.filter { it.name !in kept }?.forEach { it.delete() }
+        // A downloaded database left behind (the app closed while "Undo" was offered).
+        // Names may hold dots ("Name (Lichess + Chess.com).pgn"): whole names are compared.
+        val online = _entries.value.filter { it.source == Source.Online }.flatMap {
+            val stem = it.location.removeSuffix(".pgn")
+            listOf("$stem.pgn", "$stem.online.json", "$stem.online.lock")
+        }.toSet()
+        onlineDir.listFiles()?.filter { it.name !in online }?.forEach { it.delete() }
         val used = _entries.value.mapNotNull { it.tree ?: it.location.takeIf { _ -> it.source == Source.File || it.source == Source.ChessBase } }.toSet()
         for (p in context.contentResolver.persistedUriPermissions) {
             if (p.uri.toString() !in used) {
@@ -263,6 +288,42 @@ class Library(private val context: Context) {
         }
     }
 
+    /// The file of a downloaded database.
+    fun onlineFile(e: DbEntry): File = File(onlineDir, e.location)
+
+    /// Puts a downloaded database (a file of [onlineDir]) on the list, or gives its entry.
+    fun addOnline(file: File): DbEntry = synchronized(this) {
+        _entries.value.firstOrNull { it.source == Source.Online && it.location == file.name }?.let { return it }
+        val entry = DbEntry(
+            id = UUID.randomUUID().toString(),
+            name = file.name.substringBeforeLast('.'),
+            source = Source.Online,
+            location = file.name,
+            fileName = file.name,
+            games = 0,
+            format = "PGN",
+        )
+        update { it + entry }
+        entry
+    }
+
+    /// A downloaded database got new games: it is read again when next opened. The old
+    /// one is not closed: a screen may still show it; it is freed once nothing holds it.
+    suspend fun downloaded(id: String, games: Int, updated: Long?) {
+        lock.withLock {
+            open.remove(id)
+            update { list -> list.map { if (it.id == id) it.copy(games = games, updated = updated ?: it.updated) else it } }
+        }
+    }
+
+    /// Takes a downloaded database that got no games off the list, with its files.
+    fun dropEmpty(id: String) {
+        val e = entry(id) ?: return
+        update { it.filterNot { x -> x.id == id } }
+        open.remove(id)?.close()
+        uniffi.mobile_api.deleteOnlineDatabase(onlineFile(e).path)
+    }
+
     fun rename(id: String, name: String) = update { list -> list.map { if (it.id == id) it.copy(name = name, renamed = true) else it } }
 
     /// Takes the database off the list (the file stays where it is). Returns its place,
@@ -284,6 +345,10 @@ class Library(private val context: Context) {
         if (entry.source == Source.Sample) return
         if (entry.source == Source.Copy) {
             File(copies, entry.location).delete()
+            return
+        }
+        if (entry.source == Source.Online) {
+            uniffi.mobile_api.deleteOnlineDatabase(onlineFile(entry).path)
             return
         }
         // The permission of a folder is given back with the last of its databases, also
@@ -433,7 +498,8 @@ class Library(private val context: Context) {
 
     fun restore(place: Int, entry: DbEntry) {
         pending.remove(entry)
-        update { it.toMutableList().apply { add(place.coerceIn(0, size), entry) } }
+        // A download may have gone on while it was off the list.
+        update { it.toMutableList().apply { add(place.coerceIn(0, size), withOnlineState(entry)) } }
     }
 
     /// The same file on the list, picked through another way (its URI differs).
@@ -452,6 +518,14 @@ class Library(private val context: Context) {
         }
     }.getOrNull()
 
+    /// The games of a database that `query` finds, in the order the list shows them: a
+    /// downloaded database from the most recent game down (android-ui.md §23), the others
+    /// as in the file. Slow for a big database: call it off the main thread.
+    fun listed(id: String, db: Database, query: String): List<UInt> {
+        val found = db.find(query)
+        return if (entry(id)?.source == Source.Online) db.newestFirst(found) else found
+    }
+
     /// The open database of an entry (opened in the background the first time).
     suspend fun database(id: String): Result<Database> = lock.withLock {
         open[id]?.let { return@withLock Result.success(it) }
@@ -465,6 +539,10 @@ class Library(private val context: Context) {
                     Source.Copy -> openFile(
                         e.fileName,
                         android.os.ParcelFileDescriptor.open(File(copies, e.location), android.os.ParcelFileDescriptor.MODE_READ_ONLY).detachFd(),
+                    )
+                    Source.Online -> openFile(
+                        e.fileName,
+                        android.os.ParcelFileDescriptor.open(onlineFile(e), android.os.ParcelFileDescriptor.MODE_READ_ONLY).detachFd(),
                     )
                 }
             }

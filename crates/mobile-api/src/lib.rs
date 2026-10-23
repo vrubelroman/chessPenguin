@@ -12,9 +12,14 @@ use chess_core::{Game, MoveKind, NodeId};
 use shakmaty::Position;
 
 mod engine;
+mod online;
 mod review;
 
 pub use engine::{Analysis, Analyzer, EngineFailure, EngineLine, LineStep};
+pub use online::{
+    AccountLookup, DownloadState, OnlineAccount, OnlineDatabase, OnlineDownload, OnlineFailure,
+    OnlineProblem, OnlineTarget, Site,
+};
 pub use review::{GameReview, MoveJudgement, ReviewMove, ReviewPoint, ReviewState, SideReview};
 
 uniffi::setup_scaffolding!();
@@ -319,6 +324,29 @@ impl Database {
             .collect()
     }
 
+    /// These games (from [`Database::find`]) from the most recent to the oldest, by the
+    /// time they were played (`UTCDate` and `UTCTime` when there, else `Date`); games of
+    /// the same time keep the newer place in the file first. For downloaded databases,
+    /// where both sites' games are appended oldest first.
+    pub fn newest_first(&self, indices: Vec<u32>) -> Vec<u32> {
+        let Some(pgn) = self.db.as_pgn() else {
+            return indices;
+        };
+        let entries = pgn.entries();
+        let when = |i: u32| {
+            let Some(e) = entries.get(i as usize) else {
+                return String::new();
+            };
+            match (e.tag("UTCDate"), e.tag("UTCTime")) {
+                (Some(d), Some(t)) => format!("{d} {t}"),
+                _ => e.tag("Date").unwrap_or("").to_owned(),
+            }
+        };
+        let mut keyed: Vec<(String, u32)> = indices.into_iter().map(|i| (when(i), i)).collect();
+        keyed.sort_by(|a, b| b.cmp(a));
+        keyed.into_iter().map(|(_, i)| i).collect()
+    }
+
     /// The rows of these games (from [`Database::find`]), in this order.
     pub fn rows_of(&self, indices: Vec<u32>) -> Vec<GameRow> {
         let Some(pgn) = self.db.as_pgn() else {
@@ -609,6 +637,19 @@ mod tests {
                 .any(|n| !n.comment_after.is_empty() && !n.comment_after.contains("[%"))
         );
         assert!(g.nodes.iter().any(|n| !n.main_line));
+    }
+
+    #[test]
+    fn downloaded_games_come_newest_first() {
+        let pgn = b"[White \"a\"][UTCDate \"2020.01.02\"][UTCTime \"10:00:00\"]\n\n1. e4 *\n\n\
+            [White \"b\"][UTCDate \"2020.01.02\"][UTCTime \"09:00:00\"]\n\n1. e4 *\n\n\
+            [White \"c\"][Date \"2021.05.01\"]\n\n1. e4 *\n\n\
+            [White \"d\"][UTCDate \"2019.12.31\"][UTCTime \"23:59:59\"]\n\n1. e4 *\n"
+            .to_vec();
+        let db = open_bytes("t.pgn".into(), pgn).unwrap();
+        let order = db.newest_first(db.find(String::new()));
+        let names: Vec<String> = db.rows_of(order).into_iter().map(|r| r.white).collect();
+        assert_eq!(names, ["c", "a", "b", "d"]);
     }
 
     #[test]
