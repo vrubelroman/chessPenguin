@@ -2675,7 +2675,7 @@ const ROWS: &[[&str; 6]] = &[
     [
         "Ctrl+F; again — the filters",
         "Ctrl+F; ещё раз — фильтры",
-        "Ctrl+F ; encore une fois — les filtres",
+        "Ctrl+F ; deux fois : filtres",
         "Strg+F; noch einmal — die Filter",
         "Ctrl+F; otra vez — los filtros",
         "Ctrl+F; di nuovo — i filtri",
@@ -2722,7 +2722,7 @@ const ROWS: &[[&str; 6]] = &[
     ],
     [
         "No game of this database has a rating",
-        "Ни у одной партии этой базы нет рейтинга",
+        "Ни у одной партии этой базы нет Эло",
         "Aucune partie de cette base n'a de classement",
         "Keine Partie dieser Datenbank hat eine Wertung",
         "Ninguna partida de esta base tiene Elo",
@@ -2737,6 +2737,14 @@ const ROWS: &[[&str; 6]] = &[
         "Nessuna partita di questo database ha un anno",
     ],
     [
+        "Reset search",
+        "Сбросить поиск",
+        "Réinitialiser la recherche",
+        "Suche zurücksetzen",
+        "Restablecer búsqueda",
+        "Azzera ricerca",
+    ],
+    [
         "Reset filters and search",
         "Сбросить фильтры и поиск",
         "Réinitialiser les filtres et la recherche",
@@ -2745,12 +2753,12 @@ const ROWS: &[[&str; 6]] = &[
         "Azzera filtri e ricerca",
     ],
     [
-        "{n} moves",
-        "{n} ходов",
-        "{n} coups",
-        "{n} Züge",
-        "{n} jugadas",
-        "{n} mosse",
+        "moves: {n}",
+        "ходов: {n}",
+        "coups : {n}",
+        "Züge: {n}",
+        "jugadas: {n}",
+        "mosse: {n}",
     ],
     [
         "Preparing the position search (once)… {p} %",

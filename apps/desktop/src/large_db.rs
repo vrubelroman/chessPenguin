@@ -143,6 +143,9 @@ struct Request {
     filter: Filter,
     sort: SortKey,
     ascending: bool,
+    /// The order of the view without a position (a position not applied for lack of
+    /// memory sorts by it, not strongest first).
+    base_sort: (SortKey, bool),
     /// The board's position while the board is shown or the position filters the list
     /// (its continuations are counted even in the starting position).
     position: Option<(u64, PositionQuery)>,
@@ -157,6 +160,7 @@ impl PartialEq for Request {
         self.filter == other.filter
             && self.sort == other.sort
             && self.ascending == other.ascending
+            && self.base_sort == other.base_sort
             && pos(self) == pos(other)
             && self.use_position == other.use_position
             && self.only_order == other.only_order
@@ -428,6 +432,7 @@ impl LargeView {
             filter: self.form.filter(),
             sort,
             ascending,
+            base_sort: self.sort,
             position: (use_position || self.pane == Pane::Board)
                 .then(|| (self.board.key(), self.board.query())),
             use_position,
@@ -575,8 +580,9 @@ impl LargeView {
         let (db, req) = (db.clone(), request.clone());
         let work = Background::spawn(ctx, now, move |progress, cancel| {
             if blocked.is_some() {
+                let (sort, ascending) = req.base_sort;
                 return Some(Answer {
-                    view: db.query(&req.filter, req.sort, req.ascending, progress, cancel)?,
+                    view: db.query(&req.filter, sort, ascending, progress, cancel)?,
                     outcome: None,
                     in_order: None,
                     blocked,
@@ -732,10 +738,12 @@ impl LargeView {
     /// The quick search of the header (§9.2): words found in a player, the tournament,
     /// the annotator, the ECO code or the date; with the panel and the position.
     fn search_field(&mut self, ui: &mut Ui, now: f64) {
-        if !self.form.search.is_empty()
-            && crate::widgets::small_close_button(ui)
-                .on_hover_text(tr("Clear"))
-                .clicked()
+        // The × has its place also when there is nothing to clear: the field stays put.
+        if self.form.search.is_empty() {
+            ui.add_space(20.0);
+        } else if crate::widgets::small_close_button(ui)
+            .on_hover_text(tr("Clear"))
+            .clicked()
         {
             self.form.search.clear();
             self.typed_at = f64::NEG_INFINITY;
@@ -1458,24 +1466,30 @@ impl LargeView {
                 self.search_field(ui, now);
                 ui.add_space(8.0);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(
-                                path.file_stem()
-                                    .map(|s| s.to_string_lossy().into_owned())
-                                    .unwrap_or_default(),
+                    // The name gives way first: the counter is the result, and the name
+                    // is on the shelf card too (§9.2).
+                    let room = (ui.available_width() - 300.0).max(80.0);
+                    ui.scope(|ui| {
+                        ui.set_max_width(room);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(
+                                    path.file_stem()
+                                        .map(|s| s.to_string_lossy().into_owned())
+                                        .unwrap_or_default(),
+                                )
+                                .strong(),
                             )
-                            .strong(),
-                        )
-                        .truncate(),
-                    );
+                            .truncate(),
+                        );
+                    });
                     if ui.available_width() > 520.0 {
                         ui.label(RichText::new(format!("· {}", header.format)).weak())
                             .on_hover_text(&header.format_hint);
                     }
                     let counter = match &self.shown {
                         Some(s)
-                            if s.use_position
+                            if (s.use_position && self.blocked.is_none())
                                 || s.filter != Filter::default()
                                 || self.form.active() > 0 =>
                         {
@@ -1607,10 +1621,10 @@ impl LargeView {
                         }
                     }
                     ui.add_space(6.0);
-                    let label = if searched {
-                        tr("Reset filters and search")
-                    } else {
-                        tr("Reset filters")
+                    let label = match (self.form.active() > 0, searched) {
+                        (true, true) => tr("Reset filters and search"),
+                        (false, true) => tr("Reset search"),
+                        _ => tr("Reset filters"),
                     };
                     if ui.button(label).clicked() {
                         self.reset();
@@ -1666,7 +1680,7 @@ impl LargeView {
             ("Elo", Some(SortKey::WhiteElo), Column::exact(44.0)),
             (tr("Black"), Some(SortKey::Black), name),
             ("Elo", Some(SortKey::BlackElo), Column::exact(44.0)),
-            (tr("Result"), Some(SortKey::Result), Column::exact(56.0)),
+            (tr("Res."), Some(SortKey::Result), Column::exact(56.0)),
         ]);
         if show_moves {
             columns.push((tr("Length"), Some(SortKey::Moves), Column::exact(56.0)));
@@ -1696,7 +1710,20 @@ impl LargeView {
         if progress.is_some() {
             ui.set_opacity(0.6);
         }
+        // Each set of columns keeps its own widths: a resized window does not leave the
+        // names at the widths of another layout.
+        let layout = (
+            show_round,
+            show_number,
+            show_moves,
+            show_marks,
+            show_eco,
+            show_event,
+            year_only,
+            use_position,
+        );
         let mut table = TableBuilder::new(ui)
+            .id_salt(("game table", layout))
             .striped(true)
             .resizable(true)
             .sense(Sense::click())
@@ -1838,8 +1865,13 @@ impl LargeView {
                         });
                     }
                     // Tournament · place · round · length · annotator, those it has.
-                    let moves = if r.moves > 0 { trf("{n} moves", &[("n", &r.moves)]) } else { String::new() };
-                    let about: Vec<&str> = [r.event.as_str(), r.site.as_str(), r.round.as_str(), moves.as_str(), r.annotator.as_str()]
+                    let moves = if r.moves > 0 { trf("moves: {n}", &[("n", &r.moves)]) } else { String::new() };
+                    let round = if r.round.trim().is_empty() || r.round == "?" {
+                        String::new()
+                    } else {
+                        format!("{} {}", tr("Round").to_lowercase(), r.round)
+                    };
+                    let about: Vec<&str> = [r.event.as_str(), r.site.as_str(), round.as_str(), moves.as_str(), r.annotator.as_str()]
                         .into_iter()
                         .filter(|t| !t.trim().is_empty() && *t != "?" && !t.contains("://"))
                         .collect();
