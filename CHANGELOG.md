@@ -2,6 +2,11 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Android: the status bar and the navigation bar follow the theme chosen in the app: with
+  the dark theme on a light phone their icons are light again (they stayed dark on dark).
+
 ## [0.13.0] — 2026-10-23
 
 - Android: **game report** — ⋮ → «Game analysis» lets Stockfish evaluate every move of the
