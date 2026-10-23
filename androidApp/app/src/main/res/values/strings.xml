@@ -226,4 +226,52 @@
     <string name="file_copy_failed">The app could not keep a copy of the file. Check that the phone has free space.</string>
     <string name="db_copy">copy</string>
     <string name="removed_copy">Database deleted from ChessPenguin</string>
+    <!-- Game report (android-ui.md §21) -->
+    <string name="review_menu">Game analysis</string>
+    <string name="review_report_menu">Game report</string>
+    <string name="review_text">The engine evaluates every position of the main line. The game itself is not changed.</string>
+    <string name="review_quality">Quality</string>
+    <string name="review_fast">Fast</string>
+    <string name="review_normal">Normal</string>
+    <string name="review_deep">Deep</string>
+    <string name="review_seconds">%d s</string>
+    <string name="review_minutes">%d min</string>
+    <string name="review_start">Analyse</string>
+    <string name="review_fill">Fill in</string>
+    <string name="review_again">Analyse again</string>
+    <string name="review_partial">%1$d of %2$d positions are evaluated already.</string>
+    <string name="review_progress">Game analysis · %1$d of %2$d</string>
+    <string name="review_stop">Stop the analysis</string>
+    <string name="review_accuracy">Accuracy</string>
+    <string name="review_accuracy_of">Accuracy: White %1$s, Black %2$s</string>
+    <string name="review_report">Report</string>
+    <string name="review_better">%1$s was better</string>
+    <string name="review_inaccuracy">Inaccuracy</string>
+    <string name="review_mistake">Mistake</string>
+    <string name="review_blunder">Blunder</string>
+    <string name="review_inaccuracies">Inaccuracies</string>
+    <string name="review_mistakes">Mistakes</string>
+    <string name="review_blunders">Blunders</string>
+    <string name="review_missing">Not evaluated: %d</string>
+    <string name="review_failed">The analysis stopped</string>
+    <string name="review_resume">Continue</string>
+    <string name="review_acpl">Average centipawn loss</string>
+    <string name="review_opening">Opening</string>
+    <string name="review_middlegame">Middlegame</string>
+    <string name="review_endgame">Endgame</string>
+    <string name="review_source">%1$s · %2$s nodes per move</string>
+    <string name="review_source_pgn" formatted="false">Evaluations from the PGN ([%eval])</string>
+    <string name="review_hide">Hide analysis</string>
+    <string name="review_graph">Evaluation graph</string>
+    <string name="review_engine_paused">Paused: the game is being analysed</string>
+    <string name="review_best_preview">Better line · move %1$d of %2$d</string>
+    <string name="review_next">Go to the next such move</string>
+    <string name="review_show_best">Show the better line on the board</string>
+    <string name="review_restart">Start over</string>
+    <string name="review_graph_state">%1$s, evaluation %2$s</string>
+    <string name="review_start_position">Start position</string>
+    <plurals name="review_estimate">
+        <item quantity="one">%1$d position, about %2$s</item>
+        <item quantity="other">%1$d positions, about %2$s</item>
+    </plurals>
 </resources>

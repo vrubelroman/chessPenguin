@@ -268,7 +268,9 @@ fn main() {
                     .iter()
                     .position(|&t| t == "depth")
                     .and_then(|p| toks.get(p + 1))
-                    .and_then(|v| v.parse().ok());
+                    .and_then(|v| v.parse().ok())
+                    // `go nodes N`: a short search that ends by itself, like a real one.
+                    .or_else(|| toks.contains(&"nodes").then_some(3));
                 search = Some(Search {
                     marker: marker.clone(),
                     depth: 0,

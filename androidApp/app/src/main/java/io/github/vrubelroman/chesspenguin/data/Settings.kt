@@ -24,6 +24,11 @@ data class Prefs(
     val engineSeconds: Int = 20,
     val engineThreads: Int = defaultThreads(),
     val engineHashMb: Int = 64,
+    /// The game report's quality, an index into REVIEW_NODES (§21.2).
+    val reviewQuality: Int = 1,
+    /// The engine's speed per thread measured by the last game analysis (0 = not yet),
+    /// for the time estimate.
+    val reviewNps: Long = 0,
 )
 
 /// Half the cores, at most 2: the engine leaves the phone's interface room (§9).
@@ -58,6 +63,8 @@ class Settings(context: Context) {
             engineSeconds = store.getInt("engineSeconds", d.engineSeconds),
             engineThreads = store.getInt("engineThreads", d.engineThreads),
             engineHashMb = store.getInt("engineHashMb", d.engineHashMb),
+            reviewQuality = store.getInt("reviewQuality", d.reviewQuality).coerceIn(0, REVIEW_NODES.size - 1),
+            reviewNps = store.getLong("reviewNps", d.reviewNps),
         )
     }
 
@@ -76,6 +83,8 @@ class Settings(context: Context) {
             .putInt("engineSeconds", p.engineSeconds)
             .putInt("engineThreads", p.engineThreads)
             .putInt("engineHashMb", p.engineHashMb)
+            .putInt("reviewQuality", p.reviewQuality)
+            .putLong("reviewNps", p.reviewNps)
             .apply()
     }
 }

@@ -17,6 +17,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -96,7 +101,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.EngineSession
 import io.github.vrubelroman.chesspenguin.data.NetState
+import io.github.vrubelroman.chesspenguin.data.REVIEW_NODES
+import io.github.vrubelroman.chesspenguin.data.ReviewSession
 import io.github.vrubelroman.chesspenguin.data.enginePosition
+import io.github.vrubelroman.chesspenguin.theme.LocalChessColors
 import io.github.vrubelroman.chesspenguin.theme.Tabular
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -105,10 +113,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.mobile_api.EngineLine
 import uniffi.mobile_api.GameData
+import uniffi.mobile_api.MoveJudgement
 import uniffi.mobile_api.MoveNode
 
-/// An engine line shown on the board (§8.3): the game itself does not change.
-private data class Preview(val line: EngineLine, val step: Int)
+/// An engine line shown on the board (§8.3): the game itself does not change. `best`:
+/// the better line of an error of the game report (§21.1).
+private data class Preview(val line: EngineLine, val step: Int, val best: Boolean = false)
 
 /// One game: the board on top, the notation under it, the move buttons at the bottom
 /// under the thumb; ‹ › page the games of the list (android-ui.md §7).
@@ -125,6 +135,8 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var current by rememberSaveable(place) { mutableIntStateOf(0) }
     var flipped by rememberSaveable { mutableStateOf(false) }
     var preview by remember { mutableStateOf<Preview?>(null) }
+    // The game report (§21): its own engine job; the live engine rests while it runs.
+    val review = remember { ReviewSession(java.io.File(context.cacheDir, "analysis").path, app.scope) }
     LaunchedEffect(db, place) {
         preview = null
         val database = app.library.database(db).getOrNull()
@@ -142,6 +154,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         val loaded = withContext(Dispatchers.Default) { runCatching { database.game(index) } }
         failed = loaded.isFailure
         game = loaded.getOrNull()
+        if (game != null) review.open(db, database, index)
     }
     val pieces = remember { Pieces(context) }
     val snackbar = remember { SnackbarHostState() }
@@ -172,6 +185,19 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var engineVisit by rememberSaveable { mutableStateOf<String?>(null) }
     val engineWanted = engineVisit == app.visit
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val reviewState by review.state.collectAsState()
+    // "Hide" in the report: until the next game.
+    var reviewHidden by remember(place) { mutableStateOf(false) }
+    var reviewStart by remember { mutableStateOf(false) }
+    var reviewReport by remember { mutableStateOf(false) }
+    // A start that waits for the engine (downloaded or unpacked): full or not.
+    var wantReview by remember { mutableStateOf<Boolean?>(null) }
+    // The download sheet was opened to analyse the game (not for the engine button).
+    var sheetForReview by remember { mutableStateOf<Boolean?>(null) }
+    // Stopped because the app went to the background: goes on when it comes back.
+    // Kept when the phone is turned (the screen is made again): the analysis goes on.
+    var reviewResume by rememberSaveable(place) { mutableStateOf(false) }
+    val reviewCycle = remember(place) { HashMap<Pair<Boolean, MoveJudgement>, Int>() }
     var menu by remember { mutableStateOf(false) }
     var info by remember { mutableStateOf(false) }
     @Suppress("DEPRECATION")
@@ -224,10 +250,12 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         else -> null
     }
 
-    LaunchedEffect(position, engineOn, visible, prefs.engineLines, prefs.engineSeconds) {
+    val reviewRunning = reviewState?.running == true
+    LaunchedEffect(position, engineOn, visible, prefs.engineLines, prefs.engineSeconds, reviewRunning) {
         if (position == null || !visible) return@LaunchedEffect
         when {
-            !engineOn -> session.shutdown()
+            // One engine at a time on a phone: the analysis of the game comes first (§21.6).
+            !engineOn || reviewRunning -> session.shutdown()
             ending != null -> session.pause()
             else -> session.show(position, prefs)
         }
@@ -241,6 +269,67 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             if (!files.builtIn) snackbar.showSnackbar(readyText)
         }
     }
+
+    fun startReview(full: Boolean) {
+        if (files.state.value != NetState.Ready) {
+            if (files.builtIn) {
+                wantReview = full
+                files.prepare()
+            } else {
+                sheetForReview = full
+                sheet = true
+            }
+            return
+        }
+        wantReview = null
+        reviewHidden = false
+        val p = app.settings.prefs.value
+        review.start(files.executable, files.net.path, p.engineThreads, p.engineHashMb, REVIEW_NODES[p.reviewQuality], full) { s ->
+            if (s.npsPerThread > 0UL) app.settings.update { it.copy(reviewNps = s.npsPerThread.toLong()) }
+        }
+    }
+    // The engine became ready for an analysis that was asked for.
+    LaunchedEffect(netState) {
+        if (netState == NetState.Ready) wantReview?.let { full ->
+            sheet = false
+            startReview(full)
+        }
+    }
+    // An analysis stopped by the background or a turn of the phone goes on once this
+    // game's analysis is loaded again and the screen is visible.
+    val reviewLoaded = reviewState != null
+    LaunchedEffect(reviewLoaded, visible) {
+        if (reviewLoaded && visible && reviewResume) {
+            reviewResume = false
+            startReview(false)
+        }
+    }
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, e ->
+            when (e) {
+                // Battery first (§21.6): the analysis stops with the screen and goes on after.
+                Lifecycle.Event.ON_STOP -> if (review.state.value?.running == true) {
+                    reviewResume = true
+                    review.cancel()
+                }
+                else -> {}
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            review.close()
+        }
+    }
+
+    val rs = reviewState
+    val preparingReview = wantReview != null && files.builtIn && netState is NetState.Loading
+    // A game without moves has nothing to analyse.
+    val hasMoves = g?.nodes?.firstOrNull()?.children?.isNotEmpty() == true
+    val reviewShown = rs != null && hasMoves && !reviewHidden && (rs.hasData || rs.running || preparingReview)
+    val reviewPoints = remember(rs) { rs?.points?.withIndex()?.associate { it.value.node.toInt() to it.index } ?: emptyMap() }
+    val reviewMarks = remember(rs) { rs?.moves?.associate { it.node.toInt() to it.judgement } ?: emptyMap() }
+    val currentMark = if (reviewShown) rs.moves.firstOrNull { it.node.toInt() == current } else null
 
     fun buzz(edge: Boolean) {
         if (prefs.vibration) view.performHapticFeedback(if (edge) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.CLOCK_TICK)
@@ -289,7 +378,10 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 wantEngine = true
                 files.prepare()
             }
-            else -> sheet = true
+            else -> {
+                sheetForReview = null
+                sheet = true
+            }
         }
     }
     BackHandler(preview != null) { preview = null }
@@ -326,6 +418,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         }
     }
     val board: @Composable (Modifier) -> Unit = { boardModifier ->
+        val dark = LocalChessColors.current.dark
         val p = preview
         val step = p?.let { it.line.steps[it.step] }
         val fen = step?.fen ?: node?.fen ?: START
@@ -339,6 +432,12 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 p.line.steps.getOrNull(p.step + 1)?.let { add(BoardArrow(it.fromSquare, it.toSquare, EngineArrow)) }
             } else {
                 node?.marks?.forEach { m -> m.to?.let { add(BoardArrow(m.from, it, markColor(m.color), 0.9f)) } }
+                // After an error of the report: how the opponent punishes it (§21.1).
+                if (!engineOn) currentMark?.let { m ->
+                    val f = m.replyFrom
+                    val t = m.replyTo
+                    if (f != null && t != null) add(BoardArrow(f, t, judgementColor(m.judgement, dark).copy(alpha = 0.8f), 0.9f))
+                }
                 if (engineOn && prefs.bestArrow) {
                     analysis()?.lines?.take(2)?.forEachIndexed { i, l ->
                         val f = l.fromSquare
@@ -392,6 +491,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                             position?.let { session.show(it, prefs) }
                         },
                         notation = line,
+                        waiting = reviewRunning,
                     )
                 }
             } else if (wantEngine && files.builtIn && netState is NetState.Loading) {
@@ -400,10 +500,34 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     Text(stringResource(R.string.preparing_engine), Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (p != null) PreviewBar(p.step + 1, p.line.steps.size, onClose = { preview = null })
+            if (reviewShown) {
+                val cursor = g?.let { pointIndex(reviewPoints, it, current) }
+                ReviewPanel(
+                    state = rs,
+                    cursor = cursor,
+                    // TalkBack: "6…Nf6, evaluation +1.2" (the start position has no move).
+                    cursorLabel = cursor?.takeIf { it > 0 }?.let { rs.points[it].node.toInt() }?.let { id ->
+                        nodes?.getOrNull(id)?.let { n -> (if (n.white) "${n.moveNumber}." else "${n.moveNumber}…") + n.san }
+                    },
+                    // A phone on its side has little height: with the engine strip on, only the row (§21.3).
+                    showGraph = !(landscape && engineOn),
+                    mark = currentMark,
+                    preparing = preparingReview,
+                    notation = line,
+                    onIndex = { i -> rs.points.getOrNull(i)?.let { go(it.node.toInt()) } },
+                    onBest = { m -> m.best?.takeIf { it.steps.isNotEmpty() }?.let { preview = Preview(it, 0, best = true) } },
+                    onReport = { reviewReport = true },
+                    onStop = { review.cancel() },
+                    onResume = { startReview(false) },
+                )
+            }
+            if (p != null) PreviewBar(p.step + 1, p.line.steps.size, onClose = { preview = null }, best = p.best)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
-                    g != null -> Notation(g, items, where, current, notation, san, onMove = ::go, modifier = Modifier.fillMaxSize())
+                    g != null -> Notation(
+                        g, items, where, current, notation, san, onMove = ::go, modifier = Modifier.fillMaxSize(),
+                        marks = if (reviewShown) reviewMarks else emptyMap(),
+                    )
                     failed -> Text(
                         stringResource(R.string.game_failed),
                         color = MaterialTheme.colorScheme.error,
@@ -452,6 +576,20 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, stringResource(R.string.menu)) }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(if (rs?.hasData == true) R.string.review_report_menu else R.string.review_menu)) },
+                                // During the first analysis the panel already shows its progress (§21.1).
+                                enabled = hasMoves && rs != null && (rs.hasData || !rs.running),
+                                onClick = {
+                                    menu = false
+                                    reviewHidden = false
+                                    when {
+                                        rs?.hasData == true -> reviewReport = true
+                                        rs?.running == true -> {}
+                                        else -> reviewStart = true
+                                    }
+                                },
+                            )
                             DropdownMenuItem(text = { Text(stringResource(R.string.game_info)) }, enabled = g != null, onClick = {
                                 menu = false
                                 info = true
@@ -497,7 +635,8 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     ) { padding ->
         val inner = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())
         if (landscape) {
-            Row(inner) {
+            // The navigation buttons stand on a side of the screen: nothing goes under them.
+            Row(inner.windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))) {
                 board(Modifier.fillMaxHeight())
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     side(Modifier.weight(1f))
@@ -537,16 +676,65 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             state = netState,
             metered = remember(sheet) { !files.builtIn && files.metered() },
             onDownload = {
-                wantEngine = true
+                // Asked for by the analysis of the game: it starts when the engine is ready,
+                // the engine button stays as it is.
+                val forReview = sheetForReview
+                if (forReview != null) wantReview = forReview else wantEngine = true
                 files.prepare()
             },
             onCancel = {
                 files.cancel()
                 wantEngine = false
+                wantReview = null
+                sheetForReview = null
                 sheet = false
                 scope.launch { snackbar.showSnackbar(cancelledText) }
             },
-            onDismiss = { sheet = false },
+            onDismiss = {
+                sheet = false
+                sheetForReview = null
+            },
+        )
+    }
+    if (reviewStart) {
+        ReviewStartSheet(
+            state = rs,
+            quality = prefs.reviewQuality,
+            threads = prefs.engineThreads,
+            npsPerThread = prefs.reviewNps,
+            onQuality = { q -> app.settings.update { it.copy(reviewQuality = q) } },
+            onStart = { full ->
+                reviewStart = false
+                startReview(full)
+            },
+            onDismiss = { reviewStart = false },
+        )
+    }
+    if (reviewReport && rs != null) {
+        val whiteName = tag("White").takeIf { it.isNotBlank() && it != "?" } ?: stringResource(R.string.tag_white)
+        val blackName = tag("Black").takeIf { it.isNotBlank() && it != "?" } ?: stringResource(R.string.tag_black)
+        ReviewSheet(
+            state = rs,
+            white = whiteName,
+            black = blackName,
+            onError = { w, j ->
+                reviewReport = false
+                val hits = rs.moves.filter { it.white == w && it.judgement == j }
+                if (hits.isNotEmpty()) {
+                    val k = ((reviewCycle[w to j] ?: -1) + 1) % hits.size
+                    reviewCycle[w to j] = k
+                    go(hits[k].node.toInt())
+                }
+            },
+            onAgain = {
+                reviewReport = false
+                reviewStart = true
+            },
+            onHide = {
+                reviewReport = false
+                reviewHidden = true
+            },
+            onDismiss = { reviewReport = false },
         )
     }
 }

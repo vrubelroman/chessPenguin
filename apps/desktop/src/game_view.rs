@@ -209,7 +209,7 @@ impl GameView {
             MoveKind::Null => return None,
         };
         if self.review.visible
-            && let Some(mark) = self.review.marks.get(&self.cursor)
+            && let Some(mark) = self.review.analysis.marks.get(&self.cursor)
         {
             return Some(board::Badge {
                 square,
@@ -853,7 +853,7 @@ impl GameView {
                         game: &self.game,
                         cursor: self.cursor,
                         scroll_to_cursor: self.scroll_to_cursor,
-                        marks: self.review.visible.then_some(&self.review.marks),
+                        marks: self.review.visible.then_some(&self.review.analysis.marks),
                         preview: self
                             .preview
                             .as_ref()
@@ -865,7 +865,7 @@ impl GameView {
                         self.goto(id);
                     }
                     if let Some((id, shown)) = resp.best
-                        && let Some(mark) = self.review.marks.get(&id)
+                        && let Some(mark) = self.review.analysis.marks.get(&id)
                         && let Some(root) = self.game.position(mark.base)
                         && !mark.best.is_empty()
                     {
@@ -1240,7 +1240,7 @@ impl GameView {
             .game
             .mainline()
             .into_iter()
-            .find_map(|id| self.review.marks.get(&id).cloned());
+            .find_map(|id| self.review.analysis.marks.get(&id).cloned());
         if let Some(mark) = mark
             && let Some(root) = self.game.position(mark.base)
             && !mark.best.is_empty()

@@ -2,6 +2,17 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Android: **game report** — ⋮ → «Game analysis» lets Stockfish evaluate every move of the
+  main line, as on the desktop: inaccuracies, mistakes and blunders marked in the notation,
+  an evaluation graph under the board (tap or drag to go to a move), each player's accuracy
+  and average centipawn loss in the report, the better move of every error shown on the
+  board. Games with `[%eval]` comments (Lichess exports) and games analysed before show
+  their report at once. The live engine waits while the game is analysed.
+- The game report's evaluations, judgements, accuracy and cache are now one shared part of
+  the desktop and Android apps, so both give the same numbers.
+
 ## [0.12.0] — 2026-10-23
 
 - Android: **paste PGN** — when the clipboard holds text, «Add a database» offers to paste

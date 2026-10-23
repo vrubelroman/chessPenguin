@@ -4,6 +4,7 @@ members = [
     "crates/chess-core",
     "crates/chess-import",
     "crates/uci",
+    "crates/game-review",
     "crates/mobile-api",
     "apps/desktop",
 ]
@@ -35,6 +36,7 @@ directories = "6"
 chess-core = { path = "crates/chess-core" }
 chess-import = { path = "crates/chess-import" }
 uci = { path = "crates/uci" }
+game-review = { path = "crates/game-review" }
 
 [profile.dev.package."*"]
 opt-level = 2

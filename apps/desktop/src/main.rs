@@ -20,7 +20,6 @@ mod notation;
 mod online;
 mod online_ui;
 mod reference;
-mod report;
 mod review;
 mod san;
 mod settings;

@@ -12,8 +12,10 @@ use chess_core::{Game, MoveKind, NodeId};
 use shakmaty::Position;
 
 mod engine;
+mod review;
 
 pub use engine::{Analysis, Analyzer, EngineFailure, EngineLine, LineStep};
+pub use review::{GameReview, MoveJudgement, ReviewMove, ReviewPoint, ReviewState, SideReview};
 
 uniffi::setup_scaffolding!();
 
@@ -330,12 +332,12 @@ impl Database {
             .collect()
     }
 
-    /// The game `index`, ready to show.
     /// The game `index` as PGN text, as it is in the file (to copy or share).
     pub fn pgn(&self, index: u32) -> Option<String> {
         self.db.raw_text(index as usize)
     }
 
+    /// The game `index`, ready to show.
     pub fn game(&self, index: u32) -> Result<GameData, ApiError> {
         let parsed = self
             .db
@@ -343,6 +345,38 @@ impl Database {
             .ok_or(ApiError::NoGame { index })?;
         Ok(game_data(&parsed.game, &parsed.diagnostics))
     }
+
+    /// The analysis of the game `index` (its report), with earlier results from the
+    /// cache folder `cache_dir` ("" for none) or from `[%eval]` comments of the game.
+    pub fn review(&self, index: u32, cache_dir: String) -> Result<Arc<GameReview>, ApiError> {
+        let parsed = self
+            .db
+            .load_game(index as usize)
+            .ok_or(ApiError::NoGame { index })?;
+        Ok(GameReview::new(parsed.game, cache_dir))
+    }
+}
+
+/// Node ids in tree order (the root first, each line before its variations' tails),
+/// mapped to their places in [`GameData::nodes`].
+fn order(game: &Game) -> Vec<NodeId> {
+    let mut order = vec![NodeId::ROOT];
+    let mut i = 0;
+    while i < order.len() {
+        let id = order[i];
+        order.extend(game.children(id).iter().copied());
+        i += 1;
+    }
+    order
+}
+
+/// The place in [`GameData::nodes`] of every node of the game.
+fn places(game: &Game) -> std::collections::HashMap<NodeId, u32> {
+    order(game)
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (*id, i as u32))
+        .collect()
 }
 
 fn row(e: &chess_core::GameEntry) -> GameRow {
@@ -398,20 +432,8 @@ fn marks(comments: &[String]) -> Vec<Mark> {
 }
 
 fn game_data(game: &Game, diagnostics: &[chess_core::Diagnostic]) -> GameData {
-    // Ids in tree order (the root first, each line before its variations' tails), mapped
-    // to their places in the list.
-    let mut order = vec![NodeId::ROOT];
-    let mut i = 0;
-    while i < order.len() {
-        let id = order[i];
-        order.extend(game.children(id).iter().copied());
-        i += 1;
-    }
-    let places: std::collections::HashMap<NodeId, u32> = order
-        .iter()
-        .enumerate()
-        .map(|(i, id)| (*id, i as u32))
-        .collect();
+    let order = order(game);
+    let places = places(game);
     let place = |id: NodeId| places.get(&id).copied();
     let main: std::collections::HashSet<NodeId> = game.mainline().into_iter().collect();
     let nodes = order

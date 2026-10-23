@@ -1,0 +1,16 @@
+[package]
+name = "game-review"
+description = "Whole-game analysis of ChessPenguin: engine evaluations of the main line, move judgements, accuracy (the desktop and Android apps share it)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+chess-core.workspace = true
+shakmaty.workspace = true
+uci.workspace = true
+serde.workspace = true
+serde_json.workspace = true

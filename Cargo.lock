@@ -803,6 +803,7 @@ dependencies = [
  "egui_extras",
  "flate2",
  "form_urlencoded",
+ "game-review",
  "getrandom 0.3.4",
  "image",
  "rfd",
@@ -1648,6 +1649,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "game-review"
+version = "0.12.0"
+dependencies = [
+ "chess-core",
+ "serde",
+ "serde_json",
+ "shakmaty",
+ "uci",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2403,6 +2415,7 @@ version = "0.12.0"
 dependencies = [
  "chess-core",
  "chess-import",
+ "game-review",
  "shakmaty",
  "thiserror 2.0.21",
  "uci",

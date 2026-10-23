@@ -48,6 +48,7 @@ import io.github.vrubelroman.chesspenguin.theme.ChessColors
 import io.github.vrubelroman.chesspenguin.theme.LocalChessColors
 import io.github.vrubelroman.chesspenguin.theme.nagColor
 import uniffi.mobile_api.GameData
+import uniffi.mobile_api.MoveJudgement
 import uniffi.mobile_api.MoveNode
 
 /// A piece of the notation: the main line as a table of moves, comments and variations
@@ -201,7 +202,8 @@ private fun variationText(
 }
 
 /// The notation under the board (android-ui.md §7.3): the current move highlighted
-/// and kept in view; a tap on a move goes there.
+/// and kept in view; a tap on a move goes there. `marks` are the engine's judgements of
+/// main-line moves (the game report, §21.4).
 @Composable
 fun Notation(
     game: GameData,
@@ -212,6 +214,7 @@ fun Notation(
     san: (String) -> AnnotatedString,
     onMove: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    marks: Map<Int, MoveJudgement> = emptyMap(),
 ) {
     val chess = LocalChessColors.current
     LaunchedEffect(current) {
@@ -237,7 +240,7 @@ fun Notation(
                         .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
-                is Item.Moves -> MovesRow(game, item, current, chess, san, onMove)
+                is Item.Moves -> MovesRow(game, item, current, chess, san, onMove, marks)
                 is Item.Variation -> Box(
                     Modifier
                         .fillMaxWidth()
@@ -276,6 +279,7 @@ private fun MovesRow(
     chess: ChessColors,
     san: (String) -> AnnotatedString,
     onMove: (Int) -> Unit,
+    marks: Map<Int, MoveJudgement>,
 ) {
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -285,8 +289,8 @@ private fun MovesRow(
             modifier = Modifier.width(40.dp).padding(end = 8.dp),
             textAlign = androidx.compose.ui.text.style.TextAlign.End,
         )
-        MoveCell(game, row.white, true, current, chess, san, onMove, Modifier.weight(1f))
-        MoveCell(game, row.black, false, current, chess, san, onMove, Modifier.weight(1f))
+        MoveCell(game, row.white, true, current, chess, san, onMove, Modifier.weight(1f), row.white?.let { marks[it] })
+        MoveCell(game, row.black, false, current, chess, san, onMove, Modifier.weight(1f), row.black?.let { marks[it] })
     }
 }
 
@@ -300,12 +304,19 @@ private fun MoveCell(
     san: (String) -> AnnotatedString,
     onMove: (Int) -> Unit,
     modifier: Modifier,
+    mark: MoveJudgement?,
 ) {
     val selected = id != null && id == current
-    // TalkBack reads "4, White, dxe5", and whether it is the current move.
+    // The engine's mark is left out where the author already put the same sign ("Nf6? ?"
+    // reads as a typo, §21.4).
+    val mark = mark?.takeIf { m -> id == null || game.nodes[id].nags.none { it.toInt() == judgementNag(m) } }
+    // TalkBack reads "4, White, dxe5", the engine's judgement, and whether it is the
+    // current move.
+    val markName = mark?.let { judgementName(it) }
     val spoken = id?.let {
         val n = game.nodes[it]
-        stringResource(if (white) R.string.move_white else R.string.move_black, n.moveNumber.toInt(), n.san + n.nagSymbols)
+        stringResource(if (white) R.string.move_white else R.string.move_black, n.moveNumber.toInt(), n.san + n.nagSymbols) +
+            (markName?.let { m -> ", $m" } ?: "")
     }
     val currentLabel = stringResource(R.string.current_move)
     // The whole cell takes the tap; the fill only hugs the move.
@@ -334,26 +345,29 @@ private fun MoveCell(
             if (white) Text("…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 8.dp))
         } else {
             val n = game.nodes[id]
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (selected) chess.currentMove else Color.Transparent)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(1.dp),
-            ) {
-                Text(san(n.san), fontSize = 17.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-                if (n.nagSymbols.isNotEmpty()) {
-                    Text(
-                        n.nagSymbols,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (selected) {
-                            MaterialTheme.colorScheme.onSurface
-                        } else {
-                            n.nags.firstOrNull()?.let { nagColor(it.toInt(), chess.dark) } ?: MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (selected) chess.currentMove else Color.Transparent)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(1.dp),
+                ) {
+                    Text(san(n.san), fontSize = 17.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                    if (n.nagSymbols.isNotEmpty()) {
+                        Text(
+                            n.nagSymbols,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                n.nags.firstOrNull()?.let { nagColor(it.toInt(), chess.dark) } ?: MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
                 }
+                if (mark != null) ReviewBadge(mark, Modifier.padding(start = 2.dp))
             }
         }
     }

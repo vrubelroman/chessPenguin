@@ -61,7 +61,8 @@ fun whiteShare(line: EngineLine?): Float {
 }
 
 /// The engine's row between the board and the notation (android-ui.md §8.2): the
-/// evaluation, the depth, the best line; ▾ shows more lines.
+/// evaluation, the depth, the best line; ▾ shows more lines. While the game is being
+/// analysed (`waiting`, §21.6) the engine rests and the row says so.
 @Composable
 fun EngineStrip(
     ending: String?,
@@ -75,6 +76,7 @@ fun EngineStrip(
     onDeeper: () -> Unit,
     onRestart: () -> Unit,
     notation: (String) -> AnnotatedString,
+    waiting: Boolean = false,
 ) {
     val best = analysis?.lines?.firstOrNull()
     val share by animateFloatAsState(whiteShare(best), tween(300), label = "eval")
@@ -91,6 +93,16 @@ fun EngineStrip(
         if (ending != null) {
             Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(ending, style = MaterialTheme.typography.labelLarge)
+            }
+            return@Column
+        }
+        if (waiting) {
+            Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.review_engine_paused),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             return@Column
         }
@@ -211,9 +223,10 @@ fun shownEval(line: EngineLine): String {
     return "$sign${a / 10}.${a % 10}"
 }
 
-/// The bar above the notation while an engine line is shown on the board (§8.3).
+/// The bar above the notation while an engine line is shown on the board (§8.3); `best`
+/// for the better line of a game report's error (§21.1).
 @Composable
-fun PreviewBar(step: Int, total: Int, onClose: () -> Unit) {
+fun PreviewBar(step: Int, total: Int, onClose: () -> Unit, best: Boolean = false) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -223,7 +236,7 @@ fun PreviewBar(step: Int, total: Int, onClose: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            stringResource(R.string.engine_line_preview, step, total),
+            stringResource(if (best) R.string.review_best_preview else R.string.engine_line_preview, step, total),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
             modifier = Modifier.weight(1f),

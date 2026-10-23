@@ -223,4 +223,52 @@
     <string name="file_copy_failed">Die App konnte keine Kopie der Datei speichern. Prüfen Sie, ob auf dem Telefon Platz frei ist.</string>
     <string name="db_copy">Kopie</string>
     <string name="removed_copy">Datenbank aus ChessPenguin gelöscht</string>
+    <!-- Game report (android-ui.md §21) -->
+    <string name="review_menu">Partieanalyse</string>
+    <string name="review_report_menu">Partiebericht</string>
+    <string name="review_text">Die Engine bewertet jede Stellung der Hauptvariante. Die Partie selbst wird nicht verändert.</string>
+    <string name="review_quality">Qualität</string>
+    <string name="review_fast">Schnell</string>
+    <string name="review_normal">Normal</string>
+    <string name="review_deep">Gründlich</string>
+    <string name="review_seconds">%d s</string>
+    <string name="review_minutes">%d Min.</string>
+    <string name="review_start">Analysieren</string>
+    <string name="review_fill">Ergänzen</string>
+    <string name="review_again">Erneut analysieren</string>
+    <string name="review_partial">%1$d von %2$d Stellungen sind schon bewertet.</string>
+    <string name="review_progress">Partieanalyse · %1$d von %2$d</string>
+    <string name="review_stop">Analyse anhalten</string>
+    <string name="review_accuracy">Genauigkeit</string>
+    <string name="review_accuracy_of">Genauigkeit: Weiß %1$s, Schwarz %2$s</string>
+    <string name="review_report">Bericht</string>
+    <string name="review_better">besser war %1$s</string>
+    <string name="review_inaccuracy">Ungenauigkeit</string>
+    <string name="review_mistake">Fehler</string>
+    <string name="review_blunder">Grober Fehler</string>
+    <string name="review_inaccuracies">Ungenauigkeiten</string>
+    <string name="review_mistakes">Fehler</string>
+    <string name="review_blunders">Grobe Fehler</string>
+    <string name="review_missing">Ohne Bewertung: %d</string>
+    <string name="review_failed">Die Analyse wurde unterbrochen</string>
+    <string name="review_resume">Fortsetzen</string>
+    <string name="review_acpl">Durchschnittlicher Centibauernverlust</string>
+    <string name="review_opening">Eröffnung</string>
+    <string name="review_middlegame">Mittelspiel</string>
+    <string name="review_endgame">Endspiel</string>
+    <string name="review_source">%1$s · %2$s Knoten pro Zug</string>
+    <string name="review_source_pgn" formatted="false">Bewertungen aus der PGN ([%eval])</string>
+    <string name="review_hide">Analyse ausblenden</string>
+    <string name="review_graph">Bewertungsgrafik</string>
+    <string name="review_engine_paused">Pausiert: Partie wird analysiert</string>
+    <string name="review_best_preview">Bessere Variante · Zug %1$d von %2$d</string>
+    <string name="review_next">Zum nächsten solchen Zug</string>
+    <string name="review_show_best">Die bessere Variante auf dem Brett zeigen</string>
+    <string name="review_restart">Von vorn</string>
+    <string name="review_graph_state">%1$s, Bewertung %2$s</string>
+    <string name="review_start_position">Ausgangsstellung</string>
+    <plurals name="review_estimate">
+        <item quantity="one">%1$d Stellung, etwa %2$s</item>
+        <item quantity="other">%1$d Stellungen, etwa %2$s</item>
+    </plurals>
 </resources>

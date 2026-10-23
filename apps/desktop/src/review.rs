@@ -1,5 +1,7 @@
-//! Whole-game analysis: a background engine job over the main line, cached results,
-//! the evaluation graph under the board, the report tab and the launch dialog.
+//! Whole-game analysis on the desktop: the background engine job over the main line,
+//! the evaluation graph under the board, the report tab and the launch dialog. The
+//! evaluations, judgements, cache and the job itself are the `game-review` crate's,
+//! shared with the Android app.
 //!
 //! The job uses its own engine process and never touches the game; writing the results
 //! into the game is a separate, undoable action ([`Review::write_to_game`]).
@@ -8,62 +10,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::{Duration, Instant};
+use std::sync::mpsc::{Receiver, channel};
 
-use chess_core::shakmaty::san::SanPlus;
-use chess_core::shakmaty::uci::UciMove;
-use chess_core::shakmaty::{Chess, Color, Move, Position};
-use chess_core::{Annotation, CommentPart, Game, Nag, NodeId, parse_comment};
+use chess_core::shakmaty::{Color, Move};
+use chess_core::{Game, Nag, NodeId};
 use egui::{Color32, RichText, Sense, Stroke, Ui, pos2, vec2};
-use serde::{Deserialize, Serialize};
-use uci::{EngineEvent, EnginePosition, ScoreBound, SearchId, SearchLimits, Side};
+use game_review::{Eval, GameAnalysis, JobEvent, JobFailure, JobSettings, Judgement, ReviewMeta};
+
+pub use game_review::Mark;
 
 use crate::i18n::{tr, trf};
-use crate::report::{Eval, Judgement, Phases, Ply, Report};
 use crate::settings::{EngineConfig, REVIEW_QUALITY, ReviewSettings, Settings};
-
-/// Engine result for one position of the main line.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PosEval {
-    pub eval: Eval,
-    /// Principal variation in UCI; the first move is the engine's best move.
-    #[serde(default)]
-    pub pv: Vec<String>,
-    #[serde(default)]
-    pub depth: u32,
-}
-
-/// Where the evaluations came from.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ReviewMeta {
-    pub engine: String,
-    /// Nodes per position; 0 = read from `[%eval]` comments of the PGN.
-    pub nodes: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-struct CacheFile {
-    version: u32,
-    meta: ReviewMeta,
-    evals: Vec<(String, PosEval)>,
-}
-
-const CACHE_VERSION: u32 = 1;
-/// A node-limited search should never take this long; stop it if it does.
-const SEARCH_GUARD: Duration = Duration::from_secs(300);
-
-/// An engine assessment of a main-line move, shown over the notation.
-#[derive(Clone, Debug)]
-pub struct Mark {
-    pub judgement: Judgement,
-    /// Node before the move (where the better line starts).
-    pub base: NodeId,
-    pub best: Vec<Move>,
-    pub best_san: Vec<String>,
-    /// "23…Nf6".
-    pub best_label: Option<String>,
-}
 
 pub enum ReportAction {
     Goto(NodeId),
@@ -78,19 +35,8 @@ pub enum DialogAction {
     OpenEngines,
 }
 
-struct Target {
-    key: String,
-    pos: EnginePosition,
-    turn: Side,
-}
-
 enum JobMsg {
-    Engine(String),
-    Eval {
-        key: String,
-        eval: PosEval,
-        nps: u64,
-    },
+    Event(JobEvent),
     Done,
     Failed(String),
 }
@@ -110,8 +56,8 @@ impl Drop for Job {
 }
 
 pub struct Review {
-    evals: HashMap<String, PosEval>,
-    pub meta: Option<ReviewMeta>,
+    /// Evaluations of the main line and the report built from them.
+    pub analysis: GameAnalysis,
     job: Option<Job>,
     pub error: Option<String>,
     /// Graph and report tab are shown.
@@ -119,51 +65,31 @@ pub struct Review {
     pub dialog_open: bool,
     /// Measured engine speed per thread, for time estimates.
     nps_per_thread: Option<f64>,
-    built_rev: Option<u64>,
-    dirty: bool,
-    /// Root and main-line nodes: the analysed positions.
-    line: Vec<NodeId>,
-    keys: Vec<String>,
-    /// Side making each move of the line.
-    movers: Vec<Color>,
-    /// Evaluation per position (engine result or a terminal position).
-    values: Vec<Option<Eval>>,
-    pub report: Report,
-    pub marks: HashMap<NodeId, Mark>,
     /// Report tab: index of the last visited error per side and kind.
     cycle: HashMap<(Color, Judgement), usize>,
 }
 
+/// The folder of the cached analyses.
+fn cache_dir() -> Option<PathBuf> {
+    Settings::cache_dir().map(|d| d.join("analysis"))
+}
+
 impl Review {
     pub fn new(game: &Game) -> Self {
-        let mut r = Review {
-            evals: HashMap::new(),
-            meta: None,
+        let analysis = GameAnalysis::new(game, cache_dir().as_deref());
+        Review {
+            visible: analysis.has_data(),
+            analysis,
             job: None,
             error: None,
-            visible: false,
             dialog_open: false,
             nps_per_thread: None,
-            built_rev: None,
-            dirty: false,
-            line: Vec::new(),
-            keys: Vec::new(),
-            movers: Vec::new(),
-            values: Vec::new(),
-            report: Report::default(),
-            marks: HashMap::new(),
             cycle: HashMap::new(),
-        };
-        r.rebuild(game);
-        if r.load_cache() || r.load_pgn_evals(game) {
-            r.rebuild(game);
-            r.visible = true;
         }
-        r
     }
 
     pub fn has_data(&self) -> bool {
-        !self.evals.is_empty()
+        self.analysis.has_data()
     }
 
     pub fn running(&self) -> bool {
@@ -176,78 +102,12 @@ impl Review {
 
     /// Positions of the current main line without an evaluation.
     pub fn missing(&self) -> usize {
-        self.values.iter().filter(|v| v.is_none()).count()
+        self.analysis.missing()
     }
 
     /// Re-derives the report when the game or the evaluations changed. Cheap otherwise.
     pub fn refresh(&mut self, game: &Game) {
-        if self.dirty || self.built_rev != Some(game.revision()) {
-            self.rebuild(game);
-        }
-    }
-
-    fn rebuild(&mut self, game: &Game) {
-        self.line = std::iter::once(NodeId::ROOT)
-            .chain(game.mainline())
-            .collect();
-        let positions: Vec<Chess> = self
-            .line
-            .iter()
-            .filter_map(|id| game.position(*id).cloned())
-            .collect();
-        self.keys = self
-            .line
-            .iter()
-            .map(|id| position_key(game, *id).map(|k| k.0).unwrap_or_default())
-            .collect();
-        self.values = (0..self.line.len())
-            .map(|i| {
-                self.evals
-                    .get(&self.keys[i])
-                    .map(|e| e.eval)
-                    .or_else(|| positions.get(i).and_then(terminal_eval))
-            })
-            .collect();
-        let mut plies = Vec::with_capacity(self.line.len().saturating_sub(1));
-        for i in 1..self.line.len() {
-            let mv = game.game_move(self.line[i]);
-            let best = self.evals.get(&self.keys[i - 1]).and_then(|e| e.pv.first());
-            plies.push(Ply {
-                mover: positions.get(i - 1).map_or(Color::White, |p| p.turn()),
-                null: mv.is_none_or(|m| m.is_null()),
-                best: best.is_some() && mv.and_then(|m| m.uci()).as_ref() == best,
-            });
-        }
-        self.movers = plies.iter().map(|p| p.mover).collect();
-        self.report = Report::build(&self.values, &plies, Phases::divide(&positions));
-        self.marks.clear();
-        for (i, j) in self.report.judgements.iter().enumerate() {
-            let Some(judgement) = *j else { continue };
-            let (base, node) = (self.line[i], self.line[i + 1]);
-            let (best, best_san) = match (self.evals.get(&self.keys[i]), positions.get(i)) {
-                (Some(e), Some(root)) => parse_pv(root, &e.pv),
-                _ => (Vec::new(), Vec::new()),
-            };
-            let best_label = best_san.first().and_then(|san| {
-                let (num, color) = game.move_number(node)?;
-                Some(match color {
-                    Color::White => format!("{num}.{san}"),
-                    Color::Black => format!("{num}…{san}"),
-                })
-            });
-            self.marks.insert(
-                node,
-                Mark {
-                    judgement,
-                    base,
-                    best,
-                    best_san,
-                    best_label,
-                },
-            );
-        }
-        self.built_rev = Some(game.revision());
-        self.dirty = false;
+        self.analysis.refresh(game);
     }
 
     /// Starts the engine job. `full` discards earlier results; otherwise only positions
@@ -266,41 +126,46 @@ impl Review {
             self.error = Some(tr("The built-in engine is not part of this build").into());
             return false;
         };
-        if full {
-            self.evals.clear();
-            self.dirty = true;
-        }
-        self.meta = Some(ReviewMeta {
+        let meta = ReviewMeta {
             engine: engine.name.clone(),
             nodes: rs.nodes(),
-        });
-        self.rebuild(game);
-        let targets: Vec<Target> = (0..self.line.len())
-            .filter(|i| self.values[*i].is_none())
-            .filter_map(|i| {
-                let (key, pos) = position_key(game, self.line[i])?;
-                let turn = match game.position(self.line[i])?.turn() {
-                    Color::White => Side::White,
-                    Color::Black => Side::Black,
-                };
-                Some(Target { key, pos, turn })
-            })
-            .collect();
+        };
+        let targets = self.analysis.begin(game, meta, full);
         if targets.is_empty() {
             return false;
         }
         let (tx, rx) = channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let total = targets.len();
-        let (path, threads, hash, nodes) = (path, rs.threads.max(1), rs.hash_mb, rs.nodes());
+        // Filling in keeps the quality of the earlier run (see `GameAnalysis::begin`).
+        let nodes = self.analysis.meta.as_ref().map_or(rs.nodes(), |m| m.nodes);
+        let settings = JobSettings {
+            threads: rs.threads.max(1),
+            hash_mb: rs.hash_mb,
+            nodes,
+            eval_file: None,
+        };
+        let threads = settings.threads;
         let (cancel_w, ctx_w) = (cancel.clone(), ctx.clone());
         let spawned = std::thread::Builder::new()
             .name("game-review".into())
             .spawn(move || {
-                let msg = match run_job(path, threads, hash, nodes, targets, &tx, &cancel_w, &ctx_w)
-                {
+                let result = game_review::run(
+                    uci::EngineConfig::new(&path),
+                    &settings,
+                    targets,
+                    &cancel_w,
+                    &mut |e| {
+                        let _ = tx.send(JobMsg::Event(e));
+                        ctx_w.request_repaint();
+                    },
+                );
+                let msg = match result {
                     Ok(()) => JobMsg::Done,
-                    Err(e) => JobMsg::Failed(e),
+                    Err(JobFailure::Start(e) | JobFailure::Engine(e)) => JobMsg::Failed(e),
+                    Err(JobFailure::Terminated(reason)) => {
+                        JobMsg::Failed(crate::analysis::termination_message(&reason))
+                    }
                 };
                 let _ = tx.send(msg);
                 ctx_w.request_repaint();
@@ -334,18 +199,14 @@ impl Review {
         let mut ended = false;
         while let Ok(msg) = job.rx.try_recv() {
             match msg {
-                JobMsg::Engine(name) => {
-                    if let Some(m) = &mut self.meta {
-                        m.engine = name;
+                JobMsg::Event(e) => {
+                    if let JobEvent::Eval { nps, .. } = &e {
+                        job.done += 1;
+                        if *nps > 0 {
+                            self.nps_per_thread = Some(*nps as f64 / f64::from(job.threads));
+                        }
                     }
-                }
-                JobMsg::Eval { key, eval, nps } => {
-                    job.done += 1;
-                    if nps > 0 {
-                        self.nps_per_thread = Some(nps as f64 / f64::from(job.threads));
-                    }
-                    self.evals.insert(key, eval);
-                    self.dirty = true;
+                    self.analysis.apply(e);
                 }
                 JobMsg::Done => ended = true,
                 JobMsg::Failed(e) => {
@@ -369,138 +230,17 @@ impl Review {
     }
 
     /// After an inaccuracy, mistake or blunder: how the opponent punishes it and how
-    /// the player best answers, the first two moves of the engine line from the position
-    /// after the move (shown as arrows, as on Lichess).
+    /// the player best answers (shown as arrows, as on Lichess).
     pub fn refutation(&self, node: NodeId, game: &Game) -> Vec<Move> {
-        if !self.marks.contains_key(&node) {
-            return Vec::new();
-        }
-        let (Some(i), Some(pos)) = (
-            self.line.iter().position(|n| *n == node),
-            game.position(node),
-        ) else {
-            return Vec::new();
-        };
-        let Some(e) = self.keys.get(i).and_then(|k| self.evals.get(k)) else {
-            return Vec::new();
-        };
-        let (mut moves, _) = parse_pv(pos, &e.pv);
-        moves.truncate(2);
-        moves
-    }
-
-    // ----- cache -----------------------------------------------------------------
-
-    fn cache_path(&self) -> Option<PathBuf> {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for k in &self.keys {
-            for b in k.bytes().chain(std::iter::once(b'\n')) {
-                h ^= u64::from(b);
-                h = h.wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-        Some(
-            Settings::cache_dir()?
-                .join("analysis")
-                .join(format!("{h:016x}.json")),
-        )
+        self.analysis.refutation(node, game)
     }
 
     fn save_cache(&self) {
-        let Some(meta) = self.meta.clone().filter(|m| m.nodes > 0) else {
-            return;
-        };
-        if self.evals.is_empty() {
-            return;
+        if let Some(dir) = cache_dir()
+            && let Err(e) = self.analysis.save_cache(&dir)
+        {
+            eprintln!("review cache: {}: {e}", dir.display());
         }
-        let Some(path) = self.cache_path() else {
-            return;
-        };
-        let file = CacheFile {
-            version: CACHE_VERSION,
-            meta,
-            evals: self
-                .evals
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        };
-        match serde_json::to_vec(&file) {
-            Ok(bytes) => {
-                if let Err(e) = crate::settings::write_atomic(&path, &bytes) {
-                    eprintln!("review cache: {}: {e}", path.display());
-                }
-            }
-            Err(e) => eprintln!("review cache: {e}"),
-        }
-    }
-
-    fn load_cache(&mut self) -> bool {
-        let Some(bytes) = self.cache_path().and_then(|p| std::fs::read(p).ok()) else {
-            return false;
-        };
-        let Ok(file) = serde_json::from_slice::<CacheFile>(&bytes) else {
-            return false;
-        };
-        if file.version != CACHE_VERSION || file.evals.is_empty() {
-            return false;
-        }
-        self.meta = Some(file.meta);
-        self.evals = file.evals.into_iter().collect();
-        true
-    }
-
-    /// Uses `[%eval]` comments (Lichess exports, or our own written analysis) when every
-    /// main-line move has one.
-    fn load_pgn_evals(&mut self, game: &Game) -> bool {
-        let mut found = Vec::new();
-        for (i, id) in self.line.iter().enumerate().skip(1) {
-            let Some(node) = game.node(*id) else {
-                return false;
-            };
-            let e = node
-                .comments_after()
-                .iter()
-                .flat_map(|c| parse_comment(c))
-                .find_map(|p| match p {
-                    CommentPart::Annotation(Annotation::Other { name, payload })
-                        if name == "eval" =>
-                    {
-                        Eval::parse_pgn(&payload)
-                    }
-                    _ => None,
-                });
-            match e {
-                Some(e) => found.push((i, e)),
-                None if self.values[i].is_some() => {}
-                None => return false,
-            }
-        }
-        let Some(&(_, first)) = found.first() else {
-            return false;
-        };
-        // The start position carries no comment: Lichess assumes +0.15 for the initial one.
-        let root = if game.start().is_standard() {
-            Eval::Cp(15)
-        } else {
-            first
-        };
-        found.insert(0, (0, root));
-        for (i, eval) in found {
-            self.evals.insert(
-                self.keys[i].clone(),
-                PosEval {
-                    eval,
-                    pv: Vec::new(),
-                    depth: 0,
-                },
-            );
-        }
-        self.meta = Some(ReviewMeta {
-            engine: "PGN".into(),
-            nodes: 0,
-        });
-        true
     }
 
     // ----- writing into the game -------------------------------------------------
@@ -511,8 +251,8 @@ impl Review {
     pub fn write_to_game(&self, game: &mut Game) -> usize {
         game.edit_group(|g| {
             let mut errors = 0;
-            for i in 1..self.line.len() {
-                let id = self.line[i];
+            for i in 1..self.analysis.line().len() {
+                let id = self.analysis.line()[i];
                 let Some(node) = g.node(id) else { continue };
                 let mut nags = node.nags().to_vec();
                 let mut comments: Vec<String> = node
@@ -521,12 +261,12 @@ impl Review {
                     .map(|c| strip_eval(c))
                     .filter(|c| !c.trim().is_empty())
                     .collect();
-                if let Some(e) = self.values[i]
+                if let Some(e) = self.analysis.values()[i]
                     && !matches!(e, Eval::Mate { moves: 0, .. })
                 {
                     comments.insert(0, format!("[%eval {}]", e.pgn()));
                 }
-                if let Some(mark) = self.marks.get(&id) {
+                if let Some(mark) = self.analysis.marks.get(&id) {
                     errors += 1;
                     if !nags.iter().any(|n| n.is_move_assessment()) {
                         nags.push(match mark.judgement {
@@ -571,7 +311,7 @@ impl Review {
         let painter = ui.painter_at(rect);
         let visuals = ui.visuals();
         painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
-        let n = self.values.len();
+        let n = self.analysis.values().len();
         if n < 2 {
             return None;
         }
@@ -580,7 +320,8 @@ impl Review {
         let y_of = |wp: f64| inner.bottom() - inner.height() * (wp / 100.0) as f32;
         let mid = y_of(50.0);
         let wp: Vec<Option<f64>> = self
-            .values
+            .analysis
+            .values()
             .iter()
             .map(|v| v.map(|e| e.win_percent(Color::White)))
             .collect();
@@ -609,12 +350,18 @@ impl Review {
                 visuals.weak_text_color(),
             );
         };
-        if self.report.phases.middlegame.is_some_and(|m| m > 0) {
+        if self
+            .analysis
+            .report
+            .phases
+            .middlegame
+            .is_some_and(|m| m > 0)
+        {
             label(inner.left(), tr("Opening"));
         }
         for (idx, name) in [
-            (self.report.phases.middlegame, tr("Middlegame")),
-            (self.report.phases.endgame, tr("Endgame")),
+            (self.analysis.report.phases.middlegame, tr("Middlegame")),
+            (self.analysis.report.phases.endgame, tr("Endgame")),
         ] {
             if let Some(i) = idx {
                 let x = x_of(i);
@@ -673,7 +420,7 @@ impl Review {
         if run.len() > 1 {
             painter.add(egui::Shape::line(run, curve));
         }
-        for (i, j) in self.report.judgements.iter().enumerate() {
+        for (i, j) in self.analysis.report.judgements.iter().enumerate() {
             if let (Some(j), Some(w)) = (j, wp[i + 1]) {
                 painter.circle_filled(pos2(x_of(i + 1), y_of(w)), 3.5, judgement_color(*j));
             }
@@ -707,12 +454,14 @@ impl Review {
             let label = if i == 0 {
                 tr("Start position").to_string()
             } else {
-                crate::san::show(&game.move_label(self.line[i]).unwrap_or_default()).into_owned()
+                crate::san::show(&game.move_label(self.analysis.line()[i]).unwrap_or_default())
+                    .into_owned()
             };
-            let eval = self.values[i]
+            let eval = self.analysis.values()[i]
                 .map(Eval::format)
                 .unwrap_or_else(|| "…".into());
             let mark = self
+                .analysis
                 .report
                 .judgements
                 .get(i.wrapping_sub(1))
@@ -731,7 +480,7 @@ impl Review {
         if (resp.clicked() || resp.dragged())
             && let Some(p) = resp.interact_pointer_pos()
         {
-            let target = self.line[index_at(p.x)];
+            let target = self.analysis.line()[index_at(p.x)];
             if target != cursor {
                 return Some(target);
             }
@@ -741,13 +490,7 @@ impl Review {
 
     /// Index in the main line of `cursor`, or of the main-line move a variation leaves from.
     fn line_index(&self, cursor: NodeId, game: &Game) -> Option<usize> {
-        let mut id = cursor;
-        loop {
-            if let Some(i) = self.line.iter().position(|n| *n == id) {
-                return Some(i);
-            }
-            id = game.parent(id)?;
-        }
+        self.analysis.line_index(cursor, game)
     }
 
     /// Report tab: per-player statistics in the Lichess layout.
@@ -761,7 +504,7 @@ impl Review {
             ui.add_space(10.0);
         }
         ui.separator();
-        if let Some(meta) = &self.meta {
+        if let Some(meta) = &self.analysis.meta {
             let source = if meta.nodes == 0 {
                 tr("Evaluations from the PGN ([%eval])").to_string()
             } else {
@@ -785,7 +528,7 @@ impl Review {
                     RichText::new(trf("Positions without evaluation: {n}", &[("n", &missing)]))
                         .color(ui.visuals().warn_fg_color),
                 );
-                let can_update = self.meta.as_ref().is_some_and(|m| m.nodes > 0);
+                let can_update = self.analysis.meta.as_ref().is_some_and(|m| m.nodes > 0);
                 if can_update && ui.button(tr("Update")).clicked() {
                     action = Some(ReportAction::Update);
                 }
@@ -842,7 +585,7 @@ impl Review {
             }
             ui.label(RichText::new(name).strong().size(16.0));
         });
-        let s = self.report.side(color).clone();
+        let s = self.analysis.report.side(color).clone();
         egui::Grid::new(("review_side", color as u8))
             .num_columns(2)
             .spacing(vec2(10.0, 3.0))
@@ -919,14 +662,7 @@ impl Review {
 
     /// Next main-line move of `color` with judgement `j` (cycles).
     fn next_error(&mut self, color: Color, j: Judgement) -> Option<NodeId> {
-        let hits: Vec<NodeId> = self
-            .report
-            .judgements
-            .iter()
-            .enumerate()
-            .filter(|(i, x)| **x == Some(j) && self.movers.get(*i) == Some(&color))
-            .map(|(i, _)| self.line[i + 1])
-            .collect();
+        let hits = self.analysis.errors(color, j);
         if hits.is_empty() {
             return None;
         }
@@ -1020,11 +756,7 @@ impl Review {
                     ui.end_row();
                 });
             ui.add_space(6.0);
-            let positions = self
-                .values
-                .iter()
-                .filter(|v| !matches!(v, Some(Eval::Mate { moves: 0, .. })))
-                .count();
+            let positions = self.analysis.positions();
             let per_thread = self.nps_per_thread.unwrap_or(700_000.0);
             let secs = positions as f64 * rs.nodes() as f64 / (per_thread * f64::from(rs.threads));
             ui.label(trf(
@@ -1074,136 +806,6 @@ impl Drop for Review {
         // Leaving the game mid-analysis keeps what was computed.
         self.cancel();
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_job(
-    path: PathBuf,
-    threads: u32,
-    hash_mb: u32,
-    nodes: u64,
-    targets: Vec<Target>,
-    tx: &Sender<JobMsg>,
-    cancel: &AtomicBool,
-    ctx: &egui::Context,
-) -> Result<(), String> {
-    let handle = uci::Engine::spawn_with(uci::EngineConfig::new(&path), Box::new(|| {}))
-        .map_err(|e| e.to_string())?;
-    if let Some(name) = &handle.info().name {
-        let _ = tx.send(JobMsg::Engine(name.clone()));
-    }
-    // Unknown options are not fatal: some engines lack Threads/Hash/MultiPV.
-    let _ = handle.set_threads(threads);
-    let _ = handle.set_hash_mb(hash_mb);
-    let _ = handle.set_multipv(1);
-    let _ = handle.new_game();
-    for (i, t) in targets.into_iter().enumerate() {
-        let id = SearchId(i as u64 + 1);
-        handle
-            .search(t.pos.clone(), id, SearchLimits::Nodes(nodes))
-            .map_err(|e| e.to_string())?;
-        let started = Instant::now();
-        let mut stopping = false;
-        let mut last: Option<uci::SearchInfo> = None;
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                handle.quit();
-                return Ok(());
-            }
-            if !stopping && started.elapsed() > SEARCH_GUARD {
-                let _ = handle.stop();
-                stopping = true;
-            }
-            match handle.recv_timeout(Duration::from_millis(100)) {
-                Some(EngineEvent::Info { search_id, info }) if search_id == id => {
-                    if info.multipv_index() == 1 && info.score.is_some() {
-                        let exact = info.score.is_some_and(|s| s.bound == ScoreBound::Exact);
-                        if exact || last.is_none() {
-                            last = Some(info);
-                        }
-                    }
-                }
-                Some(EngineEvent::BestMove {
-                    search_id, best, ..
-                }) if search_id == id => {
-                    if let Some(info) = last.take()
-                        && let Some(score) = info.score
-                    {
-                        let eval = Eval::from_white_eval(score.to_white(t.turn).eval);
-                        let mut pv: Vec<String> = info.pv.iter().take(12).cloned().collect();
-                        if let Some(b) = best
-                            && pv.first() != Some(&b)
-                        {
-                            pv = vec![b];
-                        }
-                        let _ = tx.send(JobMsg::Eval {
-                            key: t.key,
-                            eval: PosEval {
-                                eval,
-                                pv,
-                                depth: info.depth.unwrap_or(0),
-                            },
-                            nps: info.nps.unwrap_or(0),
-                        });
-                        ctx.request_repaint();
-                    }
-                    break;
-                }
-                Some(EngineEvent::Terminated(reason)) => {
-                    return Err(crate::analysis::termination_message(&reason));
-                }
-                _ => {}
-            }
-        }
-    }
-    handle.quit();
-    Ok(())
-}
-
-/// Cache key and UCI position of a node (full history, see [`Game::engine_history`]).
-fn position_key(game: &Game, id: NodeId) -> Option<(String, EnginePosition)> {
-    let h = game.engine_history(id)?;
-    let key = format!(
-        "{}|{}",
-        h.start_fen.as_deref().unwrap_or("startpos"),
-        h.moves.join(" ")
-    );
-    let pos = match h.start_fen {
-        None => EnginePosition::startpos(h.moves),
-        Some(fen) => EnginePosition::fen(fen, h.moves),
-    };
-    Some((key, pos))
-}
-
-/// Evaluation of a position without legal moves.
-fn terminal_eval(pos: &Chess) -> Option<Eval> {
-    if pos.is_checkmate() {
-        Some(Eval::Mate {
-            white: pos.turn() == Color::Black,
-            moves: 0,
-        })
-    } else if pos.is_stalemate() {
-        Some(Eval::Cp(0))
-    } else {
-        None
-    }
-}
-
-fn parse_pv(root: &Chess, pv: &[String]) -> (Vec<Move>, Vec<String>) {
-    let mut pos = root.clone();
-    let (mut moves, mut san) = (Vec::new(), Vec::new());
-    for u in pv {
-        let Some(m) = u
-            .parse::<UciMove>()
-            .ok()
-            .and_then(|um| um.to_move(&pos).ok())
-        else {
-            break;
-        };
-        san.push(SanPlus::from_move_and_play_unchecked(&mut pos, m).to_string());
-        moves.push(m);
-    }
-    (moves, san)
 }
 
 /// Removes `[%eval …]` commands from a comment.
@@ -1327,17 +929,17 @@ mod tests {
         let mut r = Review::new(&game);
         assert!(r.has_data() && r.visible);
         assert_eq!(r.missing(), 0);
-        assert!(r.report.complete);
+        assert!(r.analysis.report.complete);
         // 2…Ke7 throws the game away; 3.Qxe5# is a terminal position.
         let ke7 = game.mainline()[3];
         assert_eq!(
-            r.marks.get(&ke7).map(|m| m.judgement),
+            r.analysis.marks.get(&ke7).map(|m| m.judgement),
             Some(Judgement::Blunder)
         );
-        assert_eq!(r.report.black.blunders, 1);
+        assert_eq!(r.analysis.report.black.blunders, 1);
 
         let errors = r.write_to_game(&mut game);
-        assert_eq!(errors, r.marks.len());
+        assert_eq!(errors, r.analysis.marks.len());
         let node = game.node(ke7).expect("node");
         assert!(node.nags().contains(&Nag::BLUNDER));
         assert!(node.comments_after()[0].starts_with("[%eval 6.50]"));

@@ -286,16 +286,29 @@ fn engine_line(root: &Chess, multipv: u32, score: Score, pv: &[String]) -> Engin
         bound: uci::ScoreBound::Exact,
     }
     .to_white(side);
-    let (eval, cp, mate) = match white.eval {
-        WhiteEval::Cp(cp) => (pawns(cp), Some(cp), None),
+    let (cp, mate) = match white.eval {
+        WhiteEval::Cp(cp) => (Some(cp), None),
         WhiteEval::Mate { winner, moves } => {
             let n = moves as i32;
-            if winner == Side::White {
-                (format!("#{n}"), None, Some(n))
-            } else {
-                (format!("#\u{2212}{n}"), None, Some(-n))
-            }
+            (None, Some(if winner == Side::White { n } else { -n }))
         }
+    };
+    line_with(root, multipv, cp, mate, pv)
+}
+
+/// The line `pv` (UCI) from `root` with its evaluation for White: centipawns, or moves
+/// to mate (positive when White mates). Stops at the first move that is not legal.
+pub(crate) fn line_with(
+    root: &Chess,
+    multipv: u32,
+    cp: Option<i32>,
+    mate: Option<i32>,
+    pv: &[String],
+) -> EngineLine {
+    let eval = match (mate, cp) {
+        (Some(n), _) if n < 0 => format!("#\u{2212}{}", -n),
+        (Some(n), _) => format!("#{n}"),
+        (None, cp) => pawns(cp.unwrap_or(0)),
     };
     let mut pos = root.clone();
     let mut words = Vec::new();
@@ -337,7 +350,7 @@ fn engine_line(root: &Chess, multipv: u32, score: Score, pv: &[String]) -> Engin
 }
 
 /// Centipawns as pawns with a sign: "+0.45", "−1.20", "0.00".
-fn pawns(cp: i32) -> String {
+pub(crate) fn pawns(cp: i32) -> String {
     let sign = match cp.signum() {
         1 => "+",
         -1 => "\u{2212}",

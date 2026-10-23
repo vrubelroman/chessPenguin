@@ -227,4 +227,53 @@
     <string name="file_copy_failed">L’app non è riuscita a salvare una copia del file. Controlla che sul telefono ci sia spazio libero.</string>
     <string name="db_copy">copia</string>
     <string name="removed_copy">Database eliminato da ChessPenguin</string>
+    <!-- Game report (android-ui.md §21) -->
+    <string name="review_menu">Analisi della partita</string>
+    <string name="review_report_menu">Resoconto della partita</string>
+    <string name="review_text">Il motore valuta ogni posizione della linea principale. La partita non viene modificata.</string>
+    <string name="review_quality">Qualità</string>
+    <string name="review_fast">Veloce</string>
+    <string name="review_normal">Normale</string>
+    <string name="review_deep">Approfondito</string>
+    <string name="review_seconds">%d s</string>
+    <string name="review_minutes">%d min</string>
+    <string name="review_start">Analizza</string>
+    <string name="review_fill">Completa</string>
+    <string name="review_again">Analizza di nuovo</string>
+    <string name="review_partial">%1$d posizioni su %2$d sono già valutate.</string>
+    <string name="review_progress">Analisi · %1$d di %2$d</string>
+    <string name="review_stop">Interrompi l\'analisi</string>
+    <string name="review_accuracy">Precisione</string>
+    <string name="review_accuracy_of">Precisione: Bianco %1$s, Nero %2$s</string>
+    <string name="review_report">Resoconto</string>
+    <string name="review_better">era meglio %1$s</string>
+    <string name="review_inaccuracy">Imprecisione</string>
+    <string name="review_mistake">Errore</string>
+    <string name="review_blunder">Svarione</string>
+    <string name="review_inaccuracies">Imprecisioni</string>
+    <string name="review_mistakes">Errori</string>
+    <string name="review_blunders">Svarioni</string>
+    <string name="review_missing">Non valutate: %d</string>
+    <string name="review_failed">L\'analisi si è interrotta</string>
+    <string name="review_resume">Continua</string>
+    <string name="review_acpl">Perdita media in centipedoni</string>
+    <string name="review_opening">Apertura</string>
+    <string name="review_middlegame">Mediogioco</string>
+    <string name="review_endgame">Finale</string>
+    <string name="review_source">%1$s · %2$s nodi per mossa</string>
+    <string name="review_source_pgn" formatted="false">Valutazioni dal PGN ([%eval])</string>
+    <string name="review_hide">Nascondi l\'analisi</string>
+    <string name="review_graph">Grafico di valutazione</string>
+    <string name="review_engine_paused">In pausa: analisi della partita in corso</string>
+    <string name="review_best_preview">Linea migliore · mossa %1$d di %2$d</string>
+    <string name="review_next">Vai alla prossima mossa di questo tipo</string>
+    <string name="review_show_best">Mostra la linea migliore sulla scacchiera</string>
+    <string name="review_restart">Ricomincia</string>
+    <string name="review_graph_state">%1$s, valutazione %2$s</string>
+    <string name="review_start_position">Posizione iniziale</string>
+    <plurals name="review_estimate">
+        <item quantity="one">%1$d posizione, circa %2$s</item>
+        <item quantity="many">%1$d posizioni, circa %2$s</item>
+        <item quantity="other">%1$d posizioni, circa %2$s</item>
+    </plurals>
 </resources>

@@ -231,4 +231,54 @@
     <string name="file_copy_failed">Приложению не удалось сохранить копию файла. Проверьте, есть ли на телефоне свободное место.</string>
     <string name="db_copy">копия</string>
     <string name="removed_copy">База удалена из ChessPenguin</string>
+    <!-- Game report (android-ui.md §21) -->
+    <string name="review_menu">Анализ партии</string>
+    <string name="review_report_menu">Отчёт по партии</string>
+    <string name="review_text">Движок оценит каждую позицию основной линии. Сама партия не изменится.</string>
+    <string name="review_quality">Качество</string>
+    <string name="review_fast">Быстро</string>
+    <string name="review_normal">Обычно</string>
+    <string name="review_deep">Глубоко</string>
+    <string name="review_seconds">%d с</string>
+    <string name="review_minutes">%d мин</string>
+    <string name="review_start">Анализировать</string>
+    <string name="review_fill">Дополнить</string>
+    <string name="review_again">Анализировать заново</string>
+    <string name="review_partial">Уже оценено позиций: %1$d из %2$d.</string>
+    <string name="review_progress">Анализ партии · %1$d из %2$d</string>
+    <string name="review_stop">Остановить анализ</string>
+    <string name="review_accuracy">Точность</string>
+    <string name="review_accuracy_of">Точность: белые %1$s, чёрные %2$s</string>
+    <string name="review_report">Отчёт</string>
+    <string name="review_better">лучше было %1$s</string>
+    <string name="review_inaccuracy">Неточность</string>
+    <string name="review_mistake">Ошибка</string>
+    <string name="review_blunder">Зевок</string>
+    <string name="review_inaccuracies">Неточности</string>
+    <string name="review_mistakes">Ошибки</string>
+    <string name="review_blunders">Зевки</string>
+    <string name="review_missing">Без оценки: %d</string>
+    <string name="review_failed">Анализ прервался</string>
+    <string name="review_resume">Продолжить</string>
+    <string name="review_acpl">Средняя потеря сантипешек</string>
+    <string name="review_opening">Дебют</string>
+    <string name="review_middlegame">Миттельшпиль</string>
+    <string name="review_endgame">Эндшпиль</string>
+    <string name="review_source">%1$s · %2$s узлов на ход</string>
+    <string name="review_source_pgn" formatted="false">Оценки из PGN ([%eval])</string>
+    <string name="review_hide">Скрыть анализ</string>
+    <string name="review_graph">График оценки</string>
+    <string name="review_engine_paused">Пауза: идёт анализ партии</string>
+    <string name="review_best_preview">Лучшая линия · ход %1$d из %2$d</string>
+    <string name="review_next">Перейти к следующему такому ходу</string>
+    <string name="review_show_best">Показать лучшую линию на доске</string>
+    <string name="review_restart">Заново</string>
+    <string name="review_graph_state">%1$s, оценка %2$s</string>
+    <string name="review_start_position">Начальная позиция</string>
+    <plurals name="review_estimate">
+        <item quantity="one">Позиций: %1$d, примерно %2$s</item>
+        <item quantity="few">Позиций: %1$d, примерно %2$s</item>
+        <item quantity="many">Позиций: %1$d, примерно %2$s</item>
+        <item quantity="other">Позиций: %1$d, примерно %2$s</item>
+    </plurals>
 </resources>
