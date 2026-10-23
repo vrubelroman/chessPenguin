@@ -60,6 +60,8 @@ struct Form {
     hide_texts: bool,
     /// The result buttons are relative to the player (win / loss).
     relative_outcomes: bool,
+    /// The quick search of the header (not a condition of the panel).
+    search: String,
 }
 
 /// Number in a field: `Ok(None)` when empty, `Err` when not a number in `range`.
@@ -114,6 +116,7 @@ impl Form {
             with_comments: self.with_comments,
             with_variations: self.with_variations,
             games_only: self.hide_texts,
+            text: self.search.trim().to_string(),
         }
     }
 
@@ -166,6 +169,8 @@ struct Answer {
     outcome: Option<Arc<PositionOutcome>>,
     /// Games that reached the position in the board's move order, of all found.
     in_order: Option<(usize, usize)>,
+    /// The position was not searched: the memory its table needs (bytes) is not there.
+    blocked: Option<u64>,
 }
 
 struct Job {
@@ -173,7 +178,24 @@ struct Job {
     work: Background<Answer>,
 }
 
-/// What the right side of the library shows for a large database.
+/// What the header line says about a database (the library knows it).
+pub struct Header {
+    /// "ChessBase, read-only", "PGN, encoding UTF-8"…
+    pub format: String,
+    pub format_hint: String,
+    /// A database downloaded from Lichess and Chess.com: its "⟳ New games".
+    pub online: Option<OnlineButton>,
+}
+
+pub struct OnlineButton {
+    /// A download into it runs.
+    pub busy: bool,
+    /// The sites answered at start.
+    pub enabled: bool,
+    pub hint: String,
+}
+
+/// What the right side of the library shows for a database.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pane {
     Hidden,
@@ -260,6 +282,15 @@ pub struct LargeView {
     pane: Pane,
     /// Last text of each name field, to notice typing.
     typed: [String; 3],
+    /// Most games have no result: the continuations count chapters (a book).
+    books: bool,
+    /// The position of the shown list could not be searched for lack of memory
+    /// (the memory its table needs, bytes).
+    blocked: Option<u64>,
+    /// Ctrl+F asked for the quick search.
+    focus_search: bool,
+    /// The quick search has the keyboard (arrows and Enter go to the table).
+    search_focused: bool,
 }
 
 impl LargeView {
@@ -325,7 +356,34 @@ impl LargeView {
             focus_player: false,
             pane,
             typed: Default::default(),
+            books: false,
+            blocked: None,
+            focus_search: false,
+            search_focused: false,
         }
+    }
+
+    /// The view of a database just opened: a book's continuations count chapters, and
+    /// games downloaded from Lichess and Chess.com come newest first (§9.6).
+    pub fn for_database(db: &Database, online: bool) -> LargeView {
+        let mut view = LargeView::new();
+        view.books = db.books();
+        if online && view.sort == (SortKey::Number, true) {
+            view.sort = (SortKey::Date, false);
+        }
+        view
+    }
+
+    /// The database was read again (it grew): the list is found anew, the conditions,
+    /// the position, the sort and the selection stay (§9.7).
+    pub fn reread(&mut self, db: &Database) {
+        self.job = None;
+        self.shown = None;
+        self.outcome = None;
+        self.in_order = None;
+        self.cache.clear();
+        self.blocked = None;
+        self.books = db.books();
     }
 
     /// Selects a record and scrolls to it (returning from a game).
@@ -413,6 +471,7 @@ impl LargeView {
                 self.view = answer.view;
                 self.outcome = answer.outcome;
                 self.in_order = answer.in_order;
+                self.blocked = answer.blocked;
                 self.shown = Some(job.request);
                 // A selected game that left the list is no longer selected, so Enter
                 // cannot open a game the user does not see.
@@ -502,9 +561,23 @@ impl LargeView {
                     .get(&(filter_hash(&request.filter), position_id(pos)))
             })
             .cloned();
+        // A PGN database without the memory for its position table: the list by the
+        // filters only, and the board says why (checked once per request).
+        let blocked = request
+            .position
+            .as_ref()
+            .filter(|_| cached.is_none())
+            .and_then(|_| db.positions_blocked());
         let (db, req) = (db.clone(), request.clone());
         let work = Background::spawn(ctx, now, move |progress, cancel| {
-            let base = db.as_chessbase()?;
+            if blocked.is_some() {
+                return Some(Answer {
+                    view: db.query(&req.filter, req.sort, req.ascending, progress, cancel)?,
+                    outcome: None,
+                    in_order: None,
+                    blocked,
+                });
+            }
             let mut outcome = cached;
             if let Some((_, query)) = &req.position
                 && outcome.is_none()
@@ -513,7 +586,7 @@ impl LargeView {
                     None
                 } else {
                     let ignore = AtomicUsize::new(0);
-                    Some(base.query(&req.filter, SortKey::Number, true, &ignore, cancel)?)
+                    Some(db.query(&req.filter, SortKey::Number, true, &ignore, cancel)?)
                 };
                 let found = db.search_position(candidates.as_deref(), query, progress, cancel)?;
                 outcome = Some(Arc::new(found));
@@ -532,15 +605,16 @@ impl LargeView {
                     .filter(|m| !req.only_order || m.same_order)
                     .map(|m| m.index)
                     .collect();
-                base.sort_records(&mut v, req.sort, req.ascending);
+                db.sort_records(&mut v, req.sort, req.ascending);
                 v
             } else {
-                base.query(&req.filter, req.sort, req.ascending, progress, cancel)?
+                db.query(&req.filter, req.sort, req.ascending, progress, cancel)?
             };
             Some(Answer {
                 view,
                 outcome,
                 in_order,
+                blocked: None,
             })
         });
         if let Some(work) = work {
@@ -559,13 +633,11 @@ impl LargeView {
         let spawned = std::thread::Builder::new()
             .name("db-suggest".into())
             .spawn(move || {
-                if let Some(b) = db.as_chessbase() {
-                    let r = match field {
-                        NameField::Event => b.suggest_events(&q, SUGGESTIONS),
-                        _ => b.suggest_players(&q, SUGGESTIONS),
-                    };
-                    let _ = tx.send(r);
-                }
+                let r = match field {
+                    NameField::Event => db.suggest_events(&q, SUGGESTIONS),
+                    _ => db.suggest_players(&q, SUGGESTIONS),
+                };
+                let _ = tx.send(r);
             });
         if spawned.is_ok() {
             self.suggest_job = Some(SuggestJob { field, query, rx });
@@ -588,7 +660,10 @@ impl LargeView {
         actions: &mut Vec<LibraryAction>,
     ) {
         self.update(db, ui.ctx());
-        let total = db.as_chessbase().map_or(1, |b| b.records());
+        let total = db.len();
+        // A PGN's first search builds its position table: the progress counts its games.
+        self.board.preparing = !db.positions_ready();
+        self.board.unavailable = self.blocked.is_some();
         let counting = self
             .job
             .as_ref()
@@ -609,6 +684,22 @@ impl LargeView {
                 ));
             });
         }
+        if let Some(need) = self.blocked {
+            let free = chess_import::memory::available().unwrap_or(0);
+            let missing = (need + (256 << 20)).saturating_sub(free) / 1_000_000;
+            ui.label(
+                RichText::new(trf(
+                    "Not enough memory for position search in this database: about {n} MB more is needed. Close other programs and try again.",
+                    &[("n", &missing.max(1))],
+                ))
+                .color(ui.visuals().warn_fg_color),
+            );
+            if ui.button(tr("Retry")).clicked() {
+                // The list is found anew; the memory is looked at again.
+                self.shown = None;
+                self.blocked = None;
+            }
+        }
         let outcome = self.board_outcome().cloned();
         let mut events = Vec::new();
         self.board.keys(ui.ctx(), outcome.as_ref(), &mut events);
@@ -618,7 +709,7 @@ impl LargeView {
             outcome.as_ref(),
             counting,
             self.table_hover,
-            false,
+            self.books,
         ));
         for e in events {
             match e {
@@ -632,6 +723,57 @@ impl LargeView {
         if !self.board.is_set() {
             self.only_order = false;
         }
+    }
+
+    /// The quick search of the header (§9.2): words found in a player, the tournament,
+    /// the annotator, the ECO code or the date; with the panel and the position.
+    fn search_field(&mut self, ui: &mut Ui, now: f64) {
+        if !self.form.search.is_empty()
+            && crate::widgets::small_close_button(ui)
+                .on_hover_text(tr("Clear"))
+                .clicked()
+        {
+            self.form.search.clear();
+            self.typed_at = f64::NEG_INFINITY;
+        }
+        let width = if ui.available_width() > 700.0 {
+            220.0
+        } else {
+            140.0
+        };
+        let resp = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.form.search)
+                    .hint_text(tr("🔍 Search: player, event, ECO, year"))
+                    .desired_width(width),
+            )
+            .on_hover_text(tr("Ctrl+F; again — the filters"));
+        if resp.changed() {
+            self.typed_at = now;
+        }
+        // Escape in a non-empty field clears it (egui has just taken the focus away);
+        // in an empty one it leaves the field for the table.
+        if resp.lost_focus()
+            && ui.input(|i| i.key_pressed(egui::Key::Escape))
+            && !self.form.search.is_empty()
+        {
+            self.form.search.clear();
+            self.typed_at = f64::NEG_INFINITY;
+            resp.request_focus();
+        }
+        if std::mem::take(&mut self.focus_search) {
+            resp.request_focus();
+            // The text selected: typing replaces it.
+            if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
+                let range = egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(self.form.search.chars().count()),
+                );
+                state.cursor.set_char_range(Some(range));
+                state.store(ui.ctx(), resp.id);
+            }
+        }
+        self.search_focused = resp.has_focus();
     }
 
     /// The pane switch `[Filters | Board]`; a click on the shown pane hides it.
@@ -658,7 +800,7 @@ impl LargeView {
             (
                 Pane::Filters,
                 filters,
-                tr("Filters: players, tournament, years, rating… (Ctrl+F)"),
+                tr("Filters: players, tournament, years, rating… (Ctrl+F twice)"),
             ),
         ] {
             let on = self.pane == pane;
@@ -682,16 +824,28 @@ impl LargeView {
             } else {
                 trf("Position: {line}", &[("line", &self.board.chip_text())])
             };
+            let blocked = self.blocked.is_some();
             out.push(Condition {
-                text,
+                text: if blocked { format!("{text} ⚠") } else { text },
                 pane: Pane::Board,
                 clear: Clear::Position,
+                hint: blocked
+                    .then(|| tr("Not applied: not enough memory for position search").to_string()),
                 mini: Some((
                     self.board.position(),
                     self.board.flipped,
                     settings.board_theme,
                     settings.piece_set,
                 )),
+            });
+        }
+        if !f.search.trim().is_empty() {
+            out.push(Condition {
+                text: format!("{}: {}", tr("Search"), f.search.trim()),
+                pane: self.pane,
+                clear: Clear::Search,
+                hint: None,
+                mini: None,
             });
         }
         let side = match f.side {
@@ -705,6 +859,7 @@ impl LargeView {
                     text,
                     pane: Pane::Filters,
                     clear,
+                    hint: None,
                     mini: None,
                 });
             }
@@ -785,6 +940,7 @@ impl LargeView {
                 self.board = SearchBoard::new();
                 self.only_order = false;
             }
+            Clear::Search => f.search.clear(),
             Clear::Player => {
                 f.player = NameFilter::default();
                 f.side = Side::Any;
@@ -873,7 +1029,9 @@ impl LargeView {
                         break;
                     }
                     let (open, remove) = chip(ui, c);
-                    if open {
+                    if open && c.clear == Clear::Search {
+                        self.focus_search = true;
+                    } else if open {
                         goto = Some(c.pane);
                     }
                     if remove {
@@ -926,12 +1084,16 @@ impl LargeView {
                 ui.add_space(4.0);
                 self.game_group(ui);
                 ui.add_space(4.0);
-                self.annotations_group(ui);
+                self.annotations_group(ui, db.texts() > 0);
             });
     }
 
+    /// Clears the conditions of the panel; the quick search and the position stay.
     fn reset(&mut self) {
-        self.form = Form::default();
+        self.form = Form {
+            search: std::mem::take(&mut self.form.search),
+            ..Form::default()
+        };
         self.suggestions = None;
         self.typed = Default::default();
     }
@@ -1109,7 +1271,7 @@ impl LargeView {
         }
     }
 
-    fn annotations_group(&mut self, ui: &mut Ui) {
+    fn annotations_group(&mut self, ui: &mut Ui, texts: bool) {
         let f = &self.form;
         let count = usize::from(f.with_comments)
             + usize::from(f.with_variations)
@@ -1117,10 +1279,13 @@ impl LargeView {
         Self::group_header(ui, tr("Annotations"), count);
         ui.checkbox(&mut self.form.with_comments, tr("with comments"));
         ui.checkbox(&mut self.form.with_variations, tr("with variations"));
-        let mut show_texts = !self.form.hide_texts;
-        ui.checkbox(&mut show_texts, tr("show texts"))
-            .on_hover_text(tr("Guiding texts of the database; left out by any condition on players, dates, ratings, results or moves"));
-        self.form.hide_texts = !show_texts;
+        // Only a database with guiding texts has the choice (§9.4).
+        if texts {
+            let mut show_texts = !self.form.hide_texts;
+            ui.checkbox(&mut show_texts, tr("show texts"))
+                .on_hover_text(tr("Guiding texts of the database; left out by any condition on players, dates, ratings, results or moves"));
+            self.form.hide_texts = !show_texts;
+        }
     }
 
     /// A name field with suggestions; picking one filters by exactly that name.
@@ -1267,88 +1432,108 @@ impl LargeView {
         ui: &mut Ui,
         path: &Path,
         db: &Arc<Database>,
+        header: &Header,
         viewed: &mut Viewed,
         notes: usize,
         settings: &Settings,
         actions: &mut Vec<LibraryAction>,
     ) -> bool {
         let mut open_notes = false;
-        let Some(base) = db.as_chessbase() else {
-            return false;
-        };
         self.update(db, ui.ctx());
         let now = ui.input(|i| i.time);
-        let progress = self.slow_progress(now, base.records());
-        let total = base.games() + base.texts();
+        let progress = self.slow_progress(now, db.len());
+        let total = db.games() + db.texts();
 
         // The pane switch comes first (right): it stays visible in a narrow window,
-        // the rest of the line is shortened.
+        // then the quick search; the rest of the line is shortened.
         ui.horizontal(|ui| {
-          ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // The switch packs its segments; the rest keeps the usual spacing.
-            ui.scope(|ui| self.pane_switch(ui));
-            ui.add_space(8.0);
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(
-                        path.file_stem()
-                            .map(|s| s.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                    )
-                    .strong(),
-                )
-                .truncate(),
-            );
-            if ui.available_width() > 520.0 {
-                ui.label(RichText::new(tr("· ChessBase, read-only")).weak())
-                    .on_hover_text(tr(
-                        "Read in place; the original files are not changed. Save a game to keep your edits.",
-                    ));
-            }
-            let counter = match &self.shown {
-                Some(s)
-                    if s.use_position
-                        || s.filter != Filter::default()
-                        || self.form.active() > 0 =>
-                {
-                    trf(
-                    "· found {n} of {total}",
-                        &[("n", &grouped(self.view.len())), ("total", &grouped(total))],
-                    )
-                }
-                _ if base.texts() > 0 => trf(
-                    "· {n} games · {t} texts",
-                    &[("n", &grouped(base.games())), ("t", &grouped(base.texts()))],
-                ),
-                _ => trf("· {n} games", &[("n", &grouped(base.games()))]),
-            };
-            let mut counter = RichText::new(counter);
-            if progress.is_some() {
-                counter = counter.weak();
-            }
-            ui.add(egui::Label::new(counter).truncate());
-            if let Some(p) = progress {
-                ui.add(egui::Spinner::new().size(14.0));
-                ui.label(RichText::new(format!("{:.0} %", p * 100.0)).weak());
-            }
-            if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
-                open_notes = true;
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // The switch packs its segments; the rest keeps the usual spacing.
+                ui.scope(|ui| self.pane_switch(ui));
+                ui.add_space(8.0);
+                self.search_field(ui, now);
+                ui.add_space(8.0);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(
+                                path.file_stem()
+                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .unwrap_or_default(),
+                            )
+                            .strong(),
+                        )
+                        .truncate(),
+                    );
+                    if ui.available_width() > 520.0 {
+                        ui.label(RichText::new(format!("· {}", header.format)).weak())
+                            .on_hover_text(&header.format_hint);
+                    }
+                    let counter = match &self.shown {
+                        Some(s)
+                            if s.use_position
+                                || s.filter != Filter::default()
+                                || self.form.active() > 0 =>
+                        {
+                            trf(
+                                "· found {n} of {total}",
+                                &[("n", &grouped(self.view.len())), ("total", &grouped(total))],
+                            )
+                        }
+                        _ if db.texts() > 0 => trf(
+                            "· {n} games · {t} texts",
+                            &[("n", &grouped(db.games())), ("t", &grouped(db.texts()))],
+                        ),
+                        _ => trf("· {n} games", &[("n", &grouped(db.games()))]),
+                    };
+                    let mut counter = RichText::new(counter);
+                    if progress.is_some() {
+                        counter = counter.weak();
+                    }
+                    ui.add(egui::Label::new(counter).truncate());
+                    if let Some(p) = progress {
+                        ui.add(egui::Spinner::new().size(14.0));
+                        ui.label(RichText::new(format!("{:.0} %", p * 100.0)).weak());
+                    }
+                    if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
+                        open_notes = true;
+                    }
+                    // A database from Lichess and Chess.com: its new games.
+                    if let Some(online) = &header.online {
+                        if online.busy {
+                            ui.add(egui::Spinner::new().size(14.0));
+                            ui.label(RichText::new(tr("updating…")).weak());
+                        } else if ui
+                            .add_enabled(
+                                online.enabled,
+                                egui::Button::new(tr("⟳ New games")).small(),
+                            )
+                            .on_hover_text(&online.hint)
+                            .on_disabled_hover_text(&online.hint)
+                            .clicked()
+                        {
+                            actions.push(LibraryAction::UpdateOnline(path.to_path_buf()));
+                        }
+                    }
+                });
             });
-          });
         });
         self.chips(ui, settings);
         ui.add_space(2.0);
 
+        // Ctrl+F: the quick search; once more, the filters' first field (§9.10).
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
-            self.pane = Pane::Filters;
-            self.focus_player = true;
+            if self.search_focused {
+                self.pane = Pane::Filters;
+                self.focus_player = true;
+            } else {
+                self.focus_search = true;
+            }
         }
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::B)) {
             self.pane = Pane::Board;
         }
-        // Ctrl+Shift+Backspace: all conditions, the position included.
+        // Ctrl+Shift+Backspace: all conditions, the quick search and the position included.
         if ui.input_mut(|i| {
             i.consume_key(
                 egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
@@ -1356,19 +1541,23 @@ impl LargeView {
             )
         }) {
             self.reset();
+            self.form.search.clear();
             self.board = SearchBoard::new();
             self.only_order = false;
         }
 
-        let use_position = self.shown.as_ref().is_some_and(|s| s.use_position);
+        // A position that could not be searched (no memory) does not filter the list.
+        let use_position =
+            self.shown.as_ref().is_some_and(|s| s.use_position) && self.blocked.is_none();
         // The position the shown rows were found for (the board may be ahead of it).
         let shown_position = self
             .shown
             .as_ref()
-            .filter(|s| s.use_position)
+            .filter(|s| s.use_position && self.blocked.is_none())
             .and_then(|s| s.position.as_ref())
             .map(|(_, q)| q.position.clone());
         if self.shown.is_some() && self.view.is_empty() && self.job.is_none() {
+            let searched = !self.form.search.trim().is_empty();
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
                 if use_position {
@@ -1376,16 +1565,52 @@ impl LargeView {
                         RichText::new(tr("The position does not occur in these games")).size(16.0),
                     );
                     ui.add_space(6.0);
-                    if self.form.active() > 0
+                    if (self.form.active() > 0 || searched)
                         && ui.button(tr("Search the whole database")).clicked()
                     {
                         self.reset();
+                        self.form.search.clear();
                     }
                 } else {
                     ui.label(RichText::new(tr("Nothing found")).size(16.0));
+                    // A condition on a field no game of the database has (§9.8).
+                    let filled = db.filled();
+                    let f = &self.form;
+                    for (asked, has, text) in [
+                        (
+                            !f.eco.trim().is_empty(),
+                            filled.eco,
+                            tr("No game of this database has an ECO code"),
+                        ),
+                        (
+                            !f.annotator.trim().is_empty(),
+                            filled.annotator,
+                            tr("No game of this database has an annotator"),
+                        ),
+                        (
+                            !f.elo_min.trim().is_empty(),
+                            filled.elo,
+                            tr("No game of this database has a rating"),
+                        ),
+                        (
+                            !f.year_from.trim().is_empty() || !f.year_to.trim().is_empty(),
+                            filled.year,
+                            tr("No game of this database has a year"),
+                        ),
+                    ] {
+                        if asked && !has {
+                            ui.label(RichText::new(text).weak());
+                        }
+                    }
                     ui.add_space(6.0);
-                    if ui.button(tr("Reset filters")).clicked() {
+                    let label = if searched {
+                        tr("Reset filters and search")
+                    } else {
+                        tr("Reset filters")
+                    };
+                    if ui.button(label).clicked() {
                         self.reset();
+                        self.form.search.clear();
                     }
                 }
             });
@@ -1418,7 +1643,13 @@ impl LargeView {
             columns.push((tr("Move"), None, Column::exact(52.0)));
         }
         if show_number {
-            columns.push(("№", Some(SortKey::Number), Column::exact(84.0)));
+            // As wide as the largest number (a check mark before it).
+            let digits = grouped(db.len()).chars().count() as f32;
+            columns.push((
+                "№",
+                Some(SortKey::Number),
+                Column::exact((digits * 8.0 + 24.0).clamp(52.0, 84.0)),
+            ));
         }
         // Without the event the names share the rest of the width.
         let name = if show_event {
@@ -1522,7 +1753,7 @@ impl LargeView {
                         return;
                     };
                     let index = index as usize;
-                    let r = base.row(index);
+                    let r = db.row(index);
                     row.set_selected(selected == Some(index));
                     let key = viewed::key(db.identity(index));
                     let seen = viewed.contains(key);
@@ -1555,7 +1786,13 @@ impl LargeView {
                                         check_mark(ui);
                                     }
                                     ui.add_space(14.0);
-                                    RichText::new(grouped(index + 1)).weak()
+                                    let n = RichText::new(grouped(index + 1)).weak();
+                                    // A game that could not be read cleanly: its number is orange.
+                                    if db.damaged(index) {
+                                        n.color(Color32::from_rgb(0xe6, 0x8f, 0x00))
+                                    } else {
+                                        n
+                                    }
                                 }
                                 (_, Some(SortKey::White)) if is_text => {
                                     RichText::new(format!("📄 {}", r.title)).italics()
@@ -1596,12 +1833,14 @@ impl LargeView {
                             ui.add(egui::Label::new(cell).selectable(false).truncate());
                         });
                     }
+                    // Tournament · place · round · length · annotator, those it has.
+                    let moves = if r.moves > 0 { trf("{n} moves", &[("n", &r.moves)]) } else { String::new() };
+                    let about: Vec<&str> = [r.event.as_str(), r.site.as_str(), r.round.as_str(), moves.as_str(), r.annotator.as_str()]
+                        .into_iter()
+                        .filter(|t| !t.trim().is_empty() && *t != "?" && !t.contains("://"))
+                        .collect();
                     let resp = row.response();
-                    let resp = if show_round && show_event {
-                        resp
-                    } else {
-                        resp.on_hover_text(format!("{} · {}", r.event, r.round))
-                    };
+                    let resp = if about.is_empty() { resp } else { resp.on_hover_text(about.join(" · ")) };
                     resp.context_menu(|ui| {
                         let label = if seen {
                             tr("Mark as not viewed")
@@ -1674,7 +1913,8 @@ impl LargeView {
                 i.key_pressed(egui::Key::Enter),
             )
         });
-        let enter = enter && !typing;
+        // Enter belongs to a filter field, but in the quick search it opens the game.
+        let enter = enter && (!typing || self.search_focused);
         let step = if page_up || page_down { 20 } else { 1 };
         if up || down || page_up || page_down {
             let pos = self
@@ -1711,6 +1951,8 @@ struct Condition {
     text: String,
     pane: Pane,
     clear: Clear,
+    /// Said under the pointer (a condition not applied, and why).
+    hint: Option<String>,
     /// Position (and how to draw it) for the tooltip of the position chip.
     mini: Option<(
         shakmaty::Chess,
@@ -1721,9 +1963,10 @@ struct Condition {
 }
 
 /// What removing a chip clears.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Clear {
     Position,
+    Search,
     Player,
     Opponent,
     Event,
@@ -1773,6 +2016,10 @@ fn chip(ui: &mut Ui, c: &Condition) -> (bool, bool) {
                         view.show(ui, &mut crate::board::BoardState::default())
                     });
                 }),
+                None => r,
+            };
+            let r = match &c.hint {
+                Some(h) => r.on_hover_text(h),
                 None => r,
             };
             out.0 = r.clicked();

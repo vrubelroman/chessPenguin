@@ -68,7 +68,7 @@ pub struct Base {
 
 /// Decoded names of a list, folded copies for searching (see [`fold`]), the
 /// alphabetical rank of each (for sorting by name) and the number of games of each.
-struct Names {
+pub(crate) struct Names {
     shown: Vec<String>,
     folded: Vec<String>,
     rank: Vec<u32>,
@@ -76,7 +76,7 @@ struct Names {
 }
 
 impl Names {
-    fn new(shown: Vec<String>) -> Names {
+    pub(crate) fn new(shown: Vec<String>) -> Names {
         let folded: Vec<String> = shown.iter().map(|s| fold(s)).collect();
         let mut order: Vec<u32> = (0..folded.len() as u32).collect();
         order.sort_by(|&a, &b| folded[a as usize].cmp(&folded[b as usize]));
@@ -98,22 +98,22 @@ impl Names {
         }
     }
 
-    fn count(&mut self, id: u32) {
+    pub(crate) fn count(&mut self, id: u32) {
         if let Some(n) = self.games.get_mut(id as usize) {
             *n += 1;
         }
     }
 
-    fn get(&self, id: u32) -> &str {
+    pub(crate) fn get(&self, id: u32) -> &str {
         self.shown.get(id as usize).map_or("", String::as_str)
     }
 
-    fn rank(&self, id: u32) -> u32 {
+    pub(crate) fn rank(&self, id: u32) -> u32 {
         self.rank.get(id as usize).copied().unwrap_or(u32::MAX)
     }
 
     /// Ids whose name contains every word of `query`, as a lookup table.
-    fn matching(&self, query: &str) -> Vec<bool> {
+    pub(crate) fn matching(&self, query: &str) -> Vec<bool> {
         let words = words(query);
         self.folded
             .iter()
@@ -123,7 +123,7 @@ impl Names {
 
     /// Up to `limit` names containing every word of `query`: names starting with
     /// the first word first, then by number of games. Also the number of matches.
-    fn suggest(&self, query: &str, limit: usize) -> (Vec<Suggestion>, usize) {
+    pub(crate) fn suggest(&self, query: &str, limit: usize) -> (Vec<Suggestion>, usize) {
         let words = words(query);
         if words.is_empty() {
             return (Vec::new(), 0);
@@ -179,6 +179,8 @@ pub fn fold(s: &str) -> String {
             'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => "c",
             'ď' | 'đ' | 'ð' => "d",
             'è'..='ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => "e",
+            // «Артём» is typed «Артем».
+            'ё' => "е",
             'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
             'ĥ' | 'ħ' => "h",
             'ì'..='ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => "i",
@@ -208,7 +210,7 @@ pub fn fold(s: &str) -> String {
 }
 
 /// Folded words of a search query; commas separate words too ("Carlsen, M").
-fn words(query: &str) -> Vec<String> {
+pub(crate) fn words(query: &str) -> Vec<String> {
     fold(query)
         .split(|c: char| c.is_whitespace() || c == ',')
         .filter(|w| !w.is_empty())
@@ -329,6 +331,9 @@ pub struct Filter {
     pub with_variations: bool,
     /// Leave guiding texts out.
     pub games_only: bool,
+    /// The quick search: every word in some field of the game — a player, the
+    /// tournament (title, place, year), the annotator, the ECO code, the date.
+    pub text: String,
 }
 
 /// ECO ranges of a filter: codes ("B90"), prefixes ("B9" = B90-B99, "B" = B00-B99)
@@ -1000,6 +1005,27 @@ impl Base {
             ids.as_ref()
                 .is_none_or(|t| t.get(id as usize).copied().unwrap_or(false))
         };
+        // The quick search, word by word: the names it is in.
+        let quick: Vec<QuickWord> = words(&filter.text)
+            .into_iter()
+            .map(|w| QuickWord {
+                players: self.players.matching(&w),
+                events: self.tournaments.matching(&w),
+                annotators: (0..self.annotators.len() as u32)
+                    .map(|id| {
+                        fold(&self.annotators.name(id, &self.decoder).unwrap_or_default())
+                            .contains(w.as_str())
+                    })
+                    .collect(),
+                // A record's year has 12 bits and its ECO 500 values: tables, not text.
+                years: (0..4096u32)
+                    .map(|y| y > 0 && y.to_string().contains(w.as_str()))
+                    .collect(),
+                ecos: (0..500u16)
+                    .map(|c| fold(&eco_text(c)).contains(w.as_str()))
+                    .collect(),
+            })
+            .collect();
         let names = player_ids.is_some() || opponent_ids.is_some();
         let game_only_conditions = names
             || filter.year_from.is_some()
@@ -1028,10 +1054,15 @@ impl Base {
             }
             if kind & 0x02 != 0 {
                 // A guiding text: only the tournament and the annotator apply.
+                // The quick search looks in its tournament and annotator.
+                let at = |t: &Vec<bool>, id: u32| t.get(id as usize).copied().unwrap_or(false);
                 if !filter.games_only
                     && !game_only_conditions
                     && has(&event_ids, u(0x07, 3))
                     && has(&annotator_ids, u(0x0d, 3))
+                    && quick
+                        .iter()
+                        .all(|q| at(&q.events, u(0x07, 3)) || at(&q.annotators, u(0x0d, 3)))
                 {
                     out.push(i as u32);
                 }
@@ -1121,6 +1152,22 @@ impl Base {
             {
                 continue;
             }
+            if !quick.is_empty() {
+                let year = (u(0x18, 3) >> 9) & 0xfff;
+                let eco = eco_number(u(0x23, 2) as u16);
+                let found = quick.iter().all(|q| {
+                    let at = |t: &Vec<bool>, id: u32| t.get(id as usize).copied().unwrap_or(false);
+                    at(&q.players, white)
+                        || at(&q.players, black)
+                        || at(&q.events, u(0x0f, 3))
+                        || at(&q.annotators, u(0x12, 3))
+                        || eco.is_some_and(|c| at(&q.ecos, u32::from(c)))
+                        || at(&q.years, year)
+                });
+                if !found {
+                    continue;
+                }
+            }
             out.push(i as u32);
         }
         scanned.store(self.records, Ordering::Relaxed);
@@ -1194,8 +1241,24 @@ impl Base {
     }
 }
 
+/// A word of the quick search and the names it is in.
+struct QuickWord {
+    players: Vec<bool>,
+    events: Vec<bool>,
+    annotators: Vec<bool>,
+    /// Years (0–4095) whose number holds the word.
+    years: Vec<bool>,
+    /// ECO codes (0 = A00 … 499 = E99) that hold it.
+    ecos: Vec<bool>,
+}
+
+/// 190 → "B90".
+pub(crate) fn eco_text(code: u16) -> String {
+    format!("{}{:02}", char::from(b'A' + (code / 100) as u8), code % 100)
+}
+
 /// Ids matching a name filter (`None`: no condition).
-fn name_table(names: &Names, f: &NameFilter) -> Option<Vec<bool>> {
+pub(crate) fn name_table(names: &Names, f: &NameFilter) -> Option<Vec<bool>> {
     if let Some(id) = f.exact {
         let mut t = vec![false; names.shown.len()];
         if let Some(x) = t.get_mut(id as usize) {

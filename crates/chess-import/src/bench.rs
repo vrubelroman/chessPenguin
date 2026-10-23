@@ -141,6 +141,19 @@ pub fn run(path: &Path, booster_dir: Option<&Path>, out: &mut dyn Write) -> io::
                 selected.len(),
                 t.elapsed().as_secs_f64() * 1e3
             )?;
+            let quick = Filter {
+                text: "carlsen 2020".into(),
+                ..Filter::default()
+            };
+            let t = Instant::now();
+            let found = base
+                .query(&quick, SortKey::Number, true, &counter, &never)
+                .map_or(0, |v| v.len());
+            writeln!(
+                out,
+                "quick search \"carlsen 2020\": {found} games in {:.1} ms",
+                t.elapsed().as_secs_f64() * 1e3
+            )?;
             let t = Instant::now();
             let all = base
                 .query(&Filter::default(), SortKey::White, true, &counter, &never)

@@ -11,6 +11,9 @@ use crate::pgn::lexer::{Lexer, TokKind, parse_tag};
 pub struct EntryFlags {
     pub has_fen: bool,
     pub has_comments: bool,
+    /// A comment with words in it, not only commands such as `[%clk 0:10:07]` or
+    /// `[%eval 0.3]` (clocks of online games are no comments to look for).
+    pub has_text_comments: bool,
     pub has_variations: bool,
     pub has_nags: bool,
     /// A `--` token outside comments (teaching null move).
@@ -36,6 +39,10 @@ pub struct GameEntry {
     /// All tags in source order (decoded).
     pub tags: Vec<(String, String)>,
     pub flags: EntryFlags,
+    /// Half-moves of the main line (outside variations), as written.
+    pub main_plies: u32,
+    /// Half-moves of the whole tree, variations included.
+    pub all_plies: u32,
 }
 
 impl GameEntry {
@@ -69,6 +76,11 @@ impl GameEntry {
     pub fn eco(&self) -> Option<&str> {
         self.tag("ECO")
     }
+    /// Moves of the main line: the `PlyCount` tag when the file has it, else counted.
+    pub fn moves(&self) -> u32 {
+        self.ply_count().unwrap_or(self.main_plies).div_ceil(2)
+    }
+
     /// When the game was played, as text that sorts by time: `UTCDate` and `UTCTime`
     /// when both are there (Lichess, Chess.com), else `Date`.
     pub fn played_at(&self) -> String {
@@ -176,6 +188,8 @@ pub fn scan_games(
                 first_line: tok.line,
                 tags: Vec::new(),
                 flags: EntryFlags::default(),
+                main_plies: 0,
+                all_plies: 0,
             });
             depth = 0;
             result_seen = false;
@@ -213,6 +227,10 @@ pub fn scan_games(
             TokKind::Comment { terminated } => {
                 movetext_tokens += 1;
                 entry.flags.has_comments = true;
+                let (from, to) = tok.comment_content();
+                if !entry.flags.has_text_comments && has_words(&bytes[from..to.max(from)]) {
+                    entry.flags.has_text_comments = true;
+                }
                 if !terminated {
                     entry.flags.has_structure_issues = true;
                 }
@@ -220,6 +238,7 @@ pub fn scan_games(
             TokKind::LineComment => {
                 movetext_tokens += 1;
                 entry.flags.has_comments = true;
+                entry.flags.has_text_comments = true;
             }
             TokKind::Escape => {}
             TokKind::Open => {
@@ -252,6 +271,11 @@ pub fn scan_games(
                 if depth == 0 && matches!(w, b"1-0" | b"0-1" | b"1/2-1/2" | b"*") {
                     result_seen = true;
                     lx.allow_tag();
+                } else if is_move(w) {
+                    entry.all_plies += 1;
+                    if depth == 0 {
+                        entry.main_plies += 1;
+                    }
                 }
             }
         }
@@ -263,6 +287,31 @@ pub fn scan_games(
         games: entries.len(),
     });
     Ok(entries)
+}
+
+/// A word of movetext that is a move: not a move number ("12.", "12..."), with or
+/// without the move glued to it ("12.e4"), and not the "e.p." of an en passant capture.
+fn is_move(w: &[u8]) -> bool {
+    let rest = &w[w
+        .iter()
+        .position(|c| !c.is_ascii_digit() && *c != b'.')
+        .unwrap_or(w.len())..];
+    !rest.is_empty() && rest != b"e.p."
+}
+
+/// Text in a comment besides commands in square brackets (`[%clk …]`, `[%eval …]`,
+/// `[%cal …]`).
+fn has_words(text: &[u8]) -> bool {
+    let mut depth = 0usize;
+    for &c in text {
+        match c {
+            b'[' => depth += 1,
+            b']' => depth = depth.saturating_sub(1),
+            c if depth == 0 && !c.is_ascii_whitespace() => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -308,6 +357,22 @@ mod tests {
         assert_eq!(e.len(), 2);
         assert_eq!(e[1].white(), Some("Ccc"));
         assert_eq!(e[1].black(), Some("Ddd"));
+    }
+
+    #[test]
+    fn main_line_moves_and_text_comments() {
+        let e = scan(concat!(
+            "1. e4 { [%clk 0:10:07] } e5 { [%clk 0:10:08] } 2.Nf3 (2. f4 exf4) 2...Nc6 *\n",
+            "1. d4 { A quiet start. [%eval 0.2] } d5 1-0\n",
+            "[PlyCount \"81\"] 1. c4 *\n",
+        ));
+        assert_eq!(e[0].main_plies, 4);
+        assert_eq!(e[0].all_plies, 6);
+        assert_eq!(e[0].moves(), 2);
+        assert!(e[0].flags.has_comments && !e[0].flags.has_text_comments);
+        assert!(e[1].flags.has_text_comments);
+        assert_eq!(e[1].moves(), 1);
+        assert_eq!(e[2].moves(), 41);
     }
 
     #[test]

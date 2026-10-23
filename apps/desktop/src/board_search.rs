@@ -60,6 +60,11 @@ pub struct SearchBoard {
     undo: Option<Replaced>,
     /// Continuation under the pointer (its arrow is drawn).
     hover: Option<UciMove>,
+    /// The first search of the database also prepares its position table (a PGN's,
+    /// once per session): the waiting line says so.
+    pub preparing: bool,
+    /// The position cannot be searched now (no memory for the table): no continuations.
+    pub unavailable: bool,
 }
 
 impl SearchBoard {
@@ -73,6 +78,8 @@ impl SearchBoard {
             board: BoardState::default(),
             undo: None,
             hover: None,
+            preparing: false,
+            unavailable: false,
         }
     }
 
@@ -598,12 +605,18 @@ impl SearchBoard {
         let Some(out) = outcome else {
             ui.label(RichText::new(title).strong());
             ui.add_space(8.0);
+            if self.unavailable {
+                ui.label(RichText::new("—").weak());
+                return;
+            }
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(14.0));
+                let p = format!("{:.0}", counting.unwrap_or(0.0) * 100.0);
                 let text = match counting {
-                    Some(p) if p > 0.0 => {
-                        trf("Counting… {p} %", &[("p", &format!("{:.0}", p * 100.0))])
+                    _ if self.preparing => {
+                        trf("Preparing the position search (once)… {p} %", &[("p", &p)])
                     }
+                    Some(c) if c > 0.0 => trf("Counting… {p} %", &[("p", &p)]),
                     _ => tr("Counting…").to_string(),
                 };
                 ui.label(RichText::new(text).weak());

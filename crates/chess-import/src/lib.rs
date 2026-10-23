@@ -12,6 +12,7 @@ pub mod bench;
 pub mod cbv;
 pub mod chessbase;
 pub mod memory;
+pub mod pgn_catalog;
 pub mod pgn_positions;
 pub mod position;
 
@@ -95,6 +96,8 @@ pub const LARGE_CHESSBASE: u64 = 20_000;
 pub struct PgnDb {
     pub db: PgnDatabase,
     positions: Mutex<Option<Arc<pgn_positions::PositionTable>>>,
+    /// The filters' index of the tags, built on first use.
+    catalog: std::sync::OnceLock<Box<pgn_catalog::Catalog>>,
 }
 
 impl PgnDb {
@@ -102,14 +105,28 @@ impl PgnDb {
         PgnDb {
             db,
             positions: Mutex::new(None),
+            catalog: std::sync::OnceLock::new(),
         }
     }
 
-    /// Memory the position table would need, built: about 20 bytes per position
-    /// and, while it is built, two to three times that (`docs/dev/import.md`),
-    /// estimated from the size of the PGN text (a move is some six bytes of it).
+    /// The filters' index of the games' tags (see [`pgn_catalog`]).
+    pub fn catalog(&self) -> &pgn_catalog::Catalog {
+        self.catalog
+            .get_or_init(|| Box::new(pgn_catalog::Catalog::build(self.db.entries())))
+    }
+
+    /// Memory the position table would need while it is built: about 20 bytes per
+    /// position, and two to three times that during the build (`docs/dev/import.md`).
+    /// Counted from the moves of the games (variations included): the size of the text
+    /// says little when every move carries a clock comment.
     pub fn positions_estimate(&self) -> u64 {
-        self.db.byte_len() as u64 * 10
+        let positions: u64 = self
+            .db
+            .entries()
+            .iter()
+            .map(|e| u64::from(e.all_plies) + 1)
+            .sum();
+        positions * 20 * 3
     }
 
     /// Why the position table cannot be built now: the memory it would need
@@ -248,6 +265,126 @@ impl Database {
         match self {
             Database::Pgn(db) => db.positions_blocked(),
             Database::ChessBase(_) => None,
+        }
+    }
+
+    /// Games (not guiding texts).
+    pub fn games(&self) -> usize {
+        match self {
+            Database::Pgn(db) => db.len(),
+            Database::ChessBase(b) => b.games(),
+        }
+    }
+
+    /// Guiding texts (only ChessBase databases have them).
+    pub fn texts(&self) -> usize {
+        match self {
+            Database::Pgn(_) => 0,
+            Database::ChessBase(b) => b.texts(),
+        }
+    }
+
+    /// The table row of record `index`.
+    pub fn row(&self, index: usize) -> chessbase::base::Row {
+        match self {
+            Database::Pgn(db) => db
+                .entries()
+                .get(index)
+                .map(|e| pgn_catalog::Catalog::row(e, e.moves()))
+                .unwrap_or_default(),
+            Database::ChessBase(b) => b.row(index),
+        }
+    }
+
+    /// Records that pass `filter`, sorted; `None` when cancelled.
+    pub fn query(
+        &self,
+        filter: &chessbase::base::Filter,
+        sort: chessbase::base::SortKey,
+        ascending: bool,
+        scanned: &AtomicUsize,
+        cancel: &AtomicBool,
+    ) -> Option<Vec<u32>> {
+        match self {
+            Database::Pgn(db) => {
+                db.catalog()
+                    .query(db.entries(), filter, sort, ascending, scanned, cancel)
+            }
+            Database::ChessBase(b) => b.query(filter, sort, ascending, scanned, cancel),
+        }
+    }
+
+    pub fn sort_records(
+        &self,
+        records: &mut Vec<u32>,
+        sort: chessbase::base::SortKey,
+        ascending: bool,
+    ) {
+        match self {
+            Database::Pgn(db) => db.catalog().sort_records(records, sort, ascending),
+            Database::ChessBase(b) => b.sort_records(records, sort, ascending),
+        }
+    }
+
+    pub fn suggest_players(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> (Vec<chessbase::base::Suggestion>, usize) {
+        match self {
+            Database::Pgn(db) => db.catalog().suggest_players(query, limit),
+            Database::ChessBase(b) => b.suggest_players(query, limit),
+        }
+    }
+
+    pub fn suggest_events(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> (Vec<chessbase::base::Suggestion>, usize) {
+        match self {
+            Database::Pgn(db) => db.catalog().suggest_events(query, limit),
+            Database::ChessBase(b) => b.suggest_events(query, limit),
+        }
+    }
+
+    /// Most games have no result: a book of chapters (continuations count chapters).
+    pub fn books(&self) -> bool {
+        match self {
+            Database::Pgn(db) => db.catalog().books(),
+            Database::ChessBase(_) => false,
+        }
+    }
+
+    /// The record could not be read cleanly (structure or encoding problems).
+    pub fn damaged(&self, index: usize) -> bool {
+        match self {
+            Database::Pgn(db) => db
+                .entries()
+                .get(index)
+                .is_some_and(|e| e.flags.has_structure_issues || e.flags.has_decode_errors),
+            Database::ChessBase(_) => false,
+        }
+    }
+
+    /// The position search is ready (a PGN database builds its table on first use).
+    pub fn positions_ready(&self) -> bool {
+        match self {
+            Database::Pgn(db) => db.positions.lock().is_ok_and(|t| t.is_some()),
+            Database::ChessBase(_) => true,
+        }
+    }
+
+    /// Which fields at least one game has (ChessBase databases: all of them).
+    pub fn filled(&self) -> pgn_catalog::Filled {
+        match self {
+            Database::Pgn(db) => db.catalog().filled(),
+            Database::ChessBase(_) => pgn_catalog::Filled {
+                eco: true,
+                annotator: true,
+                elo: true,
+                year: true,
+            },
         }
     }
 

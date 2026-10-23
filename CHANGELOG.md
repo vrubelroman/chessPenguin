@@ -2,6 +2,26 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Desktop: **every database gets the filters and the position search of a ChessBase
+  database** — PGN files of any size, downloads from Lichess and Chess.com, archives and
+  small ChessBase databases. Player and opponent (with the colour), tournament or place,
+  annotator, years, rating, result, ECO, length, «with comments» (clock and evaluation
+  marks such as `[%clk]` do not count) and «with variations»; names suggested as you
+  type; the table sorts by any column. Fields a file does not have stay in the panel,
+  and an empty result says when no game of the database has that field. Dates are read
+  with dots, dashes or slashes (`2026-10-18`), the length of a game is counted when the
+  file has no `PlyCount`.
+- Desktop: the quick search is in the header of every database (Mega too); each word may
+  be found in a different field ("carlsen 2024"). Ctrl+F goes there, again to the filters.
+- Desktop: games downloaded from Lichess and Chess.com are shown newest first (by the
+  date and time they were played); on Android the count over a downloaded database's
+  games grows during its download.
+- Names are found with «е» for «ё» («Артем» finds «Артём»).
+- The memory a PGN's position search needs is reckoned from its moves, not from the size
+  of the file (a file with clock comments was thought to need 14 times too much).
+
 ## [0.15.0] — 2026-10-23
 
 - Android: **the app updates itself.** Once a day (a switch in About turns it off; «Check
