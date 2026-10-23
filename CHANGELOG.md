@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.14.0] — 2026-10-23
 
 - Android: **games from Lichess and Chess.com** — «Add a database» → «Games from Lichess
   and Chess.com»: any player's games by nickname (yours, a pupil's, an opponent's; no login,
