@@ -336,13 +336,10 @@ impl Database {
         };
         let entries = pgn.entries();
         let when = |i: u32| {
-            let Some(e) = entries.get(i as usize) else {
-                return String::new();
-            };
-            match (e.tag("UTCDate"), e.tag("UTCTime")) {
-                (Some(d), Some(t)) => format!("{d} {t}"),
-                _ => e.tag("Date").unwrap_or("").to_owned(),
-            }
+            entries
+                .get(i as usize)
+                .map(|e| e.played_at())
+                .unwrap_or_default()
         };
         let mut keyed: Vec<(String, u32)> = indices.into_iter().map(|i| (when(i), i)).collect();
         keyed.sort_by(|a, b| b.cmp(a));

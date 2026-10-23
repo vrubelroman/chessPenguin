@@ -157,6 +157,10 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
                                 Text(
                                     if (query.isNotEmpty() && found != null) {
                                         stringResource(R.string.found_of, groupDigits(found), groupDigits(n))
+                                    } else if (download?.state?.running == true) {
+                                        // The games come as the download goes, as on the list of
+                                        // databases; the list itself is read again when it ends.
+                                        stringResource(R.string.online_downloading, groupDigits((entry?.games ?: n) + download.state.added.toInt()))
                                     } else {
                                         pluralStringResource(R.plurals.games_count, n, groupDigits(n))
                                     },

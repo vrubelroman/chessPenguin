@@ -153,7 +153,7 @@ impl SmallBoard {
                 let pgn = db.as_pgn()?;
                 let candidates: Option<Vec<u32>> = (!text.is_empty()).then(|| {
                     let mut v: Vec<u32> =
-                        filtered_sorted(pgn.entries(), &text, (SortKey::Index, true))
+                        filtered_sorted(pgn.entries(), &text, (SortKey::Index, true), false)
                             .into_iter()
                             .map(|i| i as u32)
                             .collect();
@@ -1013,7 +1013,9 @@ impl Library {
 
         let key = (path.clone(), self.search.clone(), self.sort.0, self.sort.1);
         if self.view_key.as_ref() != Some(&key) {
-            self.view = filtered_sorted(pgn.entries(), &self.search, self.sort);
+            // Games from Lichess and Chess.com: by default the most recent first.
+            let newest = crate::online::is_online(&path);
+            self.view = filtered_sorted(pgn.entries(), &self.search, self.sort, newest);
             self.view_key = Some(key);
         }
         // With a position on the board: only the games that reach it.
@@ -1320,7 +1322,15 @@ pub fn display_date(raw: &str) -> String {
     }
 }
 
-fn filtered_sorted(entries: &[GameEntry], search: &str, (key, asc): (SortKey, bool)) -> Vec<usize> {
+/// The games matching `search`, in the order of the column `key`. In a downloaded
+/// database (`newest`) the "№" order is the time the games were played, the most recent
+/// first: the sites' games are appended to the file oldest first, one site after another.
+fn filtered_sorted(
+    entries: &[GameEntry],
+    search: &str,
+    (key, asc): (SortKey, bool),
+    newest: bool,
+) -> Vec<usize> {
     let needle = search.trim().to_lowercase();
     let mut v: Vec<usize> = entries
         .iter()
@@ -1360,6 +1370,12 @@ fn filtered_sorted(entries: &[GameEntry], search: &str, (key, asc): (SortKey, bo
             _ => 0,
         }
     };
+    if newest && key == SortKey::Index {
+        let mut keyed: Vec<(String, usize)> =
+            v.into_iter().map(|i| (entries[i].played_at(), i)).collect();
+        keyed.sort_by(|x, y| if asc { y.cmp(x) } else { x.cmp(y) });
+        return keyed.into_iter().map(|(_, i)| i).collect();
+    }
     v.sort_by(|&a, &b| {
         let (ea, eb) = (&entries[a], &entries[b]);
         let ord = text(ea)
@@ -1384,5 +1400,36 @@ fn import_error(e: &ImportError) -> String {
         )
         .into(),
         e => e.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chess_core::pgn::scan_games;
+    use std::sync::atomic::AtomicBool;
+
+    fn entries(pgn: &str) -> Vec<GameEntry> {
+        scan_games(
+            pgn.as_bytes(),
+            chess_core::TextEncoding::Utf8,
+            &mut |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn downloaded_games_come_newest_first() {
+        // As a download writes them: one site's games oldest first, then the other's.
+        let e = entries(concat!(
+            "[Site \"lichess\"][UTCDate \"2026.01.01\"][UTCTime \"10:00:00\"] 1. e4 *\n",
+            "[Site \"lichess\"][UTCDate \"2026.03.01\"][UTCTime \"10:00:00\"] 1. d4 *\n",
+            "[Site \"chess.com\"][UTCDate \"2026.02.01\"][UTCTime \"10:00:00\"] 1. c4 *\n",
+        ));
+        assert_eq!(filtered_sorted(&e, "", (SortKey::Index, true), true), vec![1, 2, 0]);
+        assert_eq!(filtered_sorted(&e, "", (SortKey::Index, false), true), vec![0, 2, 1]);
+        // Any other database keeps the order of its file.
+        assert_eq!(filtered_sorted(&e, "", (SortKey::Index, true), false), vec![0, 1, 2]);
     }
 }

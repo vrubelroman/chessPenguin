@@ -69,6 +69,15 @@ impl GameEntry {
     pub fn eco(&self) -> Option<&str> {
         self.tag("ECO")
     }
+    /// When the game was played, as text that sorts by time: `UTCDate` and `UTCTime`
+    /// when both are there (Lichess, Chess.com), else `Date`.
+    pub fn played_at(&self) -> String {
+        match (self.tag("UTCDate"), self.tag("UTCTime")) {
+            (Some(d), Some(t)) => format!("{d} {t}"),
+            _ => self.date().unwrap_or("").to_owned(),
+        }
+    }
+
     pub fn ply_count(&self) -> Option<u32> {
         self.tag("PlyCount").and_then(|v| v.trim().parse().ok())
     }
