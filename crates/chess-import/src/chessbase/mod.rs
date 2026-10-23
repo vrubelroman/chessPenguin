@@ -172,8 +172,10 @@ pub fn convert(files: &Files) -> Result<Conversion, ImportError> {
             }
             headers::Record::Text(t) => match text::guiding_text(cbg, t.text_offset, &decoder) {
                 Ok(body) => {
-                    let tags =
+                    let mut tags =
                         writer::text_tags(t, &body.title, &tournaments, &annotators, &decoder);
+                    // The PGN of the library knows a guiding text by this tag (§9.4).
+                    tags.push((crate::pgn_catalog::TEXT_TAG.into(), "1".into()));
                     writer::text_game(&mut out.pgn, &tags, &body.text);
                     out.texts += 1;
                 }

@@ -108,8 +108,13 @@ impl Names {
         self.shown.get(id as usize).map_or("", String::as_str)
     }
 
-    pub(crate) fn rank(&self, id: u32) -> u32 {
-        self.rank.get(id as usize).copied().unwrap_or(u32::MAX)
+    /// Alphabetical place of a name for sorting; an empty name has none (`u64::MAX`:
+    /// last in both directions, like a missing rating).
+    pub(crate) fn rank(&self, id: u32) -> u64 {
+        match self.rank.get(id as usize) {
+            Some(&r) if r != u32::MAX => u64::from(r),
+            _ => u64::MAX,
+        }
     }
 
     /// Ids whose name contains every word of `query`, as a lookup table.
@@ -1211,8 +1216,8 @@ impl Base {
         let none_if_zero = |v: u32| if v == 0 { u64::MAX } else { u64::from(v) };
         match sort {
             SortKey::Number => index as u64,
-            SortKey::White => self.players.rank(u(0x09, 3)).into(),
-            SortKey::Black => self.players.rank(u(0x0c, 3)).into(),
+            SortKey::White => self.players.rank(u(0x09, 3)),
+            SortKey::Black => self.players.rank(u(0x0c, 3)),
             SortKey::WhiteElo => none_if_zero(u(0x1f, 2)),
             SortKey::BlackElo => none_if_zero(u(0x21, 2)),
             SortKey::Result => match r.get(0x1b) {
@@ -1225,8 +1230,7 @@ impl Base {
             SortKey::Eco => eco_number(u(0x23, 2) as u16).map_or(u64::MAX, u64::from),
             SortKey::Event => self
                 .tournaments
-                .rank(if text { u(0x07, 3) } else { u(0x0f, 3) })
-                .into(),
+                .rank(if text { u(0x07, 3) } else { u(0x0f, 3) }),
             SortKey::Date => none_if_zero(u(0x18, 3)),
             SortKey::AverageElo => {
                 let (w, b) = (u(0x1f, 2), u(0x21, 2));

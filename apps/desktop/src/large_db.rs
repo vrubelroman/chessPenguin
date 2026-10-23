@@ -1498,11 +1498,12 @@ impl LargeView {
                                 &[("n", &grouped(self.view.len())), ("total", &grouped(total))],
                             )
                         }
-                        _ if db.texts() > 0 => trf(
-                            "· {n} games · {t} texts",
-                            &[("n", &grouped(db.games())), ("t", &grouped(db.texts()))],
+                        _ if db.texts() > 0 => format!(
+                            "· {} · {}",
+                            crate::i18n::games(db.games()),
+                            crate::i18n::texts(db.texts())
                         ),
-                        _ => trf("· {n} games", &[("n", &grouped(db.games()))]),
+                        _ => format!("· {}", crate::i18n::games(db.games())),
                     };
                     let mut counter = RichText::new(counter);
                     if progress.is_some() {
@@ -1741,7 +1742,12 @@ impl LargeView {
         let mut hovered = None;
         let view = &self.view;
         let selected = self.selected;
-        let sort = self.effective_sort();
+        // A position not applied (no memory) does not sort: the arrow shows the view's own order.
+        let sort = if self.blocked.is_some() {
+            self.sort
+        } else {
+            self.effective_sort()
+        };
         let outcome = self.outcome.clone().filter(|_| use_position);
         let ordered = self
             .shown

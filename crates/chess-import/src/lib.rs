@@ -271,15 +271,15 @@ impl Database {
     /// Games (not guiding texts).
     pub fn games(&self) -> usize {
         match self {
-            Database::Pgn(db) => db.len(),
+            Database::Pgn(db) => db.len() - db.catalog().texts(),
             Database::ChessBase(b) => b.games(),
         }
     }
 
-    /// Guiding texts (only ChessBase databases have them).
+    /// Guiding texts (of a ChessBase database, or of one converted to PGN).
     pub fn texts(&self) -> usize {
         match self {
-            Database::Pgn(_) => 0,
+            Database::Pgn(db) => db.catalog().texts(),
             Database::ChessBase(b) => b.texts(),
         }
     }

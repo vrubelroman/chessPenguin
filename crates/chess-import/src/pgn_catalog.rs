@@ -12,6 +12,15 @@ use crate::chessbase::base::{
     words,
 };
 
+/// The tag the ChessBase converter gives a guiding text (its title is the `White`
+/// tag): such a record is a text, not a game, as in the ChessBase database.
+pub const TEXT_TAG: &str = "CbText";
+
+/// A record of a PGN converted from ChessBase that was a guiding text.
+pub fn is_text(e: &GameEntry) -> bool {
+    e.tag(TEXT_TAG).is_some()
+}
+
 /// What a filter and a sort need of each game, one array per field.
 pub struct Catalog {
     players: Names,
@@ -38,6 +47,9 @@ pub struct Catalog {
     filled: Filled,
     /// Most games have no result: a book, whose continuations count chapters.
     books: bool,
+    /// Guiding texts (from a converted ChessBase database).
+    text: Vec<bool>,
+    texts: usize,
 }
 
 /// Fields at least one game of the database has.
@@ -64,6 +76,18 @@ pub fn date_number(date: &str) -> u32 {
         return 0;
     }
     year * 10000 + num(parts.next(), 12) * 100 + num(parts.next(), 31)
+}
+
+/// yyyymmdd → the date as the table shows it ("18.10.2026", "10.2026", "2026"), for the
+/// quick search.
+fn shown_date(d: u32) -> String {
+    let (y, m, day) = (d / 10000, d / 100 % 100, d % 100);
+    match (y, m, day) {
+        (0, ..) => String::new(),
+        (y, 0, _) => y.to_string(),
+        (y, m, 0) => format!("{m:02}.{y}"),
+        (y, m, day) => format!("{day:02}.{m:02}.{y}"),
+    }
 }
 
 /// "13:05:09" → seconds of the day.
@@ -185,10 +209,18 @@ fn intern(values: impl Iterator<Item = String>) -> (Vec<String>, Vec<u32>) {
 impl Catalog {
     pub fn build(entries: &[GameEntry]) -> Catalog {
         // White and Black share one list: a player is the same whichever colour.
+        // A text has a title, not players.
+        let player = |e: &GameEntry, name: Option<&str>| {
+            if is_text(e) {
+                String::new()
+            } else {
+                known(name)
+            }
+        };
         let (names, ids) = intern(
             entries
                 .iter()
-                .flat_map(|e| [known(e.white()), known(e.black())]),
+                .flat_map(|e| [player(e, e.white()), player(e, e.black())]),
         );
         let white: Vec<u32> = ids.iter().step_by(2).copied().collect();
         let black: Vec<u32> = ids.iter().skip(1).step_by(2).copied().collect();
@@ -215,6 +247,8 @@ impl Catalog {
                 },
             )
             .collect();
+        let text: Vec<bool> = entries.iter().map(is_text).collect();
+        let texts = text.iter().filter(|&&t| t).count();
         let decided = entries
             .iter()
             .filter(|e| outcome(e.result()) != Outcome::Unknown)
@@ -241,7 +275,9 @@ impl Catalog {
             annotator,
             date,
             when,
-            books: decided * 2 < entries.len(),
+            books: decided * 2 < entries.len() - texts,
+            text,
+            texts,
             white_elo,
             black_elo,
             result: entries.iter().map(|e| outcome(e.result())).collect(),
@@ -259,6 +295,11 @@ impl Catalog {
     /// Which fields at least one game has.
     pub fn filled(&self) -> Filled {
         self.filled
+    }
+
+    /// Guiding texts among the records.
+    pub fn texts(&self) -> usize {
+        self.texts
     }
 
     /// Most games have no result (a book of chapters).
@@ -284,6 +325,17 @@ impl Catalog {
 
     /// The table row of game `index`.
     pub fn row(entry: &GameEntry, moves: u32) -> Row {
+        if is_text(entry) {
+            return Row {
+                kind: Some(RecordKind::Text),
+                title: known(entry.white()),
+                event: known(entry.event()),
+                round: known(entry.tag("Round")),
+                annotator: entry.tag("Annotator").unwrap_or("").trim().to_owned(),
+                result: "*",
+                ..Row::default()
+            };
+        }
         Row {
             kind: Some(RecordKind::Game),
             white: known(entry.white()),
@@ -352,6 +404,18 @@ impl Catalog {
         };
         let names = player_ids.is_some() || opponent_ids.is_some();
         let relative = filter.player_relative && player_ids.is_some();
+        // A guiding text has only a tournament and an annotator: any other condition
+        // leaves it out, as in a ChessBase database.
+        let game_only = names
+            || filter.year_from.is_some()
+            || filter.year_to.is_some()
+            || filter.elo_min.is_some()
+            || !filter.eco.is_empty()
+            || !filter.outcomes.is_empty()
+            || filter.moves_from.is_some()
+            || filter.moves_to.is_some()
+            || filter.with_comments
+            || filter.with_variations;
         let mut out = Vec::new();
         for i in 0..self.white.len() {
             if i % 65536 == 0 {
@@ -359,6 +423,22 @@ impl Catalog {
                     return None;
                 }
                 scanned.store(i, Ordering::Relaxed);
+            }
+            if self.text[i] {
+                let at = |t: &Vec<bool>, id: u32| t.get(id as usize).copied().unwrap_or(false);
+                if !filter.games_only
+                    && !game_only
+                    && has(&event_ids, self.event[i])
+                    && annotator
+                        .iter()
+                        .all(|w| self.annotator[i].contains(w.as_str()))
+                    && quick.iter().all(|(w, _, events)| {
+                        at(events, self.event[i]) || self.annotator[i].contains(w.as_str())
+                    })
+                {
+                    out.push(i as u32);
+                }
+                continue;
             }
             let (white, black) = (self.white[i], self.black[i]);
             let mut player_white = true;
@@ -447,6 +527,7 @@ impl Catalog {
                         || at(players, black)
                         || at(events, self.event[i])
                         || self.annotator[i].contains(w.as_str())
+                        || shown_date(self.date[i]).contains(w.as_str())
                         || e.is_some_and(|e| {
                             ["Site", "ECO", "Date", "UTCDate"]
                                 .iter()
@@ -487,11 +568,14 @@ impl Catalog {
     }
 
     fn sort_key(&self, i: usize, sort: SortKey) -> u64 {
+        if self.text[i] && !matches!(sort, SortKey::Number | SortKey::Event) {
+            return u64::MAX;
+        }
         let none_if_zero = |v: u32| if v == 0 { u64::MAX } else { u64::from(v) };
         match sort {
             SortKey::Number => i as u64,
-            SortKey::White => self.players.rank(self.white[i]).into(),
-            SortKey::Black => self.players.rank(self.black[i]).into(),
+            SortKey::White => self.players.rank(self.white[i]),
+            SortKey::Black => self.players.rank(self.black[i]),
             SortKey::WhiteElo => none_if_zero(self.white_elo[i].into()),
             SortKey::BlackElo => none_if_zero(self.black_elo[i].into()),
             SortKey::Result => match self.result[i] {
@@ -502,7 +586,7 @@ impl Catalog {
             },
             SortKey::Moves => none_if_zero(self.moves[i].into()),
             SortKey::Eco => self.eco[i].map_or(u64::MAX, u64::from),
-            SortKey::Event => self.events.rank(self.event[i]).into(),
+            SortKey::Event => self.events.rank(self.event[i]),
             SortKey::Date => {
                 if self.when[i] == 0 {
                     u64::MAX
@@ -814,6 +898,77 @@ mod tests {
         let mut v = vec![0, 1, 2, 3];
         c.sort_records(&mut v, SortKey::Date, false);
         assert_eq!(v, vec![2, 1, 3, 0]);
+    }
+
+    #[test]
+    fn guiding_texts_of_a_converted_chessbase_database() {
+        let (e, c) = catalog(concat!(
+            "[Event \"Course\"][White \"Strong and weak squares\"][Black \"\"][CbText \"1\"][Result \"*\"]\n{ A chapter. } *\n",
+            "[Event \"Course\"][White \"Karpov\"][Black \"Kasparov\"][Date \"1985.??.??\"][Result \"1-0\"]\n1. e4 1-0\n",
+        ));
+        assert_eq!(c.texts(), 1);
+        let r = Catalog::row(&e[0], 0);
+        assert_eq!(
+            (r.kind, r.title.as_str(), r.white.as_str()),
+            (Some(RecordKind::Text), "Strong and weak squares", "")
+        );
+        // A text's title is no player.
+        assert_eq!(c.suggest_players("squares", 5).1, 0);
+        // Only the tournament and the annotator apply to a text.
+        assert_eq!(
+            find(
+                &e,
+                &c,
+                &Filter {
+                    event: name("course"),
+                    ..Filter::default()
+                }
+            ),
+            vec![0, 1]
+        );
+        assert_eq!(
+            find(
+                &e,
+                &c,
+                &Filter {
+                    year_from: Some(1900),
+                    ..Filter::default()
+                }
+            ),
+            vec![1]
+        );
+        assert_eq!(
+            find(
+                &e,
+                &c,
+                &Filter {
+                    games_only: true,
+                    ..Filter::default()
+                }
+            ),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn empty_names_come_last_both_ways() {
+        let (_, c) = catalog("[White \"B\"][Black \"?\"] *\n[White \"A\"][Black \"Z\"] *\n");
+        let mut v = vec![0, 1];
+        c.sort_records(&mut v, SortKey::Black, false);
+        assert_eq!(v, vec![1, 0]);
+        c.sort_records(&mut v, SortKey::Black, true);
+        assert_eq!(v, vec![1, 0]);
+    }
+
+    #[test]
+    fn the_quick_search_finds_a_date_as_the_table_shows_it() {
+        let (e, c) = catalog(GAMES);
+        let text = |t: &str| Filter {
+            text: t.into(),
+            ..Filter::default()
+        };
+        assert_eq!(find(&e, &c, &text("18.10.2026")), vec![0]);
+        assert_eq!(find(&e, &c, &text("2026-10")), vec![0]);
     }
 
     #[test]

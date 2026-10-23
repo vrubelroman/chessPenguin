@@ -132,6 +132,13 @@ impl Library {
                     },
                     &c,
                 );
+                // The filters' index of a PGN is built here, not on the screen's thread
+                // (a large download takes a second, §9.7).
+                if let Ok(opened) = &res
+                    && let Database::Pgn(pgn) = &opened.db
+                {
+                    pgn.catalog();
+                }
                 let _ = tx.send(res);
                 ctx.request_repaint();
             });

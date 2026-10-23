@@ -119,6 +119,27 @@ pub fn games(n: usize) -> String {
     }
 }
 
+/// "1 text", "21 texts" (guiding texts of a database), with Russian plural forms
+/// ("1 текст", "3 текста", "5 текстов").
+pub fn texts(n: usize) -> String {
+    let num = crate::large_db::grouped(n);
+    match current() {
+        Lang::Ru => {
+            let word = match (n % 10, n % 100) {
+                (1, x) if x != 11 => "текст",
+                (2..=4, x) if !(12..=14).contains(&x) => "текста",
+                _ => "текстов",
+            };
+            format!("{num} {word}")
+        }
+        Lang::En => format!("{num} {}", if n == 1 { "text" } else { "texts" }),
+        Lang::Fr => format!("{num} {}", if n <= 1 { "texte" } else { "textes" }),
+        Lang::De => format!("{num} {}", if n == 1 { "Text" } else { "Texte" }),
+        Lang::Es => format!("{num} {}", if n == 1 { "texto" } else { "textos" }),
+        Lang::It => format!("{num} {}", if n == 1 { "testo" } else { "testi" }),
+    }
+}
+
 /// "11,7 млн партий" / "267 партий": a database size in a short form.
 pub fn games_short(n: usize) -> String {
     if n >= 1_000_000 {
