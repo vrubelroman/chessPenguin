@@ -25,6 +25,9 @@ use crate::library::LibraryAction;
 use crate::settings::Settings;
 use crate::viewed::{self, Viewed};
 
+/// The × of a text field and its gap (`widgets::small_close_button` is 22 pt wide).
+const CLEAR_SLOT: f32 = 26.0;
+
 /// Text edits are applied this long after the last key press.
 const DEBOUNCE: f64 = 0.25;
 /// A pass that takes longer than this dims the table and shows its progress.
@@ -1123,11 +1126,11 @@ impl LargeView {
         let count =
             usize::from(self.form.player.is_set()) + usize::from(self.form.opponent.is_set());
         Self::group_header(ui, tr("Players"), count);
-        ui.label(tr("Player"));
-        self.name_field(ui, db, NameField::Player);
+        self.name_field(ui, db, NameField::Player, tr("Player"));
         let player_set = self.form.player.is_set();
         ui.add_enabled_ui(player_set, |ui| {
-            ui.horizontal(|ui| {
+            // Wrapped: longer words (French, Spanish) do not widen the panel.
+            ui.horizontal_wrapped(|ui| {
                 for (side, label) in [
                     (Side::Any, tr("either colour")),
                     (Side::White, tr("as White")),
@@ -1139,16 +1142,14 @@ impl LargeView {
             .response
             .on_disabled_hover_text(tr("Enter a player first"));
         });
-        ui.label(tr("Opponent"));
-        self.name_field(ui, db, NameField::Opponent);
+        self.name_field(ui, db, NameField::Opponent, tr("Opponent"));
     }
 
     fn event_group(&mut self, ui: &mut Ui, db: &Arc<Database>) {
         let count = usize::from(self.form.event.is_set())
             + usize::from(!self.form.annotator.trim().is_empty());
         Self::group_header(ui, tr("Tournament"), count);
-        ui.label(tr("Tournament or place"));
-        self.name_field(ui, db, NameField::Event);
+        self.name_field(ui, db, NameField::Event, tr("Tournament or place"));
         ui.label(tr("Annotator"));
         let r = text_field(ui, &mut self.form.annotator, "", true);
         if r.changed() {
@@ -1167,6 +1168,22 @@ impl LargeView {
         let now = ui.input(|i| i.time);
         let mut typed = false;
 
+        // One grid (§2.6): captions in a column as wide as the longest of them, the
+        // fields from one edge to one edge; "from – to" and Elo with its rule in halves.
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let label_w = [tr("Years"), tr("Elo from"), tr("Moves"), "ECO"]
+            .iter()
+            .map(|t| {
+                ui.painter()
+                    .layout_no_wrap((*t).to_string(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            })
+            .fold(0.0_f32, f32::max)
+            .ceil();
+        let fields = (ui.available_width() - label_w - 8.0 - CLEAR_SLOT).floor();
+        let half = ((fields - DASH - 8.0) / 2.0).floor().max(40.0);
+
         let years_ok = {
             let a = number(&self.form.year_from, 1..=2100);
             let b = number(&self.form.year_to, 1..=2100);
@@ -1175,17 +1192,16 @@ impl LargeView {
                 (a, b) => (a.is_ok(), b.is_ok()),
             }
         };
-        ui.horizontal(|ui| {
-            ui.label(tr("Years"));
-            typed |= number_field(ui, &mut self.form.year_from, "", years_ok.0).changed();
-            ui.label("–");
-            typed |= number_field(ui, &mut self.form.year_to, "", years_ok.1).changed();
+        form_row(ui, label_w, tr("Years"), |ui| {
+            typed |= number_field(ui, &mut self.form.year_from, "", years_ok.0, half).changed();
+            dash(ui, "–");
+            typed |= number_field(ui, &mut self.form.year_to, "", years_ok.1, half).changed();
         });
 
-        ui.horizontal(|ui| {
-            ui.label(tr("Elo from"));
+        form_row(ui, label_w, tr("Elo from"), |ui| {
             let ok = number(&self.form.elo_min, 1..=3500).is_ok();
-            typed |= number_field(ui, &mut self.form.elo_min, "", ok).changed();
+            typed |= number_field(ui, &mut self.form.elo_min, "", ok, half).changed();
+            dash(ui, "");
             let player_set = self.form.player.is_set();
             if !player_set && self.form.elo_rule == EloRule::Opponent {
                 self.form.elo_rule = EloRule::Both;
@@ -1198,7 +1214,7 @@ impl LargeView {
             };
             egui::ComboBox::from_id_salt("elo_rule")
                 .selected_text(label(self.form.elo_rule))
-                .width(96.0)
+                .width(half)
                 .show_ui(ui, |ui| {
                     let mut rules = vec![EloRule::Both, EloRule::Either, EloRule::Average];
                     if player_set {
@@ -1208,6 +1224,33 @@ impl LargeView {
                         ui.selectable_value(&mut self.form.elo_rule, r, label(r));
                     }
                 });
+        });
+
+        let moves_ok = {
+            let a = number(&self.form.moves_from, 0..=999);
+            let b = number(&self.form.moves_to, 0..=999);
+            match (a, b) {
+                (Ok(Some(a)), Ok(Some(b))) => (a <= b, a <= b),
+                (a, b) => (a.is_ok(), b.is_ok()),
+            }
+        };
+        form_row(ui, label_w, tr("Moves"), |ui| {
+            typed |= number_field(ui, &mut self.form.moves_from, "", moves_ok.0, half).changed();
+            dash(ui, "–");
+            typed |= number_field(ui, &mut self.form.moves_to, "", moves_ok.1, half).changed();
+        });
+
+        form_row(ui, label_w, "ECO", |ui| {
+            let ok = self.form.eco.trim().is_empty() || parse_eco(&self.form.eco).is_some();
+            let r = text_field(ui, &mut self.form.eco, tr("B90, B9 or C60-C99"), ok);
+            let r = if ok {
+                r
+            } else {
+                r.on_hover_text(tr(
+                    "A code (B90), a prefix (B9) or a range (C60-C99), separated by commas",
+                ))
+            };
+            typed |= r.changed();
         });
 
         ui.label(tr("Result"));
@@ -1249,35 +1292,6 @@ impl LargeView {
                 }
             }
         });
-
-        ui.horizontal(|ui| {
-            ui.label("ECO");
-            let ok = self.form.eco.trim().is_empty() || parse_eco(&self.form.eco).is_some();
-            let r = text_field(ui, &mut self.form.eco, tr("B90, B9 or C60-C99"), ok);
-            let r = if ok {
-                r
-            } else {
-                r.on_hover_text(tr(
-                    "A code (B90), a prefix (B9) or a range (C60-C99), separated by commas",
-                ))
-            };
-            typed |= r.changed();
-        });
-
-        let moves_ok = {
-            let a = number(&self.form.moves_from, 0..=999);
-            let b = number(&self.form.moves_to, 0..=999);
-            match (a, b) {
-                (Ok(Some(a)), Ok(Some(b))) => (a <= b, a <= b),
-                (a, b) => (a.is_ok(), b.is_ok()),
-            }
-        };
-        ui.horizontal(|ui| {
-            ui.label(tr("Moves"));
-            typed |= number_field(ui, &mut self.form.moves_from, "", moves_ok.0).changed();
-            ui.label("–");
-            typed |= number_field(ui, &mut self.form.moves_to, "", moves_ok.1).changed();
-        });
         if typed {
             self.typed_at = now;
         }
@@ -1301,21 +1315,25 @@ impl LargeView {
     }
 
     /// A name field with suggestions; picking one filters by exactly that name.
-    fn name_field(&mut self, ui: &mut Ui, db: &Arc<Database>, field: NameField) {
+    fn name_field(&mut self, ui: &mut Ui, db: &Arc<Database>, field: NameField, caption: &str) {
         let slot = field as usize;
         let value = match field {
             NameField::Player => &mut self.form.player,
             NameField::Opponent => &mut self.form.opponent,
             NameField::Event => &mut self.form.event,
         };
+        // "=" on the caption's line: the field itself does not move when a name is picked.
+        ui.horizontal(|ui| {
+            ui.label(caption);
+            if value.exact.is_some() {
+                ui.label(RichText::new("=").strong()).on_hover_text(tr(
+                    "Exactly this name; edit the text to search by words again",
+                ));
+            }
+        });
         let mut picked_this_frame = None;
         let resp = ui
             .horizontal(|ui| {
-                if value.exact.is_some() {
-                    ui.label(RichText::new("=").strong()).on_hover_text(tr(
-                        "Exactly this name; edit the text to search by words again",
-                    ));
-                }
                 let r = text_field(ui, &mut value.text, "", true);
                 if field == NameField::Player && std::mem::take(&mut self.focus_player) {
                     r.request_focus();
@@ -2072,14 +2090,52 @@ fn chip(ui: &mut Ui, c: &Condition) -> (bool, bool) {
     out
 }
 
+/// The cell between "from" and "to" (and before Elo's rule).
+const DASH: f32 = 16.0;
+
+/// A row of the «Game» grid: the caption in a column `label_w` wide, then the fields.
+fn form_row(ui: &mut Ui, label_w: f32, caption: &str, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(label_w, ui.spacing().interact_size.y), Sense::hover());
+        ui.painter().text(
+            rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            caption,
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().text_color(),
+        );
+        ui.add_space(4.0);
+        add(ui);
+    });
+}
+
+/// The dash between "from" and "to", centred in its cell (empty: only the gap).
+fn dash(ui: &mut Ui, text: &str) {
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(DASH, ui.spacing().interact_size.y), Sense::hover());
+    if !text.is_empty() {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().text_color(),
+        );
+    }
+}
+
 /// A one-line text field across the panel, with a red frame when `ok` is false.
 /// A non-empty field has a × to clear it (the response then reports a change).
 fn text_field(ui: &mut Ui, text: &mut String, hint: &str, ok: bool) -> egui::Response {
     ui.horizontal(|ui| {
-        let clear = if text.is_empty() { 0.0 } else { 26.0 };
+        // The × (22 pt) and its 4 pt gap have their place whether shown or not: the row
+        // never sticks out, so the panel keeps its width while one types (§2.6).
+        ui.spacing_mut().item_spacing.x = 4.0;
         let mut edit = egui::TextEdit::singleline(text)
             .hint_text(hint)
-            .desired_width((ui.available_width() - clear).max(40.0));
+            .desired_width((ui.available_width() - CLEAR_SLOT).floor().max(40.0));
         if !ok {
             edit = edit.text_color(ui.visuals().error_fg_color);
         }
@@ -2092,10 +2148,11 @@ fn text_field(ui: &mut Ui, text: &mut String, hint: &str, ok: bool) -> egui::Res
                 egui::StrokeKind::Outside,
             );
         }
-        if !text.is_empty()
-            && crate::widgets::small_close_button(ui)
-                .on_hover_text(tr("Clear"))
-                .clicked()
+        if text.is_empty() {
+            ui.add_space(CLEAR_SLOT - 4.0);
+        } else if crate::widgets::small_close_button(ui)
+            .on_hover_text(tr("Clear"))
+            .clicked()
         {
             text.clear();
             r.mark_changed();
@@ -2106,10 +2163,16 @@ fn text_field(ui: &mut Ui, text: &mut String, hint: &str, ok: bool) -> egui::Res
 }
 
 /// A short field for a number (digits only).
-fn number_field(ui: &mut Ui, text: &mut String, hint: &str, ok: bool) -> egui::Response {
+fn number_field(
+    ui: &mut Ui,
+    text: &mut String,
+    hint: &str,
+    ok: bool,
+    width: f32,
+) -> egui::Response {
     let mut edit = egui::TextEdit::singleline(text)
         .hint_text(hint)
-        .desired_width(48.0)
+        .desired_width(width)
         .char_limit(4);
     if !ok {
         edit = edit.text_color(ui.visuals().error_fg_color);
