@@ -318,6 +318,10 @@ impl LargeView {
                 }
             }
         }
+        // `CP_SEARCH="carlsen 2024"`: the quick search from the start (screenshots).
+        if let Ok(t) = std::env::var("CP_SEARCH") {
+            form.search = t;
+        }
         let (board, mut pane) = match SearchBoard::from_env() {
             Some(b) => (b, Pane::Board),
             None => (SearchBoard::new(), Pane::Filters),
