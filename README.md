@@ -90,7 +90,7 @@ cargo run --release -p chesspenguin -- examples/classics.pgn
 | Where | Keys |
 | --- | --- |
 | Library | ↑/↓ select · Enter open · Ctrl+O add PGN · Ctrl+N new game · Ctrl+F search |
-| Game | ←/→ move · ↑ end · ↓ start (also End/Home) · Shift+↑/↓ switch variation · F flip · L engine · Shift+A game analysis · Esc leave a preview, then back to the previous game or the library |
+| Game | ←/→ move · ↑ end · ↓ start (also End/Home) · Shift+↑/↓ switch variation · F flip · L engine · Shift+A game analysis · Esc leave a preview, then back to the previous game or the library (unsaved edits: Esc again leaves without saving) |
 | Editing | Ctrl+Z / Ctrl+Y undo/redo · Ctrl+Shift+C copy PGN · Ctrl+S save as · Ctrl+W back to library |
 
 ## Project layout

@@ -761,10 +761,14 @@ impl App {
                 if ui.button(tr("Save as…")).clicked() {
                     choice = Some(0);
                 }
-                if ui.button(tr("Don't save")).clicked() {
+                // Escape goes on where the user was going (the owner's choice): the
+                // second Escape of "Escape, Escape" leaves without saving. Cancel stays.
+                if ui.button(tr("Don't save")).on_hover_text("Esc").clicked()
+                    || ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape))
+                {
                     choice = Some(1);
                 }
-                if ui.button(tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                if ui.button(tr("Cancel")).clicked() {
                     choice = Some(2);
                 }
             });

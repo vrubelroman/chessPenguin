@@ -1489,6 +1489,9 @@ impl GameView {
                     } else if self.board.is_busy() {
                         self.board.clear();
                     } else if !crate::app::overlay_open(ui.ctx()) {
+                        // Taken: the question about unsaved edits that leaving may open in
+                        // this frame must not read the same key as its own Escape.
+                        ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
                         actions.push(if self.previous.is_some() {
                             GameAction::ReturnToPrevious
                         } else {
