@@ -15,6 +15,17 @@ pub enum ShapeColor {
 }
 
 impl ShapeColor {
+    /// The letter PGN writes: `R`, `G`, `B`, `Y`.
+    pub fn letter(self) -> char {
+        match self {
+            ShapeColor::Red => 'R',
+            ShapeColor::Green => 'G',
+            ShapeColor::Blue => 'B',
+            ShapeColor::Yellow => 'Y',
+            ShapeColor::Other(c) => c,
+        }
+    }
+
     fn from_char(c: char) -> ShapeColor {
         match c {
             'R' => ShapeColor::Red,
@@ -127,6 +138,120 @@ fn command(name: &str, payload: &str) -> Annotation {
     }
 }
 
+impl Annotation {
+    /// The command as PGN writes it: `[%cal Rc7b6]`.
+    pub fn to_pgn(&self) -> String {
+        match self {
+            Annotation::Squares(list) => format!(
+                "[%csl {}]",
+                list.iter()
+                    .map(|(c, sq)| format!("{}{sq}", c.letter()))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Annotation::Arrows(list) => format!(
+                "[%cal {}]",
+                list.iter()
+                    .map(|(c, a, b)| format!("{}{a}{b}", c.letter()))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Annotation::Other { name, payload } if payload.is_empty() => format!("[%{name}]"),
+            Annotation::Other { name, payload } => format!("[%{name} {payload}]"),
+        }
+    }
+}
+
+/// The commands of a node's comments, in order.
+fn commands(comments: &[String]) -> Vec<Annotation> {
+    comments
+        .iter()
+        .flat_map(|c| parse_comment(c))
+        .filter_map(|p| match p {
+            CommentPart::Annotation(a) => Some(a),
+            CommentPart::Text(_) => None,
+        })
+        .collect()
+}
+
+/// One comment from `text` and `commands`: the text, then the commands; nothing when
+/// both are empty (an empty `Vec`, so that no `{}` is written).
+fn assemble(text: &str, commands: &[Annotation]) -> Vec<String> {
+    let mut out = text.trim().to_owned();
+    for c in commands {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(&c.to_pgn());
+    }
+    if out.is_empty() {
+        Vec::new()
+    } else {
+        vec![out]
+    }
+}
+
+/// The comments of a node with their text replaced by what the user typed: the
+/// commands (`[%cal]`, `[%clk]`, …) stay, in their order, after the text. A `}` cannot
+/// be in a PGN comment and becomes `)`. Paragraphs (blank lines) are kept, a single
+/// line break is a space.
+pub fn with_text(comments: &[String], text: &str) -> Vec<String> {
+    let mut clean = String::new();
+    let mut blank = false;
+    for line in text.replace('}', ")").lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            blank = !clean.is_empty();
+            continue;
+        }
+        if blank {
+            clean.push_str("\n\n");
+        } else if !clean.is_empty() {
+            clean.push(' ');
+        }
+        blank = false;
+        clean.push_str(line);
+    }
+    assemble(&clean, &commands(comments))
+}
+
+/// Arrows `(colour, from, to)` and squares `(colour, square)` of a node.
+pub type Shapes = (Vec<(ShapeColor, Square, Square)>, Vec<(ShapeColor, Square)>);
+
+/// The arrows and the squares drawn on the board for a node (`[%cal]`, `[%csl]`).
+pub fn shapes(comments: &[String]) -> Shapes {
+    let mut arrows = Vec::new();
+    let mut squares = Vec::new();
+    for a in commands(comments) {
+        match a {
+            Annotation::Arrows(list) => arrows.extend(list),
+            Annotation::Squares(list) => squares.extend(list),
+            Annotation::Other { .. } => {}
+        }
+    }
+    (arrows, squares)
+}
+
+/// The comments of a node with these arrows and squares instead of its own: the text
+/// and the other commands stay.
+pub fn with_shapes(
+    comments: &[String],
+    arrows: &[(ShapeColor, Square, Square)],
+    squares: &[(ShapeColor, Square)],
+) -> Vec<String> {
+    let mut cmds: Vec<Annotation> = commands(comments)
+        .into_iter()
+        .filter(|a| matches!(a, Annotation::Other { .. }))
+        .collect();
+    if !squares.is_empty() {
+        cmds.push(Annotation::Squares(squares.to_vec()));
+    }
+    if !arrows.is_empty() {
+        cmds.push(Annotation::Arrows(arrows.to_vec()));
+    }
+    assemble(&comment_display_text(comments), &cmds)
+}
+
 /// The text of a node's comments as a reader sees it: board commands (`[%cal]`,
 /// `[%clk]`, …) left out, single line breaks reflowed (they are formatting), a blank
 /// line kept as a paragraph break (book chapters imported from ChessBase).
@@ -198,6 +323,38 @@ mod tests {
                 CommentPart::Text("a".into()),
                 CommentPart::Text("[%csl Rc6".into())
             ]
+        );
+    }
+    #[test]
+    fn with_text_keeps_commands_and_paragraphs() {
+        let c = vec!["Старый текст [%cal Gf3d5][%clk 0:03:12]".to_owned()];
+        assert_eq!(
+            with_text(&c, "  Новый }текст{\nещё\n\n\nабзац  "),
+            vec!["Новый )текст{ ещё\n\nабзац [%cal Gf3d5] [%clk 0:03:12]".to_owned()]
+        );
+        // No text: the commands alone; nothing at all: an empty Vec.
+        assert_eq!(
+            with_text(&c, " "),
+            vec!["[%cal Gf3d5] [%clk 0:03:12]".to_owned()]
+        );
+        assert!(with_text(&["plain".to_owned()], "").is_empty());
+        assert_eq!(with_text(&[], "a"), vec!["a".to_owned()]);
+    }
+
+    #[test]
+    fn with_shapes_replaces_board_commands_only() {
+        let c = vec![
+            "Текст [%cal Gf3d5] [%clk 0:03:12]".to_owned(),
+            "[%csl Ra6]".to_owned(),
+        ];
+        let (arrows, squares) = shapes(&c);
+        assert_eq!(arrows.len(), 1);
+        assert_eq!(squares.len(), 1);
+        let out = with_shapes(&c, &[(ShapeColor::Red, Square::E2, Square::E4)], &[]);
+        assert_eq!(out, vec!["Текст [%clk 0:03:12] [%cal Re2e4]".to_owned()]);
+        assert_eq!(
+            with_shapes(&c, &[], &[]),
+            vec!["Текст [%clk 0:03:12]".to_owned()]
         );
     }
 }

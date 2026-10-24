@@ -37,6 +37,10 @@
   variation with one click (undoable).
 - **Editing** — enter moves and variations, promote or delete lines, undo/redo,
   copy PGN/FEN, save a game to a new file.
+- **Your comments** — write a comment after any move or at the start of the game, in the
+  main line or inside a variation, right in the notation; put symbols on moves and
+  positions; draw arrows and circles on the board with the right mouse button. Existing
+  book comments can be edited; their embedded commands and bytes are kept when untouched.
 - **Your own databases** — create an empty PGN database, add any game to it (a new one, a
   pasted one, a game from a ChessBase or online database), save your changes back
   (Ctrl+S), edit the game data (players, event, date, result, annotator), delete games with
@@ -98,6 +102,7 @@ cargo run --release -p chesspenguin -- examples/classics.pgn
 | Library | ↑/↓ select · Enter open · Ctrl+O add database · Ctrl+Shift+N new database · Ctrl+N new game · Ctrl+F search · F2 game data · Ctrl+Shift+S add the game to another database · Delete delete the game (Ctrl+Z puts it back) |
 | Game | ←/→ move · ↑ end · ↓ start (also End/Home) · Shift+↑/↓ switch variation · F flip · L engine · Shift+A game analysis · Esc leave a preview, then back to the previous game or the library (unsaved edits: Esc again leaves without saving) |
 | Editing | Ctrl+Z / Ctrl+Y undo/redo · Ctrl+Shift+C copy PGN · Ctrl+S save to the game's database (or add to one) · Ctrl+Shift+S add to a database · F2 game data · Ctrl+W back to library |
+| Comments | Enter comment on the move (Enter done · Esc cancel · Shift+Enter paragraph) · Ctrl+1…6 the move's symbol ! ? !! ?? !? ?! · right mouse button on the board: an arrow (drag) or a circle (click); Shift red, Alt blue, Shift+Alt yellow |
 
 ## Project layout
 

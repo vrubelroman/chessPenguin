@@ -23,11 +23,24 @@ pub struct Badge {
 }
 
 /// Interaction state that lives across frames (per board instance).
+/// A shape the user drew with the right mouse button (docs/design/user-comments.md
+/// §10): an arrow, or a circle on one square. The colour is the modifier held when the
+/// button was released: none green, Shift red, Alt blue, Shift+Alt yellow (Lichess).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drawn {
+    Arrow(chess_core::ShapeColor, Square, Square),
+    Circle(chess_core::ShapeColor, Square),
+}
+
 #[derive(Default)]
 pub struct BoardState {
     selected: Option<Square>,
     drag: Option<Square>,
     promotion: Option<(Square, Square)>,
+    /// The square the right button went down on: a shape is being drawn.
+    shape_from: Option<Square>,
+    /// A shape drawn this frame, for the game to take (`take_shape`).
+    shape: Option<Drawn>,
     /// The position drawn last: a different one next frame is animated from it.
     shown: Option<Board>,
     anim: Option<Anim>,
@@ -42,6 +55,11 @@ impl BoardState {
         self.selected = None;
         self.drag = None;
         self.promotion = None;
+    }
+
+    /// The shape the user has just drawn, once.
+    pub fn take_shape(&mut self) -> Option<Drawn> {
+        self.shape.take()
     }
 
     /// A piece is selected or dragged, or a promotion is being chosen.
@@ -182,8 +200,32 @@ impl BoardView<'_> {
                     _ => state.selected = self.own_piece(sq).then_some(sq),
                 }
             }
+            // The right button draws: a drag — an arrow, a click — a circle on the square.
+            // Pressing it also drops a picked-up piece, as before.
+            if response.drag_started_by(egui::PointerButton::Secondary) {
+                let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
+                state.shape_from = origin.and_then(|p| geo.square_at(p));
+                state.selected = None;
+                state.drag = None;
+            }
+            if response.drag_stopped_by(egui::PointerButton::Secondary) {
+                let to = ui
+                    .input(|i| i.pointer.latest_pos())
+                    .and_then(|p| geo.square_at(p));
+                let color = shape_color_for(ui.input(|i| i.modifiers));
+                if let Some(from) = state.shape_from.take() {
+                    state.shape = Some(match to {
+                        Some(to) if to != from => Drawn::Arrow(color, from, to),
+                        _ => Drawn::Circle(color, from),
+                    });
+                }
+            }
             if response.secondary_clicked() {
                 state.clear();
+                if let Some(sq) = pointer.and_then(|p| geo.square_at(p)) {
+                    let color = shape_color_for(ui.input(|i| i.modifiers));
+                    state.shape = Some(Drawn::Circle(color, sq));
+                }
             }
         }
 
@@ -304,6 +346,35 @@ impl BoardView<'_> {
         }
         for a in self.arrows {
             draw_arrow(&painter, &geo, a);
+        }
+        if let Some(from) = state.shape_from
+            && response.dragged_by(egui::PointerButton::Secondary)
+        {
+            let color = shape_color_for(ui.input(|i| i.modifiers));
+            let c = shape_preview_color(color);
+            match ui
+                .input(|i| i.pointer.latest_pos())
+                .and_then(|p| geo.square_at(p))
+            {
+                Some(to) if to != from => draw_arrow(
+                    &painter,
+                    &geo,
+                    &Arrow {
+                        from,
+                        to,
+                        color: c,
+                        weight: 0.9,
+                    },
+                ),
+                _ => {
+                    let r = geo.square_rect(from);
+                    painter.circle_stroke(
+                        r.center(),
+                        sq_size * 0.46,
+                        Stroke::new(sq_size * 0.07, c),
+                    );
+                }
+            }
         }
         if let Some(b) = self.badge {
             let r = geo.square_rect(b.square);
@@ -506,6 +577,27 @@ impl Geometry {
         let y = ((p.y - self.rect.min.y) / self.sq).floor().clamp(0.0, 7.0) as u32;
         let (f, r) = if self.flipped { (7 - x, y) } else { (x, 7 - y) };
         Some(Square::from_coords(File::new(f), Rank::new(r)))
+    }
+}
+
+/// The colour of a shape from the modifiers held (as on Lichess).
+fn shape_color_for(m: egui::Modifiers) -> chess_core::ShapeColor {
+    match (m.shift, m.alt) {
+        (false, false) => chess_core::ShapeColor::Green,
+        (true, false) => chess_core::ShapeColor::Red,
+        (false, true) => chess_core::ShapeColor::Blue,
+        (true, true) => chess_core::ShapeColor::Yellow,
+    }
+}
+
+/// How a shape being drawn looks (the game draws the finished ones).
+pub fn shape_preview_color(c: chess_core::ShapeColor) -> Color32 {
+    match c {
+        chess_core::ShapeColor::Red => Color32::from_rgba_unmultiplied(136, 32, 32, 170),
+        chess_core::ShapeColor::Green => Color32::from_rgba_unmultiplied(21, 120, 27, 170),
+        chess_core::ShapeColor::Blue => Color32::from_rgba_unmultiplied(0, 48, 136, 170),
+        chess_core::ShapeColor::Yellow => Color32::from_rgba_unmultiplied(230, 143, 0, 170),
+        chess_core::ShapeColor::Other(_) => Color32::from_rgba_unmultiplied(120, 120, 120, 170),
     }
 }
 

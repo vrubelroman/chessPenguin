@@ -9,10 +9,11 @@ use shakmaty::{CastlingMode, Move, Position, san::SanPlus, uci::UciMove};
 use crate::game::{Game, GameMove, MoveKind, NodeId};
 use crate::nag::Nag;
 
-/// NAGs and trailing comments of a node (what annotation edits change).
+/// NAGs and comments of a node (what annotation edits change).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Annotations {
     nags: Vec<Nag>,
+    comments_before: Vec<String>,
     comments_after: Vec<String>,
 }
 
@@ -263,11 +264,38 @@ impl Game {
         let node = self.node(id).ok_or(EditError::UnknownNode)?;
         let old = Annotations {
             nags: node.nags.clone(),
+            comments_before: node.comments_before.clone(),
             comments_after: node.comments_after.clone(),
         };
         let new = Annotations {
             nags,
+            comments_before: old.comments_before.clone(),
             comments_after,
+        };
+        if old != new {
+            self.record(Command::Annotate { node: id, old, new });
+        }
+        Ok(())
+    }
+
+    /// Replaces the comments before the move of `id` (an introduction to a line).
+    /// Undoable; no-op if unchanged.
+    pub fn set_comments_before(
+        &mut self,
+        id: NodeId,
+        comments_before: Vec<String>,
+    ) -> Result<(), EditError> {
+        self.check_attached(id)?;
+        let node = self.node(id).ok_or(EditError::UnknownNode)?;
+        let old = Annotations {
+            nags: node.nags.clone(),
+            comments_before: node.comments_before.clone(),
+            comments_after: node.comments_after.clone(),
+        };
+        let new = Annotations {
+            nags: old.nags.clone(),
+            comments_before,
+            comments_after: old.comments_after.clone(),
         };
         if old != new {
             self.record(Command::Annotate { node: id, old, new });
@@ -345,6 +373,7 @@ impl Game {
             Command::Annotate { node, new, .. } => {
                 if let Some(n) = self.node_mut(*node) {
                     n.nags.clone_from(&new.nags);
+                    n.comments_before.clone_from(&new.comments_before);
                     n.comments_after.clone_from(&new.comments_after);
                 }
                 return;

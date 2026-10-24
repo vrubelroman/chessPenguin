@@ -6,15 +6,17 @@ use std::path::PathBuf;
 
 use chess_core::shakmaty::{Chess, Color, Move, Position, Square};
 use chess_core::{
-    Annotation, CommentPart, Diagnostic, Game, GameResult, MoveKind, NodeId, Severity, ShapeColor,
-    parse_comment,
+    Annotation, CommentPart, Diagnostic, Game, GameResult, MoveKind, Nag, NodeId, Severity,
+    ShapeColor, parse_comment,
 };
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Ui, vec2};
 
 use crate::analysis::{self, Analysis, PvLine, Status};
 use crate::assets::Sound;
 use crate::board::{self, Arrow, BoardState, BoardView};
-use crate::notation::{Notation, NotationCommand};
+use crate::notation::{
+    CommentEditor, EditorOutcome, MOVE_NAGS, Notation, NotationCommand, Slot, toggle_nag,
+};
 use crate::review::{DialogAction, ReportAction, Review};
 use crate::settings::Settings;
 
@@ -58,6 +60,8 @@ pub struct GameView {
     flipped: bool,
     preview: Option<Preview>,
     scroll_to_cursor: bool,
+    /// The comment being written (user-comments.md).
+    editor: Option<CommentEditor>,
     show_diagnostics: bool,
     engine_settings_open: bool,
     review: Review,
@@ -133,6 +137,7 @@ impl GameView {
             flipped,
             preview: None,
             scroll_to_cursor: true,
+            editor: None,
             show_diagnostics: false,
             engine_settings_open: false,
             review,
@@ -249,11 +254,279 @@ impl GameView {
 
     fn goto(&mut self, id: NodeId) {
         if id != self.cursor {
+            // Leaving the move writes the comment being written (user-comments.md §4).
+            self.commit_editor();
             self.cursor = id;
             self.board.clear();
             self.scroll_to_cursor = true;
         }
         self.preview = None;
+    }
+
+    // ----- comments (docs/design/user-comments.md) ------------------------------------
+
+    /// «4.Ba4» / «4…Nf6» as the editor's title names the move.
+    fn move_name(&self, id: NodeId) -> String {
+        let Some((num, color)) = self.game.move_number(id) else {
+            return String::new();
+        };
+        let san = self
+            .game
+            .game_move(id)
+            .map(|m| m.san.as_str())
+            .unwrap_or("?");
+        let san = crate::san::show(san);
+        match color {
+            Color::White => format!("{num}.{san}"),
+            Color::Black => format!("{num}…{san}"),
+        }
+    }
+
+    /// Opens the editor on this comment (the one open before is written first). The
+    /// move becomes the current one.
+    fn open_editor(&mut self, slot: Slot) {
+        if self.preview.is_some() {
+            return;
+        }
+        if self.editor.as_ref().is_some_and(|e| e.slot == slot) {
+            if let Some(e) = self.editor.as_mut() {
+                e.focus = true;
+            }
+            return;
+        }
+        self.commit_editor();
+        let id = slot.node();
+        let Some(node) = self.game.node(id) else {
+            return;
+        };
+        let (original, nags, title, short) = match slot {
+            Slot::After(NodeId::ROOT) => (
+                node.comments_after().to_vec(),
+                Vec::new(),
+                tr("Comment at the start of the game").to_owned(),
+                tr("At the start").to_owned(),
+            ),
+            Slot::After(_) => (
+                node.comments_after().to_vec(),
+                node.nags().to_vec(),
+                trf("Comment after {move}", &[("move", &self.move_name(id))]),
+                trf("After {move}", &[("move", &self.move_name(id))]),
+            ),
+            Slot::Before(_) => (
+                node.comments_before().to_vec(),
+                Vec::new(),
+                trf("Comment before {move}", &[("move", &self.move_name(id))]),
+                trf("Before {move}", &[("move", &self.move_name(id))]),
+            ),
+        };
+        let text = chess_core::comment_display_text(&original);
+        let translated = self
+            .translation
+            .shown()
+            .and_then(|m| m.get(&text))
+            .is_some_and(|m| matches!(m, crate::translate_ui::Mark::Translated(_)));
+        if matches!(slot, Slot::After(_)) && id != NodeId::ROOT {
+            self.goto(id);
+        }
+        self.editor = Some(CommentEditor {
+            slot,
+            initial: text.clone(),
+            text,
+            initial_nags: nags.clone(),
+            nags,
+            title,
+            short_title: short,
+            translated,
+            focus: true,
+            scroll: true,
+            field_id: None,
+        });
+    }
+
+    /// Writes the comment being written into the game (one undo step) and closes the
+    /// editor; nothing written when nothing changed. Also for the program: before the
+    /// game is left or saved.
+    pub fn commit_editor(&mut self) {
+        let Some(ed) = self.editor.take() else { return };
+        if !ed.changed() {
+            return;
+        }
+        let id = ed.slot.node();
+        let Some(node) = self.game.node(id) else {
+            return;
+        };
+        match ed.slot {
+            Slot::After(_) => {
+                let original = node.comments_after().to_vec();
+                let comments = if ed.text_changed() {
+                    chess_core::with_text(&original, &ed.text)
+                } else {
+                    original
+                };
+                let _ = self.game.annotate(id, ed.nags, comments);
+            }
+            Slot::Before(_) => {
+                let original = node.comments_before().to_vec();
+                let _ = self
+                    .game
+                    .set_comments_before(id, chess_core::with_text(&original, &ed.text));
+            }
+        }
+        self.scroll_to_cursor = true;
+    }
+
+    fn cancel_editor(&mut self) {
+        self.editor = None;
+        self.scroll_to_cursor = true;
+    }
+
+    /// The editor's text field has the keyboard.
+    fn editor_focused(&self, ui: &Ui) -> bool {
+        self.editor
+            .as_ref()
+            .and_then(|e| e.field_id)
+            .is_some_and(|id| ui.ctx().memory(|m| m.focused() == Some(id)))
+    }
+
+    /// The keys of the editor, taken before the text field sees them: Enter — done,
+    /// Shift+Enter — a paragraph, Esc — cancel, Ctrl+S / Ctrl+W — done and then the
+    /// action, Ctrl+1…6 — the move's symbol in the draft.
+    fn editor_keys(&mut self, ui: &Ui, actions: &mut Vec<GameAction>) {
+        if !self.editor_focused(ui) {
+            return;
+        }
+        let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
+        let (done, paragraph, cancel, save, back, nag) = ui.input_mut(|i| {
+            let done =
+                i.consume_key(Modifiers::NONE, Key::Enter) || i.consume_shortcut(&ctrl(Key::Enter));
+            let paragraph = i.consume_key(Modifiers::SHIFT, Key::Enter);
+            let cancel = i.consume_key(Modifiers::NONE, Key::Escape);
+            let save = i.consume_shortcut(&ctrl(Key::S));
+            let back = i.consume_shortcut(&ctrl(Key::W));
+            let nag = [
+                Key::Num1,
+                Key::Num2,
+                Key::Num3,
+                Key::Num4,
+                Key::Num5,
+                Key::Num6,
+            ]
+            .into_iter()
+            .zip(MOVE_NAGS)
+            .find(|(k, _)| i.consume_shortcut(&ctrl(*k)))
+            .map(|(_, (nag, _, _))| nag);
+            (done, paragraph, cancel, save, back, nag)
+        });
+        if let Some(nag) = nag
+            && let Some(ed) = self.editor.as_mut()
+        {
+            ed.nags = toggle_nag(&ed.nags, nag);
+        }
+        if paragraph && let Some(ed) = self.editor.as_mut() {
+            // A blank line at the cursor.
+            let Some(field) = ed.field_id else { return };
+            let mut state = egui::TextEdit::load_state(ui.ctx(), field).unwrap_or_default();
+            let at = state
+                .cursor
+                .char_range()
+                .map_or(ed.text.chars().count(), |r| r.primary.index.into());
+            let byte = ed
+                .text
+                .char_indices()
+                .nth(at)
+                .map_or(ed.text.len(), |(b, _)| b);
+            ed.text.insert_str(byte, "\n\n");
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(at + 2),
+                )));
+            state.store(ui.ctx(), field);
+        }
+        if cancel {
+            self.cancel_editor();
+        } else if done || save || back {
+            self.commit_editor();
+            if save {
+                actions.push(GameAction::Save);
+            }
+            if back {
+                actions.push(GameAction::Back);
+            }
+        }
+    }
+
+    /// A symbol put on or taken off a move at once (the menu, Ctrl+1…6): one undo step.
+    fn toggle_nag_on(&mut self, id: NodeId, nag: Nag) {
+        if id == NodeId::ROOT {
+            return;
+        }
+        let Some(node) = self.game.node(id) else {
+            return;
+        };
+        let nags = toggle_nag(node.nags(), nag);
+        let comments = node.comments_after().to_vec();
+        let _ = self.game.annotate(id, nags, comments);
+    }
+
+    /// Deletes a comment (its board commands and clocks stay); undoable.
+    fn delete_comment(&mut self, slot: Slot, actions: &mut Vec<GameAction>) {
+        if self.editor.as_ref().is_some_and(|e| e.slot == slot) {
+            self.editor = None;
+        }
+        let id = slot.node();
+        let Some(node) = self.game.node(id) else {
+            return;
+        };
+        let done = match slot {
+            Slot::After(_) => {
+                let comments = chess_core::with_text(node.comments_after(), "");
+                self.game.annotate(id, node.nags().to_vec(), comments)
+            }
+            Slot::Before(_) => {
+                let comments = chess_core::with_text(node.comments_before(), "");
+                self.game.set_comments_before(id, comments)
+            }
+        };
+        if done.is_ok() {
+            actions.push(GameAction::Toast(
+                tr("Comment deleted (Ctrl+Z to undo)").to_owned(),
+            ));
+        }
+    }
+
+    /// An arrow or a circle drawn on the board goes into the comment of the current move
+    /// (`[%cal]`, `[%csl]`); the same shape again takes it off, another colour replaces it.
+    fn apply_shape(&mut self, drawn: board::Drawn) {
+        let id = self.cursor;
+        let Some(node) = self.game.node(id) else {
+            return;
+        };
+        let (mut arrows, mut squares) = chess_core::shapes(node.comments_after());
+        match drawn {
+            board::Drawn::Arrow(color, from, to) => {
+                let same = arrows.iter().position(|(_, a, b)| *a == from && *b == to);
+                match same {
+                    Some(i) if arrows[i].0 == color => {
+                        arrows.remove(i);
+                    }
+                    Some(i) => arrows[i].0 = color,
+                    None => arrows.push((color, from, to)),
+                }
+            }
+            board::Drawn::Circle(color, sq) => {
+                let same = squares.iter().position(|(_, s)| *s == sq);
+                match same {
+                    Some(i) if squares[i].0 == color => {
+                        squares.remove(i);
+                    }
+                    Some(i) => squares[i].0 = color,
+                    None => squares.push((color, sq)),
+                }
+            }
+        }
+        let comments = chess_core::with_shapes(node.comments_after(), &arrows, &squares);
+        let _ = self.game.annotate(id, node.nags().to_vec(), comments);
     }
 
     /// Assessment of the move that led to the current position, for the board: the
@@ -326,6 +599,7 @@ impl GameView {
             self.review.note_live_speed(analysis.nps, e.threads);
         }
         if input_enabled && !self.review.dialog_open {
+            self.editor_keys(ui, &mut actions);
             self.keyboard(ui, &mut actions);
         }
 
@@ -909,6 +1183,11 @@ impl GameView {
                 if let Some(m) = view.show(ui, &mut self.board) {
                     self.play_move(m, actions);
                 }
+                if let Some(drawn) = self.board.take_shape()
+                    && self.preview.is_none()
+                {
+                    self.apply_shape(drawn);
+                }
             });
         });
         if show_graph {
@@ -1030,10 +1309,25 @@ impl GameView {
                             .as_ref()
                             .map(|p| (p.base, p.san.as_slice(), p.shown)),
                         translations: self.translation.shown(),
+                        editor: self.editor.as_mut(),
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
                         self.goto(id);
+                    }
+                    match resp.editor {
+                        Some(EditorOutcome::Done) => self.commit_editor(),
+                        Some(EditorOutcome::Cancel) => self.cancel_editor(),
+                        None => {}
+                    }
+                    if let Some(slot) = resp.edit {
+                        self.open_editor(slot);
+                    }
+                    if let Some(slot) = resp.delete {
+                        self.delete_comment(slot, actions);
+                    }
+                    if let Some((id, nag)) = resp.nag {
+                        self.toggle_nag_on(id, nag);
                     }
                     if let Some((id, shown)) = resp.best
                         && let Some(mark) = self.review.analysis.marks.get(&id)
@@ -1379,15 +1673,23 @@ impl GameView {
             {
                 self.flipped = !self.flipped;
             }
+            // Not while a comment is being written: it would undo what stands under it.
+            let no_editor = self.editor.is_none();
             if ui
-                .add_enabled(self.game.can_undo(), egui::Button::new(big("↩")))
+                .add_enabled(
+                    self.game.can_undo() && no_editor,
+                    egui::Button::new(big("↩")),
+                )
                 .on_hover_text(tr("Undo move/edit (Ctrl+Z)"))
                 .clicked()
             {
                 self.undo();
             }
             if ui
-                .add_enabled(self.game.can_redo(), egui::Button::new(big("↪")))
+                .add_enabled(
+                    self.game.can_redo() && no_editor,
+                    egui::Button::new(big("↪")),
+                )
                 .on_hover_text(tr("Redo move/edit (Ctrl+Y)"))
                 .clicked()
             {
@@ -1408,6 +1710,15 @@ impl GameView {
                 }
                 if ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked() {
                     actions.push(GameAction::AddToDatabase);
+                    ui.close();
+                }
+                let comment = if self.cursor == NodeId::ROOT {
+                    tr("Comment at the start of the game… (Enter)")
+                } else {
+                    tr("Comment on the move… (Enter)")
+                };
+                if ui.button(comment).clicked() {
+                    self.open_editor(Slot::After(self.cursor));
                     ui.close();
                 }
                 ui.separator();
@@ -1584,6 +1895,37 @@ impl GameView {
         }
     }
 
+    /// Dev hook (`CP_SHAPE=Ge2e4,Rd5`): shapes drawn on the board at the current move.
+    pub fn debug_shapes(&mut self, spec: &str) {
+        for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let parsed = chess_core::parse_comment(&if item.len() > 3 {
+                format!("[%cal {item}]")
+            } else {
+                format!("[%csl {item}]")
+            });
+            for p in parsed {
+                match p {
+                    CommentPart::Annotation(Annotation::Arrows(list)) => {
+                        for (c, a, b) in list {
+                            self.apply_shape(board::Drawn::Arrow(c, a, b));
+                        }
+                    }
+                    CommentPart::Annotation(Annotation::Squares(list)) => {
+                        for (c, sq) in list {
+                            self.apply_shape(board::Drawn::Circle(c, sq));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Dev hook (`CP_COMMENT_EDIT`): the editor on the current move.
+    pub fn debug_comment_edit(&mut self) {
+        self.open_editor(Slot::After(self.cursor));
+    }
+
     /// Dev hook (`CP_COMMENT`): a comment after the current move.
     pub fn debug_comment(&mut self, text: &str) {
         let nags = self
@@ -1643,6 +1985,7 @@ impl GameView {
         }
         let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
         let ctrl_shift = |k| KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, k);
+        let overlay = crate::app::overlay_open(ui.ctx());
         let mut cmds = Vec::new();
         ui.input_mut(|i| {
             if i.consume_shortcut(&ctrl_shift(Key::Z)) || i.consume_shortcut(&ctrl(Key::Y)) {
@@ -1681,6 +2024,18 @@ impl GameView {
             if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::ArrowUp)) {
                 cmds.push("prev_var");
             }
+            for (key, cmd) in [
+                (Key::Num1, "nag1"),
+                (Key::Num2, "nag2"),
+                (Key::Num3, "nag3"),
+                (Key::Num4, "nag4"),
+                (Key::Num5, "nag5"),
+                (Key::Num6, "nag6"),
+            ] {
+                if i.consume_shortcut(&ctrl(key)) {
+                    cmds.push(cmd);
+                }
+            }
             if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::ArrowDown)) {
                 cmds.push("next_var");
             }
@@ -1700,12 +2055,28 @@ impl GameView {
                         cmds.push(cmd);
                     }
                 }
+                // Taken: the Enter that closed a dialog this frame must not open the editor.
+                if i.key_pressed(Key::Enter) && !overlay {
+                    i.consume_key(Modifiers::NONE, Key::Enter);
+                    cmds.push("comment");
+                }
             }
         });
         for cmd in cmds {
             match cmd {
-                "undo" => self.undo(),
-                "redo" => self.redo(),
+                "undo" if self.editor.is_none() => self.undo(),
+                "redo" if self.editor.is_none() => self.redo(),
+                "comment" => {
+                    if self.preview.is_none() {
+                        self.open_editor(Slot::After(self.cursor));
+                    }
+                }
+                "nag1" | "nag2" | "nag3" | "nag4" | "nag5" | "nag6" => {
+                    if self.preview.is_none() {
+                        let k: u8 = cmd[3..].parse().unwrap_or(1);
+                        self.toggle_nag_on(self.cursor, Nag(k));
+                    }
+                }
                 "copy" => actions.push(self.copy_pgn()),
                 "save" => actions.push(GameAction::Save),
                 "add_to_db" => actions.push(GameAction::AddToDatabase),

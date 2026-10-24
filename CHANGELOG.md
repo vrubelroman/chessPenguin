@@ -2,6 +2,21 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Your own comments in a game (desktop): Enter on a move (or the right-click menu, a
+  double click on a comment, the ☰ menu) opens an editor right where the comment stands
+  in the notation — after any move of the main line or of a variation, or at the start of
+  the game; Enter — done, Esc — cancel, Shift+Enter — a paragraph; going to another move
+  writes the draft. Symbols of the move (! ? !! ?? !? ?!, also Ctrl+1…6) and of the
+  position (= ∞ ⩲ ⩱ ± ∓ +− −+) in the editor and in the move's menu, one click on, one
+  click off. Arrows and circles drawn with the right mouse button on the board (green;
+  Shift red, Alt blue, Shift+Alt yellow; the same shape again takes it off) go into the
+  comment as `[%cal]`/`[%csl]`. Existing comments, book ones too, can be edited and
+  deleted (Ctrl+Z puts them back); their `[%clk]`, `[%eval]` and board commands are kept,
+  an untouched comment keeps its bytes. One edit is one undo step; the game is marked
+  modified and Ctrl+S saves it. Paragraphs of comments survive writing now.
+
 ## [1.1.0] — 2026-10-25
 
 - Your own databases (desktop): «✚ New database» on the shelf makes an empty PGN file

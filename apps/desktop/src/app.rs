@@ -242,6 +242,8 @@ struct DebugStartup {
     own: Option<String>,
     keys: std::collections::VecDeque<(Modifiers, Key)>,
     next_key: f64,
+    /// `CP_TYPE=<text>`: typed into the field that has the keyboard, 2.5 s after start.
+    typed: Option<String>,
 }
 
 impl DebugStartup {
@@ -281,6 +283,7 @@ impl DebugStartup {
                 })
                 .collect(),
             next_key: 2.0,
+            typed: std::env::var("CP_TYPE").ok(),
         }
     }
 }
@@ -397,10 +400,15 @@ impl App {
     }
 
     fn debug_keys(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        if now >= 2.5
+            && let Some(text) = self.debug.typed.take()
+        {
+            ctx.input_mut(|i| i.events.push(egui::Event::Text(text)));
+        }
         if self.debug.keys.is_empty() {
             return;
         }
-        let now = ctx.input(|i| i.time);
         if now >= self.debug.next_key
             && let Some((modifiers, key)) = self.debug.keys.pop_front()
         {
@@ -503,6 +511,12 @@ impl App {
             // modified (to try saving it).
             if let Ok(text) = std::env::var("CP_COMMENT") {
                 g.debug_comment(&text);
+            }
+            if let Ok(spec) = std::env::var("CP_SHAPE") {
+                g.debug_shapes(&spec);
+            }
+            if std::env::var_os("CP_COMMENT_EDIT").is_some() {
+                g.debug_comment_edit();
             }
             if std::env::var("CP_ENGINE_PANEL").is_ok() {
                 g.debug_open_engine_settings();
@@ -1664,6 +1678,10 @@ impl App {
     }
 
     fn request_close(&mut self, ctx: &egui::Context, intent: CloseIntent) {
+        // A comment being written goes into the game first.
+        if let Some(g) = self.game.as_mut() {
+            g.commit_editor();
+        }
         if self.game.as_ref().is_some_and(|g| g.game.is_modified()) {
             self.confirm_close = Some(intent);
         } else {
