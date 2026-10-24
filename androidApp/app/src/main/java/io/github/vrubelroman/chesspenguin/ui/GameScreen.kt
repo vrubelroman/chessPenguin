@@ -129,6 +129,8 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val app = app()
     val context = LocalContext.current
     val prefs by app.settings.prefs.collectAsState()
+    val libraryEntries by app.library.entries.collectAsState()
+    val dbEntry = libraryEntries.firstOrNull { it.id == db }
     var games by remember { mutableStateOf(app.shown[db]) }
     var place by rememberSaveable { mutableIntStateOf(startPlace) }
     var game by remember { mutableStateOf<GameData?>(null) }
@@ -553,14 +555,16 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 title = {
                     // The event and year (else the site); the game's place and round. A tap
                     // shows the game's details.
+                    // No event and no site: the database's name.
                     val event = joinKnown(tag("Event"), year(tag("Date"))).ifEmpty { joinKnown(tag("Site")) }
+                        .ifEmpty { dbEntry?.let { displayName(it) } ?: "" }
                     val round = tag("Round").trim().takeIf { it.isNotEmpty() && it != "?" && it != "-" }
                     val placeLine = joinKnown(
                         if (total > 0) stringResource(R.string.game_of, place + 1, total) else "",
-                        round?.let { stringResource(R.string.tag_round) + " " + it } ?: "",
+                        round?.let { stringResource(R.string.tag_round).lowercase() + " " + it } ?: "",
                     )
                     Column(
-                        Modifier.clickable(
+                        Modifier.fillMaxWidth().clickable(
                             enabled = g != null,
                             onClickLabel = stringResource(R.string.game_info),
                             role = Role.Button,
@@ -937,7 +941,8 @@ private fun PlayerBar(name: String, elo: String, white: Boolean, result: String?
         name = name,
         elo = elo,
         result = result,
-        style = MaterialTheme.typography.titleSmall,
+        // A missing name shows the side greyed and in the regular weight (§7.11).
+        style = MaterialTheme.typography.titleSmall.let { if (known) it else it.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal) },
         modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp).padding(horizontal = 16.dp),
         disc = white,
         nameColor = if (known) androidx.compose.ui.graphics.Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,

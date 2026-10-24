@@ -282,18 +282,21 @@ private fun numberWidth(count: Int): androidx.compose.ui.unit.Dp {
 /// sentence by TalkBack.
 @Composable
 private fun GameRowView(number: Int, numberWidth: androidx.compose.ui.unit.Dp, row: GameRow?, onClick: () -> Unit) {
+    // 6 + 24 + 24 + 20 + 6 = 80 dp at the normal font size; the lines grow with a larger font.
+    val nameLine = lineHeight(MaterialTheme.typography.bodyLarge, 24.dp)
+    val detailsLine = lineHeight(MaterialTheme.typography.bodyMedium, 20.dp)
     val said = row?.let { rowDescription(number, it) } ?: ""
     Row(
         Modifier
             .fillMaxWidth()
-            .height(80.dp)
+            .height(12.dp + nameLine * 2 + detailsLine)
             .clickable(enabled = row != null, onClick = onClick)
             .clearAndSetSemantics { if (row != null) contentDescription = said }
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.Top,
     ) {
         // Level with White's line.
-        Box(Modifier.width(numberWidth).height(24.dp), contentAlignment = Alignment.CenterEnd) {
+        Box(Modifier.width(numberWidth).height(nameLine), contentAlignment = Alignment.CenterEnd) {
             Text(
                 groupDigits(number),
                 style = MaterialTheme.typography.bodySmall.merge(Tabular),
@@ -302,12 +305,12 @@ private fun GameRowView(number: Int, numberWidth: androidx.compose.ui.unit.Dp, r
             )
         }
         Spacer(Modifier.width(12.dp))
-        GameRowText(row, Modifier.weight(1f))
+        GameRowText(row, nameLine, detailsLine, Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun GameRowText(row: GameRow?, modifier: Modifier) {
+private fun GameRowText(row: GameRow?, nameLine: androidx.compose.ui.unit.Dp, detailsLine: androidx.compose.ui.unit.Dp, modifier: Modifier) {
     Column(modifier) {
         if (row == null) return@Column
         val style = MaterialTheme.typography.bodyLarge
@@ -316,10 +319,13 @@ private fun GameRowText(row: GameRow?, modifier: Modifier) {
         val black = row.black.trim().takeIf { it.isNotEmpty() && it != "?" }
         if (white != null && black == null) {
             // A study or a book position: a title for White and no Black — two lines of it.
-            PlayerLine(white, elo(row.whiteElo), null, style, Modifier.height(48.dp), maxLines = 2, abbreviate = false)
+            // From the top, level with the number, not centred in the two lines.
+            Box(Modifier.height(nameLine * 2)) {
+                PlayerLine(white, elo(row.whiteElo), null, style, maxLines = 2, abbreviate = false)
+            }
         } else {
-            PlayerLine(white ?: "?", elo(row.whiteElo), sideResult(row.result, true), style, Modifier.height(24.dp), nameColor = if (white == null) muted else androidx.compose.ui.graphics.Color.Unspecified)
-            PlayerLine(black ?: "?", elo(row.blackElo), sideResult(row.result, false), style, Modifier.height(24.dp), nameColor = if (black == null) muted else androidx.compose.ui.graphics.Color.Unspecified)
+            PlayerLine(white ?: "?", elo(row.whiteElo), sideResult(row.result, true), style, Modifier.height(nameLine), nameColor = if (white == null) muted else androidx.compose.ui.graphics.Color.Unspecified)
+            PlayerLine(black ?: "?", elo(row.blackElo), sideResult(row.result, false), style, Modifier.height(nameLine), nameColor = if (black == null) muted else androidx.compose.ui.graphics.Color.Unspecified)
         }
         val details = joinKnown(row.event, year(row.date), row.eco)
         if (details.isNotEmpty()) {
@@ -329,7 +335,7 @@ private fun GameRowText(row: GameRow?, modifier: Modifier) {
                 color = muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.height(20.dp),
+                modifier = Modifier.height(detailsLine),
             )
         }
     }
@@ -339,21 +345,31 @@ private fun GameRowText(row: GameRow?, modifier: Modifier) {
 @Composable
 private fun rowDescription(number: Int, row: GameRow): String {
     val player = { label: String, name: String, rating: String ->
-        "$label: " + joinKnownComma(name.trim().takeIf { it.isNotEmpty() } ?: "?", elo(rating))
+        "$label: " + joinKnownComma(name.trim().takeIf { it.isNotEmpty() } ?: "?", elo(rating).let { if (it.isEmpty()) "" else "Elo $it" })
     }
     val result = when (row.result) {
-        "1-0" -> "1-0, " + stringResource(R.string.white_won)
-        "0-1" -> "0-1, " + stringResource(R.string.black_won)
-        "1/2-1/2" -> "½-½, " + stringResource(R.string.draw)
+        "1-0" -> "1-0, " + stringResource(R.string.white_won).lowercase()
+        "0-1" -> "0-1, " + stringResource(R.string.black_won).lowercase()
+        "1/2-1/2" -> stringResource(R.string.draw)
         else -> ""
     }
+    // A study or a book chapter: a title for White and no Black is read as the title.
+    val title = row.white.trim().takeIf { it.isNotEmpty() && it != "?" && row.black.trim().let { b -> b.isEmpty() || b == "?" } }
     return listOf(
         stringResource(R.string.game_number, groupDigits(number)),
-        player(stringResource(R.string.tag_white), row.white, row.whiteElo),
-        player(stringResource(R.string.tag_black), row.black, row.blackElo),
+        title ?: player(stringResource(R.string.tag_white), row.white, row.whiteElo),
+        if (title != null) "" else player(stringResource(R.string.tag_black), row.black, row.blackElo),
         result,
-        joinKnown(row.event, year(row.date), row.eco),
+        listOf(row.event, year(row.date), row.eco).map { it.trim() }.filter { it.isNotEmpty() && it != "?" }.joinToString(", "),
     ).filter { it.isNotEmpty() }.joinToString(". ")
 }
 
 private fun joinKnownComma(vararg parts: String): String = parts.filter { it.isNotEmpty() }.joinToString(", ")
+
+/// A text style's line height in dp (it grows with the font scale), at least `min`.
+@Composable
+private fun lineHeight(style: androidx.compose.ui.text.TextStyle, min: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp {
+    val h = style.lineHeight
+    if (!h.isSp) return min
+    return with(androidx.compose.ui.platform.LocalDensity.current) { h.toDp() }.coerceAtLeast(min)
+}

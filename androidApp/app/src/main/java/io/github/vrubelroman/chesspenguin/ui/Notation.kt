@@ -221,8 +221,9 @@ fun Notation(
         val at = where[current] ?: if (current == 0) 0 else return@LaunchedEffect
         val visible = state.layoutInfo.visibleItemsInfo
         if (visible.none { it.index == at } || visible.firstOrNull()?.index == at || visible.lastOrNull()?.index == at) {
-            // Keep the current move about the middle of what is visible.
-            state.animateScrollToItem((at - 2).coerceAtLeast(0))
+            // The current move a third down what is visible: whole however few rows fit
+            // (beside the board with the engine on, only two or three).
+            state.animateScrollToItem(at, -(state.layoutInfo.viewportSize.height / 3))
         }
     }
     LazyColumn(modifier, state = state, contentPadding = PaddingValues(bottom = 8.dp)) {

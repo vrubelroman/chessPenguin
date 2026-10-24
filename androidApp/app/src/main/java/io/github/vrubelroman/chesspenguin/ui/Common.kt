@@ -155,7 +155,7 @@ fun PlayerLine(
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         if (disc != null) {
             SideDisc(disc)
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(8.dp))
         }
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             PlayerName(name, style, Modifier.weight(1f, fill = false), nameColor, maxLines, abbreviate)
@@ -168,6 +168,7 @@ fun PlayerLine(
             result ?: "",
             style = style.merge(Tabular),
             color = if (result == "1") MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = if (result == "1") androidx.compose.ui.text.font.FontWeight.Medium else null,
             textAlign = androidx.compose.ui.text.style.TextAlign.End,
             maxLines = 1,
             modifier = Modifier.width(24.dp),
