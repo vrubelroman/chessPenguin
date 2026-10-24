@@ -50,6 +50,8 @@ pub enum LibraryAction {
     OpenSettings,
     /// A new, empty PGN database (own-databases.md §2).
     NewDatabase,
+    /// A UTF-8 copy of a PGN in a legacy encoding, which can take games.
+    Utf8Copy(PathBuf),
     /// A record of a table: delete it, add a copy of it to another database, open it
     /// with its data for editing.
     DeleteGame {
@@ -868,9 +870,25 @@ impl Library {
         if resp.clicked() {
             self.select_db(path, ui.ctx());
         }
+        let legacy = matches!(
+            self.write_block(path),
+            Some(crate::own_db::Block::Encoding(_))
+        );
         resp.context_menu(|ui| {
             if ui.button(tr("Show in folder")).clicked() {
                 crate::own_db::show_in_folder(path);
+                ui.close();
+            }
+            // Games are written in UTF-8: a legacy file takes them through a copy.
+            if legacy
+                && ui
+                    .button(tr("Make a copy in UTF-8…"))
+                    .on_hover_text(tr(
+                        "A copy of the file in UTF-8, next to it: games can be added to the copy",
+                    ))
+                    .clicked()
+            {
+                actions.push(LibraryAction::Utf8Copy(path.to_path_buf()));
                 ui.close();
             }
             if ui.button(tr("Remove from list")).clicked() {

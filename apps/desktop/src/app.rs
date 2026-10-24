@@ -77,10 +77,10 @@ enum QuestionThen {
         path: PathBuf,
         index: usize,
     },
+    /// Make the copy (asked from the card's menu); its card is then selected.
     Utf8Copy {
         path: PathBuf,
         dest: PathBuf,
-        purpose: ChooserFor,
     },
     /// The write failed: the same write again.
     Retry(Retry),
@@ -1121,6 +1121,35 @@ impl App {
         }
     }
 
+    /// A UTF-8 copy of a PGN in a legacy encoding (the card's menu): asked first.
+    fn utf8_copy(&mut self, path: PathBuf) {
+        let encoding = match self.library.write_block(&path) {
+            Some(own_db::Block::Encoding(e)) => e,
+            _ => return,
+        };
+        // "X (UTF-8).pgn", or "X (UTF-8 2).pgn" when that is taken.
+        let stem = own_db::base_name(&path);
+        let dest = (1..)
+            .map(|k| {
+                let n = if k == 1 {
+                    String::new()
+                } else {
+                    format!(" {k}")
+                };
+                path.with_file_name(format!("{stem} (UTF-8{n}).pgn"))
+            })
+            .find(|p| !p.exists())
+            .expect("a free name");
+        self.ask(
+            QuestionKind::Utf8Copy {
+                path: path.clone(),
+                dest: dest.clone(),
+                encoding,
+            },
+            QuestionThen::Utf8Copy { path, dest },
+        );
+    }
+
     fn new_base_dialog(&mut self, after: own_db::AfterCreate) {
         let dir = own_db::default_base_dir(self.settings.new_database_dir.as_deref());
         self.own.new_base = Some(own_db::NewBaseDialog::new(dir, after));
@@ -1209,14 +1238,7 @@ impl App {
                 (QuestionThen::Delete { path, index }, Answer::Primary) => {
                     self.delete_now(ctx, path, index)
                 }
-                (
-                    QuestionThen::Utf8Copy {
-                        path,
-                        dest,
-                        purpose,
-                    },
-                    Answer::Primary,
-                ) => {
+                (QuestionThen::Utf8Copy { path, dest }, Answer::Primary) => {
                     let Some(db) = self.library.database(&path) else {
                         return;
                     };
@@ -1234,14 +1256,11 @@ impl App {
                             self.settings
                                 .databases
                                 .insert(at.min(self.settings.databases.len()), dest.clone());
-                            // The copy is the one to add to: chosen in the list, which
-                            // comes back for the same game or record.
+                            // The copy is the one to add to from now on.
                             self.settings.last_target = Some(dest.clone());
                             self.settings_dirty = true;
-                            self.library.load(&dest, ctx);
+                            self.library.select_db(&dest, ctx);
                             self.toast(ctx, trf("Copy made: {path}", &[("path", &dest.display())]));
-                            self.own.chooser = None;
-                            self.open_chooser(ctx, purpose);
                         }
                         Err(e) => {
                             self.toast(ctx, trf("Could not make the copy: {e}", &[("e", &e)]))
@@ -1340,39 +1359,6 @@ impl App {
                 ChooserOutcome::SaveAsFile => {
                     self.close_after_save = self.own.then_close.take();
                     self.pick_save(ctx);
-                }
-                ChooserOutcome::Utf8Copy(path) => {
-                    let encoding = match self.library.write_block(&path) {
-                        Some(own_db::Block::Encoding(e)) => e,
-                        _ => "?",
-                    };
-                    // "X (UTF-8).pgn", or "X (UTF-8 2).pgn" when that is taken.
-                    let stem = own_db::base_name(&path);
-                    let dest = (1..)
-                        .map(|k| {
-                            let n = if k == 1 {
-                                String::new()
-                            } else {
-                                format!(" {k}")
-                            };
-                            path.with_file_name(format!("{stem} (UTF-8{n}).pgn"))
-                        })
-                        .find(|p| !p.exists())
-                        .expect("a free name");
-                    let purpose = chooser.purpose.clone();
-                    self.own.chooser = Some(chooser);
-                    self.ask(
-                        QuestionKind::Utf8Copy {
-                            path: path.clone(),
-                            dest: dest.clone(),
-                            encoding,
-                        },
-                        QuestionThen::Utf8Copy {
-                            path,
-                            dest,
-                            purpose,
-                        },
-                    );
                 }
                 ChooserOutcome::Cancel => {
                     if let Some(intent) = self.own.then_close.take() {
@@ -2171,6 +2157,7 @@ impl eframe::App for App {
                         self.own.then_close = None;
                         self.new_base_dialog(own_db::AfterCreate::Shelf);
                     }
+                    LibraryAction::Utf8Copy(path) => self.utf8_copy(path),
                     LibraryAction::DeleteGame { path, index } => {
                         self.delete_game(&ctx, path, index)
                     }

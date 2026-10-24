@@ -30,20 +30,6 @@ pub enum Block {
 }
 
 impl Block {
-    /// One line, for a list row or a tooltip.
-    pub fn short(&self) -> String {
-        match self {
-            Block::Online => tr("updates itself from Lichess and Chess.com").to_owned(),
-            Block::ReadOnly => tr("read only").to_owned(),
-            Block::Encoding(enc) => trf(
-                "encoding {enc} — a UTF-8 copy can take games",
-                &[("enc", enc)],
-            ),
-            Block::NoPermission => tr("no permission to write the file").to_owned(),
-            Block::Missing => tr("file not found").to_owned(),
-        }
-    }
-
     /// The explanation when the user tries anyway.
     pub fn long(&self) -> String {
         match self {
@@ -216,8 +202,12 @@ impl NewBaseDialog {
                                 out = Some(NewBaseOutcome::AddExisting(self.path()));
                             }
                         }
+                        // The same main button, only disabled: the row does not jump
+                        // when the first letter is typed.
                         Err(_) => {
-                            ui.add_enabled(false, egui::Button::new(tr("Create")));
+                            ui.add_enabled_ui(false, |ui| {
+                                crate::widgets::primary(ui, tr("Create"))
+                            });
                         }
                     }
                     if ui.button(tr("Cancel")).clicked() {
@@ -272,8 +262,6 @@ pub enum ChooserOutcome {
     Pick(PathBuf),
     NewBase,
     SaveAsFile,
-    /// A PGN in another encoding: make the copy and add to it.
-    Utf8Copy(PathBuf),
     Cancel,
 }
 
@@ -340,17 +328,17 @@ impl Chooser {
                     needle.is_empty() || self.rows[i].name.to_lowercase().contains(&needle)
                 })
                 .collect();
-            // Writable ones first, in shelf order; the others, greyed, after them.
+            // Only the databases that take games, in shelf order; those still being read
+            // after them (they may turn out to take games). Online, ChessBase, legacy
+            // encodings, read-only files are not offered at all.
             let order: Vec<usize> = shown
                 .iter()
                 .copied()
                 .filter(|&i| self.rows[i].takes_games())
-                .chain(
-                    shown
-                        .iter()
-                        .copied()
-                        .filter(|&i| !self.rows[i].takes_games()),
-                )
+                .chain(shown.iter().copied().filter(|&i| {
+                    let r = &self.rows[i];
+                    r.block.is_none() && r.games.is_none()
+                }))
                 .collect();
             let (up, down, enter) = ui.input(|i| {
                 (
@@ -386,62 +374,39 @@ impl Chooser {
                             .weak(),
                         );
                     }
-                    let width = ui.available_width();
-                    for i in order {
-                        let row = &self.rows[i];
-                        let selected = self.selected == Some(i);
-                        let text = match row.games {
-                            Some(n) => format!("{} · {}", row.name, crate::i18n::games(n)),
-                            None => format!("{} · {}", row.name, tr("reading…")),
-                        };
-                        let folder = row
-                            .path
-                            .parent()
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_default();
-                        match (&row.block, row.games) {
-                            (None, Some(_)) => {
-                                let resp = ui
-                                    .add_sized(
-                                        [width, 0.0],
-                                        egui::Button::selectable(selected, text),
-                                    )
-                                    .on_hover_text(&folder);
-                                if resp.clicked() {
-                                    self.selected = Some(i);
-                                }
-                                if resp.double_clicked() {
-                                    out = Some(ChooserOutcome::Pick(row.path.clone()));
-                                }
-                            }
-                            (None, None) => {
-                                ui.label(RichText::new(text).weak());
-                            }
-                            (Some(Block::Encoding(enc)), _) => {
-                                // The copy is the way in: a link at the end of the row.
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("{text} · {enc} ·")).weak());
-                                    if ui
-                                        .link(tr("Make a copy in UTF-8…"))
-                                        .on_hover_text(tr(
-                                            "Make a copy in UTF-8 and add the game to it",
-                                        ))
-                                        .clicked()
-                                    {
-                                        out = Some(ChooserOutcome::Utf8Copy(row.path.clone()));
+                    // Rows the whole width, their text from the left.
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                        for i in order {
+                            let row = &self.rows[i];
+                            let selected = self.selected == Some(i);
+                            let text = match row.games {
+                                Some(n) => format!("{} · {}", row.name, crate::i18n::games(n)),
+                                None => format!("{} · {}", row.name, tr("reading…")),
+                            };
+                            let folder = row
+                                .path
+                                .parent()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default();
+                            match (&row.block, row.games) {
+                                (None, Some(_)) => {
+                                    let resp = ui
+                                        .add(egui::Button::selectable(selected, text))
+                                        .on_hover_text(&folder);
+                                    if resp.clicked() {
+                                        self.selected = Some(i);
                                     }
-                                });
-                            }
-                            (Some(b), _) => {
-                                ui.add_enabled(
-                                    false,
-                                    egui::Button::new(format!("{text} — {}", b.short()))
-                                        .frame(false),
-                                )
-                                .on_disabled_hover_text(b.long());
+                                    if resp.double_clicked() {
+                                        out = Some(ChooserOutcome::Pick(row.path.clone()));
+                                    }
+                                }
+                                (None, None) => {
+                                    ui.label(RichText::new(text).weak());
+                                }
+                                (Some(_), _) => {}
                             }
                         }
-                    }
+                    });
                 });
             ui.separator();
             if ui.button(tr("✚ New database…")).clicked() {
