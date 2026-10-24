@@ -7,7 +7,7 @@ import android.os.Build
 import android.os.LocaleList
 
 /// The interface languages; "" follows the system (android-ui.md §9).
-val LANGUAGES = listOf("", "en", "ru", "de", "fr", "es", "it")
+val LANGUAGES = listOf("", "en", "ru", "de", "fr", "es", "it", "pt", "uz", "kk")
 
 /// The language chosen in the app. Android 13+ keeps it itself (and shows it in the
 /// system settings of the app); on Android 12 the app keeps it and applies it to its

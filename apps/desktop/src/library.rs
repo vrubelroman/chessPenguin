@@ -83,6 +83,26 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
     texts.iter().map(|t| button_w(ui, t)).sum::<f32>() + update.map_or(0.0, |v| button_w(ui, v))
 }
 
+/// The shelf's "+ Add database" and "Online games" cards: 150 wide, wider when their
+/// label needs it (some languages say it longer).
+fn side_card_widths(ui: &Ui) -> (f32, f32) {
+    let w = |t: &str, size: f32| {
+        ui.painter()
+            .layout_no_wrap(
+                t.to_owned(),
+                egui::FontId::proportional(size),
+                egui::Color32::WHITE,
+            )
+            .size()
+            .x
+    };
+    let fit = |inner: f32| (inner + 32.0).max(150.0).ceil();
+    (
+        fit(w(tr("+ Add database"), 15.0)),
+        fit(w(&format!("🌐 {}", tr("Online games")), 15.0).max(w("Lichess · Chess.com", 13.0))),
+    )
+}
+
 /// The least widths of the panels beside the table (narrow-windows.md §1).
 const FILTERS_MIN: f32 = 260.0;
 const SEARCH_BOARD_MIN: f32 = 340.0;
@@ -348,12 +368,17 @@ impl Library {
             .selected_db
             .as_ref()
             .is_some_and(|p| self.large.get(p).is_some_and(|v| v.pane() == Pane::Board));
+        let (add_w, online_w) = side_card_widths(ui);
         let cards = databases.len() + 1 + usize::from(self.online);
         let card_rows = {
             let mut rows = 1;
             let mut x = 0.0;
             for k in 0..cards {
-                let w = if k < databases.len() { 190.0 } else { 150.0 };
+                let w = match k.checked_sub(databases.len()) {
+                    None => 190.0,
+                    Some(0) => add_w,
+                    Some(_) => online_w,
+                };
                 if x > 0.0 && x + w > width - 16.0 {
                     rows += 1;
                     x = 0.0;
@@ -628,7 +653,8 @@ impl Library {
             for path in databases {
                 self.db_card(ui, path, actions);
             }
-            let (rect, resp) = ui.allocate_exact_size(vec2(150.0, 64.0), Sense::click());
+            let (add_w, online_w) = side_card_widths(ui);
+            let (rect, resp) = ui.allocate_exact_size(vec2(add_w, 64.0), Sense::click());
             let visuals = ui.style().interact(&resp);
             ui.painter()
                 .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
@@ -648,7 +674,7 @@ impl Library {
                 actions.push(LibraryAction::AddDatabases);
             }
             if self.online {
-                let (rect, resp) = ui.allocate_exact_size(vec2(150.0, 64.0), Sense::click());
+                let (rect, resp) = ui.allocate_exact_size(vec2(online_w, 64.0), Sense::click());
                 let visuals = ui.style().interact(&resp);
                 ui.painter()
                     .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);

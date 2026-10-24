@@ -636,6 +636,9 @@ fn about_tab(ui: &mut Ui, lang: Lang, updates: impl FnOnce(&mut Ui)) {
         Lang::De => format!("{SITE}/de/"),
         Lang::Es => format!("{SITE}/es/"),
         Lang::It => format!("{SITE}/it/"),
+        Lang::Pt => format!("{SITE}/pt/"),
+        Lang::Uz => format!("{SITE}/uz/"),
+        Lang::Kk => format!("{SITE}/kk/"),
     };
     ui.add_space(6.0);
     ui.label(RichText::new("ChessPenguin").size(22.0).strong());

@@ -353,7 +353,7 @@ const LANGUAGES: &[whatlang::Lang] = {
     &[
         Eng, Rus, Deu, Fra, Spa, Ita, Por, Nld, Ukr, Bel, Pol, Ces, Slk, Slv, Hrv, Srp, Bul, Mkd,
         Ron, Hun, Ell, Tur, Swe, Dan, Nob, Fin, Est, Lav, Lit, Cat, Epo, Lat, Kat, Hye, Aze, Heb,
-        Ara, Pes, Cmn, Jpn, Kor, Vie, Hin, Ind,
+        Ara, Pes, Cmn, Jpn, Kor, Vie, Hin, Ind, Uzb,
     ]
 };
 
@@ -365,15 +365,20 @@ fn detect(text: &str) -> Option<whatlang::Lang> {
         .map(|i| i.lang())
 }
 
-pub fn language_of(lang: Lang) -> whatlang::Lang {
-    match lang {
+/// The language as the detector knows it (`None`: it does not tell Kazakh, so every
+/// comment counts as another language).
+pub fn language_of(lang: Lang) -> Option<whatlang::Lang> {
+    Some(match lang {
         Lang::En => whatlang::Lang::Eng,
         Lang::Ru => whatlang::Lang::Rus,
         Lang::Fr => whatlang::Lang::Fra,
         Lang::De => whatlang::Lang::Deu,
         Lang::Es => whatlang::Lang::Spa,
         Lang::It => whatlang::Lang::Ita,
-    }
+        Lang::Pt => whatlang::Lang::Por,
+        Lang::Uz => whatlang::Lang::Uzb,
+        Lang::Kk => return None,
+    })
 }
 
 /// What a game's comments need.
@@ -426,7 +431,7 @@ pub fn plan(texts: &[String], target: Lang) -> Option<Plan> {
     let foreign: Vec<usize> = detected
         .iter()
         .enumerate()
-        .filter(|(_, (n, lang))| *n > 0 && lang.or(game_lang).is_some_and(|l| l != target))
+        .filter(|(_, (n, lang))| *n > 0 && lang.or(game_lang).is_some_and(|l| Some(l) != target))
         .map(|(i, _)| i)
         .collect();
     let foreign_letters: usize = foreign.iter().map(|&i| detected[i].0).sum();
@@ -435,7 +440,7 @@ pub fn plan(texts: &[String], target: Lang) -> Option<Plan> {
     }
     let source = letters
         .iter()
-        .filter(|(l, _)| **l != target)
+        .filter(|(l, _)| Some(**l) != target)
         .max_by_key(|(_, n)| **n)
         .map(|(l, _)| *l)?;
     Some(Plan {
@@ -559,6 +564,9 @@ fn english_name(lang: Lang) -> &'static str {
         Lang::De => "German",
         Lang::Es => "Spanish",
         Lang::It => "Italian",
+        Lang::Pt => "Brazilian Portuguese",
+        Lang::Uz => "Uzbek (Latin script)",
+        Lang::Kk => "Kazakh (Cyrillic script)",
     }
 }
 
@@ -579,6 +587,15 @@ fn glossary(lang: Lang) -> &'static str {
         }
         Lang::It => {
             "exchange (rook for a minor piece) — la qualità; passed pawn — pedone passato; isolated pawn — pedone isolato; doubled pawns — pedoni doppiati; backward pawn — pedone arretrato; outpost — avamposto; open file — colonna aperta; back rank — ultima traversa; fork — forchetta; pin — inchiodatura; skewer — infilata; discovered attack — attacco di scoperta; zwischenzug — mossa intermedia; sacrifice — sacrificio; initiative — iniziativa; tempo — tempo; zugzwang — zugzwang; stalemate — stallo; perpetual check — scacco perpetuo; opposition — opposizione; fianchetto — fianchetto; bishop pair — coppia degli alfieri; minor piece — pezzo leggero; major piece — pezzo pesante; development — sviluppo; endgame — finale; middlegame — mediogioco; opening — apertura; blunder — svista; time trouble — zeitnot"
+        }
+        Lang::Pt => {
+            "exchange (rook for a minor piece) — a qualidade; passed pawn — peão passado; isolated pawn — peão isolado; doubled pawns — peões dobrados; backward pawn — peão atrasado; outpost — posto avançado; open file — coluna aberta; back rank — última fileira; fork — garfo; pin — cravada; skewer — espeto; discovered attack — ataque descoberto; zwischenzug — lance intermediário; sacrifice — sacrifício; initiative — iniciativa; tempo — tempo; zugzwang — zugzwang; stalemate — afogamento; perpetual check — xeque perpétuo; opposition — oposição; fianchetto — fianqueto; bishop pair — par de bispos; minor piece — peça menor; major piece — peça maior; development — desenvolvimento; endgame — final; middlegame — meio-jogo; opening — abertura; blunder — erro grave (capivarada); time trouble — apuro de tempo"
+        }
+        Lang::Uz => {
+            "exchange (rook for a minor piece) — sifat; passed pawn — o‘tar piyoda; isolated pawn — yakkalangan piyoda; doubled pawns — qo‘shaloq piyodalar; open file — ochiq vertikal; fork — vilka; pin — bog‘lash; sacrifice — qurbonlik; initiative — tashabbus; tempo — temp; zugzwang — sugsvang; stalemate — pat; perpetual check — abadiy shoh; castling — roqirovka; endgame — endshpil; middlegame — mittelshpil; opening — debyut; blunder — qo‘pol xato; time trouble — vaqt tanqisligi (seytnot); draw — durang"
+        }
+        Lang::Kk => {
+            "exchange (rook for a minor piece) — сапа; passed pawn — өтпелі сарбаз; isolated pawn — оқшау сарбаз; doubled pawns — қосарланған сарбаздар; open file — ашық тік сызық; fork — шанышқы; pin — байлау; sacrifice — құрбандық; initiative — бастама; tempo — темп; zugzwang — цугцванг; stalemate — пат; perpetual check — мәңгі шах; castling — рокировка; endgame — эндшпиль; middlegame — миттельшпиль; opening — дебют; blunder — өрескел қате; time trouble — уақыт тапшылығы (цейтнот); draw — тең ойын"
         }
         Lang::En => {
             "Russian качество — the exchange (rook for a minor piece); размен — exchange of pieces, trade; проходная — passed pawn; цугцванг — zugzwang; вилка — fork; связка — pin; вечный шах — perpetual check; цейтнот — time trouble; German Qualität — the exchange; Freibauer — passed pawn; Fesselung — pin; Gabel — fork; Abzug — discovered attack; Läuferpaar — bishop pair; Spanish/Italian calidad/qualità — the exchange; clavada/inchiodatura — pin; horquilla/forchetta — fork"
@@ -1006,6 +1023,9 @@ fn lang_code(l: Lang) -> &'static str {
         Lang::De => "de",
         Lang::Es => "es",
         Lang::It => "it",
+        Lang::Pt => "pt",
+        Lang::Uz => "uz",
+        Lang::Kk => "kk",
     }
 }
 

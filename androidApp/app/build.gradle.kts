@@ -158,7 +158,7 @@ android {
     }
     // The languages of the interface; the libraries' other translations stay out.
     androidResources {
-        localeFilters += listOf("en", "ru", "de", "fr", "es", "it")
+        localeFilters += listOf("en", "ru", "de", "fr", "es", "it", "pt", "uz", "kk")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

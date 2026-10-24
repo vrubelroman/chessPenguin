@@ -40,7 +40,7 @@
 - **Looks** — 17 piece sets, 37 boards (flat colours and textures), 7 sound sets,
   dark and light themes.
 - **Online games** — download anyone's games from Lichess and Chess.com by nickname (yours, a pupil's, an opponent's; no login) into a database, both sites merged or one per site, and fetch the new ones with one click.
-- **Languages** — English, Русский, Français, Deutsch, Español, Italiano.
+- **Languages** — English, Русский, Français, Deutsch, Español, Italiano, Português, Oʻzbekcha, Қазақша.
 
 | Game analysis: graph and report | Engine marks and better lines |
 | --- | --- |

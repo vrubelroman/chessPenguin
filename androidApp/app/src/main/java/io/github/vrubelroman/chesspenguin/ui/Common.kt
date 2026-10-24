@@ -106,11 +106,12 @@ fun joinKnown(vararg parts: String): String = parts.map { it.trim() }.filter { i
 val Figurines = FontFamily(Font(R.font.figurines))
 
 /// King, queen, rook, bishop, knight in a language, as on the desktop (san.rs).
-private fun localLetters(lang: String): List<String>? = when (lang) {
+fun localLetters(lang: String): List<String>? = when (lang) {
     "ru" -> listOf("Кр", "Ф", "Л", "С", "К")
     "de" -> listOf("K", "D", "T", "L", "S")
     "fr" -> listOf("R", "D", "T", "F", "C")
     "es", "it" -> listOf("R", "D", "T", "A", "C")
+    "pt" -> listOf("R", "D", "T", "B", "C")
     else -> null
 }
 

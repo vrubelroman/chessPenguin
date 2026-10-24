@@ -56,6 +56,10 @@ pub fn local_letters(lang: Lang) -> Option<[&'static str; 5]> {
         Lang::De => Some(["K", "D", "T", "L", "S"]),
         Lang::Fr => Some(["R", "D", "T", "F", "C"]),
         Lang::Es | Lang::It => Some(["R", "D", "T", "A", "C"]),
+        // Rei, Dama, Torre, Bispo, Cavalo.
+        Lang::Pt => Some(["R", "D", "T", "B", "C"]),
+        // Uzbek and Kazakh books print moves with the Latin letters.
+        Lang::Uz | Lang::Kk => None,
     }
 }
 

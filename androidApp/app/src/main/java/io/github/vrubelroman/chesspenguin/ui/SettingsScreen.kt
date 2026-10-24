@@ -78,8 +78,8 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
     val notationNames = buildList {
         add(Notation.Latin to stringResource(R.string.notation_latin))
         add(Notation.Figurines to stringResource(R.string.notation_figurines))
-        // English has no letters of its own (move-notation.md §2.1).
-        if (lang != "en") add(Notation.Local to stringResource(R.string.notation_local))
+        // Only a language with letters of its own (not English, Uzbek, Kazakh; move-notation.md §2.1).
+        if (localLetters(lang) != null) add(Notation.Local to stringResource(R.string.notation_local))
     }
     val secondsNames = listOf(
         10 to stringResource(R.string.seconds, 10),
