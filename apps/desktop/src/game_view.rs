@@ -277,38 +277,59 @@ impl GameView {
         self.sync_analysis(analysis);
         let databases = settings.databases.clone();
         egui::Panel::top("game_header").show(ui, |ui| self.header(ui, &databases, &mut actions));
-        // The board takes the full height of the window: the side panel is never wider
-        // than what is left beside it (the user can make it narrower, not wider). The
-        // reference tab has two wide tables and its own width (egui remembers each).
+        // Side by side or stacked (docs/design/narrow-windows.md §3): decided by the size
+        // of the window alone, for the notation tab with the evaluation bar and no graph,
+        // so that switching a tab, the engine or the report never rearranges the screen.
         let width = ui.available_width();
         let height = ui.available_height();
         let graph = self.review.visible && (self.review.has_data() || self.review.running());
-        let board = if graph {
-            height - (height * 0.14).clamp(80.0, 130.0) - 8.0
+        let graph_h = if graph {
+            (height * 0.14).clamp(80.0, 130.0) + 8.0
         } else {
-            height
-        } - 16.0;
-        // In a tall narrow window the board gives way: the reference tables need 320 px.
-        let least: f32 = if self.side_tab == SideTab::Reference {
-            320.0
-        } else {
-            240.0
+            0.0
         };
-        let room = (width - board - 24.0).max(least.min(width * 0.5));
-        let (side_id, side_width) = if self.side_tab == SideTab::Reference {
-            ("game_side_ref", room.min(1100.0))
+        let board_side = (height - 16.0).min(width - SIDE_MIN - EVAL_BAR - 24.0);
+        let board_stack = (width - 16.0 - EVAL_BAR).min(height - STACK_BOTTOM_MIN - 16.0);
+        let stacked = board_stack >= 1.25 * board_side;
+        let least = if self.side_tab == SideTab::Reference {
+            REF_MIN
         } else {
-            ("game_side", (width * 0.4).clamp(260.0, 460.0).min(room))
+            SIDE_MIN
         };
-        let max = room.max(side_width).min((width * 0.7).max(240.0));
-        let side = egui::Panel::right(side_id)
-            .resizable(true)
-            .default_size(side_width)
-            .size_range(least.min(width * 0.5).min(max)..=max)
-            .show(ui, |ui| {
-                self.side_panel(ui, settings, analysis, reference, hub, &mut actions)
-            });
-        crate::widgets::check_panel(side_id, &side.response);
+        let side = if stacked {
+            // The notation under the board, as high as the board leaves; dragging its
+            // edge up gives the notation more and the board less.
+            let rest = (height - board_stack - graph_h - 16.0).max(STACK_BOTTOM_MIN);
+            let most = (height - BOARD_MIN - graph_h - 16.0).max(STACK_BOTTOM_MIN);
+            egui::Panel::bottom("game_side_stacked")
+                .resizable(true)
+                .default_size(rest)
+                .size_range(STACK_BOTTOM_MIN..=most)
+                .show(ui, |ui| {
+                    self.side_panel(ui, settings, analysis, reference, hub, &mut actions)
+                })
+        } else {
+            // The board takes the full height of the window: the side panel is never
+            // wider than what is left beside it (the user can make it narrower, not
+            // wider), nor than leaves the board its least size. The reference tab has
+            // two wide tables and its own width (egui remembers each).
+            let board = height - graph_h - 16.0;
+            let most = (width - BOARD_MIN - EVAL_BAR - 24.0).max(least);
+            let room = (width - board - 24.0).clamp(least, most);
+            let (side_id, side_width) = if self.side_tab == SideTab::Reference {
+                ("game_side_ref", room.min(1100.0))
+            } else {
+                ("game_side", (width * 0.4).clamp(260.0, 460.0).min(room))
+            };
+            egui::Panel::right(side_id)
+                .resizable(true)
+                .default_size(side_width)
+                .size_range(least..=most)
+                .show(ui, |ui| {
+                    self.side_panel(ui, settings, analysis, reference, hub, &mut actions)
+                })
+        };
+        crate::widgets::check_panel("game_side", &side.response);
         self.sync_analysis(analysis);
         let hover = (self.side_tab == SideTab::Reference)
             .then(|| reference.hover())
@@ -734,7 +755,7 @@ impl GameView {
         let graph_gap = if show_graph { 8.0 } else { 0.0 };
         let side = (area.width() - bar_w - gap)
             .min(area.height() - graph_h - graph_gap)
-            .max(120.0);
+            .max(BOARD_MIN);
         let total = bar_w + gap + side;
         let left = area.left() + ((area.width() - total) / 2.0).max(0.0).floor();
         let group = egui::Rect::from_min_size(egui::pos2(left, area.top()), vec2(total, side));
@@ -1572,6 +1593,15 @@ impl GameView {
         }
     }
 }
+
+/// The least widths and heights of the game screen (docs/design/narrow-windows.md §1):
+/// the side panel (notation, report), its reference tab, the board, the notation part
+/// under a stacked board, the evaluation bar with its gap.
+const SIDE_MIN: f32 = 240.0;
+const REF_MIN: f32 = 320.0;
+const BOARD_MIN: f32 = 220.0;
+const STACK_BOTTOM_MIN: f32 = 300.0;
+const EVAL_BAR: f32 = 26.0;
 
 const SEARCH_TIMES: [Option<u32>; 11] = [
     Some(2),

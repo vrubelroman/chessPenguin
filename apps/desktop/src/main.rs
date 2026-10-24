@@ -61,7 +61,7 @@ fn main() -> eframe::Result {
             .with_app_id("io.github.vrubelroman.chessPenguin")
             .with_title("ChessPenguin")
             .with_inner_size([1400.0, 900.0])
-            .with_min_inner_size([900.0, 600.0])
+            .with_min_inner_size([640.0, 480.0])
             // X11 uses this; on Wayland the icon comes from the .desktop entry matching the app id.
             .with_icon(
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))
