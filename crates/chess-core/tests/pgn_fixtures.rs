@@ -423,3 +423,19 @@ fn utf8_bom_and_crlf() {
         &["Комментарий\nв две строки".to_owned()]
     );
 }
+
+#[test]
+fn comment_paragraphs_survive_writing() {
+    // A book comment with paragraphs: lines are reflowed, blank lines kept.
+    let p = parse_ok(
+        "[Event \"?\"]\n\n1. e4 {First paragraph\nstill the first.\n\nSecond paragraph.\n\n\nThird.} e5 *\n",
+    );
+    let out = assert_roundtrip(&p);
+    let again = parse_ok(&out);
+    let e4 = again.game.mainline()[0];
+    let text = chess_core::comment_display_text(again.game.node(e4).unwrap().comments_after());
+    assert_eq!(
+        text,
+        "First paragraph still the first.\n\nSecond paragraph.\n\nThird."
+    );
+}

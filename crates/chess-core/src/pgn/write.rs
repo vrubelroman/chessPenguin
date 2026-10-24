@@ -78,16 +78,39 @@ impl Out {
             }
             return;
         }
-        let words: Vec<&str> = text.split_whitespace().collect();
-        match words.as_slice() {
-            [] => self.token("{}"),
-            [one] => self.token(&format!("{{{one}}}")),
-            [first, middle @ .., last] => {
-                self.token(&format!("{{{first}"));
-                for w in middle {
-                    self.token(w);
+        // Lines are reflowed, paragraphs (blank lines) kept: a book's comment keeps its
+        // shape (comment_display_text shows a blank line as a paragraph break).
+        let mut paragraphs: Vec<Vec<&str>> = vec![Vec::new()];
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                if paragraphs.last().is_some_and(|p| !p.is_empty()) {
+                    paragraphs.push(Vec::new());
                 }
-                self.token(&format!("{last}}}"));
+            } else {
+                paragraphs
+                    .last_mut()
+                    .expect("one paragraph")
+                    .extend(line.split_whitespace());
+            }
+        }
+        paragraphs.retain(|p| !p.is_empty());
+        let total: usize = paragraphs.iter().map(Vec::len).sum();
+        if total == 0 {
+            self.token("{}");
+            return;
+        }
+        let mut n = 0;
+        for (k, words) in paragraphs.iter().enumerate() {
+            if k > 0 {
+                // A blank line inside the braces.
+                self.newline();
+                self.buf.push('\n');
+            }
+            for w in words {
+                n += 1;
+                let open = if n == 1 { "{" } else { "" };
+                let close = if n == total { "}" } else { "" };
+                self.token(&format!("{open}{w}{close}"));
             }
         }
     }
