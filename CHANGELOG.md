@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.3] — 2026-10-24
 
 - A new icon — a penguin in a crown — on the desktop, Android and the website.
 
