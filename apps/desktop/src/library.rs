@@ -38,6 +38,8 @@ pub enum LibraryAction {
     /// Open PGN text as a new game.
     OpenPgn(String),
     NewGame,
+    /// A new game meant for this database (the table's «+ Game»): Ctrl+S adds it there.
+    NewGameIn(PathBuf),
     PastePgn,
     AddDatabases,
     /// The window for downloading games from Lichess and Chess.com.
@@ -89,6 +91,25 @@ fn button_w(ui: &Ui, text: &str) -> f32 {
     text_w(ui, text, egui::TextStyle::Button)
         + 2.0 * ui.spacing().button_padding.x
         + ui.spacing().item_spacing.x
+}
+
+/// A PGN file whose beginning is in a legacy (single-byte) encoding: it takes games only
+/// through a UTF-8 copy. For a file not read yet (its card's menu).
+fn legacy_pgn(path: &Path) -> bool {
+    use std::io::Read;
+    let pgn = path
+        .extension()
+        .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("pgn"));
+    if !pgn || crate::online::is_online(path) || crate::examples::is_example(path) {
+        return false;
+    }
+    let mut head = Vec::with_capacity(64 << 10);
+    let read = std::fs::File::open(path).and_then(|f| f.take(64 << 10).read_to_end(&mut head));
+    if read.is_err() {
+        return false;
+    }
+    let guess = chess_core::detect_encoding(&head);
+    guess.encoding != chess_core::TextEncoding::Utf8 && !guess.ascii_only
 }
 
 /// The width of the shelf's buttons on the right (`Library::shelf_buttons`).
@@ -261,6 +282,9 @@ impl Library {
         if crate::online::is_online(path) {
             return Some(Block::Online);
         }
+        if crate::examples::is_example(path) {
+            return Some(Block::Example);
+        }
         if !path.exists() {
             return Some(Block::Missing);
         }
@@ -431,18 +455,13 @@ impl Library {
             .selected_db
             .as_ref()
             .is_some_and(|p| self.large.get(p).is_some_and(|v| v.pane() == Pane::Board));
-        let (add_w, new_w, online_w) = side_card_widths(ui);
-        let cards = databases.len() + 2 + usize::from(self.online);
+        // The shelf's rows hold the databases only (their actions are in the title row).
+        let cards = databases.len();
         let card_rows = {
             let mut rows = 1;
             let mut x = 0.0;
-            for k in 0..cards {
-                let w = match k.checked_sub(databases.len()) {
-                    None => 190.0,
-                    Some(0) => add_w,
-                    Some(1) => new_w,
-                    Some(_) => online_w,
-                };
+            for _ in 0..cards {
+                let w = 190.0;
                 if x > 0.0 && x + w > width - 16.0 {
                     rows += 1;
                     x = 0.0;
@@ -472,7 +491,10 @@ impl Library {
                 width < table_min + FILTERS_MIN,
                 width < table_min_pos + SEARCH_BOARD_MIN,
             );
+            // An empty database has nothing to filter: no panel beside it.
+            let empty = db.games() + db.texts() == 0;
             match view.pane() {
+                _ if empty => {}
                 Pane::Filters if view.drawer().is_none() && width >= table_min + FILTERS_MIN => {
                     let r = egui::Panel::right("filters")
                         .resizable(true)
@@ -597,13 +619,7 @@ impl Library {
         // The list of databases gives way first (to 180), then the buttons on the right
         // show their icons, then the list goes down to 140 (narrow-windows.md §2.5).
         let gap = ui.spacing().item_spacing.x;
-        let others = button_w(ui, "+")
-            + if self.online {
-                button_w(ui, "🌐")
-            } else {
-                0.0
-            }
-            + 16.0;
+        let others = self.shelf_actions_w(ui, true) + 16.0;
         let free = ui.available_width() - others;
         let icons = free - shelf_buttons_w(ui, self.update.as_deref(), false) < 180.0 + gap;
         let list = (free - shelf_buttons_w(ui, self.update.as_deref(), icons) - gap)
@@ -629,26 +645,7 @@ impl Library {
             if let Some(p) = pick {
                 self.select_db(&p, ui.ctx());
             }
-            ui.menu_button("+", |ui| {
-                if ui.button(tr("Add database…")).on_hover_text(tr(
-                    "Open PGN, ChessBase (.cbh, .cbv) or an archive (.zip, .7z) (Ctrl+O)",
-                )).clicked() {
-                    actions.push(LibraryAction::AddDatabases);
-                    ui.close();
-                }
-                if ui.button(tr("New database…")).on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)")).clicked() {
-                    actions.push(LibraryAction::NewDatabase);
-                    ui.close();
-                }
-            });
-            if self.online
-                && ui
-                    .button("🌐")
-                    .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
-                    .clicked()
-            {
-                actions.push(LibraryAction::OnlineGames);
-            }
+            self.shelf_actions(ui, true, actions);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.shelf_buttons(ui, icons, actions);
             });
@@ -705,74 +702,153 @@ impl Library {
 
     fn shelf(&mut self, ui: &mut Ui, databases: &[PathBuf], actions: &mut Vec<LibraryAction>) {
         ui.add_space(8.0);
+        // The title row (library-layout.md §1.4): «Databases», the actions with databases
+        // on the left, the game and program ones on the right. Narrowing: the left group
+        // folds to «+ ▾ 🌐» first (databases are added seldom), then the right one shows
+        // icons, then the title goes.
+        let avail = ui.available_width();
         let heading = text_w(ui, tr("Databases"), egui::TextStyle::Heading) + 16.0;
-        let icons =
-            ui.available_width() - heading < shelf_buttons_w(ui, self.update.as_deref(), false);
+        let between = 24.0;
+        let update = self.update.as_deref();
+        let full = self.shelf_actions_w(ui, false);
+        let short = self.shelf_actions_w(ui, true);
+        let right = |icons| shelf_buttons_w(ui, update, icons);
+        let (title, folded, icons) = if heading + full + between + right(false) <= avail {
+            (true, false, false)
+        } else if heading + short + between + right(false) <= avail {
+            (true, true, false)
+        } else if heading + short + between + right(true) <= avail {
+            (true, true, true)
+        } else {
+            (false, true, true)
+        };
         ui.horizontal(|ui| {
-            ui.heading(tr("Databases"));
+            if title {
+                ui.heading(tr("Databases"));
+                ui.add_space(16.0 - ui.spacing().item_spacing.x);
+            }
+            self.shelf_actions(ui, folded, actions);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.shelf_buttons(ui, icons, actions);
             });
         });
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-            for path in databases {
-                self.db_card(ui, path, actions);
-            }
-            let (add_w, new_w, online_w) = side_card_widths(ui);
-            let (rect, resp) = ui.allocate_exact_size(vec2(add_w, 64.0), Sense::click());
-            let visuals = ui.style().interact(&resp);
-            ui.painter()
-                .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                tr("+ Add database"),
-                egui::FontId::proportional(15.0),
-                visuals.text_color(),
-            );
-            if resp
-                .on_hover_text(tr(
-                    "Open PGN, ChessBase (.cbh, .cbv) or an archive (.zip, .7z) (Ctrl+O)",
-                ))
+        if !databases.is_empty() {
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                for path in databases {
+                    self.db_card(ui, path, actions);
+                }
+            });
+        }
+        ui.add_space(8.0);
+    }
+
+    /// The width of `shelf_actions`.
+    fn shelf_actions_w(&self, ui: &Ui, folded: bool) -> f32 {
+        let online = self.online_running.map_or(0.0, |n| {
+            14.0 + ui.spacing().item_spacing.x + button_w(ui, &crate::large_db::grouped(n))
+        });
+        let buttons = if folded {
+            button_w(ui, "+ ▾")
+                + if self.online {
+                    button_w(ui, "🌐")
+                } else {
+                    0.0
+                }
+        } else {
+            button_w(ui, tr("+ Add database"))
+                + button_w(ui, tr("✚ New database"))
+                + if self.online {
+                    button_w(ui, &format!("🌐 {}", tr("Online games")))
+                } else {
+                    0.0
+                }
+        };
+        buttons + if self.online { online } else { 0.0 }
+    }
+
+    /// «+ Add database · ✚ New database · 🌐 Online games», or folded: «+ ▾» (a menu of
+    /// the first two) and «🌐»; a download under way shows its count beside the globe.
+    fn shelf_actions(&self, ui: &mut Ui, folded: bool, actions: &mut Vec<LibraryAction>) {
+        let add_hint = tr("Open PGN, ChessBase (.cbh, .cbv) or an archive (.zip, .7z) (Ctrl+O)");
+        let new_hint = tr("An empty PGN file for your own games (Ctrl+Shift+N)");
+        let online_hint = tr(
+            "Download any player's games by nickname into a database: yours, a pupil's, an opponent's",
+        );
+        if folded {
+            ui.menu_button("+ ▾", |ui| {
+                if ui
+                    .button(tr("Add database…"))
+                    .on_hover_text(add_hint)
+                    .clicked()
+                {
+                    actions.push(LibraryAction::AddDatabases);
+                    ui.close();
+                }
+                if ui
+                    .button(tr("New database…"))
+                    .on_hover_text(new_hint)
+                    .clicked()
+                {
+                    actions.push(LibraryAction::NewDatabase);
+                    ui.close();
+                }
+            });
+        } else {
+            if ui
+                .button(tr("+ Add database"))
+                .on_hover_text(add_hint)
                 .clicked()
             {
                 actions.push(LibraryAction::AddDatabases);
             }
-            let (rect, resp) = ui.allocate_exact_size(vec2(new_w, 64.0), Sense::click());
-            let visuals = ui.style().interact(&resp);
-            ui.painter()
-                .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                tr("✚ New database"),
-                egui::FontId::proportional(15.0),
-                visuals.text_color(),
-            );
-            if resp
-                .on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)"))
+            if ui
+                .button(tr("✚ New database"))
+                .on_hover_text(new_hint)
                 .clicked()
             {
                 actions.push(LibraryAction::NewDatabase);
             }
-            if self.online {
-                let (rect, resp) = ui.allocate_exact_size(vec2(online_w, 64.0), Sense::click());
-                let visuals = ui.style().interact(&resp);
-                ui.painter()
-                    .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
-                let below = match self.online_running {
-                    Some(n) => trf("downloading… {n}", &[("n", &crate::i18n::games(n))]),
-                    None => "Lichess · Chess.com".to_owned(),
-                };
-                ui.painter().text(
-                    rect.center() + vec2(0.0, -9.0),
-                    egui::Align2::CENTER_CENTER,
-                    format!("🌐 {}", tr("Online games")),
-                    egui::FontId::proportional(15.0),
-                    visuals.text_color(),
-                );
+        }
+        if self.online {
+            let label = if folded {
+                "🌐".to_owned()
+            } else {
+                format!("🌐 {}", tr("Online games"))
+            };
+            let hint = match self.online_running {
+                Some(n) => trf("downloading… {n}", &[("n", &crate::i18n::games(n))]),
+                None => online_hint.to_owned(),
+            };
+            if ui.button(label).on_hover_text(hint).clicked() {
+                actions.push(LibraryAction::OnlineGames);
+            }
+            if let Some(n) = self.online_running {
+                ui.add(egui::Spinner::new().size(14.0));
+                ui.label(RichText::new(crate::large_db::grouped(n)).weak());
+            }
+        }
+    }
+
+    /// The empty shelf's invitation: the three actions as large cards, centred.
+    fn action_cards(&self, ui: &mut Ui, actions: &mut Vec<LibraryAction>) {
+        let (add_w, new_w, online_w) = side_card_widths(ui);
+        let total = add_w + new_w + if self.online { online_w + 8.0 } else { 0.0 } + 8.0;
+        let card = |ui: &mut Ui, w: f32, title: &str, below: Option<&str>| {
+            let (rect, resp) = ui.allocate_exact_size(vec2(w, 64.0), Sense::click());
+            let visuals = ui.style().interact(&resp);
+            ui.painter()
+                .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
+            let up = if below.is_some() { -9.0 } else { 0.0 };
+            ui.painter().text(
+                rect.center() + vec2(0.0, up),
+                egui::Align2::CENTER_CENTER,
+                title,
+                egui::FontId::proportional(15.0),
+                visuals.text_color(),
+            );
+            if let Some(below) = below {
                 ui.painter().text(
                     rect.center() + vec2(0.0, 11.0),
                     egui::Align2::CENTER_CENTER,
@@ -780,15 +856,48 @@ impl Library {
                     egui::FontId::proportional(13.0),
                     ui.visuals().weak_text_color(),
                 );
-                if resp
-                    .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
-                    .clicked()
-                {
-                    actions.push(LibraryAction::OnlineGames);
-                }
+            }
+            resp
+        };
+        // One row, centred; a column of them, centred, when the row does not fit.
+        let row = ui.available_width() >= total;
+        let layout = if row {
+            egui::Layout::left_to_right(egui::Align::Min)
+        } else {
+            egui::Layout::top_down(egui::Align::Center)
+        };
+        ui.with_layout(layout, |ui| {
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            if row {
+                ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
+            }
+            if card(ui, add_w, tr("+ Add database"), None)
+                .on_hover_text(tr(
+                    "Open PGN, ChessBase (.cbh, .cbv) or an archive (.zip, .7z) (Ctrl+O)",
+                ))
+                .clicked()
+            {
+                actions.push(LibraryAction::AddDatabases);
+            }
+            if card(ui, new_w, tr("✚ New database"), None)
+                .on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)"))
+                .clicked()
+            {
+                actions.push(LibraryAction::NewDatabase);
+            }
+            if self.online
+                && card(
+                    ui,
+                    online_w,
+                    &format!("🌐 {}", tr("Online games")),
+                    Some("Lichess · Chess.com"),
+                )
+                .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
+                .clicked()
+            {
+                actions.push(LibraryAction::OnlineGames);
             }
         });
-        ui.add_space(8.0);
     }
 
     fn db_card(&mut self, ui: &mut Ui, path: &Path, actions: &mut Vec<LibraryAction>) {
@@ -870,16 +979,20 @@ impl Library {
         if resp.clicked() {
             self.select_db(path, ui.ctx());
         }
-        let legacy = matches!(
-            self.write_block(path),
-            Some(crate::own_db::Block::Encoding(_))
-        );
+        let block = self.write_block(path);
+        let not_read = self.database(path).is_none() && block.is_none();
         resp.context_menu(|ui| {
             if ui.button(tr("Show in folder")).clicked() {
                 crate::own_db::show_in_folder(path);
                 ui.close();
             }
-            // Games are written in UTF-8: a legacy file takes them through a copy.
+            // Games are written in UTF-8: a legacy file takes them through a copy. A file
+            // not read yet is looked at now (its beginning), while the menu is open.
+            let legacy = match &block {
+                Some(crate::own_db::Block::Encoding(_)) => true,
+                None if not_read => legacy_pgn(path),
+                _ => false,
+            };
             if legacy
                 && ui
                     .button(tr("Make a copy in UTF-8…"))
@@ -905,15 +1018,36 @@ impl Library {
 
     fn table_area(&mut self, ui: &mut Ui, settings: &Settings, actions: &mut Vec<LibraryAction>) {
         let Some(path) = self.selected_db.clone() else {
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    RichText::new(tr(
-                        "Choose a database above, add a PGN file or start a new game",
-                    ))
-                    .weak()
-                    .size(16.0),
-                );
-            });
+            if settings.databases.is_empty() {
+                // The empty shelf (library-layout.md §1.5): its actions where a newcomer
+                // looks, large.
+                ui.vertical_centered(|ui| {
+                    ui.add_space(60.0);
+                    ui.label(RichText::new(tr("No databases yet")).size(16.0));
+                    ui.add_space(12.0);
+                });
+                self.action_cards(ui, actions);
+                ui.vertical_centered(|ui| {
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        let w = text_w(ui, tr("or"), egui::TextStyle::Body)
+                            + button_w(ui, tr("♟ New game"));
+                        ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
+                        ui.label(RichText::new(tr("or")).weak());
+                        if ui.button(tr("♟ New game")).clicked() {
+                            actions.push(LibraryAction::NewGame);
+                        }
+                    });
+                });
+            } else {
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        RichText::new(tr("Choose a database above"))
+                            .weak()
+                            .size(16.0),
+                    );
+                });
+            }
             return;
         };
         let db = match self.slots.get(&path) {

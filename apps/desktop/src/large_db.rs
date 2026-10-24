@@ -886,10 +886,22 @@ impl LargeView {
         let resp = ui
             .add(
                 egui::TextEdit::singleline(&mut self.form.search)
-                    .hint_text(tr("🔍 Search: player, event, ECO, year"))
+                    .hint_text(if width < 200.0 {
+                        tr("🔍 Search")
+                    } else {
+                        tr("🔍 Search: player, event, ECO, year")
+                    })
                     .desired_width(width),
             )
-            .on_hover_text(tr("Ctrl+F; again — the filters"));
+            .on_hover_text(if width < 200.0 {
+                format!(
+                    "{}\n{}",
+                    tr("🔍 Search: player, event, ECO, year"),
+                    tr("Ctrl+F; again — the filters")
+                )
+            } else {
+                tr("Ctrl+F; again — the filters").to_owned()
+            });
         if resp.changed() {
             self.typed_at = now;
         }
@@ -1621,24 +1633,42 @@ impl LargeView {
         // A database with no games yet (own-databases.md §2.3): how to put one in.
         if total == 0 && writable {
             let name = crate::own_db::base_name(path);
+            // The header as for any database; nothing to search, so no field and no switch.
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&name).strong());
+                ui.label(RichText::new(format!("· {}", header.format)).weak());
+                ui.label(format!("· {}", crate::i18n::games(0)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(tr("+ Game"))
+                        .on_hover_text(new_game_hint(&name))
+                        .clicked()
+                    {
+                        actions.push(LibraryAction::NewGameIn(path.to_path_buf()));
+                    }
+                });
+            });
             ui.vertical_centered(|ui| {
                 ui.add_space(60.0);
                 ui.label(
                     RichText::new(trf("No games in «{name}» yet", &[("name", &name)])).size(16.0),
                 );
+                ui.add_space(10.0);
+                if crate::widgets::primary(ui, tr("+ Game"))
+                    .on_hover_text(new_game_hint(&name))
+                    .clicked()
+                {
+                    actions.push(LibraryAction::NewGameIn(path.to_path_buf()));
+                }
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new(tr(
-                        "Add one: ♟ New game, or «Add to database…» (Ctrl+Shift+S) from any game.",
+                        "«+ Game» opens an empty board; Ctrl+S adds the game here. Or open any game and choose «Add to database…» (Ctrl+Shift+S)",
                     ))
                     .weak(),
                 );
                 ui.add_space(6.0);
                 ui.label(RichText::new(trf("File: {path}", &[("path", &path.display())])).weak());
-                ui.add_space(10.0);
-                if ui.button(tr("♟ New game")).clicked() {
-                    actions.push(LibraryAction::NewGame);
-                }
             });
             return open_notes;
         }
@@ -1705,31 +1735,52 @@ impl LargeView {
         let name_w = text_w(ui, &name, egui::TextStyle::Body) + gap;
         let format_w = body(&format) + gap;
         let avail = ui.available_width();
-        let right = |field: f32| switch_w + 8.0 + search_w(field);
+        // «+ Game» (a database that takes games only), shortened to «+» after the field.
+        let plus_w = |full: bool| {
+            if !writable {
+                0.0
+            } else if full {
+                body(tr("+ Game")) + pad + 8.0 + gap
+            } else {
+                body("+") + pad + 8.0 + gap
+            }
+        };
+        let right = |field: f32, full: bool| switch_w + 8.0 + search_w(field) + plus_w(full);
         // One line: the widest field that leaves the counter and at least 80 of the name.
-        // (field, format, the name's least room: 0 leaves the name out)
+        // (field, format, the name's least room: 0 leaves the name out, «+ Game» in full)
         let one_line = [
-            (220.0, true, name_w),
-            (220.0, false, 80.0 + gap),
-            (140.0, false, 80.0 + gap),
-            (140.0, false, 0.0),
+            (220.0, true, name_w, true),
+            (220.0, false, 80.0 + gap, true),
+            (140.0, false, 80.0 + gap, true),
+            (140.0, false, 80.0 + gap, false),
+            (140.0, false, 0.0, false),
         ]
         .into_iter()
-        .find(|(field, with_format, name_least)| {
+        .find(|(field, with_format, name_least, full)| {
             let format = if *with_format { format_w } else { 0.0 };
-            avail - right(*field) - info_w - format >= *name_least
+            avail - right(*field, *full) - info_w - format >= *name_least
         })
-        .map(|(field, with_format, _)| (field, with_format));
-        let field = match one_line {
-            Some((field, _)) => field,
-            None if avail - right(220.0) >= 80.0 + gap => 220.0,
-            None => 140.0,
+        .map(|(field, with_format, _, full)| (field, with_format, full));
+        let (field, plus_full) = match one_line {
+            Some((field, _, full)) => (field, full),
+            None if avail - right(220.0, true) >= 80.0 + gap => (220.0, true),
+            None => (140.0, false),
         };
-        let with_format = one_line.is_some_and(|(_, f)| f);
+        let with_format = one_line.is_some_and(|(_, f, _)| f);
         let mut back_to_list = false;
+        let mut new_game = false;
         let alone = self.board_alone();
         // On a line of its own the counter loses its leading "· ".
-        let counter_text = if one_line.is_some() {
+        // The name is drawn when it has its own width or at least 80 (shortened).
+        let name_shown = |room: f32| room >= name_w.min(80.0 + gap);
+        let name_room = if one_line.is_some() {
+            avail - right(field, plus_full) - info_w - if with_format { format_w } else { 0.0 }
+        } else {
+            avail - right(field, plus_full)
+        };
+        let shown = name_shown(name_room);
+        // What starts the line loses its leading "· ".
+        let counter_text = if one_line.is_some() && (shown || with_format) {
             counter.as_str()
         } else {
             counter.trim_start_matches("· ")
@@ -1772,13 +1823,8 @@ impl LargeView {
                 }
             }
         };
-        let name_room = if one_line.is_some() {
-            avail - right(field) - info_w - if with_format { format_w } else { 0.0 }
-        } else {
-            avail - right(field)
-        };
         ui.horizontal(|ui| {
-            if name_room >= 80.0 + gap {
+            if shown {
                 ui.allocate_ui(
                     vec2((name_room - gap).floor(), ui.spacing().interact_size.y),
                     |ui| {
@@ -1788,7 +1834,12 @@ impl LargeView {
                 );
             }
             if with_format {
-                ui.label(RichText::new(&format).weak())
+                let format = if shown {
+                    format.as_str()
+                } else {
+                    format.trim_start_matches("· ")
+                };
+                ui.label(RichText::new(format).weak())
                     .on_hover_text(&header.format_hint);
             }
             if one_line.is_some() {
@@ -1799,6 +1850,17 @@ impl LargeView {
                 ui.scope(|ui| self.pane_switch(ui));
                 ui.add_space(8.0);
                 self.search_field(ui, now, field);
+                if writable {
+                    ui.add_space(8.0 - ui.spacing().item_spacing.x);
+                    let label = if plus_full { tr("+ Game") } else { "+" };
+                    if ui
+                        .button(label)
+                        .on_hover_text(new_game_hint(&name))
+                        .clicked()
+                    {
+                        new_game = true;
+                    }
+                }
             });
         });
         if one_line.is_none() {
@@ -1806,6 +1868,9 @@ impl LargeView {
         }
         if back_to_list {
             self.pane = Pane::Hidden;
+        }
+        if new_game {
+            actions.push(LibraryAction::NewGameIn(path.to_path_buf()));
         }
         self.chips(ui, settings);
         ui.add_space(2.0);
@@ -2530,6 +2595,14 @@ pub fn short_count(n: usize) -> String {
         };
         trf("{n} million", &[("n", &m)])
     }
+}
+
+/// The tooltip of «+ Game»: where its game goes.
+fn new_game_hint(name: &str) -> String {
+    trf(
+        "A new game for «{name}»: Ctrl+S adds it to this database",
+        &[("name", &name)],
+    )
 }
 
 #[cfg(test)]

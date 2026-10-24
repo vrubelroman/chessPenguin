@@ -21,6 +21,8 @@ pub enum Block {
     Online,
     /// A ChessBase database or an archive: read only.
     ReadOnly,
+    /// A sample database of the program: read only.
+    Example,
     /// A PGN in another encoding: a UTF-8 copy can take games.
     Encoding(&'static str),
     /// The file cannot be written (permissions).
@@ -36,6 +38,7 @@ impl Block {
             Block::Online => tr("This database is downloaded from Lichess and Chess.com and updates itself: a game added by hand would be lost at the next update. Add the game to a database of your own.").to_owned(),
             Block::ReadOnly => tr("ChessBase databases and archives are only read. Add the game to a PGN database of your own.").to_owned(),
             Block::Encoding(enc) => trf("This file is in the {enc} encoding; games are written in UTF-8. Make a copy of it in UTF-8 and add games to the copy — the original stays as it is.", &[("enc", enc)]),
+            Block::Example => tr("This is a sample database of the program; it is only read. Make a database of your own for your games.").to_owned(),
             Block::NoPermission => tr("The file cannot be written: no permission.").to_owned(),
             Block::Missing => tr("The file is not on the disk any more.").to_owned(),
         }
@@ -368,10 +371,8 @@ impl Chooser {
                 .show(ui, |ui| {
                     if order.is_empty() {
                         ui.label(
-                            RichText::new(tr(
-                                "No PGN databases on the shelf yet — create one below.",
-                            ))
-                            .weak(),
+                            RichText::new(tr("No databases of your own yet: create one below."))
+                                .weak(),
                         );
                     }
                     // Rows the whole width, their text from the left.
@@ -409,7 +410,14 @@ impl Chooser {
                     });
                 });
             ui.separator();
-            if ui.button(tr("✚ New database…")).clicked() {
+            // Nothing to choose: the new database is the main way, not «Add».
+            let none = !self.rows.iter().any(|r| r.block.is_none());
+            let new_base = if none {
+                crate::widgets::primary(ui, tr("✚ New database…"))
+            } else {
+                ui.button(tr("✚ New database…"))
+            };
+            if new_base.clicked() || (none && ui.input(|i| i.key_pressed(Key::Enter))) {
                 out = Some(ChooserOutcome::NewBase);
             }
             if self.purpose == ChooserFor::CurrentGame
@@ -425,13 +433,15 @@ impl Chooser {
             ui.add_space(8.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let pick = self.selected.map(|i| self.rows[i].path.clone());
-                let add = ui
-                    .add_enabled_ui(pick.is_some(), |ui| crate::widgets::primary(ui, tr("Add")))
-                    .inner;
-                if (add.clicked() || enter)
-                    && let Some(p) = pick
-                {
-                    out = Some(ChooserOutcome::Pick(p));
+                if !none {
+                    let add = ui
+                        .add_enabled_ui(pick.is_some(), |ui| crate::widgets::primary(ui, tr("Add")))
+                        .inner;
+                    if (add.clicked() || enter)
+                        && let Some(p) = pick
+                    {
+                        out = Some(ChooserOutcome::Pick(p));
+                    }
                 }
                 if ui.button(tr("Cancel")).clicked() {
                     out = Some(ChooserOutcome::Cancel);

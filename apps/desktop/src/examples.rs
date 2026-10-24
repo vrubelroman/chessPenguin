@@ -26,6 +26,12 @@ fn dir() -> Option<PathBuf> {
         .map(|d| d.data_local_dir().join("examples"))
 }
 
+/// A sample database of the program: only read (games added there would end up in a
+/// hidden data folder).
+pub fn is_example(path: &std::path::Path) -> bool {
+    dir().is_some_and(|d| path.starts_with(d))
+}
+
 /// Adds the samples once; `true` when the settings changed. A new library starts with
 /// them (the classics open); an existing one gets them after its own databases.
 pub fn first_run_setup(settings: &mut Settings) -> bool {

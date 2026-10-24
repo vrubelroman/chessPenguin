@@ -49,6 +49,9 @@ impl Preview {
 pub struct GameView {
     pub game: Game,
     pub source: Option<GameSource>,
+    /// A new game meant for this database (the table's «+ Game»): Ctrl+S adds it there.
+    /// Cleared once the game is in a database.
+    pub target: Option<PathBuf>,
     pub diagnostics: Vec<Diagnostic>,
     cursor: NodeId,
     board: BoardState,
@@ -141,6 +144,7 @@ impl GameView {
             },
             previous: None,
             data_asked: false,
+            target: None,
             update: None,
             translation: Default::default(),
             translate_now: false,
@@ -176,6 +180,17 @@ impl GameView {
     /// Where the game lives: «🗄 Petrov · No. 13» (🌐 an online database, 🔒 a read-only
     /// one); nothing for a game that is in no database yet.
     pub fn source_line(&self) -> Option<String> {
+        if self.source.is_none()
+            && let Some(t) = &self.target
+        {
+            return Some(format!(
+                "🗄 {}",
+                trf(
+                    "{name} · new game",
+                    &[("name", &crate::own_db::base_name(t))]
+                )
+            ));
+        }
         let s = self.source.as_ref()?;
         let icon = match &s.block {
             None => "🗄",
@@ -191,10 +206,14 @@ impl GameView {
 
     /// What Ctrl+S does to this game, for the button's tooltip.
     pub fn save_hint(&self) -> String {
-        match &self.source {
-            Some(s) if s.block.is_none() => trf(
+        match (&self.source, &self.target) {
+            (Some(s), _) if s.block.is_none() => trf(
                 "Save to «{name}» (Ctrl+S)",
                 &[("name", &crate::own_db::base_name(&s.path))],
+            ),
+            (None, Some(t)) => trf(
+                "Add to «{name}» (Ctrl+S)",
+                &[("name", &crate::own_db::base_name(t))],
             ),
             _ => tr("Add to database… (Ctrl+S)").to_owned(),
         }
@@ -1380,13 +1399,9 @@ impl GameView {
                     actions.push(GameAction::EditGameData);
                     ui.close();
                 }
-                if let Some(s) = self.source.as_ref().filter(|s| s.block.is_none())
-                    && ui
-                        .button(trf(
-                            "Save to «{name}» (Ctrl+S)",
-                            &[("name", &crate::own_db::base_name(&s.path))],
-                        ))
-                        .clicked()
+                let writable_source = self.source.as_ref().is_some_and(|s| s.block.is_none());
+                if (writable_source || (self.source.is_none() && self.target.is_some()))
+                    && ui.button(self.save_hint()).clicked()
                 {
                     actions.push(GameAction::Save);
                     ui.close();

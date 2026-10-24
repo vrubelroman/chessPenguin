@@ -441,6 +441,13 @@ impl App {
                     self.open_chooser(ctx, ChooserFor::Record { path, index })
                 }
                 ("data", _) => self.edit_game_data(),
+                // The table's «+ Game» for the first database.
+                ("newin", Some(path)) => {
+                    self.new_game();
+                    if let Some(g) = self.game.as_mut() {
+                        g.target = Some(path);
+                    }
+                }
                 ("save", _) => self.save_current(ctx, None),
                 ("delete", Some(path)) => self.delete_game(ctx, path, index),
                 _ => {}
@@ -534,6 +541,7 @@ impl App {
     /// Ctrl+S: a game from a PGN that takes games is saved back into it; any other game
     /// is added to a database of the user's choice.
     fn save_current(&mut self, ctx: &egui::Context, then_close: Option<CloseIntent>) {
+        let target = self.current_target();
         let Some(g) = &self.game else { return };
         self.own.then_close = then_close;
         match &g.source {
@@ -552,8 +560,25 @@ impl App {
                 }
                 self.replace_current(ctx);
             }
+            // A new game meant for a database (the table's «+ Game»): straight there.
+            None if let Some(t) = target => self.add_current_to(ctx, t),
             _ => self.open_chooser(ctx, ChooserFor::CurrentGame),
         }
+    }
+
+    /// The database the new game on the screen is meant for, while it still takes games
+    /// and is on the shelf; else the target is dropped.
+    fn current_target(&mut self) -> Option<PathBuf> {
+        let g = self.game.as_mut()?;
+        let t = g.target.clone()?;
+        if g.source.is_some()
+            || !self.settings.databases.contains(&t)
+            || self.library.write_block(&t).is_some()
+        {
+            g.target = None;
+            return None;
+        }
+        Some(t)
     }
 
     /// Writes the game over its record in its own PGN.
@@ -614,7 +639,8 @@ impl App {
             .as_ref()
             .and_then(|g| g.source.as_ref())
             .map(|s| s.path.clone());
-        let preselect = self.settings.last_target.clone().or(source);
+        let target = self.current_target();
+        let preselect = target.or(self.settings.last_target.clone()).or(source);
         // Databases not read yet are read now, for their counts and encodings.
         for p in self.settings.databases.clone() {
             if self.library.database(&p).is_none() && p.exists() {
@@ -716,6 +742,7 @@ impl App {
                         index,
                         block: None,
                     });
+                    g.target = None;
                     g.game.mark_saved();
                 }
                 self.settings.last_target = Some(target.clone());
@@ -1844,6 +1871,8 @@ impl App {
             .as_ref()
             .filter(|s| s.block.is_none())
             .map(|s| own_db::base_name(&s.path));
+        // A new game meant for a database goes there.
+        let target = self.current_target().map(|t| own_db::base_name(&t));
         egui::Modal::new(egui::Id::new("confirm_close")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(tr("Game modified"));
@@ -1853,6 +1882,9 @@ impl App {
             match (&own, &source) {
                 (Some(name), _) => {
                     ui.label(trf("Save the changes to «{name}»?", &[("name", name)]));
+                }
+                (None, None) if let Some(name) = &target => {
+                    ui.label(trf("Add the game to «{name}»?", &[("name", name)]));
                 }
                 (None, Some(s)) => {
                     if let Some(b) = &s.block {
@@ -1868,9 +1900,10 @@ impl App {
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                let primary = match &own {
-                    Some(name) => trf("Save to «{name}»", &[("name", name)]),
-                    None => tr("Add to database…").to_owned(),
+                let primary = match (&own, &target) {
+                    (Some(name), _) => trf("Save to «{name}»", &[("name", name)]),
+                    (None, Some(name)) => trf("Add to «{name}»", &[("name", name)]),
+                    (None, None) => tr("Add to database…").to_owned(),
                 };
                 if crate::widgets::primary(ui, &primary).clicked() {
                     choice = Some(0);
@@ -1903,7 +1936,7 @@ impl App {
         match choice {
             Some(0) => {
                 self.confirm_close = None;
-                if own.is_some() {
+                if own.is_some() || target.is_some() {
                     self.save_current(ctx, Some(intent));
                 } else {
                     self.own.then_close = Some(intent);
@@ -1998,6 +2031,9 @@ impl eframe::App for App {
             self.settings_ui.open = !self.settings_ui.open;
         }
 
+        // A new game's target base that left the shelf or stopped taking games is
+        // dropped before the game is drawn (its header names the target).
+        let _ = self.current_target();
         if let Some(game) = &mut self.game {
             let input_enabled = self.confirm_close.is_none();
             // A database opened for the reference tab arrives here (the library is
@@ -2133,6 +2169,12 @@ impl eframe::App for App {
                     }
                     LibraryAction::OpenPgn(text) => self.open_pgn_text(&ctx, text, true),
                     LibraryAction::NewGame => self.new_game(),
+                    LibraryAction::NewGameIn(path) => {
+                        self.new_game();
+                        if let Some(g) = self.game.as_mut() {
+                            g.target = Some(path);
+                        }
+                    }
                     LibraryAction::PastePgn => self.paste_pgn(&ctx),
                     LibraryAction::AddDatabases => self.pick_databases(&ctx),
                     LibraryAction::OnlineGames => self.online.open(),

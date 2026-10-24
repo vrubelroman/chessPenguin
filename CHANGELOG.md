@@ -20,6 +20,14 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   check that the file did not change on the disk meanwhile. The game's header names its
   database and number (🔒 read-only, 🌐 online); the card menu has «Show in folder»;
   «Remove from list» says where the file stays. A new game gets today's date.
+- Library: «+ Add database», «✚ New database» and «🌐 Online games» moved from the row of
+  database cards to the title row, beside «Databases» (folded into «+ ▾» and «🌐» in a
+  narrow window); the cards row holds only databases. An empty shelf shows the three
+  actions as large cards in the middle. The table header of a database that takes games
+  has «+ Game»: a new game meant for that database — its header says so and Ctrl+S adds
+  it there straight away. «Add to database» lists only databases that take games; a PGN
+  in a legacy encoding gets its UTF-8 copy from its card's menu. The built-in sample
+  databases are read-only. An empty database shows no filter panel.
 
 ## [1.0.3] — 2026-10-24
 
