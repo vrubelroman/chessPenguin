@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.2] — 2026-10-24
 
 - Android: the update card on the main screen has a × that stops the offers (with "Undo";
   they come back with "Offer new versions" in Settings → About, where a new version can
