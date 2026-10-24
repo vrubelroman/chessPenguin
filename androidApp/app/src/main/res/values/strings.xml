@@ -333,11 +333,8 @@
     </plurals>
     <string name="upd_title">Version %1$s is out</string>
     <string name="upd_you_have">You have %1$s</string>
-    <string name="upd_whats_new">What’s new</string>
-    <string name="upd_whats_new_cd">What’s new, opens the page on GitHub</string>
     <string name="upd_update">Update</string>
     <string name="upd_install">Install</string>
-    <string name="upd_hidden_snack">The update is in Settings, under About</string>
     <string name="upd_keeps">Databases, settings and the engine stay.</string>
     <string name="upd_keeps_no_engine">Databases and settings stay.</string>
     <string name="upd_closes">ChessPenguin closes while it installs — then open it again.</string>
@@ -378,18 +375,22 @@
     <string name="upd_copy">Copy</string>
     <string name="upd_group">Updates</string>
     <string name="upd_auto">Check for updates at start</string>
-    <string name="upd_auto_sub">Once a day ChessPenguin asks its site which version is the latest; the site counts installations that run. Only a random number of this installation, the version and the system are sent.</string>
+    <string name="upd_auto_sub">Once a day ChessPenguin asks its site which version is the latest; the site counts installations that run. Only a random number of this installation, the version and the system are sent. The check runs even with offers off.</string>
+    <string name="upd_offer">Offer new versions</string>
+    <string name="upd_offer_sub">A card on the Databases screen when a new version is out.</string>
+    <string name="upd_offer_needs_check">Works when the update check is on.</string>
+    <string name="upd_offers_off_snack">We won’t offer it again. Turn it on in Settings, About</string>
+    <string name="upd_dismiss_cd">Don’t offer updates</string>
     <string name="upd_check_now">Check now</string>
     <string name="upd_checking">Checking…</string>
     <string name="upd_latest">You have the latest version</string>
     <string name="upd_checked">Checked %1$s</string>
     <string name="upd_check_offline">No internet — cannot check for updates</string>
-    <string name="upd_check_failed">Could not check for updates: GitHub did not answer. Try later.</string>
+    <string name="upd_check_failed">Could not check for updates: the site did not answer. Try later.</string>
     <string name="s_about_available">Version %1$s is out</string>
     <string name="s_about_downloading">Downloading version %1$s…</string>
     <string name="s_about_ready">Version %1$s is downloaded</string>
     <string name="upd_card_downloading">Update to %1$s, %2$d of %3$d megabytes downloaded</string>
     <!-- Shown only when the interface is not in English. -->
-    <string name="upd_notes_english">The list of changes is on GitHub, in English.</string>
     <string name="upd_short_release">The file cannot be checked</string>
 </resources>

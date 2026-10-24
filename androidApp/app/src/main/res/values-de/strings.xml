@@ -330,12 +330,8 @@
     </plurals>
     <string name="upd_title">Version %1$s ist erschienen</string>
     <string name="upd_you_have">Sie haben %1$s</string>
-    <string name="upd_whats_new">Neuigkeiten</string>
-    <string name="upd_whats_new_cd">Neuigkeiten, öffnet die Seite auf GitHub</string>
-    <string name="upd_notes_english">Die Änderungsliste steht auf GitHub, auf Englisch.</string>
     <string name="upd_update">Aktualisieren</string>
     <string name="upd_install">Installieren</string>
-    <string name="upd_hidden_snack">Das Update finden Sie unter Einstellungen → Über</string>
     <string name="upd_keeps">Datenbanken, Einstellungen und die Engine bleiben erhalten.</string>
     <string name="upd_keeps_no_engine">Datenbanken und Einstellungen bleiben erhalten.</string>
     <string name="upd_closes">ChessPenguin schließt sich während der Installation — öffnen Sie es danach wieder.</string>
@@ -376,13 +372,18 @@
     <string name="upd_copy">Kopieren</string>
     <string name="upd_group">Updates</string>
     <string name="upd_auto">Beim Start nach Updates suchen</string>
-    <string name="upd_auto_sub">Einmal am Tag fragt ChessPenguin seine Website nach der neuesten Version; die Website zählt laufende Installationen. Gesendet werden nur eine Zufallsnummer dieser Installation, die Version und das System.</string>
+    <string name="upd_auto_sub">Einmal am Tag fragt ChessPenguin seine Website nach der neuesten Version; die Website zählt laufende Installationen. Gesendet werden nur eine Zufallsnummer dieser Installation, die Version und das System. Die Prüfung läuft auch ohne Angebote.</string>
+    <string name="upd_offer">Neue Versionen anbieten</string>
+    <string name="upd_offer_sub">Eine Karte auf dem Bildschirm Datenbanken, wenn eine neue Version erscheint.</string>
+    <string name="upd_offer_needs_check">Funktioniert, wenn die Update-Prüfung eingeschaltet ist.</string>
+    <string name="upd_offers_off_snack">Wird nicht mehr angeboten. Einschalten unter Einstellungen, Über</string>
+    <string name="upd_dismiss_cd">Keine Updates anbieten</string>
     <string name="upd_check_now">Jetzt prüfen</string>
     <string name="upd_checking">Wird geprüft…</string>
     <string name="upd_latest">Sie haben die neueste Version</string>
     <string name="upd_checked">Zuletzt geprüft: %1$s</string>
     <string name="upd_check_offline">Kein Internet — Updates lassen sich nicht prüfen</string>
-    <string name="upd_check_failed">Updates ließen sich nicht prüfen: GitHub hat nicht geantwortet. Versuchen Sie es später.</string>
+    <string name="upd_check_failed">Updates konnten nicht geprüft werden: Die Website hat nicht geantwortet. Später erneut versuchen.</string>
     <string name="s_about_available">Version %1$s ist erschienen</string>
     <string name="s_about_downloading">Version %1$s wird heruntergeladen…</string>
     <string name="s_about_ready">Version %1$s ist heruntergeladen</string>

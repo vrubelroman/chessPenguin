@@ -330,11 +330,8 @@
     </plurals>
     <string name="upd_title">%1$s нұсқасы шықты</string>
     <string name="upd_you_have">Сізде %1$s</string>
-    <string name="upd_whats_new">Не жаңа</string>
-    <string name="upd_whats_new_cd">Не жаңа, GitHub бетін ашады</string>
     <string name="upd_update">Жаңарту</string>
     <string name="upd_install">Орнату</string>
-    <string name="upd_hidden_snack">Жаңарту Баптаулардағы «Бағдарлама туралы» бөлімінде</string>
     <string name="upd_keeps">Базалар, баптаулар мен қозғалтқыш сақталады.</string>
     <string name="upd_keeps_no_engine">Базалар мен баптаулар сақталады.</string>
     <string name="upd_closes">Орнату кезінде ChessPenguin жабылады — содан кейін оны қайта ашыңыз.</string>
@@ -375,18 +372,22 @@
     <string name="upd_copy">Көшіру</string>
     <string name="upd_group">Жаңартулар</string>
     <string name="upd_auto">Іске қосқанда жаңартуларды тексеру</string>
-    <string name="upd_auto_sub">Күніне бір рет ChessPenguin өз сайтынан соңғы нұсқаны сұрайды; сайт жұмыс істеп тұрған орнатуларды санайды. Тек осы орнатудың кездейсоқ нөмірі, нұсқа және жүйе жіберіледі.</string>
+    <string name="upd_auto_sub">Күніне бір рет ChessPenguin өз сайтынан соңғы нұсқаны сұрайды; сайт жұмыс істеп тұрған орнатуларды санайды. Тек осы орнатудың кездейсоқ нөмірі, нұсқа және жүйе жіберіледі. Ұсыныстар өшірулі болса да тексеру жүреді.</string>
+    <string name="upd_offer">Жаңа нұсқаларды ұсыну</string>
+    <string name="upd_offer_sub">Жаңа нұсқа шыққанда «Базалар» экранындағы карта.</string>
+    <string name="upd_offer_needs_check">Жаңартуларды тексеру қосулы болғанда жұмыс істейді.</string>
+    <string name="upd_offers_off_snack">Енді ұсынбаймыз. Қосу — Баптаулар, «Бағдарлама туралы»</string>
+    <string name="upd_dismiss_cd">Жаңартуларды ұсынбау</string>
     <string name="upd_check_now">Қазір тексеру</string>
     <string name="upd_checking">Тексерілуде…</string>
     <string name="upd_latest">Сізде соңғы нұсқа</string>
     <string name="upd_checked">Тексерілді %1$s</string>
     <string name="upd_check_offline">Интернет жоқ — жаңартуларды тексеру мүмкін емес</string>
-    <string name="upd_check_failed">Жаңартуларды тексеру мүмкін болмады: GitHub жауап бермеді. Кейінірек көріңіз.</string>
+    <string name="upd_check_failed">Жаңартуларды тексеру мүмкін болмады: сайт жауап бермеді. Кейінірек көріңіз.</string>
     <string name="s_about_available">%1$s нұсқасы шықты</string>
     <string name="s_about_downloading">%1$s нұсқасы жүктелуде…</string>
     <string name="s_about_ready">%1$s нұсқасы жүктелді</string>
     <string name="upd_card_downloading">%1$s нұсқасына жаңарту, %3$d мегабайттың %2$d жүктелді</string>
     <!-- Shown only when the interface is not in English. -->
-    <string name="upd_notes_english">Өзгерістер тізімі GitHub-та, ағылшын тілінде.</string>
     <string name="upd_short_release">Файлды тексеру мүмкін емес</string>
 </resources>

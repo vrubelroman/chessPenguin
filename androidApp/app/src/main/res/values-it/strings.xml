@@ -336,12 +336,8 @@
     </plurals>
     <string name="upd_title">È uscita la versione %1$s</string>
     <string name="upd_you_have">Hai la %1$s</string>
-    <string name="upd_whats_new">Novità</string>
-    <string name="upd_whats_new_cd">Novità, apre la pagina su GitHub</string>
-    <string name="upd_notes_english">L’elenco delle modifiche è su GitHub, in inglese.</string>
     <string name="upd_update">Aggiorna</string>
     <string name="upd_install">Installa</string>
-    <string name="upd_hidden_snack">L’aggiornamento è in Impostazioni, alla voce Informazioni</string>
     <string name="upd_keeps">Database, impostazioni e motore vengono mantenuti.</string>
     <string name="upd_keeps_no_engine">Database e impostazioni restano.</string>
     <string name="upd_closes">ChessPenguin si chiude durante l’installazione: poi riaprilo.</string>
@@ -382,13 +378,18 @@
     <string name="upd_copy">Copia</string>
     <string name="upd_group">Aggiornamenti</string>
     <string name="upd_auto">Cerca aggiornamenti all’avvio</string>
-    <string name="upd_auto_sub">Una volta al giorno ChessPenguin chiede al suo sito qual è l’ultima versione; il sito conta le installazioni in uso. Vengono inviati solo un numero casuale di questa installazione, la versione e il sistema.</string>
+    <string name="upd_auto_sub">Una volta al giorno ChessPenguin chiede al suo sito qual è l’ultima versione; il sito conta le installazioni in uso. Vengono inviati solo un numero casuale di questa installazione, la versione e il sistema. Il controllo avviene anche senza le proposte.</string>
+    <string name="upd_offer">Proponi nuove versioni</string>
+    <string name="upd_offer_sub">Una scheda nella schermata Database quando esce una nuova versione.</string>
+    <string name="upd_offer_needs_check">Funziona con il controllo degli aggiornamenti attivo.</string>
+    <string name="upd_offers_off_snack">Non lo proporremo più. Riattivalo in Impostazioni, Informazioni</string>
+    <string name="upd_dismiss_cd">Non proporre aggiornamenti</string>
     <string name="upd_check_now">Controlla ora</string>
     <string name="upd_checking">Controllo in corso…</string>
     <string name="upd_latest">Hai l’ultima versione</string>
     <string name="upd_checked">Ultimo controllo: %1$s</string>
     <string name="upd_check_offline">Nessuna connessione: impossibile cercare aggiornamenti</string>
-    <string name="upd_check_failed">Impossibile cercare aggiornamenti: GitHub non ha risposto. Riprova più tardi.</string>
+    <string name="upd_check_failed">Impossibile controllare gli aggiornamenti: il sito non ha risposto. Riprova più tardi.</string>
     <string name="s_about_available">È uscita la versione %1$s</string>
     <string name="s_about_downloading">Scaricamento della versione %1$s…</string>
     <string name="s_about_ready">La versione %1$s è scaricata</string>

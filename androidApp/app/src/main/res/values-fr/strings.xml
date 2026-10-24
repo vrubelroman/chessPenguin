@@ -336,12 +336,8 @@
     </plurals>
     <string name="upd_title">La version %1$s est sortie</string>
     <string name="upd_you_have">Vous avez %1$s</string>
-    <string name="upd_whats_new">Nouveautés</string>
-    <string name="upd_whats_new_cd">Nouveautés, ouvre la page sur GitHub</string>
-    <string name="upd_notes_english">La liste des changements est sur GitHub, en anglais.</string>
     <string name="upd_update">Mettre à jour</string>
     <string name="upd_install">Installer</string>
-    <string name="upd_hidden_snack">La mise à jour est dans Paramètres, rubrique À propos</string>
     <string name="upd_keeps">Les bases, les paramètres et le moteur sont conservés.</string>
     <string name="upd_keeps_no_engine">Les bases et les paramètres sont conservés.</string>
     <string name="upd_closes">ChessPenguin se ferme pendant l’installation — rouvrez-le ensuite.</string>
@@ -382,13 +378,18 @@
     <string name="upd_copy">Copier</string>
     <string name="upd_group">Mises à jour</string>
     <string name="upd_auto">Rechercher les mises à jour au démarrage</string>
-    <string name="upd_auto_sub">Une fois par jour, ChessPenguin demande à son site quelle est la dernière version ; le site compte les installations actives. Seuls un numéro aléatoire de cette installation, la version et le système sont envoyés.</string>
+    <string name="upd_auto_sub">Une fois par jour, ChessPenguin demande à son site quelle est la dernière version ; le site compte les installations actives. Seuls un numéro aléatoire de cette installation, la version et le système sont envoyés. La vérification se fait même sans les propositions.</string>
+    <string name="upd_offer">Proposer les nouvelles versions</string>
+    <string name="upd_offer_sub">Une carte sur l’écran Bases quand une nouvelle version sort.</string>
+    <string name="upd_offer_needs_check">Fonctionne quand la vérification des mises à jour est activée.</string>
+    <string name="upd_offers_off_snack">Nous ne le proposerons plus. Réactivez-le dans Réglages, À propos</string>
+    <string name="upd_dismiss_cd">Ne pas proposer les mises à jour</string>
     <string name="upd_check_now">Vérifier maintenant</string>
     <string name="upd_checking">Vérification…</string>
     <string name="upd_latest">Vous avez la dernière version</string>
     <string name="upd_checked">Dernière vérification : %1$s</string>
     <string name="upd_check_offline">Pas d’Internet — impossible de vérifier les mises à jour</string>
-    <string name="upd_check_failed">Impossible de vérifier les mises à jour : GitHub n’a pas répondu. Réessayez plus tard.</string>
+    <string name="upd_check_failed">Impossible de vérifier les mises à jour : le site n’a pas répondu. Réessayez plus tard.</string>
     <string name="s_about_available">La version %1$s est sortie</string>
     <string name="s_about_downloading">Téléchargement de la version %1$s…</string>
     <string name="s_about_ready">La version %1$s est téléchargée</string>

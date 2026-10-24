@@ -342,12 +342,8 @@
     </plurals>
     <string name="upd_title">Вышла версия %1$s</string>
     <string name="upd_you_have">У вас %1$s</string>
-    <string name="upd_whats_new">Что нового</string>
-    <string name="upd_whats_new_cd">Что нового, откроется страница на GitHub</string>
-    <string name="upd_notes_english">Список изменений — на GitHub, по-английски.</string>
     <string name="upd_update">Обновить</string>
     <string name="upd_install">Установить</string>
-    <string name="upd_hidden_snack">Обновление — в Настройках, в разделе «О программе»</string>
     <string name="upd_keeps">Базы, настройки и движок останутся.</string>
     <string name="upd_keeps_no_engine">Базы и настройки останутся.</string>
     <string name="upd_closes">На время установки ChessPenguin закроется — потом откройте его снова.</string>
@@ -388,13 +384,18 @@
     <string name="upd_copy">Копировать</string>
     <string name="upd_group">Обновления</string>
     <string name="upd_auto">Проверять обновления при запуске</string>
-    <string name="upd_auto_sub">Раз в день ChessPenguin спрашивает у своего сайта, какая версия последняя; сайт считает работающие установки. Передаются только случайный номер этой установки, версия и система.</string>
+    <string name="upd_auto_sub">Раз в день ChessPenguin спрашивает у своего сайта, какая версия последняя; сайт считает работающие установки. Передаются только случайный номер этой установки, версия и система. Проверка идёт и при выключенных предложениях.</string>
+    <string name="upd_offer">Предлагать новые версии</string>
+    <string name="upd_offer_sub">Карточка на экране «Базы», когда выходит новая версия.</string>
+    <string name="upd_offer_needs_check">Работает, когда включена проверка обновлений.</string>
+    <string name="upd_offers_off_snack">Больше не предлагаем. Включить — в Настройках, «О программе»</string>
+    <string name="upd_dismiss_cd">Не предлагать обновления</string>
     <string name="upd_check_now">Проверить сейчас</string>
     <string name="upd_checking">Проверяю…</string>
     <string name="upd_latest">У вас последняя версия</string>
     <string name="upd_checked">Проверено %1$s</string>
     <string name="upd_check_offline">Нет интернета — проверить обновления нельзя</string>
-    <string name="upd_check_failed">Не удалось проверить обновления: GitHub не ответил. Попробуйте позже.</string>
+    <string name="upd_check_failed">Не удалось проверить обновления: сайт не ответил. Попробуйте позже.</string>
     <string name="s_about_available">Вышла версия %1$s</string>
     <string name="s_about_downloading">Скачивается версия %1$s…</string>
     <string name="s_about_ready">Версия %1$s скачана</string>

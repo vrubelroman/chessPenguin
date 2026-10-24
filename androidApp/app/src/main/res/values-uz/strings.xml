@@ -329,11 +329,8 @@
     </plurals>
     <string name="upd_title">%1$s versiyasi chiqdi</string>
     <string name="upd_you_have">Sizda %1$s</string>
-    <string name="upd_whats_new">Nima yangi</string>
-    <string name="upd_whats_new_cd">Nima yangi, GitHub sahifasini ochadi</string>
     <string name="upd_update">Yangilash</string>
     <string name="upd_install">Oʻrnatish</string>
-    <string name="upd_hidden_snack">Yangilanish Sozlamalarda, Dastur haqida boʻlimida</string>
     <string name="upd_keeps">Bazalar, sozlamalar va dvigatel saqlanadi.</string>
     <string name="upd_keeps_no_engine">Bazalar va sozlamalar saqlanadi.</string>
     <string name="upd_closes">Oʻrnatish vaqtida ChessPenguin yopiladi — soʻng uni qayta oching.</string>
@@ -374,17 +371,21 @@
     <string name="upd_copy">Nusxalash</string>
     <string name="upd_group">Yangilanishlar</string>
     <string name="upd_auto">Ishga tushganda yangilanishlarni tekshirish</string>
-    <string name="upd_auto_sub">ChessPenguin kuniga bir marta oʻz saytidan eng soʻnggi versiyani soʻraydi; sayt ishlayotgan oʻrnatmalarni sanaydi. Faqat shu oʻrnatmaning tasodifiy raqami, versiya va tizim yuboriladi.</string>
+    <string name="upd_auto_sub">ChessPenguin kuniga bir marta oʻz saytidan eng soʻnggi versiyani soʻraydi; sayt ishlayotgan oʻrnatmalarni sanaydi. Faqat shu oʻrnatmaning tasodifiy raqami, versiya va tizim yuboriladi. Takliflar oʻchiq boʻlsa ham tekshiruv davom etadi.</string>
+    <string name="upd_offer">Yangi versiyalarni taklif qilish</string>
+    <string name="upd_offer_sub">Yangi versiya chiqqanda «Bazalar» ekranida karta.</string>
+    <string name="upd_offer_needs_check">Yangilanishlarni tekshirish yoqilganda ishlaydi.</string>
+    <string name="upd_offers_off_snack">Endi taklif qilmaymiz. Yoqish — Sozlamalar, «Dastur haqida»</string>
+    <string name="upd_dismiss_cd">Yangilanishlarni taklif qilmaslik</string>
     <string name="upd_check_now">Hozir tekshirish</string>
     <string name="upd_checking">Tekshirilmoqda…</string>
     <string name="upd_latest">Sizda eng soʻnggi versiya</string>
     <string name="upd_checked">Tekshirildi: %1$s</string>
     <string name="upd_check_offline">Internet yoʻq — yangilanishlarni tekshirib boʻlmaydi</string>
-    <string name="upd_check_failed">Yangilanishlarni tekshirib boʻlmadi: GitHub javob bermadi. Keyinroq urinib koʻring.</string>
+    <string name="upd_check_failed">Yangilanishlarni tekshirib boʻlmadi: sayt javob bermadi. Keyinroq urinib koʻring.</string>
     <string name="s_about_available">%1$s versiyasi chiqdi</string>
     <string name="s_about_downloading">%1$s versiyasi yuklab olinmoqda…</string>
     <string name="s_about_ready">%1$s versiyasi yuklab olindi</string>
     <string name="upd_card_downloading">%1$sga yangilash, %3$d megabaytdan %2$d tasi yuklab olindi</string>
-    <string name="upd_notes_english">Oʻzgarishlar roʻyxati GitHubda, ingliz tilida.</string>
     <string name="upd_short_release">Faylni tekshirib boʻlmaydi</string>
 </resources>

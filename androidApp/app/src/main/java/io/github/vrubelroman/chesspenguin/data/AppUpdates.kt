@@ -83,7 +83,7 @@ sealed interface UpdateMessage {
     data object Ready : UpdateMessage
     data object Cancelled : UpdateMessage
     data object Latest : UpdateMessage
-    data class Updated(val from: String, val to: String, val page: String) : UpdateMessage
+    data class Updated(val from: String, val to: String) : UpdateMessage
 }
 
 /// The app updating itself (android-ui.md §25): asks GitHub for a newer release (the
@@ -115,9 +115,10 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
     /// «Check for updates at start».
     val auto: StateFlow<Boolean> = _auto.asStateFlow()
 
-    private val _hidden = MutableStateFlow(prefs.getString(HIDDEN, null))
-    /// The version hidden with «Not now» on the card.
-    val hidden: StateFlow<String?> = _hidden.asStateFlow()
+    private val _offer = MutableStateFlow(prefs.getBoolean(OFFER, true))
+    /// «Offer new versions»: the card on «Databases» (its × turns this off). The check
+    /// goes on without it.
+    val offer: StateFlow<Boolean> = _offer.asStateFlow()
 
     /// The release was found by «Check now»: its card shows even with the check off.
     private val _asked = MutableStateFlow(false)
@@ -133,7 +134,7 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
 
     fun shown(m: UpdateMessage) {
         _message.compareAndSet(m, null)
-        if (m is UpdateMessage.Updated) prefs.edit().remove(UPDATED_FROM).remove(UPDATED_PAGE).apply()
+        if (m is UpdateMessage.Updated) prefs.edit().remove(UPDATED_FROM).apply()
     }
 
     private val _confirm = MutableStateFlow<Intent?>(null)
@@ -167,11 +168,12 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         // The first start of a new version: say so, and forget the update.
         // Kept until a screen shows it: Android may start the new version in the background
         // first, only to hand it the installer's answer.
+        // Keys of 1.0.0 and earlier: a version hidden with «Not now», a page of what's new.
+        prefs.edit().remove(HIDDEN).remove(UPDATED_PAGE).apply()
         prefs.getString(INSTALLING_FROM, null)?.let { from ->
             if (from != BuildConfig.VERSION_NAME) {
                 prefs.edit()
                     .putString(UPDATED_FROM, from)
-                    .putString(UPDATED_PAGE, known()?.page ?: "")
                     .remove(LATEST)
                     .remove(READY)
                     .apply()
@@ -180,7 +182,7 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
             prefs.edit().remove(INSTALLING_FROM).apply()
         }
         prefs.getString(UPDATED_FROM, null)?.let { from ->
-            _message.value = UpdateMessage.Updated(from, BuildConfig.VERSION_NAME, prefs.getString(UPDATED_PAGE, "") ?: "")
+            _message.value = UpdateMessage.Updated(from, BuildConfig.VERSION_NAME)
         }
         val update = known()
         when {
@@ -231,10 +233,7 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
                 val update = Update(result.release.version, result.release.page, light.name, light.url, light.size.toLong(), light.sha256)
                 checked()
                 _check.value = CheckState.Idle
-                if (manual) {
-                    _asked.value = true
-                    setHidden(null)
-                }
+                if (manual) _asked.value = true
                 found(update)
             }
             is ReleaseCheck.Unverifiable -> {
@@ -242,10 +241,7 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
                 _check.value = CheckState.Idle
                 val light = result.release.light ?: return
                 val update = Update(result.release.version, result.release.page, light.name, light.url, light.size.toLong(), "")
-                if (manual) {
-                    _asked.value = true
-                    setHidden(null)
-                }
+                if (manual) _asked.value = true
                 found(update)
                 if (!busy()) _state.value = UpdateState.Failed(update, UpdateProblem.BadRelease, null)
             }
@@ -272,7 +268,6 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         if (busy()) return
         forgetFile()
         prefs.edit().putString(LATEST, json.encodeToString(update)).remove(READY).apply()
-        if (_hidden.value != null && _hidden.value != update.version) setHidden(null)
         _state.value = UpdateState.Available(update)
     }
 
@@ -283,14 +278,10 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         if (on) checkIfDue()
     }
 
-    /// «Not now» on the card: hidden until a newer version.
-    fun hide() {
-        _state.value?.let { setHidden(it.update.version) }
-    }
-
-    private fun setHidden(version: String?) {
-        _hidden.value = version
-        prefs.edit().apply { if (version == null) remove(HIDDEN) else putString(HIDDEN, version) }.apply()
+    fun setOffer(on: Boolean) {
+        _offer.value = on
+        prefs.edit().putBoolean(OFFER, on).apply()
+        if (on) checkIfDue()
     }
 
     /// «Update» / «Try again» / «Download again»: from the permission on to the install.
@@ -611,6 +602,8 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         const val LAST_ATTEMPT = "lastAttempt"
         const val INSTALL_ID = "installId"
         const val LATEST = "latest"
+        const val OFFER = "offerUpdates"
+        /// No longer used: «Not now» hid one version (until 1.0.1).
         const val HIDDEN = "hiddenVersion"
         const val DOWNLOAD = "downloadId"
         const val DOWNLOAD_VERSION = "downloadVersion"
@@ -618,6 +611,7 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         const val AWAITING_PERMISSION = "awaitingPermission"
         const val INSTALLING_FROM = "installingFrom"
         const val UPDATED_FROM = "updatedFrom"
+        /// No longer used (until 1.0.1).
         const val UPDATED_PAGE = "updatedPage"
         const val DAY = 24 * 60 * 60 * 1000L
         const val HOUR = 60 * 60 * 1000L

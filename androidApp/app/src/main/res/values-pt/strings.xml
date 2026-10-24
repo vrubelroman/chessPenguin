@@ -336,11 +336,8 @@
     </plurals>
     <string name="upd_title">Saiu a versão %1$s</string>
     <string name="upd_you_have">Você tem a %1$s</string>
-    <string name="upd_whats_new">Novidades</string>
-    <string name="upd_whats_new_cd">Novidades, abre a página no GitHub</string>
     <string name="upd_update">Atualizar</string>
     <string name="upd_install">Instalar</string>
-    <string name="upd_hidden_snack">A atualização está em Configurações, em Sobre</string>
     <string name="upd_keeps">Bases, configurações e o motor ficam.</string>
     <string name="upd_keeps_no_engine">Bases e configurações ficam.</string>
     <string name="upd_closes">O ChessPenguin fecha durante a instalação — depois abra-o de novo.</string>
@@ -381,18 +378,22 @@
     <string name="upd_copy">Copiar</string>
     <string name="upd_group">Atualizações</string>
     <string name="upd_auto">Verificar atualizações ao iniciar</string>
-    <string name="upd_auto_sub">Uma vez por dia o ChessPenguin pergunta ao seu site qual é a versão mais recente; o site conta as instalações em uso. São enviados apenas um número aleatório desta instalação, a versão e o sistema.</string>
+    <string name="upd_auto_sub">Uma vez por dia o ChessPenguin pergunta ao seu site qual é a versão mais recente; o site conta as instalações em uso. São enviados apenas um número aleatório desta instalação, a versão e o sistema. A verificação continua mesmo sem as ofertas.</string>
+    <string name="upd_offer">Oferecer novas versões</string>
+    <string name="upd_offer_sub">Um cartão na tela Bases quando sai uma nova versão.</string>
+    <string name="upd_offer_needs_check">Funciona com a verificação de atualizações ligada.</string>
+    <string name="upd_offers_off_snack">Não vamos mais oferecer. Ative em Configurações, Sobre</string>
+    <string name="upd_dismiss_cd">Não oferecer atualizações</string>
     <string name="upd_check_now">Verificar agora</string>
     <string name="upd_checking">Verificando…</string>
     <string name="upd_latest">Você tem a versão mais recente</string>
     <string name="upd_checked">Verificado %1$s</string>
     <string name="upd_check_offline">Sem internet — não é possível verificar atualizações</string>
-    <string name="upd_check_failed">Não foi possível verificar atualizações: o GitHub não respondeu. Tente mais tarde.</string>
+    <string name="upd_check_failed">Não foi possível verificar atualizações: o site não respondeu. Tente mais tarde.</string>
     <string name="s_about_available">Saiu a versão %1$s</string>
     <string name="s_about_downloading">Baixando a versão %1$s…</string>
     <string name="s_about_ready">A versão %1$s foi baixada</string>
     <string name="upd_card_downloading">Atualização para %1$s, %2$d de %3$d megabytes baixados</string>
     <!-- Shown only when the interface is not in English. -->
-    <string name="upd_notes_english">A lista de mudanças está no GitHub, em inglês.</string>
     <string name="upd_short_release">O arquivo não pode ser verificado</string>
 </resources>

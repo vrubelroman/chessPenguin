@@ -20,7 +20,10 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -79,26 +82,26 @@ private const val SITE_URL = "https://chess.vrubel.xyz"
 
 private fun mb(bytes: Long) = ((bytes + 999_999) / 1_000_000).toInt()
 
-/// The update the card on «Databases» shows, or null: none known, hidden with «Not now»,
-/// or the check turned off (unless the user asked for it).
+/// The update the card on «Databases» shows, or null: none known, offers turned off (its
+/// ×, or Settings), or the check turned off (unless the user asked for it).
 @Composable
 fun shownUpdate(): UpdateState? {
     val updates = app().updates
     val state by updates.state.collectAsState()
     val auto by updates.auto.collectAsState()
-    val hidden by updates.hidden.collectAsState()
+    val offer by updates.offer.collectAsState()
     val asked by updates.asked.collectAsState()
     val s = state ?: return null
-    if (hidden == s.update.version) return null
+    if (!offer) return null
     if (!auto && !asked && s is UpdateState.Available) return null
     return s
 }
 
-/// The card over the list of databases (android-ui.md §25.2).
+/// The card over the list of databases (android-ui.md §25.2): the new version, one
+/// button, and × that stops the offers (they come back in Settings → About).
 @Composable
-fun UpdateCard(state: UpdateState, onHidden: () -> Unit, modifier: Modifier = Modifier) {
+fun UpdateCard(state: UpdateState, onDismissed: () -> Unit, modifier: Modifier = Modifier) {
     val updates = app().updates
-    val uri = LocalUriHandler.current
     val update = state.update
     val title = stringResource(R.string.upd_title, update.version)
     val progressOnly = state is UpdateState.Downloading || state is UpdateState.Busy
@@ -144,8 +147,11 @@ fun UpdateCard(state: UpdateState, onHidden: () -> Unit, modifier: Modifier = Mo
                     )
                     Spacer(Modifier.height(2.dp))
                     when (state) {
-                        is UpdateState.Available, is UpdateState.NeedsPermission ->
-                            YouHave(update.page) { uri.openUri(update.page) }
+                        is UpdateState.Available, is UpdateState.NeedsPermission -> Text(
+                            stringResource(R.string.upd_you_have, BuildConfig.VERSION_NAME),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         is UpdateState.Downloading -> {
                             Spacer(Modifier.height(6.dp))
                             LinearProgressIndicator(
@@ -177,13 +183,23 @@ fun UpdateCard(state: UpdateState, onHidden: () -> Unit, modifier: Modifier = Mo
                         )
                     }
                 }
+                if (progressOnly) {
+                    // The whole card opens the sheet.
+                    Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
+                } else {
+                    IconButton(
+                        onClick = {
+                            updates.setOffer(false)
+                            onDismissed()
+                        },
+                        modifier = Modifier.offset(x = 12.dp, y = (-12).dp),
+                    ) {
+                        Icon(Icons.Rounded.Close, stringResource(R.string.upd_dismiss_cd), tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                    }
+                }
             }
             if (!progressOnly) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                    TextButton(onClick = {
-                        updates.hide()
-                        onHidden()
-                    }) { Text(stringResource(R.string.not_now)) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     when (state) {
                         is UpdateState.Ready -> FilledTonalButton(onClick = {
                             updates.openSheet()
@@ -198,35 +214,6 @@ fun UpdateCard(state: UpdateState, onHidden: () -> Unit, modifier: Modifier = Mo
                 }
             }
         }
-    }
-}
-
-/// «You have 0.14.0 · What's new ↗».
-@Composable
-private fun YouHave(page: String, onWhatsNew: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            stringResource(R.string.upd_you_have, BuildConfig.VERSION_NAME) + " · ",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (page.isNotEmpty()) WhatsNew(Modifier.minimumInteractiveComponentSize(), onWhatsNew)
-    }
-}
-
-/// «What's new ↗»: the release's page on GitHub.
-@Composable
-private fun WhatsNew(modifier: Modifier, onClick: () -> Unit) {
-    val description = stringResource(R.string.upd_whats_new_cd)
-    Row(
-        modifier
-            .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = description },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(stringResource(R.string.upd_whats_new), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.width(2.dp))
-        Icon(Icons.AutoMirrored.Rounded.OpenInNew, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -293,10 +280,11 @@ fun UpdateSheet() {
         ) {
             Text(stringResource(R.string.upd_title, update.version), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
             Spacer(Modifier.height(4.dp))
-            YouHave(update.page) { uri.openUri(update.page) }
-            if (uiLanguage() != "en") {
-                Text(stringResource(R.string.upd_notes_english), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(
+                stringResource(R.string.upd_you_have, BuildConfig.VERSION_NAME),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(16.dp))
             // The engine stays when there is one to keep: in the app's storage, or in a full
             // build that keeps it before the install.
@@ -443,8 +431,8 @@ fun AboutUpdates() {
     val state by updates.state.collectAsState()
     val check by updates.check.collectAsState()
     val auto by updates.auto.collectAsState()
+    val offer by updates.offer.collectAsState()
     val last by updates.lastCheck.collectAsState()
-    val uri = LocalUriHandler.current
     val context = LocalContext.current
     Column(Modifier.fillMaxWidth()) {
         Text(
@@ -460,7 +448,11 @@ fun AboutUpdates() {
             if (last > 0 || check == CheckState.Latest) Text(stringResource(R.string.upd_latest), style = MaterialTheme.typography.bodyLarge)
         } else {
             Text(stringResource(R.string.upd_title, s.update.version), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            if (s.update.page.isNotEmpty()) WhatsNew(Modifier.heightIn(min = 48.dp)) { uri.openUri(s.update.page) }
+            Text(
+                stringResource(R.string.upd_you_have, BuildConfig.VERSION_NAME),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             when (s) {
                 is UpdateState.Downloading -> {
                     LinearProgressIndicator(progress = { s.done.toFloat() / s.update.apkSize.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth())
@@ -491,6 +483,22 @@ fun AboutUpdates() {
                 }
             }
         }
+        // The card on «Databases» (its × turns this off); the check below goes on either way.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 72.dp)
+                .toggleable(value = offer, enabled = auto, role = Role.Switch, onValueChange = { updates.setOffer(it) }),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.upd_offer), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Switch(checked = offer, enabled = auto, onCheckedChange = null)
+        }
+        Text(
+            stringResource(if (auto) R.string.upd_offer_sub else R.string.upd_offer_needs_check),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Row(
             Modifier
                 .fillMaxWidth()
@@ -550,12 +558,10 @@ fun aboutUpdateLine(): String? {
 fun UpdateMessages(snackbar: SnackbarHostState) {
     val updates = app().updates
     val message by updates.message.collectAsState()
-    val uri = LocalUriHandler.current
     val ready = stringResource(R.string.upd_ready_snack)
     val install = stringResource(R.string.upd_install)
     val cancelled = stringResource(R.string.download_cancelled)
     val latest = stringResource(R.string.upd_latest)
-    val whatsNew = stringResource(R.string.upd_whats_new)
     val doneText = (message as? UpdateMessage.Updated)?.let { stringResource(R.string.upd_done_snack, it.from, it.to) }
     // Marked shown when its snackbar is gone: a screen left meanwhile hands it to the next.
     LaunchedEffect(message) {
@@ -570,10 +576,7 @@ fun UpdateMessages(snackbar: SnackbarHostState) {
             }
             UpdateMessage.Cancelled -> snackbar.showSnackbar(cancelled)
             UpdateMessage.Latest -> snackbar.showSnackbar(latest)
-            is UpdateMessage.Updated -> {
-                val action = if (m.page.isNotEmpty()) whatsNew else null
-                if (snackbar.showSnackbar(doneText ?: "", action, duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) uri.openUri(m.page)
-            }
+            is UpdateMessage.Updated -> snackbar.showSnackbar(doneText ?: "", duration = SnackbarDuration.Long)
         }
         updates.shown(m)
     }

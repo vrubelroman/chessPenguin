@@ -92,11 +92,16 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     val removedText = stringResource(R.string.removed)
     val removedCopyText = stringResource(R.string.removed_copy)
     val update = shownUpdate()
-    val hiddenText = stringResource(R.string.upd_hidden_snack)
-    val onUpdateHidden: () -> Unit = {
+    val offersOffText = stringResource(R.string.upd_offers_off_snack)
+    val offersUndoText = stringResource(R.string.undo)
+    val updatesForUndo = app().updates
+    // The card's ×: offers are off; «Undo» for a slip of the finger (android-ui.md §25.2).
+    val onUpdateDismissed: () -> Unit = {
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
-            snackbar.showSnackbar(hiddenText)
+            if (snackbar.showSnackbar(offersOffText, offersUndoText, duration = androidx.compose.material3.SnackbarDuration.Long) == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                updatesForUndo.setOffer(true)
+            }
         }
     }
     UpdateMessages(snackbar)
@@ -179,7 +184,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     ) { padding ->
         if (entries.isEmpty()) {
             Column(Modifier.padding(padding)) {
-                update?.let { UpdateCard(it, onHidden = onUpdateHidden) }
+                update?.let { UpdateCard(it, onDismissed = onUpdateDismissed) }
                 Empty(Modifier.weight(1f), onAdd = add, onSamples = {
                     library.addSamples()
                     library.entries.value.firstOrNull()?.let { onOpen(it.id) }
@@ -192,7 +197,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                 contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 88.dp),
             ) {
                 // A newer version of the app (android-ui.md §25.2): the first item of the list.
-                update?.let { u -> item(key = "update") { UpdateCard(u, onHidden = onUpdateHidden, modifier = Modifier.animateItem()) } }
+                update?.let { u -> item(key = "update") { UpdateCard(u, onDismissed = onUpdateDismissed, modifier = Modifier.animateItem()) } }
                 items(entries, key = { it.id }) { e ->
                     DatabaseRow(
                         e,
