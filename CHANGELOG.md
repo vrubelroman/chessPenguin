@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.16.2] — 2026-10-24
 
 - Desktop: narrow windows (half a screen, a tiling window manager) no longer overlap:
   - the reference tab, the engine settings and the game's title fit their place (the

@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="0.16.2" date="2026-10-24">
+      <description>
+        <p>Narrow windows no longer overlap: the reference tab and the engine settings fit their panel, the filters open over the list and the search board takes its place in a narrow window, and a narrow tall window shows the notation under the board. The window can be made as small as 640×480.</p>
+      </description>
+    </release>
     <release version="0.16.1" date="2026-10-24">
       <description>
         <p>The filter panel keeps its width while a name is typed and its rows are aligned. Escape in a game with unsaved edits asks about saving again.</p>
