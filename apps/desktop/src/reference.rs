@@ -925,21 +925,27 @@ impl Reference {
         // come a moment later; on this line they take no room of their own).
         ui.horizontal_wrapped(|ui| {
             ui.label(tr("Database"));
-            egui::ComboBox::from_id_salt("reference_db")
-                .selected_text(current_label)
-                .width(ui.available_width().min(340.0))
-                .truncate()
-                .show_ui(ui, |ui| {
-                    for d in &self.dbs {
-                        if ui.selectable_label(d.path == path, db_label(d)).clicked()
-                            && d.path != path
-                        {
-                            action = Some(RefAction::Choose(d.path.clone()));
+            // What is left of the row after the label, and the box shortens its text to
+            // that: in a wrapping row `available_width` is the whole row (with it a long
+            // name pushed the side panel out under the board).
+            let width = ui.available_size_before_wrap().x.min(340.0);
+            ui.allocate_ui(vec2(width, ui.spacing().interact_size.y), |ui| {
+                egui::ComboBox::from_id_salt("reference_db")
+                    .selected_text(current_label)
+                    .width(width)
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        for d in &self.dbs {
+                            if ui.selectable_label(d.path == path, db_label(d)).clicked()
+                                && d.path != path
+                            {
+                                action = Some(RefAction::Choose(d.path.clone()));
+                            }
                         }
-                    }
-                });
+                    });
+            });
             if let Some(node) = novelty {
-                ui.add_space(8.0);
+                row_gap(ui, 8.0);
                 ui.label(RichText::new(tr("Novelty:")).weak());
                 if ui
                     .link(node_label(game, node).unwrap_or_default())
@@ -952,7 +958,7 @@ impl Reference {
                 }
             }
             if let (Some(c), Some(q)) = (copy, &query) {
-                ui.add_space(8.0);
+                row_gap(ui, 8.0);
                 ui.label(RichText::new(tr("This game is in the database")).weak());
                 if ui
                     .link(tr("open it"))
@@ -1125,15 +1131,12 @@ impl Reference {
         // As tall as its rows, but at most 40 % of the panel (at least 120 px of it).
         let natural = 26.0 * (rows as f32 + 1.0) + 8.0;
         let height = natural.min((ui.available_height() * 0.4).max(120.0));
-        // Columns that give way in a narrow panel: players, year, White's score, rating.
-        // Each is shown only while the table still fits the panel (in this order).
+        // Columns that give way in a narrow panel: players, year, White's score, rating,
+        // the result bar. Each is shown only while the table still fits the panel (in
+        // this order): a wider table would push the whole side panel under the board.
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
-        let show_bar = !books;
-        let mut used = 96.0 + 64.0 + 44.0 + 3.0 * gap;
-        if show_bar {
-            used += 86.0 + gap;
-        }
+        let mut used = 96.0 + 64.0 + 44.0 + 2.0 * gap;
         let mut fits = |w: f32, wanted: bool| {
             let ok = wanted && used + w + gap <= width;
             if ok {
@@ -1141,6 +1144,7 @@ impl Reference {
             }
             ok
         };
+        let show_bar = fits(86.0, !books);
         let show_elo = fits(56.0, !books);
         let show_score = fits(48.0, !books);
         let show_year = fits(44.0, true);
@@ -1593,6 +1597,14 @@ impl Reference {
             action = Some(RefAction::OpenGame(path.to_owned(), i, pos.clone()));
         }
         action
+    }
+}
+
+/// A gap between items of a wrapping row, only where the row goes on: at the end of a
+/// full row a plain `add_space` does not wrap but sticks out of the panel.
+fn row_gap(ui: &mut Ui, gap: f32) {
+    if ui.available_size_before_wrap().x > gap + ui.spacing().item_spacing.x {
+        ui.add_space(gap);
     }
 }
 

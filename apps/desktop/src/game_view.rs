@@ -301,13 +301,14 @@ impl GameView {
             ("game_side", (width * 0.4).clamp(260.0, 460.0).min(room))
         };
         let max = room.max(side_width).min((width * 0.7).max(240.0));
-        egui::Panel::right(side_id)
+        let side = egui::Panel::right(side_id)
             .resizable(true)
             .default_size(side_width)
             .size_range(least.min(width * 0.5).min(max)..=max)
             .show(ui, |ui| {
                 self.side_panel(ui, settings, analysis, reference, hub, &mut actions)
             });
+        crate::widgets::check_panel(side_id, &side.response);
         self.sync_analysis(analysis);
         let hover = (self.side_tab == SideTab::Reference)
             .then(|| reference.hover())
@@ -445,9 +446,71 @@ impl GameView {
         actions: &mut Vec<GameAction>,
     ) {
         ui.add_space(4.0);
+        let warnings = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity >= Severity::Warning)
+            .count();
+        let notes = (!self.diagnostics.is_empty()).then(|| {
+            if warnings > 0 {
+                RichText::new(format!("⚠ {warnings}")).color(ui.visuals().warn_fg_color)
+            } else {
+                RichText::new(format!("ℹ {}", self.diagnostics.len())).weak()
+            }
+        });
+        let back_to = self
+            .previous
+            .as_ref()
+            .map(|t| trf("⬅ Back to {game}", &[("game", t)]));
+        // The buttons are measured first: the title gets what they leave (shortened with
+        // "…"; the result always shows). When it would get under 160 pt, the buttons
+        // around it give up their words for their icons (the words go to the tooltips).
+        let gap = ui.spacing().item_spacing.x;
+        let button = |ui: &Ui, text: &str| {
+            text_width(ui, text, egui::TextStyle::Button)
+                + 2.0 * ui.spacing().button_padding.x
+                + gap
+        };
+        let left = |compact: bool| {
+            button(ui, tr("⬅ Library"))
+                + back_to
+                    .as_deref()
+                    .map_or(0.0, |b| button(ui, if compact { "⬅" } else { b }))
+                + gap
+                + 2.0 * gap
+        };
+        let right = |compact: bool| {
+            button(ui, if compact { "⚙" } else { tr("⚙ Settings") })
+                + self.update.as_deref().map_or(0.0, |v| button(ui, v))
+                + button(ui, "⏷")
+                + button(
+                    ui,
+                    if compact {
+                        "🔍"
+                    } else {
+                        tr("🔍 Find in database")
+                    },
+                )
+                + notes.as_ref().map_or(0.0, |n| button(ui, n.text()))
+        };
+        let result = result_label(self.game.result());
+        let result_w = result.map_or(0.0, |r| {
+            ui.painter()
+                .layout_no_wrap(
+                    format!(" {r} "),
+                    egui::FontId::proportional(15.0),
+                    Color32::WHITE,
+                )
+                .size()
+                .x
+                + gap
+        });
+        let row = ui.available_width();
+        let compact = row - left(false) - right(false) - result_w < 160.0;
+        let title_room = (row - left(compact) - right(compact)).max(0.0);
         ui.horizontal(|ui| {
             if ui
-                .button(tr("⬅ Library"))
+                .button(if compact { "⬅" } else { tr("⬅ Library") })
                 .on_hover_text(if self.previous.is_some() {
                     tr("Back to the game list (Ctrl+W)")
                 } else {
@@ -457,42 +520,58 @@ impl GameView {
             {
                 actions.push(GameAction::Back);
             }
-            if let Some(t) = &self.previous
+            if let Some(b) = &back_to
                 && ui
-                    .button(trf("⬅ Back to {game}", &[("game", t)]))
-                    .on_hover_text(tr("The game this one was opened from, as you left it (Esc)"))
+                    .button(if compact { "⬅" } else { b.as_str() })
+                    .on_hover_text(if compact {
+                        format!(
+                            "{b}\n{}",
+                            tr("The game this one was opened from, as you left it (Esc)")
+                        )
+                    } else {
+                        tr("The game this one was opened from, as you left it (Esc)").to_owned()
+                    })
                     .clicked()
             {
                 actions.push(GameAction::ReturnToPrevious);
             }
             ui.separator();
-            ui.vertical(|ui| {
-                let modified = if self.game.is_modified() { " •" } else { "" };
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("{}{modified}", self.title()))
-                            .strong()
-                            .size(16.0),
-                    );
-                    if let Some(result) = result_label(self.game.result()) {
-                        ui.label(
-                            RichText::new(format!(" {result} "))
-                                .strong()
-                                .size(15.0)
-                                .background_color(ui.visuals().widgets.inactive.weak_bg_fill),
-                        )
-                        .on_hover_text(result_hint(self.game.result()));
+            let height = ui.available_height();
+            ui.allocate_ui_with_layout(
+                vec2(title_room, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_width(title_room);
+                    let modified = if self.game.is_modified() { " •" } else { "" };
+                    ui.horizontal(|ui| {
+                        ui.set_max_width(title_room);
+                        let title = format!("{}{modified}", self.title());
+                        ui.allocate_ui(vec2((title_room - result_w).max(0.0), height), |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(&title).strong().size(16.0))
+                                    .truncate(),
+                            );
+                        });
+                        if let Some(result) = result {
+                            ui.label(
+                                RichText::new(format!(" {result} "))
+                                    .strong()
+                                    .size(15.0)
+                                    .background_color(ui.visuals().widgets.inactive.weak_bg_fill),
+                            )
+                            .on_hover_text(result_hint(self.game.result()));
+                        }
+                    });
+                    let sub = self.subtitle();
+                    if !sub.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(sub).weak()).truncate());
                     }
-                });
-                let sub = self.subtitle();
-                if !sub.is_empty() {
-                    ui.label(RichText::new(sub).weak());
-                }
-            });
+                },
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button(tr("⚙ Settings"))
-                    .on_hover_text("Ctrl+,")
+                    .button(if compact { "⚙" } else { tr("⚙ Settings") })
+                    .on_hover_text(if compact { format!("{} (Ctrl+,)", tr("Settings")) } else { "Ctrl+,".to_owned() })
                     .clicked()
                 {
                     actions.push(GameAction::OpenSettings);
@@ -521,7 +600,7 @@ impl GameView {
                     .response
                     .on_hover_text(tr("Find in another database"));
                     if ui
-                        .button(tr("🔍 Find in database"))
+                        .button(if compact { "🔍" } else { tr("🔍 Find in database") })
                         .on_hover_text(tr("Find this position in a database (Ctrl+Shift+F)"))
                         .on_disabled_hover_text(if searchable { tr("Add a database first") } else { why })
                         .clicked()
@@ -529,24 +608,13 @@ impl GameView {
                         actions.push(GameAction::FindPosition(None));
                     }
                 });
-                let warnings = self
-                    .diagnostics
-                    .iter()
-                    .filter(|d| d.severity >= Severity::Warning)
-                    .count();
-                if !self.diagnostics.is_empty() {
-                    let text = if warnings > 0 {
-                        RichText::new(format!("⚠ {warnings}")).color(ui.visuals().warn_fg_color)
-                    } else {
-                        RichText::new(format!("ℹ {}", self.diagnostics.len())).weak()
-                    };
-                    if ui
+                if let Some(text) = notes
+                    && ui
                         .button(text)
                         .on_hover_text(tr("PGN compatibility notes"))
                         .clicked()
-                    {
-                        self.show_diagnostics = true;
-                    }
+                {
+                    self.show_diagnostics = true;
                 }
             });
         });
@@ -1569,53 +1637,91 @@ fn engine_settings(ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<GameA
                 .unwrap_or(1);
             let hash_steps = hash_steps();
             let mut settled = false;
-            ui.spacing_mut().slider_width = (ui.available_width() - 230.0).max(80.0);
-            egui::Grid::new("engine_settings_grid")
-                .num_columns(3)
-                .spacing(vec2(12.0, 8.0))
-                .show(ui, |ui| {
-                    // Search time
-                    let mut t = SEARCH_TIMES
-                        .iter()
-                        .position(|s| *s == e.search_secs)
-                        .unwrap_or(SEARCH_TIMES.len() - 1);
-                    ui.label(tr("Search time"));
-                    settled |= index_slider(ui, &mut t, SEARCH_TIMES.len());
-                    e.search_secs = SEARCH_TIMES[t];
-                    ui.label(
-                        e.search_secs
-                            .map(|s| trf("{n} s", &[("n", &s)]))
-                            .unwrap_or_else(|| "∞".into()),
-                    );
-                    ui.end_row();
-
-                    // Lines
-                    let mut k = e.multipv.clamp(1, 5) as usize - 1;
-                    ui.label(tr("Lines"));
-                    settled |= index_slider(ui, &mut k, 5);
-                    e.multipv = k as u32 + 1;
-                    ui.label(format!("{} / 5", e.multipv));
-                    ui.end_row();
-
-                    // Threads
-                    let mut th = e.threads.clamp(1, cores) as usize - 1;
-                    ui.label(tr("Threads"));
-                    settled |= index_slider(ui, &mut th, cores as usize);
-                    e.threads = th as u32 + 1;
-                    ui.label(format!("{} / {cores}", e.threads));
-                    ui.end_row();
-
-                    // Memory
-                    let mut h = hash_steps
-                        .iter()
-                        .position(|m| *m >= e.hash_mb)
-                        .unwrap_or(hash_steps.len() - 1);
-                    ui.label(tr("Memory"));
-                    settled |= index_slider(ui, &mut h, hash_steps.len());
-                    e.hash_mb = hash_steps[h];
-                    ui.label(format_mb(e.hash_mb));
-                    ui.end_row();
-                });
+            // Each setting: its name, the slider, the value. The slider gets what the
+            // measured names and values leave; in a narrow panel (under 100 pt for it)
+            // the name and the value share a line above a slider across the panel.
+            let mut t = SEARCH_TIMES
+                .iter()
+                .position(|s| *s == e.search_secs)
+                .unwrap_or(SEARCH_TIMES.len() - 1);
+            let mut k = e.multipv.clamp(1, 5) as usize - 1;
+            let mut th = e.threads.clamp(1, cores) as usize - 1;
+            let mut h = hash_steps
+                .iter()
+                .position(|m| *m >= e.hash_mb)
+                .unwrap_or(hash_steps.len() - 1);
+            let search_value = |t: usize| {
+                SEARCH_TIMES[t]
+                    .map(|s| trf("{n} s", &[("n", &s)]))
+                    .unwrap_or_else(|| "∞".into())
+            };
+            let names = [tr("Search time"), tr("Lines"), tr("Threads"), tr("Memory")];
+            // The widest value each setting can show, so the slider does not jump.
+            let widest = [
+                (0..SEARCH_TIMES.len())
+                    .map(search_value)
+                    .collect::<Vec<_>>(),
+                vec!["5 / 5".to_owned()],
+                vec![format!("{cores} / {cores}")],
+                hash_steps.iter().map(|m| format_mb(*m)).collect(),
+            ];
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let text_w = |t: &str| {
+                ui.painter()
+                    .layout_no_wrap(t.to_owned(), font.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            };
+            let name_w = names.iter().map(|n| text_w(n)).fold(0.0, f32::max);
+            let value_w = widest
+                .iter()
+                .flatten()
+                .map(|v| text_w(v))
+                .fold(0.0, f32::max);
+            let gap = 12.0;
+            let slider = (ui.available_width() - name_w - value_w - 2.0 * gap).floor();
+            let mut rows: [(&str, &mut usize, usize); 4] = [
+                (names[0], &mut t, SEARCH_TIMES.len()),
+                (names[1], &mut k, 5),
+                (names[2], &mut th, cores as usize),
+                (names[3], &mut h, hash_steps.len()),
+            ];
+            let value = |i: usize, idx: usize| match i {
+                0 => search_value(idx),
+                1 => format!("{} / 5", idx + 1),
+                2 => format!("{} / {cores}", idx + 1),
+                _ => format_mb(hash_steps[idx]),
+            };
+            if slider >= 100.0 {
+                ui.spacing_mut().slider_width = slider;
+                egui::Grid::new("engine_settings_grid")
+                    .num_columns(3)
+                    .spacing(vec2(gap, 8.0))
+                    .show(ui, |ui| {
+                        for (i, (name, idx, len)) in rows.iter_mut().enumerate() {
+                            ui.label(*name);
+                            settled |= index_slider(ui, idx, *len);
+                            ui.label(value(i, **idx));
+                            ui.end_row();
+                        }
+                    });
+            } else {
+                ui.spacing_mut().slider_width = ui.available_width().floor();
+                for (i, (name, idx, len)) in rows.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(*name);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(value(i, **idx));
+                        });
+                    });
+                    settled |= index_slider(ui, idx, *len);
+                    ui.add_space(4.0);
+                }
+            }
+            e.search_secs = SEARCH_TIMES[t];
+            e.multipv = k as u32 + 1;
+            e.threads = th as u32 + 1;
+            e.hash_mb = hash_steps[h];
             if settled {
                 actions.push(GameAction::EngineReconfigure);
             }
@@ -1736,4 +1842,12 @@ fn shape_color(c: ShapeColor) -> Color32 {
         ShapeColor::Yellow => Color32::from_rgba_unmultiplied(230, 143, 0, 170),
         ShapeColor::Other(_) => Color32::from_rgba_unmultiplied(120, 120, 120, 170),
     }
+}
+
+/// The width of `text` in `style` (as a label or a button would lay it out on one line).
+pub(crate) fn text_width(ui: &Ui, text: &str, style: egui::TextStyle) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), style.resolve(ui.style()), Color32::WHITE)
+        .size()
+        .x
 }

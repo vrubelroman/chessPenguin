@@ -2,6 +2,36 @@
 
 use egui::{Color32, Sense, Stroke, Ui, vec2};
 
+/// A dev check (`CP_PANEL_CHECK=1`): a panel whose content is wider than the panel. egui
+/// then moves a right panel out (its left part under the central panel, its right part
+/// off the window); the content of every panel must fit its least width
+/// (docs/design/narrow-windows.md).
+pub fn check_panel(name: &str, panel: &egui::Response) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let on = *ON.get_or_init(|| {
+        let on = std::env::var_os("CP_PANEL_CHECK").is_some();
+        // In a debug build egui also marks (red) what makes its parent wider.
+        #[cfg(debug_assertions)]
+        if on {
+            panel
+                .ctx
+                .all_styles_mut(|s| s.debug.show_expand_width = true);
+        }
+        on
+    });
+    if !on {
+        return;
+    }
+    let window = panel.ctx.content_rect();
+    let over = (panel.rect.right() - window.right()).max(window.left() - panel.rect.left());
+    if over > 0.5 {
+        eprintln!(
+            "CP_PANEL_CHECK: panel {name} is {over:.0} pt wider than its place (window {:.0} pt)",
+            window.width()
+        );
+    }
+}
+
 /// Compact ✕ (e.g. to cancel a running task); the caller adds the tooltip.
 pub fn small_close_button(ui: &mut Ui) -> egui::Response {
     x_button(ui, vec2(22.0, 20.0), 4.5)

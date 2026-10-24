@@ -328,19 +328,21 @@ impl Library {
             let db = db.clone();
             match view.pane() {
                 Pane::Filters => {
-                    egui::Panel::right("filters")
+                    let r = egui::Panel::right("filters")
                         .resizable(true)
                         .default_size(280.0)
                         .size_range(260.0..=380.0)
                         .show(ui, |ui| view.panel(ui, &db));
+                    crate::widgets::check_panel("filters", &r.response);
                 }
                 Pane::Board => {
                     let width = ui.available_width();
-                    egui::Panel::right("search_board")
+                    let r = egui::Panel::right("search_board")
                         .resizable(true)
                         .default_size((width * 0.5).max(340.0))
                         .size_range(340.0..=(width - 420.0).max(340.0))
                         .show(ui, |ui| view.board_panel(ui, &db, settings, &mut actions));
+                    crate::widgets::check_panel("search_board", &r.response);
                 }
                 Pane::Hidden => {}
             }
