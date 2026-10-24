@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] — 2026-10-24
 
 - Three more interface languages on the desktop, on Android and on the website: Brazilian
   Portuguese, Uzbek (Latin script) and Kazakh (Cyrillic script) — nine in all. The

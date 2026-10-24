@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.0.0" date="2026-10-24">
+      <description>
+        <p>ChessPenguin 1.0: three more interface languages — Brazilian Portuguese, Uzbek and Kazakh, nine in all. On Android the players stand above and below the board, and both names are shown in full in the list of games.</p>
+      </description>
+    </release>
     <release version="0.16.2" date="2026-10-24">
       <description>
         <p>Narrow windows no longer overlap: the reference tab and the engine settings fit their panel, the filters open over the list and the search board takes its place in a narrow window, and a narrow tall window shows the notation under the board. The window can be made as small as 640×480.</p>
