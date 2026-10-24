@@ -382,7 +382,7 @@
     <string name="upd_copy">Copier</string>
     <string name="upd_group">Mises à jour</string>
     <string name="upd_auto">Rechercher les mises à jour au démarrage</string>
-    <string name="upd_auto_sub">Une fois par jour, ChessPenguin demande à GitHub quelle est la dernière version ; rien sur vous n’est envoyé.</string>
+    <string name="upd_auto_sub">Une fois par jour, ChessPenguin demande à son site quelle est la dernière version ; le site compte les installations actives. Seuls un numéro aléatoire de cette installation et la version sont envoyés.</string>
     <string name="upd_check_now">Vérifier maintenant</string>
     <string name="upd_checking">Vérification…</string>
     <string name="upd_latest">Vous avez la dernière version</string>

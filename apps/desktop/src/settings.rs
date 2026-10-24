@@ -128,6 +128,9 @@ pub struct Settings {
     pub skipped_version: Option<String>,
     /// The version that ran last (to say "updated to …" once).
     pub last_version: Option<String>,
+    /// A random id of this installation, sent with the update check (the site counts
+    /// installations that run; nothing else identifies the user).
+    pub install_id: String,
     /// The database of the reference tab (`None`: the largest one on the shelf).
     pub reference_db: Option<PathBuf>,
 }
@@ -189,6 +192,7 @@ impl Default for Settings {
             check_updates: true,
             skipped_version: None,
             last_version: None,
+            install_id: String::new(),
             reference_db: None,
         }
     }

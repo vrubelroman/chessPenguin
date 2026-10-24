@@ -2,6 +2,13 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- The update check goes through the ChessPenguin site (GitHub when the site does not
+  answer), which counts installations that run: once a day, only a random number of the
+  installation, the version and the platform. With the check turned off, nothing is
+  sent. The site's statistics show installations by day, platform and version.
+
 ## [1.0.0] — 2026-10-24
 
 - Three more interface languages on the desktop, on Android and on the website: Brazilian

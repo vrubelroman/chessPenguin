@@ -374,7 +374,7 @@
     <string name="upd_copy">Nusxalash</string>
     <string name="upd_group">Yangilanishlar</string>
     <string name="upd_auto">Ishga tushganda yangilanishlarni tekshirish</string>
-    <string name="upd_auto_sub">ChessPenguin kuniga bir marta GitHubdan eng soʻnggi versiyani soʻraydi; siz haqingizda hech narsa yuborilmaydi.</string>
+    <string name="upd_auto_sub">ChessPenguin kuniga bir marta oʻz saytidan eng soʻnggi versiyani soʻraydi; sayt ishlayotgan oʻrnatmalarni sanaydi. Faqat shu oʻrnatmaning tasodifiy raqami va versiya yuboriladi.</string>
     <string name="upd_check_now">Hozir tekshirish</string>
     <string name="upd_checking">Tekshirilmoqda…</string>
     <string name="upd_latest">Sizda eng soʻnggi versiya</string>

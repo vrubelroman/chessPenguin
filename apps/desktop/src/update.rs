@@ -1,6 +1,7 @@
-//! Updates: at start the program asks GitHub for the latest release (once, in the
-//! background; can be turned off in Settings → About). When it is newer, a button next
-//! to Settings offers it. What "update" does depends on how ChessPenguin was installed:
+//! Updates: at start the program asks its site (else GitHub) for the latest release
+//! (once, in the background; can be turned off in Settings → About; the site counts the
+//! installation, see `releases::check_latest`). When it is newer, a button next to
+//! Settings offers it. What "update" does depends on how ChessPenguin was installed:
 //!
 //! - the Windows zip, the AppImage and the Linux tarball: the new file is downloaded,
 //!   checked against `SHA256SUMS.txt` and put in place of the running one; the program
@@ -206,12 +207,48 @@ fn source_dir() -> Option<PathBuf> {
     std::env::var_os("CP_UPDATE_SOURCE").map(PathBuf::from)
 }
 
-/// Who asks GitHub.
+/// Who asks the site and GitHub.
 fn client() -> String {
     format!("ChessPenguin/{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Asks for the latest release. `Err` with a short reason when there is no answer.
+static INSTALL_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// This installation's id for the update check (`Settings::install_id`).
+pub fn set_install_id(id: &str) {
+    let _ = INSTALL_ID.set(id.to_owned());
+}
+
+/// A new random installation id: 32 hex digits.
+pub fn new_install_id() -> String {
+    let mut b = [0u8; 16];
+    if getrandom::fill(&mut b).is_err() {
+        // No randomness: no id; the check then goes to GitHub, uncounted.
+        return String::new();
+    }
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+impl Install {
+    /// The platform the site counts this installation under.
+    fn platform(&self) -> &'static str {
+        match self {
+            Install::Windows(_) => "windows",
+            Install::Mac => "macos",
+            Install::AppImage(_) => "appimage",
+            Install::Tarball(_) => "tarball",
+            Install::Deb => "deb",
+            Install::Rpm => "rpm",
+            Install::Arch => "arch",
+            Install::Aur => "aur",
+            Install::Flatpak => "flatpak",
+            Install::Other => "source",
+        }
+    }
+}
+
+/// Asks for the latest release (through the site, which counts this installation; see
+/// `releases::check_latest`). `Err` with a short reason when there is no answer.
 pub fn latest() -> Result<Release, String> {
     match source_dir() {
         Some(dir) => {
@@ -220,7 +257,10 @@ pub fn latest() -> Result<Release, String> {
             let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
             releases::parse_release(&v).ok_or_else(|| "unexpected answer".to_owned())
         }
-        None => releases::fetch_latest(releases::API, &client()),
+        None => match INSTALL_ID.get().filter(|id| !id.is_empty()) {
+            Some(id) => releases::check_latest(id, detect().platform(), &client()),
+            None => releases::fetch_latest(releases::API, &client()),
+        },
     }
 }
 

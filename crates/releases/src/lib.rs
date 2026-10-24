@@ -10,6 +10,10 @@ use serde_json::Value;
 /// GitHub's answer for the latest release.
 pub const API: &str = "https://api.github.com/repos/vrubelroman/chessPenguin/releases/latest";
 
+/// The site's update check: GitHub's answer passed on, and this installation counted for
+/// the day (website/README.md, "Installations").
+pub const CHECK: &str = "https://chess.vrubel.xyz/api/update";
+
 /// Where people download ChessPenguin.
 pub const DOWNLOAD_PAGE: &str = "https://chess.vrubel.xyz/";
 
@@ -128,6 +132,16 @@ pub fn fetch_latest(api: &str, client: &str) -> Result<Release, String> {
         .map_err(|e| e.to_string())?;
     let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     parse_release(&v).ok_or_else(|| "unexpected answer".to_owned())
+}
+
+/// Asks the site for the latest release, counting this installation once a day: only its
+/// random id (`install`, made up by the program), this version and `platform` ("windows",
+/// "deb", "android"…) are sent. Without an answer from the site, GitHub is asked.
+pub fn check_latest(install: &str, platform: &str, client: &str) -> Result<Release, String> {
+    // `CP_UPDATE_CHECK`: another site (a local one, to try it).
+    let site = std::env::var("CP_UPDATE_CHECK").unwrap_or_else(|_| CHECK.to_owned());
+    let url = format!("{site}?install={install}&version={VERSION}&platform={platform}");
+    fetch_latest(&url, client).or_else(|_| fetch_latest(API, client))
 }
 
 /// Opens a file of the release for reading; a whole download has half an hour.

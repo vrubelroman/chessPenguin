@@ -167,6 +167,10 @@ impl App {
             .last_version
             .clone()
             .filter(|v| crate::update::parse_version(v) < crate::update::parse_version(current));
+        if settings.install_id.is_empty() {
+            settings.install_id = crate::update::new_install_id();
+        }
+        crate::update::set_install_id(&settings.install_id);
         if settings.last_version.as_deref() != Some(current) {
             settings.last_version = Some(current.to_owned());
             let _ = settings.save();

@@ -378,7 +378,7 @@
     <string name="upd_copy">Copy</string>
     <string name="upd_group">Updates</string>
     <string name="upd_auto">Check for updates at start</string>
-    <string name="upd_auto_sub">Once a day ChessPenguin asks GitHub which version is the latest; nothing about you is sent.</string>
+    <string name="upd_auto_sub">Once a day ChessPenguin asks its site which version is the latest; the site counts installations that run. Only a random number of this installation and the version are sent.</string>
     <string name="upd_check_now">Check now</string>
     <string name="upd_checking">Checking…</string>
     <string name="upd_latest">You have the latest version</string>

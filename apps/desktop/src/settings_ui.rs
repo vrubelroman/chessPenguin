@@ -123,7 +123,7 @@ impl SettingsWindow {
                             changed |= ui
                                 .checkbox(&mut s.check_updates, tr("Check for updates at start"))
                                 .on_hover_text(tr(
-                                    "ChessPenguin asks GitHub which version is the latest; nothing about you is sent",
+                                    "ChessPenguin asks its site which version is the latest; the site counts installations that run: only a random number of this installation, the version and the system are sent",
                                 ))
                                 .changed();
                         });

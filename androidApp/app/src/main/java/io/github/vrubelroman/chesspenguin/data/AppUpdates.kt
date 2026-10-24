@@ -28,7 +28,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import uniffi.mobile_api.ReleaseCheck
 import uniffi.mobile_api.checkRelease
-import uniffi.mobile_api.releaseApi
+import uniffi.mobile_api.checkReleaseCounted
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -95,7 +95,14 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
     private val downloads get() = context.getSystemService(DownloadManager::class.java)
     private val dir get() = context.getExternalFilesDir("updates")
     private val json = Json { ignoreUnknownKeys = true }
-    private val api = BuildConfig.UPDATE_API.ifEmpty { releaseApi() }
+    /// A test server (debug builds); otherwise the site, which counts this installation.
+    private val testApi = BuildConfig.UPDATE_API
+
+    /// A random id of this installation, made once; the site counts installations that
+    /// run by it (nothing else about the user is sent).
+    private fun installId(): String = prefs.getString(INSTALL_ID, null) ?: java.util.UUID.randomUUID().toString().replace("-", "").also {
+        prefs.edit().putString(INSTALL_ID, it).apply()
+    }
 
     private val _state = MutableStateFlow<UpdateState?>(null)
     /// The known newer release and where its update is; null when there is none.
@@ -214,7 +221,10 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
             _check.value = if (manual) CheckState.Offline else CheckState.Idle
             return
         }
-        val result = withContext(Dispatchers.IO) { checkRelease(api) }
+        val platform = if (BuildConfig.FLAVOR == "full") "android" else "android-noengine"
+        val result = withContext(Dispatchers.IO) {
+            if (testApi.isNotEmpty()) checkRelease(testApi) else checkReleaseCounted(installId(), platform)
+        }
         when (result) {
             is ReleaseCheck.Newer -> {
                 val light = result.release.light ?: return
@@ -599,6 +609,7 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         const val AUTO = "autoCheck"
         const val LAST_OK = "lastCheckOk"
         const val LAST_ATTEMPT = "lastAttempt"
+        const val INSTALL_ID = "installId"
         const val LATEST = "latest"
         const val HIDDEN = "hiddenVersion"
         const val DOWNLOAD = "downloadId"

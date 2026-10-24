@@ -5,7 +5,7 @@
 //! The check talks to GitHub (or to a test server in a debug build) and blocks: call it
 //! off the main thread.
 
-use releases::{Release, VERSION, fetch_latest, fetch_sums, sum_in};
+use releases::{Release, VERSION, check_latest, fetch_latest, fetch_sums, sum_in};
 
 /// GitHub's answer for the latest release (a debug build may ask a test server).
 #[uniffi::export]
@@ -59,11 +59,24 @@ pub enum ReleaseCheck {
 const LIGHT: &str = "-android-noengine.apk";
 const FULL: &str = "-android.apk";
 
-/// Asks `api` for the latest release; a newer one comes with its APKs.
+/// Asks `api` (a test server) for the latest release; a newer one comes with its APKs.
 #[uniffi::export]
 pub fn check_release(api: String) -> ReleaseCheck {
     let client = format!("ChessPenguin/{VERSION} (Android)");
-    let release = match fetch_latest(&api, &client) {
+    checked(fetch_latest(&api, &client), &client)
+}
+
+/// Asks the site for the latest release, counting this installation for the day (its
+/// random `install` id and `platform`: "android" or "android-noengine"); without the
+/// site, GitHub. A newer release comes with its APKs.
+#[uniffi::export]
+pub fn check_release_counted(install: String, platform: String) -> ReleaseCheck {
+    let client = format!("ChessPenguin/{VERSION} (Android)");
+    checked(check_latest(&install, &platform, &client), &client)
+}
+
+fn checked(found: Result<Release, String>, client: &str) -> ReleaseCheck {
+    let release = match found {
         Ok(r) => r,
         Err(detail) => return ReleaseCheck::Failed { detail },
     };
@@ -73,7 +86,7 @@ pub fn check_release(api: String) -> ReleaseCheck {
         };
     }
     let sums = if release.sums().is_some() {
-        match fetch_sums(&release, &client) {
+        match fetch_sums(&release, client) {
             Ok(s) => s,
             Err(detail) => return ReleaseCheck::Failed { detail },
         }
