@@ -375,7 +375,7 @@
     <string name="upd_copy">Көшіру</string>
     <string name="upd_group">Жаңартулар</string>
     <string name="upd_auto">Іске қосқанда жаңартуларды тексеру</string>
-    <string name="upd_auto_sub">Күніне бір рет ChessPenguin өз сайтынан соңғы нұсқаны сұрайды; сайт жұмыс істеп тұрған орнатуларды санайды. Тек осы орнатудың кездейсоқ нөмірі мен нұсқа жіберіледі.</string>
+    <string name="upd_auto_sub">Күніне бір рет ChessPenguin өз сайтынан соңғы нұсқаны сұрайды; сайт жұмыс істеп тұрған орнатуларды санайды. Тек осы орнатудың кездейсоқ нөмірі, нұсқа және жүйе жіберіледі.</string>
     <string name="upd_check_now">Қазір тексеру</string>
     <string name="upd_checking">Тексерілуде…</string>
     <string name="upd_latest">Сізде соңғы нұсқа</string>

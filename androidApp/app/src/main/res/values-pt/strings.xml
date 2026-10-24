@@ -381,7 +381,7 @@
     <string name="upd_copy">Copiar</string>
     <string name="upd_group">Atualizações</string>
     <string name="upd_auto">Verificar atualizações ao iniciar</string>
-    <string name="upd_auto_sub">Uma vez por dia o ChessPenguin pergunta ao seu site qual é a versão mais recente; o site conta as instalações em uso. São enviados apenas um número aleatório desta instalação e a versão.</string>
+    <string name="upd_auto_sub">Uma vez por dia o ChessPenguin pergunta ao seu site qual é a versão mais recente; o site conta as instalações em uso. São enviados apenas um número aleatório desta instalação, a versão e o sistema.</string>
     <string name="upd_check_now">Verificar agora</string>
     <string name="upd_checking">Verificando…</string>
     <string name="upd_latest">Você tem a versão mais recente</string>

@@ -242,7 +242,7 @@ impl Install {
             Install::Arch => "arch",
             Install::Aur => "aur",
             Install::Flatpak => "flatpak",
-            Install::Other => "source",
+            Install::Other => "other",
         }
     }
 }

@@ -388,7 +388,7 @@
     <string name="upd_copy">Копировать</string>
     <string name="upd_group">Обновления</string>
     <string name="upd_auto">Проверять обновления при запуске</string>
-    <string name="upd_auto_sub">Раз в день ChessPenguin спрашивает у своего сайта, какая версия последняя; сайт считает работающие установки. Передаются только случайный номер этой установки и версия.</string>
+    <string name="upd_auto_sub">Раз в день ChessPenguin спрашивает у своего сайта, какая версия последняя; сайт считает работающие установки. Передаются только случайный номер этой установки, версия и система.</string>
     <string name="upd_check_now">Проверить сейчас</string>
     <string name="upd_checking">Проверяю…</string>
     <string name="upd_latest">У вас последняя версия</string>

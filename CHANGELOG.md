@@ -6,8 +6,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 - The update check goes through the ChessPenguin site (GitHub when the site does not
   answer), which counts installations that run: once a day, only a random number of the
-  installation, the version and the platform. With the check turned off, nothing is
-  sent. The site's statistics show installations by day, platform and version.
+  installation, the version and the platform. With the check at start turned off,
+  nothing is sent unless one checks by hand. The site's statistics show installations by day, platform and version.
 
 ## [1.0.0] — 2026-10-24
 
