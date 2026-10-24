@@ -688,16 +688,21 @@ fn comment_block(ui: &mut Ui, n: &Notation, text: &str, slot: Slot, out: &mut No
             bottom: 6,
         });
     }
-    let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
     let r = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
-        let resp = ui.add(
-            egui::Label::new(RichText::new(shown).color(comment_color(ui)).size(14.5))
-                .sense(Sense::click()),
-        );
-        comment_response(&resp, slot, out);
+        ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
     });
-    let _ = hovered;
+    // The whole block, not only its text, takes the double click and the right button.
+    let resp = ui.interact(
+        r.response.rect,
+        ui.id().with((
+            "comment",
+            slot.node().index(),
+            matches!(slot, Slot::Before(_)),
+        )),
+        Sense::click(),
+    );
+    comment_response(&resp, slot, out);
     if let Some(m) = mark {
         let at = r.response.rect.right_top() + vec2(-8.0, 7.0);
         translation_mark(ui, at, m, text);
@@ -761,7 +766,11 @@ fn editor_block(ui: &mut Ui, editor: &mut Option<&mut CommentEditor>, out: &mut 
                 ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if narrow {
-                        if ui.button("×").on_hover_text(tr("Cancel (Esc)")).clicked() {
+                        if ui
+                            .add(egui::Button::new("×").min_size(vec2(0.0, 30.0)))
+                            .on_hover_text(tr("Cancel (Esc)"))
+                            .clicked()
+                        {
                             out.editor = Some(EditorOutcome::Cancel);
                         }
                         if crate::widgets::primary(ui, "✔")
@@ -771,7 +780,11 @@ fn editor_block(ui: &mut Ui, editor: &mut Option<&mut CommentEditor>, out: &mut 
                             out.editor = Some(EditorOutcome::Done);
                         }
                     } else {
-                        if ui.button(tr("Cancel")).on_hover_text("Esc").clicked() {
+                        if ui
+                            .add(egui::Button::new(tr("Cancel")).min_size(vec2(0.0, 30.0)))
+                            .on_hover_text("Esc")
+                            .clicked()
+                        {
                             out.editor = Some(EditorOutcome::Cancel);
                         }
                         if crate::widgets::primary(ui, tr("Done"))

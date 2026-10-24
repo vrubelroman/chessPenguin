@@ -357,12 +357,44 @@ const LANGUAGES: &[whatlang::Lang] = {
     ]
 };
 
-fn detect(text: &str) -> Option<whatlang::Lang> {
+fn detect_info(text: &str) -> Option<whatlang::Info> {
     static DETECTOR: std::sync::OnceLock<whatlang::Detector> = std::sync::OnceLock::new();
     DETECTOR
         .get_or_init(|| whatlang::Detector::with_allowlist(LANGUAGES.to_vec()))
         .detect(text)
-        .map(|i| i.lang())
+}
+
+/// The language of one comment for the plan: a short text in the script of `target`
+/// that the detector cannot tell apart reliably (Russian notes read as Ukrainian or
+/// Bulgarian) is taken for `target` — the reader's own notes are not translated.
+fn comment_lang(text: &str, target: Option<whatlang::Lang>) -> Option<whatlang::Lang> {
+    let info = detect_info(text)?;
+    if let Some(t) = target
+        && info.lang() != t
+        && !info.is_reliable()
+        && info.script() == script_of(t)
+    {
+        return Some(t);
+    }
+    Some(info.lang())
+}
+
+/// The script a language is written in, as the detector names it.
+fn script_of(lang: whatlang::Lang) -> whatlang::Script {
+    use whatlang::Lang::*;
+    match lang {
+        Rus | Ukr | Bel | Bul | Mkd | Srp => whatlang::Script::Cyrillic,
+        Ell => whatlang::Script::Greek,
+        Kat => whatlang::Script::Georgian,
+        Hye => whatlang::Script::Armenian,
+        Heb => whatlang::Script::Hebrew,
+        Ara | Pes => whatlang::Script::Arabic,
+        Cmn => whatlang::Script::Mandarin,
+        Jpn => whatlang::Script::Katakana,
+        Kor => whatlang::Script::Hangul,
+        Hin => whatlang::Script::Devanagari,
+        _ => whatlang::Script::Latin,
+    }
 }
 
 /// The language as the detector knows it (`None`: it does not tell Kazakh, so every
@@ -401,16 +433,16 @@ const SHORT: usize = 25;
 pub fn plan(texts: &[String], target: Lang) -> Option<Plan> {
     let target = language_of(target);
     let mut letters: HashMap<whatlang::Lang, usize> = HashMap::new();
-    let detected: Vec<(usize, Option<whatlang::Lang>)> = texts
+    let detected: Vec<(usize, Option<whatlang::Lang>, Option<whatlang::Script>)> = texts
         .iter()
         .map(|t| {
             let p = prose(t);
             let n = p.chars().filter(|c| c.is_alphabetic()).count();
-            let lang = (n >= SHORT).then(|| detect(&p)).flatten();
+            let lang = (n >= SHORT).then(|| comment_lang(&p, target)).flatten();
             if let Some(l) = lang {
                 *letters.entry(l).or_default() += n;
             }
-            (n, lang)
+            (n, lang, whatlang::detect_script(&p))
         })
         .collect();
     let mut game_lang = letters.iter().max_by_key(|(_, n)| **n).map(|(l, _)| *l);
@@ -428,10 +460,22 @@ pub fn plan(texts: &[String], target: Lang) -> Option<Plan> {
             }
         }
     }
+    // A short note in the script of the interface language, in a book of another
+    // script ("Размен в пользу белых" in a Dutch book), is the reader's own: not foreign.
+    let own_script = |script: Option<whatlang::Script>| {
+        target.is_some_and(|t| script == Some(script_of(t)))
+            && game_lang.is_some_and(|g| script != Some(script_of(g)))
+    };
     let foreign: Vec<usize> = detected
         .iter()
         .enumerate()
-        .filter(|(_, (n, lang))| *n > 0 && lang.or(game_lang).is_some_and(|l| Some(l) != target))
+        .filter(|(_, (n, lang, script))| {
+            *n > 0
+                && match lang {
+                    Some(l) => Some(*l) != target,
+                    None => game_lang.is_some_and(|g| Some(g) != target) && !own_script(*script),
+                }
+        })
         .map(|(i, _)| i)
         .collect();
     let foreign_letters: usize = foreign.iter().map(|&i| detected[i].0).sum();
@@ -1571,5 +1615,35 @@ mod tests {
                 .contains("Italian")
         );
         assert!(seen[0].get("response_format").is_none());
+    }
+}
+
+#[cfg(test)]
+mod own_comment_tests {
+    use super::*;
+
+    #[test]
+    fn a_comment_in_the_interface_language_is_not_translated() {
+        // A Dutch book with the reader's own Russian notes: the notes stay.
+        let texts: Vec<String> = [
+            "Wit heeft een klein voordeel dankzij het loperpaar en de betere pionnenstructuur.",
+            "Zwart moet nu actief spelen, anders wordt de stelling langzaam slechter.",
+            "Een rustige zet die de spanning in het centrum handhaaft.",
+            "я не знаю насколько хорош этот ход",
+            "Размен в пользу белых",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let plan = plan(&texts, Lang::Ru).expect("the Dutch comments need a translation");
+        assert_eq!(plan.source, whatlang::Lang::Nld);
+        assert!(
+            !plan
+                .texts
+                .iter()
+                .any(|t| t.starts_with("я не знаю") || t.starts_with("Размен")),
+            "own Russian notes in the plan: {:?}",
+            plan.texts
+        );
     }
 }
