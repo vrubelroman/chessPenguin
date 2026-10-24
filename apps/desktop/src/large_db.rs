@@ -1633,20 +1633,12 @@ impl LargeView {
         // A database with no games yet (own-databases.md §2.3): how to put one in.
         if total == 0 && writable {
             let name = crate::own_db::base_name(path);
-            // The header as for any database; nothing to search, so no field and no switch.
+            // The header as for any database; nothing to search, so no field and no switch,
+            // and «+ Game» once: the main button in the middle.
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&name).strong());
                 ui.label(RichText::new(format!("· {}", header.format)).weak());
                 ui.label(format!("· {}", crate::i18n::games(0)));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button(tr("+ Game"))
-                        .on_hover_text(new_game_hint(&name))
-                        .clicked()
-                    {
-                        actions.push(LibraryAction::NewGameIn(path.to_path_buf()));
-                    }
-                });
             });
             ui.vertical_centered(|ui| {
                 ui.add_space(60.0);

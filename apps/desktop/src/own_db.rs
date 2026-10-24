@@ -169,10 +169,11 @@ impl NewBaseDialog {
                     self.path().display().to_string()
                 };
                 ui.label(RichText::new(shown).weak());
-                if ui.small_button(tr("Change folder…")).clicked() {
-                    out = Some(NewBaseOutcome::PickFolder);
-                }
             });
+            // On a line of its own: typing the name does not move it.
+            if ui.small_button(tr("Change folder…")).clicked() {
+                out = Some(NewBaseOutcome::PickFolder);
+            }
             match &check {
                 Err(e) if !e.is_empty() => {
                     ui.label(RichText::new(e).color(ui.visuals().error_fg_color));

@@ -112,15 +112,34 @@ fn legacy_pgn(path: &Path) -> bool {
     guess.encoding != chess_core::TextEncoding::Utf8 && !guess.ascii_only
 }
 
-/// The width of the shelf's buttons on the right (`Library::shelf_buttons`).
+/// The width of the game buttons and of the program's ones (`Library::game_buttons`,
+/// `Library::app_buttons`), with the gap that sets the game ones apart from the
+/// database actions.
 fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
     let texts: [&str; 3] = if icons {
         ["⚙", "📋", "♟"]
     } else {
         [tr("⚙ Settings"), tr("📋 Paste PGN"), tr("♟ New game")]
     };
-    texts.iter().map(|t| button_w(ui, t)).sum::<f32>() + update.map_or(0.0, |v| button_w(ui, v))
+    texts.iter().map(|t| button_w(ui, t)).sum::<f32>()
+        + update.map_or(0.0, |v| button_w(ui, v))
+        + GROUP_GAP
 }
+
+/// A shelf button's tooltip: with icons only, its name first.
+fn shelf_hint(icons: bool, full: &str, hint: &str) -> String {
+    if icons {
+        format!(
+            "{}\n{hint}",
+            full.trim_start_matches(|c: char| !c.is_alphabetic())
+        )
+    } else {
+        hint.to_owned()
+    }
+}
+
+/// Between the database actions and the game ones in the title row.
+const GROUP_GAP: f32 = 16.0;
 
 /// The shelf's "+ Add database", "✚ New database" and "Online games" cards: 150 wide,
 /// wider when their label needs it (some languages say it longer).
@@ -646,29 +665,21 @@ impl Library {
                 self.select_db(&p, ui.ctx());
             }
             self.shelf_actions(ui, true, actions);
+            ui.add_space(GROUP_GAP - ui.spacing().item_spacing.x);
+            self.game_buttons(ui, icons, actions);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.shelf_buttons(ui, icons, actions);
+                self.app_buttons(ui, icons, actions);
             });
         });
     }
 
-    /// "♟ New game · 📋 Paste PGN · ⚙ Settings" (right to left), or their icons with
-    /// the names in the tooltips.
-    fn shelf_buttons(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
+    /// "⚙ Settings" and the newer version (right to left): the program's corner, the
+    /// same as on the game screen. Icons only, with the names in the tooltips.
+    fn app_buttons(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
         let label = |full: &'static str, icon: &'static str| if icons { icon } else { full };
-        let hint = |full: &str, hint: &str| {
-            if icons {
-                format!(
-                    "{}\n{hint}",
-                    full.trim_start_matches(|c: char| !c.is_alphabetic())
-                )
-            } else {
-                hint.to_owned()
-            }
-        };
         if ui
             .button(label(tr("⚙ Settings"), "⚙"))
-            .on_hover_text(hint(tr("⚙ Settings"), "Ctrl+,"))
+            .on_hover_text(shelf_hint(icons, tr("⚙ Settings"), "Ctrl+,"))
             .clicked()
         {
             actions.push(LibraryAction::OpenSettings);
@@ -677,6 +688,22 @@ impl Library {
             && crate::widgets::update_button(ui, v).clicked()
         {
             actions.push(LibraryAction::OpenUpdate);
+        }
+    }
+
+    /// "♟ New game · 📋 Paste PGN" after the database actions: what to put in, together.
+    fn game_buttons(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
+        let label = |full: &'static str, icon: &'static str| if icons { icon } else { full };
+        let hint = |full: &str, hint: &str| shelf_hint(icons, full, hint);
+        if ui
+            .button(label(tr("♟ New game"), "♟"))
+            .on_hover_text(hint(
+                tr("♟ New game"),
+                tr("Empty board in the starting position (Ctrl+N)"),
+            ))
+            .clicked()
+        {
+            actions.push(LibraryAction::NewGame);
         }
         if ui
             .button(label(tr("📋 Paste PGN"), "📋"))
@@ -688,24 +715,14 @@ impl Library {
         {
             actions.push(LibraryAction::PastePgn);
         }
-        if ui
-            .button(label(tr("♟ New game"), "♟"))
-            .on_hover_text(hint(
-                tr("♟ New game"),
-                tr("Empty board in the starting position (Ctrl+N)"),
-            ))
-            .clicked()
-        {
-            actions.push(LibraryAction::NewGame);
-        }
     }
 
     fn shelf(&mut self, ui: &mut Ui, databases: &[PathBuf], actions: &mut Vec<LibraryAction>) {
         ui.add_space(8.0);
-        // The title row (library-layout.md §1.4): «Databases», the actions with databases
-        // on the left, the game and program ones on the right. Narrowing: the left group
-        // folds to «+ ▾ 🌐» first (databases are added seldom), then the right one shows
-        // icons, then the title goes.
+        // The title row (library-layout.md §1.4): «Databases», then what to put in — the
+        // database actions and, apart, the game ones; the program's on the right.
+        // Narrowing: the database actions fold to «+ ▾ 🌐» first (databases are added
+        // seldom), then the other buttons show icons, then the title goes.
         let avail = ui.available_width();
         let heading = text_w(ui, tr("Databases"), egui::TextStyle::Heading) + 16.0;
         let between = 24.0;
@@ -728,8 +745,10 @@ impl Library {
                 ui.add_space(16.0 - ui.spacing().item_spacing.x);
             }
             self.shelf_actions(ui, folded, actions);
+            ui.add_space(GROUP_GAP - ui.spacing().item_spacing.x);
+            self.game_buttons(ui, icons, actions);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.shelf_buttons(ui, icons, actions);
+                self.app_buttons(ui, icons, actions);
             });
         });
         if !databases.is_empty() {
