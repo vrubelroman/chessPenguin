@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.1.0" date="2026-10-25">
+      <description>
+        <p>Your own databases: create an empty PGN database, add any game to it, save your changes back with Ctrl+S, edit the game data (players, event, date, result, annotator) and delete games with Undo. A new game can be started right in a database with «+ Game». The library's title row holds the actions: new game, paste PGN, add or create a database, online games.</p>
+      </description>
+    </release>
     <release version="1.0.3" date="2026-10-24">
       <description>
         <p>A new icon: a penguin in a crown.</p>

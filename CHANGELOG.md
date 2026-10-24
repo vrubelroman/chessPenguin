@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0] — 2026-10-25
 
 - Your own databases (desktop): «✚ New database» on the shelf makes an empty PGN file
   (Documents/ChessPenguin by default, the folder is shown and can be changed); any game —
