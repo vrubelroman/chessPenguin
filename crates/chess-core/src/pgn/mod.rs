@@ -3,6 +3,7 @@
 mod lexer;
 pub mod parse;
 pub mod scan;
+pub mod store;
 pub mod write;
 
 pub use parse::{

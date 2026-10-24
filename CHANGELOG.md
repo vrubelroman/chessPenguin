@@ -2,6 +2,25 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Your own databases (desktop): «✚ New database» on the shelf makes an empty PGN file
+  (Documents/ChessPenguin by default, the folder is shown and can be changed); any game —
+  new, pasted, from a ChessBase, an online or any other database — is added to a PGN of
+  your choice with «Add to database…» (Ctrl+Shift+S, the 💾 button, the ☰ menu); Ctrl+S
+  saves the changes back into the game's own PGN (replacing its record) or, for a game
+  from a read-only source, adds it to a database. The data of a game (players, Elo, event,
+  site, date, round, result, annotator from «Your name» in Settings) are asked when a new
+  game is first added and can be edited any time (F2, the title, the ☰ menu). A game that
+  is already in the target (same players, date and moves) can replace its record or go in
+  as a new one. Games are deleted from the table (Delete, the row menu) after a question,
+  with Undo for six seconds (Ctrl+Z). Online databases and ChessBase files stay read-only;
+  a PGN in a legacy encoding is offered a UTF-8 copy next to it. Writes are explicit:
+  appending to the file, or rewriting it through a temporary file and a rename, with a
+  check that the file did not change on the disk meanwhile. The game's header names its
+  database and number (🔒 read-only, 🌐 online); the card menu has «Show in folder»;
+  «Remove from list» says where the file stays. A new game gets today's date.
+
 ## [1.0.3] — 2026-10-24
 
 - A new icon — a penguin in a crown — on the desktop, Android and the website.

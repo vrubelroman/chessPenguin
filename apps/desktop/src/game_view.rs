@@ -18,11 +18,13 @@ use crate::notation::{Notation, NotationCommand};
 use crate::review::{DialogAction, ReportAction, Review};
 use crate::settings::Settings;
 
-/// Where an opened game came from (to return to the same library row).
+/// Where an opened game came from (to return to the same library row, to save into).
 #[derive(Clone, Debug)]
 pub struct GameSource {
     pub path: PathBuf,
     pub index: usize,
+    /// Why the game cannot be saved back there (`None`: a PGN that takes games).
+    pub block: Option<crate::own_db::Block>,
 }
 
 /// A frozen engine line being stepped through on the board. Never changes the game.
@@ -59,6 +61,8 @@ pub struct GameView {
     side_tab: SideTab,
     /// The game this one was opened from (reference tab): the title for "← back to".
     pub previous: Option<String>,
+    /// The game's data were asked once (on its first add); not again.
+    pub data_asked: bool,
     /// A newer version to offer (its number), next to Settings.
     pub update: Option<String>,
     /// Comments in another language, translated for reading (never into the PGN).
@@ -79,7 +83,12 @@ pub enum GameAction {
     Back,
     Sound(Sound),
     CopyText(String, &'static str),
-    SaveAs,
+    /// Ctrl+S: into the game's own database, else "Add to database…".
+    Save,
+    /// Ctrl+Shift+S: choose the database to add the game to.
+    AddToDatabase,
+    /// F2: players, event, date, result…
+    EditGameData,
     ToggleEngine,
     /// Threads/Hash/MultiPV/search time of the active engine changed (settings already updated).
     EngineReconfigure,
@@ -131,6 +140,7 @@ impl GameView {
                 SideTab::Notation
             },
             previous: None,
+            data_asked: false,
             update: None,
             translation: Default::default(),
             translate_now: false,
@@ -161,6 +171,33 @@ impl GameView {
         }
         let black = g.tag("Black").filter(|s| *s != "?").unwrap_or(tr("Black"));
         format!("{white} — {black}")
+    }
+
+    /// Where the game lives: «🗄 Petrov · No. 13» (🌐 an online database, 🔒 a read-only
+    /// one); nothing for a game that is in no database yet.
+    pub fn source_line(&self) -> Option<String> {
+        let s = self.source.as_ref()?;
+        let icon = match &s.block {
+            None => "🗄",
+            Some(crate::own_db::Block::Online) => "🌐",
+            Some(_) => "🔒",
+        };
+        Some(format!(
+            "{icon} {} · № {}",
+            crate::own_db::base_name(&s.path),
+            s.index + 1
+        ))
+    }
+
+    /// What Ctrl+S does to this game, for the button's tooltip.
+    pub fn save_hint(&self) -> String {
+        match &self.source {
+            Some(s) if s.block.is_none() => trf(
+                "Save to «{name}» (Ctrl+S)",
+                &[("name", &crate::own_db::base_name(&s.path))],
+            ),
+            _ => tr("Add to database… (Ctrl+S)").to_owned(),
+        }
     }
 
     fn subtitle(&self) -> String {
@@ -569,15 +606,31 @@ impl GameView {
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.set_width(title_room);
-                    let modified = if self.game.is_modified() { " •" } else { "" };
                     ui.horizontal(|ui| {
                         ui.set_max_width(title_room);
-                        let title = format!("{}{modified}", self.title());
-                        ui.allocate_ui(vec2((title_room - result_w).max(0.0), height), |ui| {
-                            ui.add(
-                                egui::Label::new(RichText::new(&title).strong().size(16.0))
-                                    .truncate(),
-                            );
+                        // The unsaved mark first: it must not be truncated away.
+                        let mut mark_w = 0.0;
+                        if self.game.is_modified() {
+                            let mark = ui
+                                .label(RichText::new("•").strong().size(16.0))
+                                .on_hover_text(tr("Unsaved changes"));
+                            mark_w = mark.rect.width() + ui.spacing().item_spacing.x;
+                        }
+                        let title = self.title();
+                        ui.allocate_ui(vec2((title_room - result_w - mark_w).max(0.0), height), |ui| {
+                            // The title opens the game's data (players, event, date…).
+                            if ui
+                                .add(
+                                    egui::Label::new(RichText::new(&title).strong().size(16.0))
+                                        .truncate()
+                                        .sense(Sense::click()),
+                                )
+                                .on_hover_text(tr("Game data (F2)"))
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .clicked()
+                            {
+                                actions.push(GameAction::EditGameData);
+                            }
                         });
                         if let Some(result) = result {
                             ui.label(
@@ -589,9 +642,13 @@ impl GameView {
                             .on_hover_text(result_hint(self.game.result()));
                         }
                     });
-                    let sub = self.subtitle();
+                    let sub: Vec<String> = self
+                        .source_line()
+                        .into_iter()
+                        .chain(Some(self.subtitle()).filter(|s| !s.is_empty()))
+                        .collect();
                     if !sub.is_empty() {
-                        ui.add(egui::Label::new(RichText::new(sub).weak()).truncate());
+                        ui.add(egui::Label::new(RichText::new(sub.join(" · ")).weak()).truncate());
                     }
                 },
             );
@@ -1317,8 +1374,28 @@ impl GameView {
             {
                 self.redo();
             }
-            next_group(ui, &["☰", "📋"], 0.0);
+            next_group(ui, &["☰", "💾", "📋"], 0.0);
             ui.menu_button(big("☰"), |ui| {
+                if ui.button(tr("Game data… (F2)")).clicked() {
+                    actions.push(GameAction::EditGameData);
+                    ui.close();
+                }
+                if let Some(s) = self.source.as_ref().filter(|s| s.block.is_none())
+                    && ui
+                        .button(trf(
+                            "Save to «{name}» (Ctrl+S)",
+                            &[("name", &crate::own_db::base_name(&s.path))],
+                        ))
+                        .clicked()
+                {
+                    actions.push(GameAction::Save);
+                    ui.close();
+                }
+                if ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked() {
+                    actions.push(GameAction::AddToDatabase);
+                    ui.close();
+                }
+                ui.separator();
                 if ui.button(tr("Copy PGN")).clicked() {
                     actions.push(self.copy_pgn());
                     ui.close();
@@ -1327,10 +1404,6 @@ impl GameView {
                     if let Some(fen) = self.game.fen(self.cursor) {
                         actions.push(GameAction::CopyText(fen, tr("FEN copied")));
                     }
-                    ui.close();
-                }
-                if ui.button(tr("Save game as…")).clicked() {
-                    actions.push(GameAction::SaveAs);
                     ui.close();
                 }
                 if !self.diagnostics.is_empty() && ui.button(tr("Compatibility notes")).clicked() {
@@ -1360,6 +1433,13 @@ impl GameView {
                     ui.close();
                 }
             });
+            if ui
+                .button(big("💾"))
+                .on_hover_text(self.save_hint())
+                .clicked()
+            {
+                actions.push(GameAction::Save);
+            }
             if ui
                 .button(big("📋"))
                 .on_hover_text(tr("Copy PGN (Ctrl+Shift+C)"))
@@ -1489,6 +1569,16 @@ impl GameView {
         }
     }
 
+    /// Dev hook (`CP_COMMENT`): a comment after the current move.
+    pub fn debug_comment(&mut self, text: &str) {
+        let nags = self
+            .game
+            .node(self.cursor)
+            .map(|n| n.nags().to_vec())
+            .unwrap_or_default();
+        let _ = self.game.annotate(self.cursor, nags, vec![text.to_owned()]);
+    }
+
     fn step_back(&mut self) {
         if let Some(p) = &mut self.preview {
             self.scroll_to_cursor = true;
@@ -1549,8 +1639,17 @@ impl GameView {
             if i.consume_shortcut(&ctrl_shift(Key::C)) {
                 cmds.push("copy");
             }
+            if i.consume_shortcut(&ctrl_shift(Key::S)) {
+                cmds.push("add_to_db");
+            }
             if i.consume_shortcut(&ctrl(Key::S)) {
                 cmds.push("save");
+            }
+            // F2 as in ChessBase; on a Mac F2 is the brightness key, ⌘I too.
+            if i.consume_key(Modifiers::NONE, Key::F2)
+                || (cfg!(target_os = "macos") && i.consume_shortcut(&ctrl(Key::I)))
+            {
+                cmds.push("game_data");
             }
             if i.consume_shortcut(&ctrl(Key::W)) {
                 cmds.push("back");
@@ -1593,7 +1692,9 @@ impl GameView {
                 "undo" => self.undo(),
                 "redo" => self.redo(),
                 "copy" => actions.push(self.copy_pgn()),
-                "save" => actions.push(GameAction::SaveAs),
+                "save" => actions.push(GameAction::Save),
+                "add_to_db" => actions.push(GameAction::AddToDatabase),
+                "game_data" => actions.push(GameAction::EditGameData),
                 "back" => actions.push(GameAction::Back),
                 "find" if self.search_line().is_some() => {
                     actions.push(GameAction::FindPosition(None))

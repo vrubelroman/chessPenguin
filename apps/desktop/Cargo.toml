@@ -38,6 +38,10 @@ zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2
 sys-locale = "0.3"
 whatlang = "0.18.0"
 getrandom = "0.3"
+# Today's date for a new game.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Warnings of the window and graphics libraries into chesspenguin.log.
+log = "0.4"
 base64 = "0.22"
 form_urlencoded = "1"
 

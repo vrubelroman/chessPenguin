@@ -48,6 +48,22 @@ pub enum LibraryAction {
     OpenUpdate,
     RemoveDatabase(PathBuf),
     OpenSettings,
+    /// A new, empty PGN database (own-databases.md §2).
+    NewDatabase,
+    /// A record of a table: delete it, add a copy of it to another database, open it
+    /// with its data for editing.
+    DeleteGame {
+        path: PathBuf,
+        index: usize,
+    },
+    AddGameToDatabase {
+        path: PathBuf,
+        index: usize,
+    },
+    EditGameData {
+        path: PathBuf,
+        index: usize,
+    },
 }
 
 /// How a database was imported, and what is worth knowing about it.
@@ -83,9 +99,9 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
     texts.iter().map(|t| button_w(ui, t)).sum::<f32>() + update.map_or(0.0, |v| button_w(ui, v))
 }
 
-/// The shelf's "+ Add database" and "Online games" cards: 150 wide, wider when their
-/// label needs it (some languages say it longer).
-fn side_card_widths(ui: &Ui) -> (f32, f32) {
+/// The shelf's "+ Add database", "✚ New database" and "Online games" cards: 150 wide,
+/// wider when their label needs it (some languages say it longer).
+fn side_card_widths(ui: &Ui) -> (f32, f32, f32) {
     let w = |t: &str, size: f32| {
         ui.painter()
             .layout_no_wrap(
@@ -99,6 +115,7 @@ fn side_card_widths(ui: &Ui) -> (f32, f32) {
     let fit = |inner: f32| (inner + 32.0).max(150.0).ceil();
     (
         fit(w(tr("+ Add database"), 15.0)),
+        fit(w(tr("✚ New database"), 15.0)),
         fit(w(&format!("🌐 {}", tr("Online games")), 15.0).max(w("Lichess · Chess.com", 13.0))),
     )
 }
@@ -235,6 +252,45 @@ impl Library {
         }
     }
 
+    /// Why a database on the shelf cannot take games (own-databases.md §5); `None`: a
+    /// PGN that can.
+    pub fn write_block(&self, path: &Path) -> Option<crate::own_db::Block> {
+        use crate::own_db::Block;
+        if crate::online::is_online(path) {
+            return Some(Block::Online);
+        }
+        if !path.exists() {
+            return Some(Block::Missing);
+        }
+        match self.info.get(path).map(|i| i.format) {
+            Some(Format::Pgn) => {}
+            Some(_) => return Some(Block::ReadOnly),
+            None => {
+                let pgn = path
+                    .extension()
+                    .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("pgn"));
+                if !pgn {
+                    return Some(Block::ReadOnly);
+                }
+            }
+        }
+        if let Some(db) = self.database(path) {
+            match db.as_pgn() {
+                Some(p) => {
+                    let enc = p.encoding();
+                    if enc != chess_core::TextEncoding::Utf8 && !p.detected_encoding().ascii_only {
+                        return Some(Block::Encoding(enc.label()));
+                    }
+                }
+                None => return Some(Block::ReadOnly),
+            }
+        }
+        if std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly()) {
+            return Some(Block::NoPermission);
+        }
+        None
+    }
+
     pub fn forget(&mut self, path: &Path) {
         self.info.remove(path);
         self.large.remove(path);
@@ -259,6 +315,11 @@ impl Library {
             .sizes
             .entry(path.to_owned())
             .or_insert_with(|| std::fs::metadata(path).map_or(0, |m| m.len()))
+    }
+
+    /// The database is being read now.
+    pub fn loading(&self, path: &Path) -> bool {
+        matches!(self.slots.get(path), Some(Slot::Loading { .. }))
     }
 
     /// Why the database could not be opened, if it could not.
@@ -368,8 +429,8 @@ impl Library {
             .selected_db
             .as_ref()
             .is_some_and(|p| self.large.get(p).is_some_and(|v| v.pane() == Pane::Board));
-        let (add_w, online_w) = side_card_widths(ui);
-        let cards = databases.len() + 1 + usize::from(self.online);
+        let (add_w, new_w, online_w) = side_card_widths(ui);
+        let cards = databases.len() + 2 + usize::from(self.online);
         let card_rows = {
             let mut rows = 1;
             let mut x = 0.0;
@@ -377,6 +438,7 @@ impl Library {
                 let w = match k.checked_sub(databases.len()) {
                     None => 190.0,
                     Some(0) => add_w,
+                    Some(1) => new_w,
                     Some(_) => online_w,
                 };
                 if x > 0.0 && x + w > width - 16.0 {
@@ -565,15 +627,18 @@ impl Library {
             if let Some(p) = pick {
                 self.select_db(&p, ui.ctx());
             }
-            if ui
-                .button("+")
-                .on_hover_text(tr(
+            ui.menu_button("+", |ui| {
+                if ui.button(tr("Add database…")).on_hover_text(tr(
                     "Open PGN, ChessBase (.cbh, .cbv) or an archive (.zip, .7z) (Ctrl+O)",
-                ))
-                .clicked()
-            {
-                actions.push(LibraryAction::AddDatabases);
-            }
+                )).clicked() {
+                    actions.push(LibraryAction::AddDatabases);
+                    ui.close();
+                }
+                if ui.button(tr("New database…")).on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)")).clicked() {
+                    actions.push(LibraryAction::NewDatabase);
+                    ui.close();
+                }
+            });
             if self.online
                 && ui
                     .button("🌐")
@@ -653,7 +718,7 @@ impl Library {
             for path in databases {
                 self.db_card(ui, path, actions);
             }
-            let (add_w, online_w) = side_card_widths(ui);
+            let (add_w, new_w, online_w) = side_card_widths(ui);
             let (rect, resp) = ui.allocate_exact_size(vec2(add_w, 64.0), Sense::click());
             let visuals = ui.style().interact(&resp);
             ui.painter()
@@ -672,6 +737,23 @@ impl Library {
                 .clicked()
             {
                 actions.push(LibraryAction::AddDatabases);
+            }
+            let (rect, resp) = ui.allocate_exact_size(vec2(new_w, 64.0), Sense::click());
+            let visuals = ui.style().interact(&resp);
+            ui.painter()
+                .rect_stroke(rect, 6.0, visuals.fg_stroke, egui::StrokeKind::Inside);
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                tr("✚ New database"),
+                egui::FontId::proportional(15.0),
+                visuals.text_color(),
+            );
+            if resp
+                .on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)"))
+                .clicked()
+            {
+                actions.push(LibraryAction::NewDatabase);
             }
             if self.online {
                 let (rect, resp) = ui.allocate_exact_size(vec2(online_w, 64.0), Sense::click());
@@ -722,7 +804,7 @@ impl Library {
                         &[("n", &large_db::short_count(b.games() + b.texts()))],
                     )
                 ),
-                None => trf("{n} games", &[("n", &db.len())]),
+                None => crate::i18n::games(db.len()),
             },
             Some(Slot::Loading { progress, .. }) => {
                 let p = progress.lock().map(|g| *g).unwrap_or(ScanProgress {
@@ -787,6 +869,10 @@ impl Library {
             self.select_db(path, ui.ctx());
         }
         resp.context_menu(|ui| {
+            if ui.button(tr("Show in folder")).clicked() {
+                crate::own_db::show_in_folder(path);
+                ui.close();
+            }
             if ui.button(tr("Remove from list")).clicked() {
                 actions.push(LibraryAction::RemoveDatabase(path.to_path_buf()));
                 ui.close();
@@ -867,6 +953,7 @@ impl Library {
 
         let online = crate::online::is_online(&path);
         let header = self.header(&path, &db, online);
+        let writable = self.write_block(&path).is_none();
         let view = self
             .large
             .entry(path.clone())
@@ -880,6 +967,7 @@ impl Library {
             &mut self.viewed,
             notes,
             settings,
+            writable,
             actions,
         ) {
             self.notes_open = Some(path.clone());

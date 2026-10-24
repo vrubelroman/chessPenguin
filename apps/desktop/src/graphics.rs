@@ -158,6 +158,64 @@ pub fn options(mode: Mode) -> WgpuConfiguration {
     }
 }
 
+/// The warnings of the window and graphics libraries (wgpu, eframe, winit…) go to the log
+/// and to stderr: a window that stops drawing says why there. One message repeated (a
+/// dropped frame each frame) is written once a minute with how many times it came.
+struct LibraryLog {
+    last: std::sync::Mutex<Option<(String, std::time::Instant, u32)>>,
+    /// `CP_LOG_FRAMES=1`: also how each frame reaches the screen (egui_wgpu's debug and
+    /// trace messages: a frame skipped as "occluded" is said only there).
+    frames: bool,
+}
+
+impl log::Log for LibraryLog {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Warn
+            || (self.frames && metadata.target().starts_with("egui_wgpu"))
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let text = format!("{} {}: {}", record.level(), record.target(), record.args());
+        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((prev, since, count)) = last.as_mut()
+            && *prev == text
+            && since.elapsed() < std::time::Duration::from_secs(60)
+        {
+            *count += 1;
+            return;
+        }
+        if let Some((prev, _, count)) = last.take()
+            && count > 0
+        {
+            log(&format!("{prev} (and {count} times more)"));
+        }
+        eprintln!("{text}");
+        log(&text);
+        *last = Some((text, std::time::Instant::now(), 0));
+    }
+
+    fn flush(&self) {}
+}
+
+/// Starts writing the libraries' warnings (see [`LibraryLog`]).
+pub fn init_library_log() {
+    static LOGGER: OnceLock<LibraryLog> = OnceLock::new();
+    let logger = LOGGER.get_or_init(|| LibraryLog {
+        last: std::sync::Mutex::new(None),
+        frames: std::env::var_os("CP_LOG_FRAMES").is_some(),
+    });
+    if log::set_logger(logger).is_ok() {
+        log::set_max_level(if logger.frames {
+            log::LevelFilter::Trace
+        } else {
+            log::LevelFilter::Warn
+        });
+    }
+}
+
 /// Appends a line to the log (kept under a megabyte).
 pub fn log(line: &str) {
     let Some(f) = log_file() else {

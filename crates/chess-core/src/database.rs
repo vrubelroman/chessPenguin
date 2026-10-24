@@ -1,7 +1,7 @@
-//! A read-only PGN source: original bytes, encoding, index and lazy parsing.
+//! A PGN source: original bytes, encoding, index and lazy parsing.
 //!
-//! The source file is only read, never written. Saving is a separate explicit
-//! operation of the application (write a new file from `Game::to_pgn`).
+//! Reading never writes the file. Writing a record into it is a separate explicit
+//! operation (`crate::pgn::store`), and the file is read again after it.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -75,8 +75,10 @@ impl PgnDatabase {
             path: path.to_owned(),
             source,
         };
-        let bytes = std::fs::read(path).map_err(io_err)?;
+        // The time first: a write that lands while the bytes are read is then seen as
+        // a change (the time moved on).
         let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let bytes = std::fs::read(path).map_err(io_err)?;
         let mut db = Self::from_bytes(bytes, None, progress, cancel)?;
         db.path = Some(path.to_owned());
         db.fingerprint.modified = modified;
@@ -117,6 +119,11 @@ impl PgnDatabase {
 
     pub fn entries(&self) -> &[GameEntry] {
         &self.entries
+    }
+
+    /// The file's bytes as read.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 
     /// Size of the PGN text, in bytes.

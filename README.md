@@ -37,6 +37,12 @@
   variation with one click (undoable).
 - **Editing** — enter moves and variations, promote or delete lines, undo/redo,
   copy PGN/FEN, save a game to a new file.
+- **Your own databases** — create an empty PGN database, add any game to it (a new one, a
+  pasted one, a game from a ChessBase or online database), save your changes back
+  (Ctrl+S), edit the game data (players, event, date, result, annotator), delete games with
+  Undo. Any PGN file on the shelf takes games; writes happen only when you ask, by appending
+  to the file or rewriting it atomically. Online and ChessBase databases stay read-only; a
+  file in a legacy encoding gets a UTF-8 copy.
 - **Looks** — 17 piece sets, 37 boards (flat colours and textures), 7 sound sets,
   dark and light themes.
 - **Online games** — download anyone's games from Lichess and Chess.com by nickname (yours, a pupil's, an opponent's; no login) into a database, both sites merged or one per site, and fetch the new ones with one click.
@@ -89,9 +95,9 @@ cargo run --release -p chesspenguin -- examples/classics.pgn
 
 | Where | Keys |
 | --- | --- |
-| Library | ↑/↓ select · Enter open · Ctrl+O add PGN · Ctrl+N new game · Ctrl+F search |
+| Library | ↑/↓ select · Enter open · Ctrl+O add database · Ctrl+Shift+N new database · Ctrl+N new game · Ctrl+F search · F2 game data · Ctrl+Shift+S add the game to another database · Delete delete the game (Ctrl+Z puts it back) |
 | Game | ←/→ move · ↑ end · ↓ start (also End/Home) · Shift+↑/↓ switch variation · F flip · L engine · Shift+A game analysis · Esc leave a preview, then back to the previous game or the library (unsaved edits: Esc again leaves without saving) |
-| Editing | Ctrl+Z / Ctrl+Y undo/redo · Ctrl+Shift+C copy PGN · Ctrl+S save as · Ctrl+W back to library |
+| Editing | Ctrl+Z / Ctrl+Y undo/redo · Ctrl+Shift+C copy PGN · Ctrl+S save to the game's database (or add to one) · Ctrl+Shift+S add to a database · F2 game data · Ctrl+W back to library |
 
 ## Project layout
 

@@ -133,6 +133,12 @@ pub struct Settings {
     pub install_id: String,
     /// The database of the reference tab (`None`: the largest one on the shelf).
     pub reference_db: Option<PathBuf>,
+    /// The user's name: the annotator of games they add (own-databases.md §7).
+    pub your_name: String,
+    /// Where new databases are made (`None`: Documents/ChessPenguin).
+    pub new_database_dir: Option<PathBuf>,
+    /// The database a game was last added to (preselected in the chooser).
+    pub last_target: Option<PathBuf>,
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -194,6 +200,9 @@ impl Default for Settings {
             last_version: None,
             install_id: String::new(),
             reference_db: None,
+            your_name: String::new(),
+            new_database_dir: None,
+            last_target: None,
         }
     }
 }

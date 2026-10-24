@@ -19,6 +19,7 @@ mod library;
 mod notation;
 mod online;
 mod online_ui;
+mod own_db;
 mod reference;
 mod review;
 mod san;
@@ -55,6 +56,7 @@ fn main() -> eframe::Result {
     }
     crate::i18n::set_lang(settings::Settings::load().language);
     graphics::install_panic_hook();
+    graphics::init_library_log();
     let mode = graphics::choose();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

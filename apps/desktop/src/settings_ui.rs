@@ -30,6 +30,8 @@ pub enum SettingsAction {
     EngineChanged,
     /// Ask now whether a newer version is out.
     CheckUpdates,
+    /// Choose the folder for new databases.
+    PickBaseFolder,
     /// Open the update window.
     OpenUpdate,
 }
@@ -153,6 +155,39 @@ impl SettingsWindow {
                             changed |= ui
                                 .selectable_value(&mut s.dark_mode, false, tr("Light"))
                                 .changed();
+                        });
+                        ui.add_space(12.0);
+                        ui.label(RichText::new(tr("Your databases")).strong());
+                        ui.horizontal(|ui| {
+                            ui.label(tr("Your name:"));
+                            changed |= ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut s.your_name)
+                                        .desired_width(220.0),
+                                )
+                                .changed();
+                        });
+                        ui.label(
+                            RichText::new(tr("Written as the annotator of the games you add"))
+                                .weak(),
+                        );
+                        ui.horizontal(|ui| {
+                            ui.label(tr("Folder for new databases:"));
+                            let dir =
+                                crate::own_db::default_base_dir(s.new_database_dir.as_deref());
+                            // Short, under the home folder; the whole path on hover.
+                            let home = directories::UserDirs::new()
+                                .map(|u| u.home_dir().to_path_buf());
+                            let short = match home.as_ref().and_then(|h| dir.strip_prefix(h).ok())
+                            {
+                                Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+                                None => dir.display().to_string(),
+                            };
+                            ui.label(RichText::new(short).weak())
+                                .on_hover_text(dir.display().to_string());
+                            if ui.button(tr("Change…")).clicked() {
+                                actions.push(SettingsAction::PickBaseFolder);
+                            }
                         });
                     }
                 });

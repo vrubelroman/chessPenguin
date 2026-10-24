@@ -13,7 +13,11 @@ use crate::analysis::Analysis;
 use crate::assets::Sound;
 use crate::game_view::{GameAction, GameSource, GameView};
 use crate::library::{Library, LibraryAction};
-use crate::settings::{EngineConfig, Settings, write_atomic};
+use crate::own_db::{
+    self, Answer, ChooserFor, ChooserOutcome, EditorMode, EditorOutcome, NewBaseOutcome,
+    QuestionKind,
+};
+use crate::settings::{EngineConfig, Settings};
 use crate::settings_ui::{SettingsAction, SettingsWindow, Tab};
 use crate::sound::SoundPlayer;
 
@@ -23,6 +27,118 @@ enum Async {
     SavePicked(PathBuf),
     SaveCancelled,
     EngineChecked(Result<(PathBuf, String), String>),
+    /// The folder for new databases (`None`: the dialog was cancelled).
+    FolderPicked(Option<PathBuf>),
+}
+
+/// A passing message at the bottom; `undo`: with the button that puts a deleted game back.
+struct Toast {
+    text: String,
+    until: f64,
+    undo: bool,
+}
+
+/// The dialogs and the pending steps of the user's own databases (own_db.rs).
+#[derive(Default)]
+struct Own {
+    new_base: Option<own_db::NewBaseDialog>,
+    chooser: Option<own_db::Chooser>,
+    editor: Option<(own_db::DataEditor, EditorThen)>,
+    question: Option<(own_db::Question, QuestionThen)>,
+    /// The advice about a big database was given this session.
+    big_advised: std::collections::HashSet<PathBuf>,
+    /// Waits for its database to be read.
+    pending: Option<Pending>,
+    /// A deleted record that can be put back (the toast's Undo, Ctrl+Z).
+    undo: Option<UndoDelete>,
+    /// Leaving the game once it is saved or added (the question about unsaved edits led
+    /// to the save or the chooser).
+    then_close: Option<CloseIntent>,
+}
+
+enum EditorThen {
+    Done,
+    Add(PathBuf),
+}
+
+enum QuestionThen {
+    Duplicate {
+        target: PathBuf,
+        index: usize,
+    },
+    /// A record of a table is already in the target (record `at`).
+    DuplicateRecord {
+        from: PathBuf,
+        index: usize,
+        target: PathBuf,
+        at: usize,
+    },
+    Delete {
+        path: PathBuf,
+        index: usize,
+    },
+    Utf8Copy {
+        path: PathBuf,
+        dest: PathBuf,
+        purpose: ChooserFor,
+    },
+    /// The write failed: the same write again.
+    Retry(Retry),
+    /// The file changed on the disk: the game can only go in as a new record.
+    Changed(Retry),
+    BigBase,
+}
+
+/// A step that waits for a database to be read (it was just created, reloaded after a
+/// write, or not opened yet).
+enum Pending {
+    AddCurrent(PathBuf),
+    AppendRecord {
+        from: PathBuf,
+        index: usize,
+        target: PathBuf,
+    },
+    Replace,
+    Undo,
+}
+
+impl Pending {
+    fn path(&self, game: Option<&GameView>, undo: Option<&UndoDelete>) -> Option<PathBuf> {
+        match self {
+            Pending::AddCurrent(p) => Some(p.clone()),
+            Pending::AppendRecord { target, .. } => Some(target.clone()),
+            Pending::Replace => game.and_then(|g| g.source.as_ref()).map(|s| s.path.clone()),
+            Pending::Undo => undo.map(|u| u.path.clone()),
+        }
+    }
+}
+
+/// What to do again after a failed write.
+#[derive(Clone)]
+enum Retry {
+    Replace,
+    /// The duplicate's record in `target` is replaced.
+    ReplaceIn {
+        target: PathBuf,
+        index: usize,
+    },
+    Append(PathBuf),
+    AppendRecord {
+        from: PathBuf,
+        index: usize,
+        target: PathBuf,
+    },
+    Delete {
+        path: PathBuf,
+        index: usize,
+    },
+}
+
+struct UndoDelete {
+    path: PathBuf,
+    removed: chess_core::pgn::store::Removed,
+    /// The open game was this record: it gets its source back with the record.
+    open: Option<GameSource>,
 }
 
 /// The id of the toast: a passing message, never in the way of the keyboard.
@@ -51,7 +167,7 @@ pub fn overlay_open_besides(ctx: &egui::Context, own: &[egui::Id]) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum CloseIntent {
+pub enum CloseIntent {
     BackToLibrary,
     QuitApp,
     /// Back to the game this one was opened from (reference tab).
@@ -68,7 +184,8 @@ pub struct App {
     /// The live engine was stopped for a whole-game analysis and resumes after it.
     live_paused: bool,
     settings_ui: SettingsWindow,
-    toast: Option<(String, f64)>,
+    toast: Option<Toast>,
+    own: Own,
     tx: Sender<Async>,
     rx: Receiver<Async>,
     confirm_close: Option<CloseIntent>,
@@ -106,7 +223,7 @@ pub struct App {
 /// `CP_OPEN=<game index>` opens a game from the first database, `CP_PLY=<n>` steps
 /// along the main line, `CP_ANALYZE=1` starts the engine, `CP_SETTINGS=1` opens settings (`=board`, `=about`: that tab),
 /// `CP_REVIEW=1` starts the whole-game analysis (`=dialog` only opens its dialog),
-/// `CP_KEYS="ArrowDown Shift+ArrowUp Escape"` presses these keys, one every half second
+/// `CP_KEYS="ArrowDown Shift+ArrowUp Ctrl+Z Escape"` presses these keys, one every half second
 /// from the second second.
 #[derive(Default)]
 struct DebugStartup {
@@ -119,6 +236,10 @@ struct DebugStartup {
     screenshot_delay: f64,
     screenshot_requested: bool,
     open_settings: bool,
+    /// `CP_OWN=new|chooser|data|save|delete`: that dialog of the own databases
+    /// (own_db.rs) after a short delay; `delete` and `chooser` without a game: the
+    /// record `CP_OPEN` (default 0) of the first database.
+    own: Option<String>,
     keys: std::collections::VecDeque<(Modifiers, Key)>,
     next_key: f64,
 }
@@ -137,15 +258,26 @@ impl DebugStartup {
                 .unwrap_or(4.0),
             screenshot_requested: false,
             open_settings: false,
+            own: std::env::var("CP_OWN").ok(),
             keys: std::env::var("CP_KEYS")
                 .unwrap_or_default()
                 .split_whitespace()
                 .filter_map(|k| {
-                    let (shift, name) = match k.strip_prefix("Shift+") {
-                        Some(name) => (Modifiers::SHIFT, name),
-                        None => (Modifiers::NONE, k),
-                    };
-                    Key::from_name(name).map(|key| (shift, key))
+                    // "Shift+ArrowUp", "Ctrl+Z", "Ctrl+Shift+S".
+                    let mut mods = Modifiers::NONE;
+                    let mut name = k;
+                    loop {
+                        if let Some(rest) = name.strip_prefix("Shift+") {
+                            mods |= Modifiers::SHIFT;
+                            name = rest;
+                        } else if let Some(rest) = name.strip_prefix("Ctrl+") {
+                            mods |= Modifiers::COMMAND;
+                            name = rest;
+                        } else {
+                            break;
+                        }
+                    }
+                    Key::from_name(name).map(|key| (mods, key))
                 })
                 .collect(),
             next_key: 2.0,
@@ -207,6 +339,7 @@ impl App {
             live_paused: false,
             settings_ui: SettingsWindow::new(),
             toast: None,
+            own: Own::default(),
             tx,
             rx,
             confirm_close: None,
@@ -249,6 +382,7 @@ impl App {
             self.debug.open_settings = true;
             match tab.as_str() {
                 "board" => self.settings_ui.tab = Tab::Board,
+                "interface" => self.settings_ui.tab = Tab::Interface,
                 "about" => self.settings_ui.tab = Tab::About,
                 "translation" => self.settings_ui.tab = Tab::Translation,
                 _ => {}
@@ -289,6 +423,28 @@ impl App {
         if self.debug.open_settings && ctx.input(|i| i.time) > 1.5 {
             self.debug.open_settings = false;
             self.settings_ui.open = true;
+        }
+        if self.debug.own.is_some() && ctx.input(|i| i.time) > 1.5 {
+            let what = self.debug.own.take().unwrap_or_default();
+            // `CP_PASTE=<pgn text>`: this game is open first (a game from no database).
+            if let Ok(text) = std::env::var("CP_PASTE") {
+                self.open_pgn_text(ctx, text, false);
+            }
+            let first = self.settings.databases.first().cloned();
+            let index = self.debug.open.unwrap_or(0);
+            match (what.as_str(), first) {
+                ("new", _) => self.new_base_dialog(own_db::AfterCreate::Shelf),
+                ("chooser", _) if self.game.is_some() => {
+                    self.open_chooser(ctx, ChooserFor::CurrentGame)
+                }
+                ("chooser", Some(path)) => {
+                    self.open_chooser(ctx, ChooserFor::Record { path, index })
+                }
+                ("data", _) => self.edit_game_data(),
+                ("save", _) => self.save_current(ctx, None),
+                ("delete", Some(path)) => self.delete_game(ctx, path, index),
+                _ => {}
+            }
         }
         let Some(path) = self.debug.screenshot.clone() else {
             return;
@@ -336,6 +492,11 @@ impl App {
         self.open_game(ctx, path, index, None);
         if let Some(g) = &mut self.game {
             g.debug_advance(self.debug.ply);
+            // `CP_COMMENT=text`: a comment on the move reached, so the game counts as
+            // modified (to try saving it).
+            if let Ok(text) = std::env::var("CP_COMMENT") {
+                g.debug_comment(&text);
+            }
             if std::env::var("CP_ENGINE_PANEL").is_ok() {
                 g.debug_open_engine_settings();
             }
@@ -356,7 +517,929 @@ impl App {
     }
 
     fn toast(&mut self, ctx: &egui::Context, msg: impl Into<String>) {
-        self.toast = Some((msg.into(), ctx.input(|i| i.time) + 3.5));
+        self.toast = Some(Toast {
+            text: msg.into(),
+            until: ctx.input(|i| i.time) + 3.5,
+            undo: false,
+        });
+    }
+
+    // ----- own databases (docs/design/own-databases.md) --------------------------------
+
+    /// The game on the screen, when there is one.
+    fn game_view(&mut self) -> Option<&mut GameView> {
+        self.game.as_mut()
+    }
+
+    /// Ctrl+S: a game from a PGN that takes games is saved back into it; any other game
+    /// is added to a database of the user's choice.
+    fn save_current(&mut self, ctx: &egui::Context, then_close: Option<CloseIntent>) {
+        let Some(g) = &self.game else { return };
+        self.own.then_close = then_close;
+        match &g.source {
+            Some(src) if src.block.is_none() => {
+                if !g.game.is_modified() {
+                    self.toast(ctx, tr("No changes to save"));
+                    self.finish_then_close(ctx);
+                    return;
+                }
+                let path = src.path.clone();
+                let bytes = self.library.file_size(&path);
+                if bytes > own_db::BIG_REWRITE_BYTES && !self.own.big_advised.contains(&path) {
+                    self.own.big_advised.insert(path.clone());
+                    self.ask(QuestionKind::BigBase { path, bytes }, QuestionThen::BigBase);
+                    return;
+                }
+                self.replace_current(ctx);
+            }
+            _ => self.open_chooser(ctx, ChooserFor::CurrentGame),
+        }
+    }
+
+    /// Writes the game over its record in its own PGN.
+    fn replace_current(&mut self, ctx: &egui::Context) {
+        let Some(g) = &self.game else { return };
+        let Some(src) = g.source.clone() else { return };
+        let Some(db) = self.library.database(&src.path) else {
+            self.wait_for(ctx, &src.path, Pending::Replace);
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        let text = g.game.to_pgn();
+        match chess_core::pgn::store::replace(pgn, src.index, &text) {
+            Ok(()) => {
+                let name = own_db::base_name(&src.path);
+                if let Some(g) = self.game.as_mut() {
+                    g.game.mark_saved();
+                }
+                self.after_written(
+                    ctx,
+                    &src.path,
+                    src.index,
+                    trf("Saved to «{name}»", &[("name", &name)]),
+                );
+            }
+            Err(e) => self.write_failed(ctx, &src.path, e, Retry::Replace, false),
+        }
+    }
+
+    /// The shelf for the chooser: each database with its count and what blocks it.
+    fn chooser_rows(&self) -> Vec<own_db::ChooserRow> {
+        self.settings
+            .databases
+            .iter()
+            .map(|p| own_db::ChooserRow {
+                path: p.clone(),
+                name: own_db::base_name(p),
+                games: self.library.database(p).map(|d| d.len()),
+                block: self.library.write_block(p),
+            })
+            .collect()
+    }
+
+    /// The list of databases to add a game to.
+    fn open_chooser(&mut self, ctx: &egui::Context, purpose: ChooserFor) {
+        let rows = self.chooser_rows();
+        let title = match &purpose {
+            ChooserFor::CurrentGame => self.game.as_ref().map(|g| g.title()).unwrap_or_default(),
+            ChooserFor::Record { path, index } => self
+                .library
+                .database(path)
+                .and_then(|db| db.load_game(*index))
+                .map(|p| GameView::new(p.game, None, Vec::new()).title())
+                .unwrap_or_default(),
+        };
+        let source = self
+            .game
+            .as_ref()
+            .and_then(|g| g.source.as_ref())
+            .map(|s| s.path.clone());
+        let preselect = self.settings.last_target.clone().or(source);
+        // Databases not read yet are read now, for their counts and encodings.
+        for p in self.settings.databases.clone() {
+            if self.library.database(&p).is_none() && p.exists() {
+                self.library.load(&p, ctx);
+            }
+        }
+        self.own.chooser = Some(own_db::Chooser::new(
+            rows,
+            preselect.as_deref(),
+            purpose,
+            title,
+        ));
+    }
+
+    fn ask(&mut self, kind: QuestionKind, then: QuestionThen) {
+        self.own.question = Some((own_db::Question { kind }, then));
+    }
+
+    /// The game on the screen goes to `target`: its data are asked once for a game that
+    /// is in no database yet, then the duplicate check, then the write.
+    fn add_current_to(&mut self, ctx: &egui::Context, target: PathBuf) {
+        let Some(g) = &self.game else { return };
+        if g.source.is_none() && !g.data_asked {
+            let editor = own_db::DataEditor::from_game(
+                &g.game,
+                &self.settings.your_name,
+                EditorMode::Add(target.clone()),
+            );
+            self.own.editor = Some((editor, EditorThen::Add(target)));
+            return;
+        }
+        self.add_current_now(ctx, target);
+    }
+
+    fn add_current_now(&mut self, ctx: &egui::Context, target: PathBuf) {
+        let Some(g) = &self.game else { return };
+        let Some(db) = self.library.database(&target) else {
+            self.wait_for(ctx, &target, Pending::AddCurrent(target.clone()));
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        if let Some(index) = chess_core::pgn::store::find_same_game(pgn, &g.game) {
+            let title = g.title();
+            self.ask(
+                QuestionKind::Duplicate {
+                    target: target.clone(),
+                    index,
+                    title,
+                },
+                QuestionThen::Duplicate { target, index },
+            );
+            return;
+        }
+        self.append_current(ctx, target);
+    }
+
+    /// The PGN text of the game on the screen: the original record when it is an
+    /// unchanged game of a PGN file, else written anew. A source whose letters are
+    /// restored on reading (ч/ю written as `~~`/`o^`) is written anew too: the copy
+    /// gets the restored text.
+    fn current_pgn(&self) -> Option<String> {
+        let g = self.game.as_ref()?;
+        if !g.game.is_modified()
+            && let Some(src) = &g.source
+            && let Some(db) = self.library.database(&src.path)
+            && let Some(pgn) = db.as_pgn()
+            && !pgn.repair_letters_enabled()
+            && let Some(text) = db.raw_text(src.index)
+        {
+            return Some(text);
+        }
+        Some(g.game.to_pgn())
+    }
+
+    /// The PGN text of record `index` of a database, as `current_pgn` would give it.
+    fn record_pgn(&self, from: &std::path::Path, index: usize) -> Option<String> {
+        let db = self.library.database(from)?;
+        match db.as_pgn() {
+            Some(pgn) if !pgn.repair_letters_enabled() => db.raw_text(index),
+            _ => db.load_game(index).map(|p| p.game.to_pgn()),
+        }
+    }
+
+    fn append_current(&mut self, ctx: &egui::Context, target: PathBuf) {
+        let Some(text) = self.current_pgn() else {
+            return;
+        };
+        let Some(db) = self.library.database(&target) else {
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        match chess_core::pgn::store::append(pgn, &text) {
+            Ok(_) => {
+                let index = pgn.len();
+                let name = own_db::base_name(&target);
+                if let Some(g) = self.game.as_mut() {
+                    g.source = Some(GameSource {
+                        path: target.clone(),
+                        index,
+                        block: None,
+                    });
+                    g.game.mark_saved();
+                }
+                self.settings.last_target = Some(target.clone());
+                self.settings_dirty = true;
+                self.after_written(
+                    ctx,
+                    &target,
+                    index,
+                    trf(
+                        "Added to «{name}» (No. {n})",
+                        &[("name", &name), ("n", &(index + 1))],
+                    ),
+                );
+            }
+            Err(e) => self.write_failed(ctx, &target, e, Retry::Append(target.clone()), false),
+        }
+    }
+
+    /// The game on the screen replaces record `index` of `target` (a duplicate).
+    fn replace_in(&mut self, ctx: &egui::Context, target: PathBuf, index: usize) {
+        let Some(text) = self.current_pgn() else {
+            return;
+        };
+        let Some(db) = self.library.database(&target) else {
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        match chess_core::pgn::store::replace(pgn, index, &text) {
+            Ok(()) => {
+                let name = own_db::base_name(&target);
+                if let Some(g) = self.game.as_mut() {
+                    g.source = Some(GameSource {
+                        path: target.clone(),
+                        index,
+                        block: None,
+                    });
+                    g.game.mark_saved();
+                }
+                self.settings.last_target = Some(target.clone());
+                self.settings_dirty = true;
+                self.after_written(
+                    ctx,
+                    &target,
+                    index,
+                    trf(
+                        "Saved to «{name}» (No. {n})",
+                        &[("name", &name), ("n", &(index + 1))],
+                    ),
+                );
+            }
+            Err(e) => self.write_failed(
+                ctx,
+                &target,
+                e,
+                Retry::ReplaceIn {
+                    target: target.clone(),
+                    index,
+                },
+                false,
+            ),
+        }
+    }
+
+    /// A record of a table goes into `target`: the duplicate check first.
+    fn append_record(&mut self, ctx: &egui::Context, from: PathBuf, index: usize, target: PathBuf) {
+        let Some(db) = self.library.database(&target) else {
+            self.wait_for(
+                ctx,
+                &target,
+                Pending::AppendRecord {
+                    from,
+                    index,
+                    target: target.clone(),
+                },
+            );
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        let Some(parsed) = self
+            .library
+            .database(&from)
+            .and_then(|d| d.load_game(index))
+        else {
+            self.toast(ctx, tr("Could not read the game"));
+            return;
+        };
+        if let Some(at) = chess_core::pgn::store::find_same_game(pgn, &parsed.game) {
+            let title = GameView::new(parsed.game, None, Vec::new()).title();
+            self.ask(
+                QuestionKind::Duplicate {
+                    target: target.clone(),
+                    index: at,
+                    title,
+                },
+                QuestionThen::DuplicateRecord {
+                    from,
+                    index,
+                    target,
+                    at,
+                },
+            );
+            return;
+        }
+        self.append_record_now(ctx, from, index, target);
+    }
+
+    fn append_record_now(
+        &mut self,
+        ctx: &egui::Context,
+        from: PathBuf,
+        index: usize,
+        target: PathBuf,
+    ) {
+        let Some(text) = self.record_pgn(&from, index) else {
+            self.toast(ctx, tr("Could not read the game"));
+            return;
+        };
+        let Some(db) = self.library.database(&target) else {
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        match chess_core::pgn::store::append(pgn, &text) {
+            Ok(_) => {
+                let n = pgn.len();
+                let name = own_db::base_name(&target);
+                self.settings.last_target = Some(target.clone());
+                self.settings_dirty = true;
+                self.library.reload(&target, ctx);
+                self.toast(
+                    ctx,
+                    trf(
+                        "Added to «{name}» (No. {n})",
+                        &[("name", &name), ("n", &(n + 1))],
+                    ),
+                );
+            }
+            Err(e) => self.write_failed(
+                ctx,
+                &target,
+                e,
+                Retry::AppendRecord {
+                    from,
+                    index,
+                    target: target.clone(),
+                },
+                false,
+            ),
+        }
+    }
+
+    /// A record of a table replaces record `at` of `target` (its duplicate).
+    fn replace_record(
+        &mut self,
+        ctx: &egui::Context,
+        from: PathBuf,
+        index: usize,
+        target: PathBuf,
+        at: usize,
+    ) {
+        let Some(text) = self.record_pgn(&from, index) else {
+            self.toast(ctx, tr("Could not read the game"));
+            return;
+        };
+        let Some(db) = self.library.database(&target) else {
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        match chess_core::pgn::store::replace(pgn, at, &text) {
+            Ok(()) => {
+                let name = own_db::base_name(&target);
+                self.settings.last_target = Some(target.clone());
+                self.settings_dirty = true;
+                self.library.reload(&target, ctx);
+                self.toast(
+                    ctx,
+                    trf(
+                        "Saved to «{name}» (No. {n})",
+                        &[("name", &name), ("n", &(at + 1))],
+                    ),
+                );
+            }
+            Err(e) => self.write_failed(
+                ctx,
+                &target,
+                e,
+                Retry::ReplaceIn {
+                    target: target.clone(),
+                    index: at,
+                },
+                false,
+            ),
+        }
+    }
+
+    /// A step that needs the database read: it runs once the file is in (`run_pending`).
+    fn wait_for(&mut self, ctx: &egui::Context, path: &std::path::Path, step: Pending) {
+        if !self.library.loading(path) && self.library.database(path).is_none() {
+            self.library.load(path, ctx);
+        }
+        self.own.pending = Some(step);
+    }
+
+    /// The database a step waits for is read: the step runs. Could not be read: said.
+    fn run_pending(&mut self, ctx: &egui::Context) {
+        let Some(step) = self.own.pending.as_ref() else {
+            return;
+        };
+        let Some(path) = step.path(self.game.as_ref(), self.own.undo.as_ref()) else {
+            self.own.pending = None;
+            return;
+        };
+        if self.library.database(&path).is_some() {
+            match self.own.pending.take().expect("pending") {
+                Pending::AddCurrent(target) => self.add_current_to(ctx, target),
+                Pending::AppendRecord {
+                    from,
+                    index,
+                    target,
+                } => self.append_record(ctx, from, index, target),
+                Pending::Replace => self.replace_current(ctx),
+                Pending::Undo => self.undo_delete(ctx),
+            }
+        } else if !self.library.loading(&path) {
+            self.own.pending = None;
+            let why = self.library.failure(&path).unwrap_or("?").to_owned();
+            self.toast(ctx, trf("Could not read the database: {e}", &[("e", &why)]));
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    /// The file is written: the library reads it again and shows the record.
+    fn after_written(
+        &mut self,
+        ctx: &egui::Context,
+        path: &std::path::Path,
+        index: usize,
+        msg: String,
+    ) {
+        self.library.reload(path, ctx);
+        self.library.reveal(path, index);
+        self.toast(ctx, msg);
+        self.finish_then_close(ctx);
+    }
+
+    fn finish_then_close(&mut self, ctx: &egui::Context) {
+        if let Some(intent) = self.own.then_close.take() {
+            self.finish_close(ctx, intent);
+        }
+    }
+
+    fn write_failed(
+        &mut self,
+        ctx: &egui::Context,
+        path: &std::path::Path,
+        e: chess_core::pgn::store::WriteError,
+        retry: Retry,
+        deleting: bool,
+    ) {
+        use chess_core::pgn::store::WriteError;
+        match e {
+            WriteError::Changed => {
+                self.library.reload(path, ctx);
+                self.ask(
+                    QuestionKind::ChangedOnDisk {
+                        path: path.to_path_buf(),
+                        deleting,
+                    },
+                    QuestionThen::Changed(retry),
+                );
+            }
+            e => self.ask(
+                QuestionKind::WriteFailed {
+                    path: path.to_path_buf(),
+                    error: e.to_string(),
+                    deleting,
+                },
+                QuestionThen::Retry(retry),
+            ),
+        }
+    }
+
+    fn retry(&mut self, ctx: &egui::Context, retry: Retry) {
+        match retry {
+            Retry::Replace => self.replace_current(ctx),
+            Retry::ReplaceIn { target, index } => self.replace_in(ctx, target, index),
+            Retry::Append(target) => self.append_current(ctx, target),
+            Retry::AppendRecord {
+                from,
+                index,
+                target,
+            } => self.append_record(ctx, from, index, target),
+            Retry::Delete { path, index } => self.delete_now(ctx, path, index),
+        }
+    }
+
+    fn delete_game(&mut self, ctx: &egui::Context, path: PathBuf, index: usize) {
+        if let Some(block) = self.library.write_block(&path) {
+            self.toast(ctx, block.long());
+            return;
+        }
+        let title = self
+            .library
+            .database(&path)
+            .and_then(|db| db.load_game(index))
+            .map(|p| GameView::new(p.game, None, Vec::new()).title())
+            .unwrap_or_default();
+        self.ask(
+            QuestionKind::Delete {
+                path: path.clone(),
+                index,
+                title,
+            },
+            QuestionThen::Delete { path, index },
+        );
+    }
+
+    fn delete_now(&mut self, ctx: &egui::Context, path: PathBuf, index: usize) {
+        let Some(db) = self.library.database(&path) else {
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        match chess_core::pgn::store::remove(pgn, index) {
+            Ok(removed) => {
+                // Games open from this file: their records moved up by one.
+                let mut open = None;
+                for g in self.game.iter_mut().chain(self.previous_games.iter_mut()) {
+                    if let Some(s) = &mut g.source
+                        && s.path == path
+                    {
+                        if s.index == index {
+                            open = g.source.take();
+                        } else if s.index > index {
+                            s.index -= 1;
+                        }
+                    }
+                }
+                self.own.undo = Some(UndoDelete {
+                    path: path.clone(),
+                    removed,
+                    open,
+                });
+                self.library.reload(&path, ctx);
+                self.library.reveal(&path, index);
+                self.toast = Some(Toast {
+                    text: trf(
+                        "Deleted from «{name}»",
+                        &[("name", &own_db::base_name(&path))],
+                    ),
+                    until: ctx.input(|i| i.time) + 6.0,
+                    undo: true,
+                });
+            }
+            Err(e) => self.write_failed(
+                ctx,
+                &path,
+                e,
+                Retry::Delete {
+                    path: path.clone(),
+                    index,
+                },
+                true,
+            ),
+        }
+    }
+
+    /// Puts the last deleted record back (the toast's Undo, Ctrl+Z on the library).
+    fn undo_delete(&mut self, ctx: &egui::Context) {
+        let Some(undo) = self.own.undo.take() else {
+            return;
+        };
+        let Some(db) = self.library.database(&undo.path) else {
+            // The file is still being read after the delete: as soon as it is in.
+            let path = undo.path.clone();
+            self.own.undo = Some(undo);
+            self.wait_for(ctx, &path, Pending::Undo);
+            return;
+        };
+        let Some(pgn) = db.as_pgn() else { return };
+        match chess_core::pgn::store::restore(pgn, &undo.removed) {
+            Ok(()) => {
+                let index = undo.removed.index;
+                for g in self.game.iter_mut().chain(self.previous_games.iter_mut()) {
+                    if let Some(s) = &mut g.source
+                        && s.path == undo.path
+                        && s.index >= index
+                    {
+                        s.index += 1;
+                    }
+                }
+                // The open game was the deleted record: it is that record again.
+                if let Some(src) = undo.open
+                    && let Some(g) = self.game.as_mut()
+                    && g.source.is_none()
+                {
+                    g.source = Some(src);
+                }
+                self.library.reload(&undo.path, ctx);
+                self.library.reveal(&undo.path, index);
+                self.toast(ctx, tr("The game is back"));
+            }
+            Err(e) => self.toast(ctx, trf("Could not put the game back: {e}", &[("e", &e)])),
+        }
+    }
+
+    fn new_base_dialog(&mut self, after: own_db::AfterCreate) {
+        let dir = own_db::default_base_dir(self.settings.new_database_dir.as_deref());
+        self.own.new_base = Some(own_db::NewBaseDialog::new(dir, after));
+    }
+
+    /// Makes the empty file and puts it on the shelf, selected and as the database the
+    /// next game goes to.
+    fn create_base(&mut self, ctx: &egui::Context, path: PathBuf) -> Result<(), String> {
+        path.parent()
+            .map(std::fs::create_dir_all)
+            .unwrap_or(Ok(()))
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+            })
+            .and_then(|f| f.sync_all())
+            .map_err(|e| trf("Could not create the file: {e}", &[("e", &e)]))?;
+        self.settings.touch_database(&path);
+        self.settings.last_target = Some(path.clone());
+        self.settings_dirty = true;
+        self.library.select_db(&path, ctx);
+        Ok(())
+    }
+
+    /// A new game to enter, with today's date (it is probably being played or entered
+    /// now).
+    fn new_game(&mut self) {
+        let mut g = Game::new();
+        g.set_tag("Date", &chrono::Local::now().format("%Y.%m.%d").to_string());
+        g.mark_saved();
+        self.game = Some(GameView::new(g, None, Vec::new()));
+    }
+
+    /// The game's data for editing (F2, the title, the menu).
+    fn edit_game_data(&mut self) {
+        let Some(g) = &self.game else { return };
+        let editor =
+            own_db::DataEditor::from_game(&g.game, &self.settings.your_name, EditorMode::Done);
+        self.own.editor = Some((editor, EditorThen::Done));
+    }
+
+    fn pick_folder(&self, ctx: &egui::Context, start: PathBuf) {
+        self.spawn_dialog(ctx, move || {
+            let picked = rfd::FileDialog::new()
+                .set_title(tr("Folder for new databases"))
+                .set_directory(start)
+                .pick_folder();
+            Some(Async::FolderPicked(picked))
+        });
+    }
+
+    /// Draws the dialog that is open and acts on what was chosen.
+    fn own_dialogs(&mut self, ctx: &egui::Context) {
+        self.run_pending(ctx);
+        if let Some((q, _)) = self.own.question.as_mut()
+            && let Some(answer) = q.show(ctx)
+        {
+            let (_, then) = self.own.question.take().expect("question");
+            match (then, answer) {
+                (QuestionThen::Duplicate { target, index }, Answer::Primary) => {
+                    self.replace_in(ctx, target, index)
+                }
+                (QuestionThen::Duplicate { target, .. }, Answer::Secondary) => {
+                    self.append_current(ctx, target)
+                }
+                (
+                    QuestionThen::DuplicateRecord {
+                        from,
+                        index,
+                        target,
+                        at,
+                    },
+                    Answer::Primary,
+                ) => self.replace_record(ctx, from, index, target, at),
+                (
+                    QuestionThen::DuplicateRecord {
+                        from,
+                        index,
+                        target,
+                        ..
+                    },
+                    Answer::Secondary,
+                ) => self.append_record_now(ctx, from, index, target),
+                (QuestionThen::Delete { path, index }, Answer::Primary) => {
+                    self.delete_now(ctx, path, index)
+                }
+                (
+                    QuestionThen::Utf8Copy {
+                        path,
+                        dest,
+                        purpose,
+                    },
+                    Answer::Primary,
+                ) => {
+                    let Some(db) = self.library.database(&path) else {
+                        return;
+                    };
+                    let Some(pgn) = db.as_pgn() else { return };
+                    match chess_core::pgn::store::write_utf8_copy(pgn, &dest) {
+                        Ok(()) => {
+                            // The copy goes on the shelf right after the original.
+                            let at = self
+                                .settings
+                                .databases
+                                .iter()
+                                .position(|p| *p == path)
+                                .map_or(0, |i| i + 1);
+                            self.settings.databases.retain(|p| *p != dest);
+                            self.settings
+                                .databases
+                                .insert(at.min(self.settings.databases.len()), dest.clone());
+                            // The copy is the one to add to: chosen in the list, which
+                            // comes back for the same game or record.
+                            self.settings.last_target = Some(dest.clone());
+                            self.settings_dirty = true;
+                            self.library.load(&dest, ctx);
+                            self.toast(ctx, trf("Copy made: {path}", &[("path", &dest.display())]));
+                            self.own.chooser = None;
+                            self.open_chooser(ctx, purpose);
+                        }
+                        Err(e) => {
+                            self.toast(ctx, trf("Could not make the copy: {e}", &[("e", &e)]))
+                        }
+                    }
+                }
+                (QuestionThen::Retry(retry), Answer::Primary) => self.retry(ctx, retry),
+                (QuestionThen::Retry(_), Answer::Secondary) => {
+                    self.open_chooser(ctx, ChooserFor::CurrentGame)
+                }
+                // After a change on the disk a record cannot be replaced: the game goes
+                // in as a new one ("Add as new"); a delete is only reread ("Reread").
+                (QuestionThen::Changed(retry), Answer::Primary) => match retry {
+                    Retry::Replace => {
+                        if let Some(src) = self.game.as_ref().and_then(|g| g.source.clone()) {
+                            self.append_current(ctx, src.path);
+                        }
+                    }
+                    Retry::ReplaceIn { target, .. } | Retry::Append(target) => {
+                        self.append_current(ctx, target)
+                    }
+                    Retry::AppendRecord {
+                        from,
+                        index,
+                        target,
+                    } => self.append_record(ctx, from, index, target),
+                    Retry::Delete { .. } => {}
+                },
+                (QuestionThen::Changed(_), Answer::Secondary) => {}
+                (QuestionThen::BigBase, Answer::Primary) => self.replace_current(ctx),
+                (QuestionThen::BigBase, Answer::Secondary) => {
+                    self.open_chooser(ctx, ChooserFor::CurrentGame)
+                }
+                (_, Answer::Cancel)
+                | (QuestionThen::Delete { .. }, _)
+                | (QuestionThen::Utf8Copy { .. }, _) => {
+                    if let Some(intent) = self.own.then_close.take() {
+                        self.confirm_close = Some(intent);
+                    }
+                }
+            }
+            return;
+        }
+        if let Some((editor, _)) = self.own.editor.as_mut()
+            && let Some(outcome) = editor.show(ctx)
+        {
+            let (editor, then) = self.own.editor.take().expect("editor");
+            match (outcome, then) {
+                (EditorOutcome::Done, EditorThen::Done) => {
+                    if let Some(g) = self.game_view() {
+                        editor.apply(&mut g.game);
+                    }
+                }
+                (EditorOutcome::Done, EditorThen::Add(target)) => {
+                    if let Some(g) = self.game_view() {
+                        editor.apply(&mut g.game);
+                        g.data_asked = true;
+                    }
+                    self.add_current_now(ctx, target);
+                }
+                (EditorOutcome::Cancel, EditorThen::Add(_)) => {
+                    if let Some(intent) = self.own.then_close.take() {
+                        self.confirm_close = Some(intent);
+                    }
+                }
+                (EditorOutcome::Cancel, EditorThen::Done) => {}
+            }
+            return;
+        }
+        if self.own.chooser.is_some() {
+            let rows = self.chooser_rows();
+            if let Some(c) = self.own.chooser.as_mut() {
+                c.refresh(rows);
+            }
+        }
+        if let Some(chooser) = self.own.chooser.as_mut()
+            && let Some(outcome) = chooser.show(ctx)
+        {
+            let chooser = self.own.chooser.take().expect("chooser");
+            match outcome {
+                ChooserOutcome::Pick(target) => match chooser.purpose {
+                    ChooserFor::CurrentGame => self.add_current_to(ctx, target),
+                    ChooserFor::Record { path, index } => {
+                        self.append_record(ctx, path, index, target)
+                    }
+                },
+                ChooserOutcome::NewBase => {
+                    let after = match chooser.purpose {
+                        ChooserFor::CurrentGame => own_db::AfterCreate::AddGame,
+                        ChooserFor::Record { path, index } => {
+                            own_db::AfterCreate::AddRecord { path, index }
+                        }
+                    };
+                    self.new_base_dialog(after);
+                }
+                ChooserOutcome::SaveAsFile => {
+                    self.close_after_save = self.own.then_close.take();
+                    self.pick_save(ctx);
+                }
+                ChooserOutcome::Utf8Copy(path) => {
+                    let encoding = match self.library.write_block(&path) {
+                        Some(own_db::Block::Encoding(e)) => e,
+                        _ => "?",
+                    };
+                    // "X (UTF-8).pgn", or "X (UTF-8 2).pgn" when that is taken.
+                    let stem = own_db::base_name(&path);
+                    let dest = (1..)
+                        .map(|k| {
+                            let n = if k == 1 {
+                                String::new()
+                            } else {
+                                format!(" {k}")
+                            };
+                            path.with_file_name(format!("{stem} (UTF-8{n}).pgn"))
+                        })
+                        .find(|p| !p.exists())
+                        .expect("a free name");
+                    let purpose = chooser.purpose.clone();
+                    self.own.chooser = Some(chooser);
+                    self.ask(
+                        QuestionKind::Utf8Copy {
+                            path: path.clone(),
+                            dest: dest.clone(),
+                            encoding,
+                        },
+                        QuestionThen::Utf8Copy {
+                            path,
+                            dest,
+                            purpose,
+                        },
+                    );
+                }
+                ChooserOutcome::Cancel => {
+                    if let Some(intent) = self.own.then_close.take() {
+                        self.confirm_close = Some(intent);
+                    }
+                }
+            }
+            return;
+        }
+        if let Some(dialog) = self.own.new_base.as_mut()
+            && let Some(outcome) = dialog.show(ctx)
+        {
+            match outcome {
+                NewBaseOutcome::PickFolder => {
+                    let start = dialog.dir.clone();
+                    self.pick_folder(ctx, start);
+                }
+                NewBaseOutcome::Cancel => {
+                    self.own.new_base = None;
+                    if let Some(intent) = self.own.then_close.take() {
+                        self.confirm_close = Some(intent);
+                    }
+                }
+                NewBaseOutcome::Create(_) | NewBaseOutcome::AddExisting(_) => {
+                    let (create, path) = match outcome {
+                        NewBaseOutcome::Create(p) => (true, p),
+                        NewBaseOutcome::AddExisting(p) => (false, p),
+                        _ => unreachable!(),
+                    };
+                    let made = if create {
+                        self.create_base(ctx, path.clone())
+                    } else {
+                        self.settings.touch_database(&path);
+                        self.settings_dirty = true;
+                        self.library.select_db(&path, ctx);
+                        Ok(())
+                    };
+                    match made {
+                        // The dialog stays, with the reason, and the name typed.
+                        Err(e) => {
+                            if let Some(d) = self.own.new_base.as_mut() {
+                                d.error = Some(e);
+                            }
+                        }
+                        Ok(()) => {
+                            let dialog = self.own.new_base.take().expect("dialog");
+                            self.settings.new_database_dir = Some(dialog.dir.clone());
+                            self.settings_dirty = true;
+                            match dialog.after {
+                                own_db::AfterCreate::Shelf => {}
+                                own_db::AfterCreate::AddGame => {
+                                    self.wait_for(ctx, &path, Pending::AddCurrent(path.clone()))
+                                }
+                                own_db::AfterCreate::AddRecord { path: from, index } => {
+                                    let step = Pending::AppendRecord {
+                                        from,
+                                        index,
+                                        target: path.clone(),
+                                    };
+                                    self.wait_for(ctx, &path, step)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn play(&self, s: Sound) {
@@ -461,6 +1544,14 @@ impl App {
                     self.close_after_save = None;
                     self.restart_to = None;
                 }
+                Async::FolderPicked(Some(dir)) => {
+                    self.settings.new_database_dir = Some(dir.clone());
+                    self.settings_dirty = true;
+                    if let Some(d) = self.own.new_base.as_mut() {
+                        d.dir = dir;
+                    }
+                }
+                Async::FolderPicked(None) => {}
                 Async::EngineChecked(res) => {
                     self.settings_ui.checking_engine = false;
                     match res {
@@ -506,7 +1597,8 @@ impl App {
         }
         let Some(g) = &mut self.game else { return };
         let pgn = g.game.to_pgn();
-        match write_atomic(&path, pgn.as_bytes()) {
+        // The user's game file: synced to the disk before the rename, like a database.
+        match chess_core::pgn::store::write_atomic(&path, pgn.as_bytes()) {
             Ok(()) => {
                 g.game.mark_saved();
                 self.toast(ctx, trf("Saved: {path}", &[("path", &path.display())]));
@@ -538,6 +1630,7 @@ impl App {
                     Some(GameSource {
                         path: path.clone(),
                         index,
+                        block: self.library.write_block(&path),
                     }),
                     parsed.diagnostics,
                 ));
@@ -758,18 +1851,42 @@ impl App {
             return;
         };
         let mut choice = None;
+        // Where the game can go (own-databases.md §3.4): back into its own PGN, or into a
+        // database of the user's choice.
+        let source = self.game.as_ref().and_then(|g| g.source.clone());
+        let own = source
+            .as_ref()
+            .filter(|s| s.block.is_none())
+            .map(|s| own_db::base_name(&s.path));
         egui::Modal::new(egui::Id::new("confirm_close")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(tr("Game modified"));
             if let Some(g) = &self.game {
                 ui.label(RichText::new(g.title()).strong());
             }
-            ui.label(tr(
-                "The source PGN is not changed. Save the changes to a separate file?",
-            ));
+            match (&own, &source) {
+                (Some(name), _) => {
+                    ui.label(trf("Save the changes to «{name}»?", &[("name", name)]));
+                }
+                (None, Some(s)) => {
+                    if let Some(b) = &s.block {
+                        ui.label(b.long());
+                    }
+                    ui.label(tr(
+                        "Add the game with the changes to a database of your own?",
+                    ));
+                }
+                (None, None) => {
+                    ui.label(tr("The game is in no database yet. Add it to one?"));
+                }
+            }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button(tr("Save as…")).clicked() {
+                let primary = match &own {
+                    Some(name) => trf("Save to «{name}»", &[("name", name)]),
+                    None => tr("Add to database…").to_owned(),
+                };
+                if crate::widgets::primary(ui, &primary).clicked() {
                     choice = Some(0);
                 }
                 // Escape goes on where the user was going back to (the owner's choice):
@@ -800,8 +1917,12 @@ impl App {
         match choice {
             Some(0) => {
                 self.confirm_close = None;
-                self.close_after_save = Some(intent);
-                self.pick_save(ctx);
+                if own.is_some() {
+                    self.save_current(ctx, Some(intent));
+                } else {
+                    self.own.then_close = Some(intent);
+                    self.open_chooser(ctx, ChooserFor::CurrentGame);
+                }
             }
             Some(1) => {
                 self.confirm_close = None;
@@ -874,8 +1995,18 @@ impl eframe::App for App {
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::O))) {
             self.pick_databases(&ctx);
         }
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Key::N,
+            ))
+        }) && self.game.is_none()
+        {
+            self.own.then_close = None;
+            self.new_base_dialog(own_db::AfterCreate::Shelf);
+        }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))) && self.game.is_none() {
-            self.game = Some(GameView::new(Game::new(), None, Vec::new()));
+            self.new_game();
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::Comma))) {
             self.settings_ui.open = !self.settings_ui.open;
@@ -950,7 +2081,12 @@ impl eframe::App for App {
                         ctx.copy_text(text);
                         self.toast(&ctx, msg);
                     }
-                    GameAction::SaveAs => self.pick_save(&ctx),
+                    GameAction::Save => self.save_current(&ctx, None),
+                    GameAction::AddToDatabase => {
+                        self.own.then_close = None;
+                        self.open_chooser(&ctx, ChooserFor::CurrentGame);
+                    }
+                    GameAction::EditGameData => self.edit_game_data(),
                     GameAction::ToggleEngine => self.toggle_engine(&ctx),
                     GameAction::EngineReconfigure => {
                         self.settings_dirty = true;
@@ -1010,9 +2146,7 @@ impl eframe::App for App {
                         self.toast(&ctx, msg);
                     }
                     LibraryAction::OpenPgn(text) => self.open_pgn_text(&ctx, text, true),
-                    LibraryAction::NewGame => {
-                        self.game = Some(GameView::new(Game::new(), None, Vec::new()))
-                    }
+                    LibraryAction::NewGame => self.new_game(),
                     LibraryAction::PastePgn => self.paste_pgn(&ctx),
                     LibraryAction::AddDatabases => self.pick_databases(&ctx),
                     LibraryAction::OnlineGames => self.online.open(),
@@ -1022,8 +2156,32 @@ impl eframe::App for App {
                         self.settings.databases.retain(|d| *d != p);
                         self.library.forget(&p);
                         self.settings_dirty = true;
+                        // The file stays where it is; said so, with the place.
+                        self.toast = Some(Toast {
+                            text: trf(
+                                "Removed from the shelf; the file stays: {path}",
+                                &[("path", &p.display())],
+                            ),
+                            until: ctx.input(|i| i.time) + 6.0,
+                            undo: false,
+                        });
                     }
                     LibraryAction::OpenSettings => self.settings_ui.open = true,
+                    LibraryAction::NewDatabase => {
+                        self.own.then_close = None;
+                        self.new_base_dialog(own_db::AfterCreate::Shelf);
+                    }
+                    LibraryAction::DeleteGame { path, index } => {
+                        self.delete_game(&ctx, path, index)
+                    }
+                    LibraryAction::AddGameToDatabase { path, index } => {
+                        self.own.then_close = None;
+                        self.open_chooser(&ctx, ChooserFor::Record { path, index });
+                    }
+                    LibraryAction::EditGameData { path, index } => {
+                        self.open_game(&ctx, path, index, None);
+                        self.edit_game_data();
+                    }
                 }
             }
         }
@@ -1113,6 +2271,10 @@ impl eframe::App for App {
                 SettingsAction::CheckUpdates => {
                     self.update_check = self.update_check.again(&ctx);
                 }
+                SettingsAction::PickBaseFolder => {
+                    let start = own_db::default_base_dir(self.settings.new_database_dir.as_deref());
+                    self.pick_folder(&ctx, start);
+                }
                 SettingsAction::OpenUpdate => self.update_ui.open = true,
                 SettingsAction::DownloadEngine => self.engine_offer.start(&ctx),
                 SettingsAction::CancelDownload => self.engine_offer.cancel(),
@@ -1144,22 +2306,52 @@ impl eframe::App for App {
         }
 
         self.confirm_dialog(&ctx);
+        self.own_dialogs(&ctx);
+        // Ctrl+Z on the library while the deleted game can still come back.
+        if self.game.is_none()
+            && self.own.undo.is_some()
+            && self.toast.as_ref().is_some_and(|t| t.undo)
+            && ctx.input_mut(|i| {
+                i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Z))
+            })
+        {
+            self.undo_delete(&ctx);
+        }
 
-        if let Some((msg, until)) = &self.toast {
+        let mut undo_clicked = false;
+        if let Some(t) = &self.toast {
             let now = ctx.input(|i| i.time);
-            if now > *until {
+            if now > t.until {
                 self.toast = None;
+                self.own.undo = None;
             } else {
-                egui::Area::new(egui::Id::new(TOAST))
+                let (msg, undo) = (t.text.clone(), t.undo && self.own.undo.is_some());
+                let area = egui::Area::new(egui::Id::new(TOAST))
                     .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -24.0))
                     .order(egui::Order::Foreground)
                     .show(&ctx, |ui| {
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            ui.label(RichText::new(msg.as_str()).size(14.0));
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(msg.as_str()).size(14.0));
+                                if undo && ui.button(tr("Undo")).on_hover_text("Ctrl+Z").clicked() {
+                                    undo_clicked = true;
+                                }
+                            });
                         });
                     });
+                // Under the mouse the toast waits (the button is being reached for).
+                if undo
+                    && area.response.contains_pointer()
+                    && let Some(t) = self.toast.as_mut()
+                {
+                    t.until = t.until.max(now + 1.5);
+                }
                 ctx.request_repaint_after(std::time::Duration::from_millis(250));
             }
+        }
+        if undo_clicked {
+            self.toast = None;
+            self.undo_delete(&ctx);
         }
 
         if self.settings_dirty && !ctx.input(|i| i.pointer.any_down()) {

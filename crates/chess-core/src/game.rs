@@ -282,6 +282,16 @@ impl Game {
             .map(|(_, v)| v.as_str())
     }
 
+    /// Drops a tag (not part of undo history); nothing when it is not there.
+    pub fn remove_tag(&mut self, name: &str) {
+        let before = self.tags.len();
+        self.tags.retain(|(k, _)| k != name);
+        if self.tags.len() != before {
+            self.unsaved_meta = true;
+            self.touch();
+        }
+    }
+
     /// Sets or appends a tag (not part of undo history).
     pub fn set_tag(&mut self, name: &str, value: &str) {
         match self.tags.iter_mut().find(|(k, _)| k == name) {
@@ -306,6 +316,42 @@ impl Game {
     pub fn set_result(&mut self, result: GameResult) {
         self.result = Some(result);
         self.set_tag("Result", result.as_str());
+    }
+
+    /// The seven tags of the PGN standard, first and in their order, with "?" for the
+    /// unknown ones (a game written by hand gets a proper tag roster); the other tags
+    /// follow as they were. Not part of undo history.
+    pub fn order_roster(&mut self) {
+        let result = self.result().as_str().to_owned();
+        let roster = [
+            ("Event", "?"),
+            ("Site", "?"),
+            ("Date", "????.??.??"),
+            ("Round", "?"),
+            ("White", "?"),
+            ("Black", "?"),
+            ("Result", result.as_str()),
+        ];
+        let mut tags: Vec<(String, String)> = Vec::with_capacity(self.tags.len() + 7);
+        for (name, unknown) in roster {
+            let value = self
+                .tags
+                .iter()
+                .find(|(k, _)| k == name)
+                .map_or(unknown, |(_, v)| v.as_str());
+            tags.push((name.to_owned(), value.to_owned()));
+        }
+        tags.extend(
+            self.tags
+                .iter()
+                .filter(|(k, _)| !roster.iter().any(|(name, _)| k == name))
+                .cloned(),
+        );
+        if tags != self.tags {
+            self.tags = tags;
+            self.unsaved_meta = true;
+            self.touch();
+        }
     }
 
     // ----- node access ------------------------------------------------------

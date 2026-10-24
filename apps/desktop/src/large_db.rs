@@ -319,6 +319,11 @@ pub struct LargeView {
     blocked: Option<u64>,
     /// Ctrl+F asked for the quick search.
     focus_search: bool,
+    /// The database takes games (delete, add a copy): set by `table`.
+    writable: bool,
+    /// The file was read again: the next list is the same list, not a new filter (the
+    /// place in the table and the selection stay).
+    rereading: bool,
     /// The window is too narrow for the filters beside the table: they open over it
     /// (`drawer_open`), and too narrow for the board beside it: one at a time (§2).
     narrow_filters: bool,
@@ -406,6 +411,8 @@ impl LargeView {
             books: false,
             blocked: None,
             focus_search: false,
+            writable: false,
+            rereading: false,
             search_focused: false,
             narrow_filters: drawer,
             narrow_board: false,
@@ -431,6 +438,7 @@ impl LargeView {
     pub fn reread(&mut self, db: &Database) {
         self.job = None;
         self.shown = None;
+        self.rereading = true;
         self.outcome = None;
         self.in_order = None;
         self.cache.clear();
@@ -585,13 +593,15 @@ impl LargeView {
         {
             let job = self.job.take().expect("job");
             if let Some(answer) = result {
-                let new_filter = self.shown.as_ref().is_none_or(|s| {
-                    s.filter != job.request.filter
-                        || s.use_position != job.request.use_position
-                        || (job.request.use_position
-                            && s.position.as_ref().map(|p| p.0)
-                                != job.request.position.as_ref().map(|p| p.0))
-                });
+                let rereading = std::mem::take(&mut self.rereading);
+                let new_filter = !rereading
+                    && self.shown.as_ref().is_none_or(|s| {
+                        s.filter != job.request.filter
+                            || s.use_position != job.request.use_position
+                            || (job.request.use_position
+                                && s.position.as_ref().map(|p| p.0)
+                                    != job.request.position.as_ref().map(|p| p.0))
+                    });
                 if let (Some(out), Some(pos)) = (&answer.outcome, &job.request.position) {
                     let kept: usize = self.cache.values().map(|o| o.matches.len()).sum();
                     if kept + out.matches.len() > CACHE_MATCHES {
@@ -1599,13 +1609,39 @@ impl LargeView {
         viewed: &mut Viewed,
         notes: usize,
         settings: &Settings,
+        writable: bool,
         actions: &mut Vec<LibraryAction>,
     ) -> bool {
         let mut open_notes = false;
         self.update(db, ui.ctx());
+        self.writable = writable;
         let now = ui.input(|i| i.time);
         let progress = self.slow_progress(now, db.len());
         let total = db.games() + db.texts();
+        // A database with no games yet (own-databases.md §2.3): how to put one in.
+        if total == 0 && writable {
+            let name = crate::own_db::base_name(path);
+            ui.vertical_centered(|ui| {
+                ui.add_space(60.0);
+                ui.label(
+                    RichText::new(trf("No games in «{name}» yet", &[("name", &name)])).size(16.0),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(tr(
+                        "Add one: ♟ New game, or «Add to database…» (Ctrl+Shift+S) from any game.",
+                    ))
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                ui.label(RichText::new(trf("File: {path}", &[("path", &path.display())])).weak());
+                ui.add_space(10.0);
+                if ui.button(tr("♟ New game")).clicked() {
+                    actions.push(LibraryAction::NewGame);
+                }
+            });
+            return open_notes;
+        }
 
         // The header (docs/design/narrow-windows.md §2.4), by importance: the pane switch,
         // the quick search (220, down to 140), the counter, "⟳ New games", the import
@@ -2119,6 +2155,18 @@ impl LargeView {
                     let resp = row.response();
                     let resp = if about.is_empty() { resp } else { resp.on_hover_text(about.join(" · ")) };
                     resp.context_menu(|ui| {
+                        if ui.button(tr("Open")).clicked() {
+                            opened = Some(index);
+                            ui.close();
+                        }
+                        if ui.button(tr("Game data… (F2)")).clicked() {
+                            actions.push(LibraryAction::EditGameData { path: path.to_path_buf(), index });
+                            ui.close();
+                        }
+                        if ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked() {
+                            actions.push(LibraryAction::AddGameToDatabase { path: path.to_path_buf(), index });
+                            ui.close();
+                        }
                         let label = if seen {
                             tr("Mark as not viewed")
                         } else {
@@ -2127,6 +2175,13 @@ impl LargeView {
                         if ui.button(label).clicked() {
                             toggle_viewed = Some((key, !seen));
                             ui.close();
+                        }
+                        if self.writable {
+                            ui.separator();
+                            if ui.button(tr("Delete from the database… (Delete)")).clicked() {
+                                actions.push(LibraryAction::DeleteGame { path: path.to_path_buf(), index });
+                                ui.close();
+                            }
                         }
                     });
                     if resp.hovered() {
@@ -2190,6 +2245,37 @@ impl LargeView {
                 i.key_pressed(egui::Key::Enter),
             )
         });
+        // The selected record: F2 opens it with its data, Ctrl+Shift+S adds a copy of it
+        // to another database, Delete removes it (a question first).
+        if !typing && let Some(index) = self.selected {
+            let (data, add, delete) = ui.input_mut(|i| {
+                (
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::F2),
+                    i.consume_key(
+                        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                        egui::Key::S,
+                    ),
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
+                )
+            });
+            let p = path.to_path_buf();
+            if data {
+                actions.push(LibraryAction::EditGameData {
+                    path: p.clone(),
+                    index,
+                });
+            }
+            if add {
+                actions.push(LibraryAction::AddGameToDatabase {
+                    path: p.clone(),
+                    index,
+                });
+            }
+            // Also for a database that takes no games: the app says why.
+            if delete {
+                actions.push(LibraryAction::DeleteGame { path: p, index });
+            }
+        }
         // Enter belongs to a filter field, but in the quick search it opens the game.
         let enter = enter && (!typing || self.search_focused);
         let step = if page_up || page_down { 20 } else { 1 };
