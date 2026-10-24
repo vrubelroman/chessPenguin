@@ -39,6 +39,9 @@ pub enum NotationCommand {
 
 const ROW_H: f32 = 26.0;
 const NUM_W: f32 = 38.0;
+/// A move's cell is no wider than this: in a wide panel (the notation under the board)
+/// the two moves of a row stay together.
+const CELL_MAX: f32 = 160.0;
 /// Moves of an engine's better line shown under a marked move.
 const MARK_LINE_MOVES: usize = 6;
 
@@ -136,7 +139,7 @@ impl Row {
             FontId::proportional(14.0),
             visuals.weak_text_color(),
         );
-        let cell_w = (width - NUM_W) / 2.0;
+        let cell_w = ((width - NUM_W) / 2.0).min(CELL_MAX);
         let cells = [(self.white, 0.0), (self.black, cell_w)];
         for (id, off) in cells {
             let cell =

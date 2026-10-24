@@ -299,12 +299,18 @@ impl GameView {
         let side = if stacked {
             // The notation under the board, as high as the board leaves; dragging its
             // edge up gives the notation more and the board less.
-            let rest = (height - board_stack - graph_h - 16.0).max(STACK_BOTTOM_MIN);
+            // The engine's lines and settings come on top of the notation's least
+            // part (their height as last drawn); the board gives way for them.
+            let engine =
+                egui::containers::panel::PanelState::load(ui.ctx(), egui::Id::new("engine_panel"))
+                    .map_or(0.0, |p| (p.size().y - ENGINE_ROW).max(0.0));
             let most = (height - BOARD_MIN - graph_h - 16.0).max(STACK_BOTTOM_MIN);
+            let bottom_least = (STACK_BOTTOM_MIN + engine).min(most);
+            let rest = (height - board_stack - graph_h - 16.0).clamp(bottom_least, most);
             egui::Panel::bottom("game_side_stacked")
                 .resizable(true)
                 .default_size(rest)
-                .size_range(STACK_BOTTOM_MIN..=most)
+                .size_range(bottom_least..=most)
                 .show(ui, |ui| {
                     self.side_panel(ui, settings, analysis, reference, hub, &mut actions)
                 })
@@ -1001,6 +1007,7 @@ impl GameView {
         actions: &mut Vec<GameAction>,
     ) {
         ui.add_space(4.0);
+        let mut below = None;
         ui.horizontal(|ui| {
             let mut on = analysis.is_on();
             let label = if on {
@@ -1029,50 +1036,69 @@ impl GameView {
                     }
                 }
             }
-            ui.vertical(|ui| {
-                let name = if analysis.is_on() {
-                    analysis.engine_name.clone()
-                } else {
-                    settings
-                        .active_engine()
-                        .map(|e| e.name.clone())
-                        .unwrap_or_else(|| tr("No engine selected").into())
-                };
-                ui.label(RichText::new(name).small());
-                match &analysis.status {
-                    Status::Starting => {
-                        ui.label(RichText::new(tr("starting…")).small().weak());
+            // The engine's name and how it goes: beside the evaluation (two small lines,
+            // or one centred line when there is no status); in a narrow panel, on a line
+            // of their own under the row, shortened.
+            let name = if analysis.is_on() {
+                analysis.engine_name.clone()
+            } else {
+                settings
+                    .active_engine()
+                    .map(|e| e.name.clone())
+                    .unwrap_or_else(|| tr("No engine selected").into())
+            };
+            let status = match &analysis.status {
+                Status::Starting => Some(RichText::new(tr("starting…")).small().weak()),
+                Status::Running => {
+                    let depth = analysis.best().map(|l| l.depth).unwrap_or(0);
+                    let tail = if analysis.finished {
+                        tr(" · done").to_string()
+                    } else {
+                        trf(
+                            " · {n} Mn/s",
+                            &[("n", &format!("{:.1}", analysis.nps as f64 / 1e6))],
+                        )
+                    };
+                    Some(
+                        RichText::new(format!("{}{tail}", trf("Depth {n}", &[("n", &depth)])))
+                            .small()
+                            .weak(),
+                    )
+                }
+                Status::Failed(e) => {
+                    Some(RichText::new(e).small().color(ui.visuals().error_fg_color))
+                }
+                Status::Off => self.review.running().then(|| {
+                    RichText::new(tr("paused: the game is being analysed"))
+                        .small()
+                        .weak()
+                }),
+            };
+            let small = |t: &str| text_width(ui, t, egui::TextStyle::Small);
+            let block = small(&name).max(status.as_ref().map_or(0.0, |s| small(s.text())));
+            let gear = ui
+                .painter()
+                .layout_no_wrap("⚙".into(), egui::FontId::proportional(18.0), Color32::WHITE)
+                .size()
+                .x
+                + 2.0 * ui.spacing().button_padding.x
+                + ui.spacing().item_spacing.x;
+            let beside = block + ui.spacing().item_spacing.x <= ui.available_width() - gear;
+            if beside {
+                match &status {
+                    Some(st) => {
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(&name).small());
+                            ui.label(st.clone());
+                        });
                     }
-                    Status::Running => {
-                        let depth = analysis.best().map(|l| l.depth).unwrap_or(0);
-                        let tail = if analysis.finished {
-                            tr(" · done").to_string()
-                        } else {
-                            trf(
-                                " · {n} Mn/s",
-                                &[("n", &format!("{:.1}", analysis.nps as f64 / 1e6))],
-                            )
-                        };
-                        ui.label(
-                            RichText::new(format!("{}{tail}", trf("Depth {n}", &[("n", &depth)])))
-                                .small()
-                                .weak(),
-                        );
-                    }
-                    Status::Failed(e) => {
-                        ui.label(RichText::new(e).small().color(ui.visuals().error_fg_color));
-                    }
-                    Status::Off => {
-                        if self.review.running() {
-                            ui.label(
-                                RichText::new(tr("paused: the game is being analysed"))
-                                    .small()
-                                    .weak(),
-                            );
-                        }
+                    None => {
+                        ui.label(RichText::new(&name).small());
                     }
                 }
-            });
+            } else {
+                below = Some((name, status));
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.toggle_value(
                     &mut self.engine_settings_open,
@@ -1081,6 +1107,20 @@ impl GameView {
                 .on_hover_text(tr("Engine settings"));
             });
         });
+        if let Some((name, status)) = below {
+            ui.horizontal(|ui| {
+                let name = RichText::new(name).small();
+                match status {
+                    Some(st) => {
+                        ui.label(name);
+                        ui.add(egui::Label::new(st).truncate());
+                    }
+                    None => {
+                        ui.add(egui::Label::new(name).truncate());
+                    }
+                }
+            });
+        }
         if self.engine_settings_open {
             engine_settings(ui, settings, actions);
         }
@@ -1203,10 +1243,33 @@ impl GameView {
 
     fn toolbar(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
         ui.add_space(4.0);
-        // Wraps onto a second row when the side panel is narrow.
+        // Wraps onto a second row when the side panel is narrow, a group at a time
+        // (moves, board and edits, copying, the game analysis): a group that does not
+        // fit the rest of the row starts the next one, without a separator.
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
             let big = |s: &str| RichText::new(s).size(18.0);
+            let next_group = |ui: &mut Ui, icons: &[&str], extra: f32| {
+                let font = egui::FontId::proportional(18.0);
+                let gap = ui.spacing().item_spacing.x;
+                let width: f32 = icons
+                    .iter()
+                    .map(|i| {
+                        ui.painter()
+                            .layout_no_wrap((*i).to_owned(), font.clone(), Color32::WHITE)
+                            .size()
+                            .x
+                            + 2.0 * ui.spacing().button_padding.x
+                            + gap
+                    })
+                    .sum::<f32>()
+                    + extra;
+                if ui.available_size_before_wrap().x < width + 2.0 * gap + 1.0 {
+                    ui.end_row();
+                } else {
+                    ui.separator();
+                }
+            };
             if ui
                 .button(big("⏮"))
                 .on_hover_text(tr("To start (Home)"))
@@ -1232,7 +1295,7 @@ impl GameView {
                 let end = self.game.line_end(self.cursor);
                 self.goto(end);
             }
-            ui.separator();
+            next_group(ui, &["🔃", "↩", "↪"], 0.0);
             if ui
                 .button(big("🔃"))
                 .on_hover_text(tr("Flip board (F)"))
@@ -1254,7 +1317,7 @@ impl GameView {
             {
                 self.redo();
             }
-            ui.separator();
+            next_group(ui, &["☰", "📋"], 0.0);
             ui.menu_button(big("☰"), |ui| {
                 if ui.button(tr("Copy PGN")).clicked() {
                     actions.push(self.copy_pgn());
@@ -1304,7 +1367,12 @@ impl GameView {
             {
                 actions.push(self.copy_pgn());
             }
-            ui.separator();
+            // A running analysis shows its progress (70) and its × (22) instead.
+            if self.review.progress().is_some() {
+                next_group(ui, &[], 70.0 + 22.0 + 2.0 * 5.0);
+            } else {
+                next_group(ui, &["📈"], 0.0);
+            }
             self.review_button(ui, actions);
         });
         ui.add_space(4.0);
@@ -1602,6 +1670,8 @@ const REF_MIN: f32 = 320.0;
 const BOARD_MIN: f32 = 220.0;
 const STACK_BOTTOM_MIN: f32 = 300.0;
 const EVAL_BAR: f32 = 26.0;
+/// The engine row alone (the "Analysis" toggle), as counted in `STACK_BOTTOM_MIN`.
+const ENGINE_ROW: f32 = 44.0;
 
 const SEARCH_TIMES: [Option<u32>; 11] = [
     Some(2),

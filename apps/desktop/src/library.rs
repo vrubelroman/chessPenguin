@@ -428,7 +428,14 @@ impl Library {
                 .show(ui.ctx(), |ui| {
                     let frame = egui::Frame::side_top_panel(ui.style())
                         .stroke(ui.visuals().window_stroke)
-                        .shadow(ui.visuals().window_shadow);
+                        // To the left, over the list (the window's own shadow falls
+                        // right and down, off the window).
+                        .shadow(egui::Shadow {
+                            offset: [-6, 0],
+                            blur: 16,
+                            spread: 0,
+                            color: egui::Color32::from_black_alpha(110),
+                        });
                     frame.show(ui, |ui| {
                         let inner = rect.shrink2(frame.total_margin().sum() / 2.0);
                         ui.set_min_size(inner.size());

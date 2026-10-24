@@ -1674,8 +1674,14 @@ impl LargeView {
         let with_format = one_line.is_some_and(|(_, f)| f);
         let mut back_to_list = false;
         let alone = self.board_alone();
+        // On a line of its own the counter loses its leading "· ".
+        let counter_text = if one_line.is_some() {
+            counter.as_str()
+        } else {
+            counter.trim_start_matches("· ")
+        };
         let mut info = |ui: &mut Ui| {
-            let mut text = RichText::new(&counter);
+            let mut text = RichText::new(counter_text);
             if progress.is_some() {
                 text = text.weak();
             }
