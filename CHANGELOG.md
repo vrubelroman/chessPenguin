@@ -2,6 +2,17 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Desktop: narrow windows (half a screen, a tiling window manager) no longer overlap:
+  - the reference tab, the engine settings and the game's title fit their place (the
+    reference tab slid under the board from a 1200-point window down);
+  - in a narrow window the filters open over the list of games, and the search board
+    takes the place of the list (Esc goes back);
+  - a narrow tall window shows the notation under the board;
+  - the header of the list and the shelf shorten what does not fit, or take a second
+    line; the window can be made as small as 640×480.
+
 ## [0.16.1] — 2026-10-24
 
 - Desktop: the filter panel no longer widens while a name is typed; the rows of «Game»

@@ -210,6 +210,29 @@ pub enum Pane {
     Board,
 }
 
+/// Widths of the narrow set of table columns (docs/design/narrow-windows.md §1): the
+/// least table is built of them, so the table and its least width do not part.
+const MOVE_COL: f32 = 52.0;
+const ELO_COL: f32 = 44.0;
+const RESULT_COL: f32 = 56.0;
+const YEAR_COL: f32 = 48.0;
+/// A name still recognised ("Конюшенко С…").
+const NAME_MIN: f32 = 110.0;
+
+/// The width of the "№" column: as wide as the largest number (a check mark before it).
+fn number_col(db: &Database) -> f32 {
+    let digits = grouped(db.len()).chars().count() as f32;
+    (digits * 8.0 + 24.0).clamp(52.0, 84.0)
+}
+
+/// The width of `text` in `style` on one line.
+fn text_w(ui: &Ui, text: &str, style: egui::TextStyle) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), style.resolve(ui.style()), Color32::WHITE)
+        .size()
+        .x
+}
+
 /// Search outcomes of the session, by filter and position with the board's move order
 /// (it decides "in this move order").
 type OutcomeCache = HashMap<(u64, u64), Arc<PositionOutcome>>;
@@ -296,6 +319,13 @@ pub struct LargeView {
     blocked: Option<u64>,
     /// Ctrl+F asked for the quick search.
     focus_search: bool,
+    /// The window is too narrow for the filters beside the table: they open over it
+    /// (`drawer_open`), and too narrow for the board beside it: one at a time (§2).
+    narrow_filters: bool,
+    narrow_board: bool,
+    drawer_open: bool,
+    /// Where the filters open over the table: under its header and conditions.
+    drawer_top: f32,
     /// The quick search has the keyboard (arrows and Enter go to the table).
     search_focused: bool,
 }
@@ -333,9 +363,13 @@ impl LargeView {
             Some(b) => (b, Pane::Board),
             None => (SearchBoard::new(), Pane::Filters),
         };
-        if std::env::var("CP_PANE").as_deref() == Ok("hidden") {
+        // `CP_PANE=hidden`: no panel; `=drawer`: the filters open over the table in a
+        // narrow window (beside it in a wide one).
+        let pane_env = std::env::var("CP_PANE").ok();
+        if pane_env.as_deref() == Some("hidden") {
             pane = Pane::Hidden;
         }
+        let drawer = pane_env.as_deref() == Some("drawer");
         // `CP_SORT=date`: newest games first (screenshots).
         let sort = if std::env::var("CP_SORT").as_deref() == Ok("date") {
             (SortKey::Date, false)
@@ -371,6 +405,10 @@ impl LargeView {
             blocked: None,
             focus_search: false,
             search_focused: false,
+            narrow_filters: drawer,
+            narrow_board: false,
+            drawer_open: drawer,
+            drawer_top: 0.0,
         }
     }
 
@@ -405,6 +443,74 @@ impl LargeView {
 
     pub fn pane(&self) -> Pane {
         self.pane
+    }
+
+    /// The least width of the table with the narrow set of columns (§1): the "Move"
+    /// column instead of "№" when the list is a position's games.
+    pub fn table_min_width(&self, db: &Database, use_position: bool) -> f32 {
+        let first = if use_position {
+            MOVE_COL
+        } else {
+            number_col(db)
+        };
+        first + 2.0 * ELO_COL + RESULT_COL + YEAR_COL + 2.0 * NAME_MIN + 6.0 * 8.0 + 10.0 + 16.0
+    }
+
+    /// The layout the window allows (§2.1). Narrowing closes the filters rather than
+    /// laying them over the table; widening docks the filters opened over it.
+    pub fn set_layout(&mut self, narrow_filters: bool, narrow_board: bool) {
+        if narrow_filters && !self.narrow_filters {
+            self.drawer_open = false;
+        }
+        if !narrow_filters && self.narrow_filters && self.drawer_open {
+            self.drawer_open = false;
+            if self.pane != Pane::Board || !narrow_board {
+                self.pane = Pane::Filters;
+            }
+        }
+        self.narrow_filters = narrow_filters;
+        self.narrow_board = narrow_board;
+    }
+
+    /// The filters open over the table: from where (under the header).
+    pub fn drawer(&self) -> Option<f32> {
+        (self.narrow_filters && self.drawer_open).then_some(self.drawer_top)
+    }
+
+    pub fn close_drawer(&mut self) {
+        self.drawer_open = false;
+    }
+
+    /// The board takes the place of the table (a narrow window).
+    pub fn board_alone(&self) -> bool {
+        self.narrow_board && self.pane == Pane::Board
+    }
+
+    /// Escape in the library with no field typing: the filters over the table close,
+    /// then the board alone gives the place back to the table.
+    pub fn escape(&mut self) -> bool {
+        if self.drawer().is_some() {
+            self.drawer_open = false;
+            true
+        } else if self.board_alone() {
+            self.pane = Pane::Hidden;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Opens the filters: beside the table, or over it in a narrow window (over the
+    /// board alone too, which stays).
+    fn open_filters(&mut self) {
+        if self.narrow_filters {
+            self.drawer_open = true;
+            if !self.board_alone() {
+                self.pane = Pane::Filters;
+            }
+        } else {
+            self.pane = Pane::Filters;
+        }
     }
 
     /// Shows the board with `line` played from `start` (a position from a game).
@@ -740,7 +846,7 @@ impl LargeView {
 
     /// The quick search of the header (§9.2): words found in a player, the tournament,
     /// the annotator, the ECO code or the date; with the panel and the position.
-    fn search_field(&mut self, ui: &mut Ui, now: f64) {
+    fn search_field(&mut self, ui: &mut Ui, now: f64, width: f32) {
         // The × has its place also when there is nothing to clear: the field stays put.
         if self.form.search.is_empty() {
             ui.add_space(20.0);
@@ -751,11 +857,6 @@ impl LargeView {
             self.form.search.clear();
             self.typed_at = f64::NEG_INFINITY;
         }
-        let width = if ui.available_width() > 700.0 {
-            220.0
-        } else {
-            140.0
-        };
         let resp = ui
             .add(
                 egui::TextEdit::singleline(&mut self.form.search)
@@ -794,7 +895,12 @@ impl LargeView {
     /// The pane switch `[Filters | Board]`; a click on the shown pane hides it.
     fn pane_switch(&mut self, ui: &mut Ui) {
         let active = self.form.active();
-        let filters = if active > 0 && self.pane != Pane::Filters {
+        let filters_shown = if self.narrow_filters {
+            self.drawer_open
+        } else {
+            self.pane == Pane::Filters
+        };
+        let filters = if active > 0 && !filters_shown {
             trf("Filters ({n})", &[("n", &active)])
         } else {
             tr("Filters").to_string()
@@ -806,22 +912,31 @@ impl LargeView {
         };
         // Right to left: the board segment first.
         ui.spacing_mut().item_spacing.x = 0.0;
-        for (pane, label, hint) in [
+        for (pane, label, hint, on) in [
             (
                 Pane::Board,
                 board,
                 tr("Find games by position: play moves on the board (Ctrl+B)"),
+                self.pane == Pane::Board,
             ),
             (
                 Pane::Filters,
                 filters,
                 tr("Filters: players, tournament, years, rating… (Ctrl+F twice)"),
+                filters_shown,
             ),
         ] {
-            let on = self.pane == pane;
             let hint = if on { tr("Hide the panel") } else { hint };
             if ui.selectable_label(on, label).on_hover_text(hint).clicked() {
-                self.pane = if on { Pane::Hidden } else { pane };
+                match (pane, on) {
+                    (Pane::Filters, false) => self.open_filters(),
+                    (Pane::Filters, true) if self.narrow_filters => self.drawer_open = false,
+                    (_, true) => self.pane = Pane::Hidden,
+                    (_, false) => {
+                        self.pane = pane;
+                        self.drawer_open = false;
+                    }
+                }
             }
         }
     }
@@ -1062,8 +1177,10 @@ impl LargeView {
         if let Some(c) = clear {
             self.clear(c);
         }
-        if let Some(p) = goto {
-            self.pane = p;
+        match goto {
+            Some(Pane::Filters) => self.open_filters(),
+            Some(p) => self.pane = p,
+            None => {}
         }
     }
 
@@ -1474,94 +1591,170 @@ impl LargeView {
         let progress = self.slow_progress(now, db.len());
         let total = db.games() + db.texts();
 
-        // The pane switch comes first (right): it stays visible in a narrow window,
-        // then the quick search; the rest of the line is shortened.
+        // The header (docs/design/narrow-windows.md §2.4), by importance: the pane switch,
+        // the quick search (220, down to 140), the counter, "⟳ New games", the import
+        // notes, the database's name (shortened, at least 80, else left out: it is on
+        // the shelf too), its format. Measured from the texts; what does not fit on one
+        // line goes to a second.
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let format = format!("· {}", header.format);
+        let counter = match &self.shown {
+            Some(s)
+                if (s.use_position && self.blocked.is_none())
+                    || s.filter != Filter::default()
+                    || self.form.active() > 0 =>
+            {
+                trf(
+                    "· found {n} of {total}",
+                    &[("n", &grouped(self.view.len())), ("total", &grouped(total))],
+                )
+            }
+            _ if db.texts() > 0 => format!(
+                "· {} · {}",
+                crate::i18n::games(db.games()),
+                crate::i18n::texts(db.texts())
+            ),
+            _ => format!("· {}", crate::i18n::games(db.games())),
+        };
+        // The board alone in a narrow window: the counter leads back to the list.
+        let counter = if self.board_alone() {
+            format!("{} ›", counter.trim_start_matches("· "))
+        } else {
+            counter
+        };
+        let gap = ui.spacing().item_spacing.x;
+        let pad = 2.0 * ui.spacing().button_padding.x;
+        let body = |t: &str| text_w(ui, t, egui::TextStyle::Body);
+        let switch_w = {
+            let active = self.form.active();
+            body(&trf("Filters ({n})", &[("n", &active)]))
+                + body(&format!("{} •", tr("Board")))
+                + 2.0 * pad
+        };
+        let search_w = |field: f32| 20.0 + gap + field + 8.0 + 8.0 + gap;
+        let info_w = body(&counter)
+            + gap
+            + progress.map_or(0.0, |_| 14.0 + gap + body("100 %") + gap)
+            + if notes > 0 {
+                body(&format!("ℹ {notes}")) + pad + gap
+            } else {
+                0.0
+            }
+            + header.online.as_ref().map_or(0.0, |o| {
+                if o.busy {
+                    14.0 + gap + body(tr("updating…")) + gap
+                } else {
+                    text_w(ui, tr("⟳ New games"), egui::TextStyle::Small) + pad + gap
+                }
+            });
+        let name_w = text_w(ui, &name, egui::TextStyle::Body) + gap;
+        let format_w = body(&format) + gap;
+        let avail = ui.available_width();
+        let right = |field: f32| switch_w + 8.0 + search_w(field);
+        // One line: the widest field that leaves the counter and at least 80 of the name.
+        let one_line = [(220.0, true), (220.0, false), (140.0, false)]
+            .into_iter()
+            .find(|(field, with_format)| {
+                let rest =
+                    avail - right(*field) - info_w - if *with_format { format_w } else { 0.0 };
+                if *with_format {
+                    rest >= name_w
+                } else {
+                    rest >= 80.0 + gap
+                }
+            });
+        let field = match one_line {
+            Some((field, _)) => field,
+            None if avail - right(220.0) >= 80.0 + gap => 220.0,
+            None => 140.0,
+        };
+        let with_format = one_line.is_some_and(|(_, f)| f);
+        let mut back_to_list = false;
+        let alone = self.board_alone();
+        let mut info = |ui: &mut Ui| {
+            let mut text = RichText::new(&counter);
+            if progress.is_some() {
+                text = text.weak();
+            }
+            if alone {
+                if ui
+                    .link(text)
+                    .on_hover_text(tr("Show the list of games (Esc)"))
+                    .clicked()
+                {
+                    back_to_list = true;
+                }
+            } else {
+                ui.label(text);
+            }
+            if let Some(p) = progress {
+                ui.add(egui::Spinner::new().size(14.0));
+                ui.label(RichText::new(format!("{:.0} %", p * 100.0)).weak());
+            }
+            if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
+                open_notes = true;
+            }
+            // A database from Lichess and Chess.com: its new games.
+            if let Some(online) = &header.online {
+                if online.busy {
+                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.label(RichText::new(tr("updating…")).weak());
+                } else if ui
+                    .add_enabled(online.enabled, egui::Button::new(tr("⟳ New games")).small())
+                    .on_hover_text(&online.hint)
+                    .on_disabled_hover_text(&online.hint)
+                    .clicked()
+                {
+                    actions.push(LibraryAction::UpdateOnline(path.to_path_buf()));
+                }
+            }
+        };
+        let name_room = if one_line.is_some() {
+            avail - right(field) - info_w - if with_format { format_w } else { 0.0 }
+        } else {
+            avail - right(field)
+        };
         ui.horizontal(|ui| {
+            if name_room >= 80.0 + gap {
+                ui.allocate_ui(
+                    vec2((name_room - gap).floor(), ui.spacing().interact_size.y),
+                    |ui| {
+                        ui.add(egui::Label::new(RichText::new(&name).strong()).truncate())
+                            .on_hover_text(&name);
+                    },
+                );
+            }
+            if with_format {
+                ui.label(RichText::new(&format).weak())
+                    .on_hover_text(&header.format_hint);
+            }
+            if one_line.is_some() {
+                info(ui);
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // The switch packs its segments; the rest keeps the usual spacing.
                 ui.scope(|ui| self.pane_switch(ui));
                 ui.add_space(8.0);
-                self.search_field(ui, now);
-                ui.add_space(8.0);
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    // The name gives way first: the counter is the result, and the name
-                    // is on the shelf card too (§9.2).
-                    let room = (ui.available_width() - 300.0).max(80.0);
-                    ui.scope(|ui| {
-                        ui.set_max_width(room);
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(
-                                    path.file_stem()
-                                        .map(|s| s.to_string_lossy().into_owned())
-                                        .unwrap_or_default(),
-                                )
-                                .strong(),
-                            )
-                            .truncate(),
-                        );
-                    });
-                    if ui.available_width() > 520.0 {
-                        ui.label(RichText::new(format!("· {}", header.format)).weak())
-                            .on_hover_text(&header.format_hint);
-                    }
-                    let counter = match &self.shown {
-                        Some(s)
-                            if (s.use_position && self.blocked.is_none())
-                                || s.filter != Filter::default()
-                                || self.form.active() > 0 =>
-                        {
-                            trf(
-                                "· found {n} of {total}",
-                                &[("n", &grouped(self.view.len())), ("total", &grouped(total))],
-                            )
-                        }
-                        _ if db.texts() > 0 => format!(
-                            "· {} · {}",
-                            crate::i18n::games(db.games()),
-                            crate::i18n::texts(db.texts())
-                        ),
-                        _ => format!("· {}", crate::i18n::games(db.games())),
-                    };
-                    let mut counter = RichText::new(counter);
-                    if progress.is_some() {
-                        counter = counter.weak();
-                    }
-                    ui.add(egui::Label::new(counter).truncate());
-                    if let Some(p) = progress {
-                        ui.add(egui::Spinner::new().size(14.0));
-                        ui.label(RichText::new(format!("{:.0} %", p * 100.0)).weak());
-                    }
-                    if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
-                        open_notes = true;
-                    }
-                    // A database from Lichess and Chess.com: its new games.
-                    if let Some(online) = &header.online {
-                        if online.busy {
-                            ui.add(egui::Spinner::new().size(14.0));
-                            ui.label(RichText::new(tr("updating…")).weak());
-                        } else if ui
-                            .add_enabled(
-                                online.enabled,
-                                egui::Button::new(tr("⟳ New games")).small(),
-                            )
-                            .on_hover_text(&online.hint)
-                            .on_disabled_hover_text(&online.hint)
-                            .clicked()
-                        {
-                            actions.push(LibraryAction::UpdateOnline(path.to_path_buf()));
-                        }
-                    }
-                });
+                self.search_field(ui, now, field);
             });
         });
+        if one_line.is_none() {
+            ui.horizontal_wrapped(|ui| info(ui));
+        }
+        if back_to_list {
+            self.pane = Pane::Hidden;
+        }
         self.chips(ui, settings);
         ui.add_space(2.0);
+        self.drawer_top = ui.cursor().top();
 
         // Ctrl+F: the quick search; once more, the filters' first field (§9.10).
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
             if self.search_focused {
-                self.pane = Pane::Filters;
+                self.open_filters();
                 self.focus_player = true;
             } else {
                 self.focus_search = true;
@@ -1581,6 +1774,12 @@ impl LargeView {
             self.form.search.clear();
             self.board = SearchBoard::new();
             self.only_order = false;
+        }
+
+        // A narrow window: the board takes the place of the table (§2.3).
+        if self.board_alone() {
+            self.board_panel(ui, db, settings, actions);
+            return open_notes;
         }
 
         // A position that could not be searched (no memory) does not filter the list.
@@ -1677,29 +1876,23 @@ impl LargeView {
         let year_only = width < 1000.0;
         let mut columns: Vec<(&str, Option<SortKey>, Column)> = Vec::new();
         if use_position {
-            columns.push((tr("Move"), None, Column::exact(52.0)));
+            columns.push((tr("Move"), None, Column::exact(MOVE_COL)));
         }
         if show_number {
-            // As wide as the largest number (a check mark before it).
-            let digits = grouped(db.len()).chars().count() as f32;
-            columns.push((
-                "№",
-                Some(SortKey::Number),
-                Column::exact((digits * 8.0 + 24.0).clamp(52.0, 84.0)),
-            ));
+            columns.push(("№", Some(SortKey::Number), Column::exact(number_col(db))));
         }
         // Without the event the names share the rest of the width.
         let name = if show_event {
-            Column::initial(170.0).at_least(60.0).clip(true)
+            Column::initial(170.0).at_least(NAME_MIN).clip(true)
         } else {
-            Column::remainder().at_least(60.0).clip(true)
+            Column::remainder().at_least(NAME_MIN).clip(true)
         };
         columns.extend([
             (tr("White"), Some(SortKey::White), name),
-            ("Elo", Some(SortKey::WhiteElo), Column::exact(44.0)),
+            ("Elo", Some(SortKey::WhiteElo), Column::exact(ELO_COL)),
             (tr("Black"), Some(SortKey::Black), name),
-            ("Elo", Some(SortKey::BlackElo), Column::exact(44.0)),
-            (tr("Res."), Some(SortKey::Result), Column::exact(56.0)),
+            ("Elo", Some(SortKey::BlackElo), Column::exact(ELO_COL)),
+            (tr("Res."), Some(SortKey::Result), Column::exact(RESULT_COL)),
         ]);
         if show_moves {
             columns.push((tr("Length"), Some(SortKey::Moves), Column::exact(56.0)));
@@ -1721,7 +1914,7 @@ impl LargeView {
             columns.push((tr("Round"), None, Column::exact(48.0)));
         }
         if year_only {
-            columns.push((tr("Year"), Some(SortKey::Date), Column::exact(48.0)));
+            columns.push((tr("Year"), Some(SortKey::Date), Column::exact(YEAR_COL)));
         } else {
             columns.push((tr("Date"), Some(SortKey::Date), Column::exact(88.0)));
         }

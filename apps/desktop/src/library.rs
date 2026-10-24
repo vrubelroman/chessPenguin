@@ -56,6 +56,37 @@ struct ImportInfo {
     notes: Vec<String>,
 }
 
+fn text_w(ui: &Ui, text: &str, style: egui::TextStyle) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            text.to_owned(),
+            style.resolve(ui.style()),
+            egui::Color32::WHITE,
+        )
+        .size()
+        .x
+}
+
+fn button_w(ui: &Ui, text: &str) -> f32 {
+    text_w(ui, text, egui::TextStyle::Button)
+        + 2.0 * ui.spacing().button_padding.x
+        + ui.spacing().item_spacing.x
+}
+
+/// The width of the shelf's buttons on the right (`Library::shelf_buttons`).
+fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
+    let texts: [&str; 3] = if icons {
+        ["⚙", "📋", "♟"]
+    } else {
+        [tr("⚙ Settings"), tr("📋 Paste PGN"), tr("♟ New game")]
+    };
+    texts.iter().map(|t| button_w(ui, t)).sum::<f32>() + update.map_or(0.0, |v| button_w(ui, v))
+}
+
+/// The least widths of the panels beside the table (narrow-windows.md §1).
+const FILTERS_MIN: f32 = 260.0;
+const SEARCH_BOARD_MIN: f32 = 340.0;
+
 pub struct Library {
     slots: HashMap<PathBuf, Slot>,
     /// Games the user has opened (by content).
@@ -307,47 +338,118 @@ impl Library {
     ) -> Vec<LibraryAction> {
         self.poll();
         let mut actions = Vec::new();
-        // With the search board open in a low window the shelf folds into one line,
-        // leaving the height to the board.
+        // A field had the keyboard when this frame began: its Escape is its own.
+        let typing = ui.ctx().egui_wants_keyboard_input();
+        let width = ui.available_width();
+        let height = ui.ctx().content_rect().height();
+        // The shelf folds into one line when its cards would take more than two rows, in
+        // a low window, and with the search board open in a window under 760.
         let board_open = self
             .selected_db
             .as_ref()
             .is_some_and(|p| self.large.get(p).is_some_and(|v| v.pane() == Pane::Board));
-        let low = ui.ctx().content_rect().height() < 760.0;
-        if board_open && low {
+        let cards = databases.len() + 1 + usize::from(self.online);
+        let card_rows = {
+            let mut rows = 1;
+            let mut x = 0.0;
+            for k in 0..cards {
+                let w = if k < databases.len() { 190.0 } else { 150.0 };
+                if x > 0.0 && x + w > width - 16.0 {
+                    rows += 1;
+                    x = 0.0;
+                }
+                x += w + 8.0;
+            }
+            rows
+        };
+        if card_rows > 2 || height < 600.0 || (board_open && height < 760.0) {
             egui::Panel::top("shelf_compact")
                 .show(ui, |ui| self.compact_shelf(ui, databases, &mut actions));
         } else {
             egui::Panel::top("shelf").show(ui, |ui| self.shelf(ui, databases, &mut actions));
         }
-        // A database has its filter panel or its search board on the right.
+        // A database has its filter panel or its search board on the right, when the
+        // window leaves the table its least width beside them (narrow-windows.md §2.1);
+        // otherwise the filters open over the table and the board takes its place.
+        let mut drawer = None;
         if let Some(path) = self.selected_db.clone()
             && let Some(Slot::Ready(db)) = self.slots.get(&path)
             && let Some(view) = self.large.get_mut(&path)
         {
             let db = db.clone();
+            let table_min = view.table_min_width(&db, false);
+            let table_min_pos = view.table_min_width(&db, true);
+            view.set_layout(
+                width < table_min + FILTERS_MIN,
+                width < table_min_pos + SEARCH_BOARD_MIN,
+            );
             match view.pane() {
-                Pane::Filters => {
+                Pane::Filters if view.drawer().is_none() && width >= table_min + FILTERS_MIN => {
                     let r = egui::Panel::right("filters")
                         .resizable(true)
                         .default_size(280.0)
-                        .size_range(260.0..=380.0)
+                        .size_range(FILTERS_MIN..=(width - table_min).floor().min(380.0))
                         .show(ui, |ui| view.panel(ui, &db));
                     crate::widgets::check_panel("filters", &r.response);
                 }
-                Pane::Board => {
-                    let width = ui.available_width();
+                Pane::Board if !view.board_alone() => {
+                    let most = (width - table_min_pos).floor().max(SEARCH_BOARD_MIN);
                     let r = egui::Panel::right("search_board")
                         .resizable(true)
-                        .default_size((width * 0.5).max(340.0))
-                        .size_range(340.0..=(width - 420.0).max(340.0))
+                        .default_size((width * 0.5).clamp(SEARCH_BOARD_MIN, most))
+                        .size_range(SEARCH_BOARD_MIN..=most)
                         .show(ui, |ui| view.board_panel(ui, &db, settings, &mut actions));
                     crate::widgets::check_panel("search_board", &r.response);
                 }
-                Pane::Hidden => {}
+                _ => {}
             }
+            drawer = view.drawer().map(|top| (path, db, top));
         }
         egui::CentralPanel::default().show(ui, |ui| self.table_area(ui, settings, &mut actions));
+        // The filters over the table: on its right edge under its header, with a shadow;
+        // the table stays live. A click elsewhere closes them (and does what it does).
+        if let Some((path, db, top)) = drawer
+            && let Some(view) = self.large.get_mut(&path)
+        {
+            let screen = ui.ctx().content_rect();
+            // As wide as the filters beside the table were left (a strip of the
+            // table stays visible to click).
+            let stored =
+                egui::containers::panel::PanelState::load(ui.ctx(), egui::Id::new("filters"))
+                    .map_or(280.0, |p| p.size().x);
+            let size = vec2(
+                stored.clamp(FILTERS_MIN, 380.0).min(width - 48.0),
+                screen.bottom() - top,
+            );
+            let rect = egui::Rect::from_min_size(egui::pos2(screen.right() - size.x, top), size);
+            let area = egui::Area::new(egui::Id::new("filters_drawer"))
+                .order(egui::Order::Middle)
+                .fixed_pos(rect.min)
+                .show(ui.ctx(), |ui| {
+                    let frame = egui::Frame::side_top_panel(ui.style())
+                        .stroke(ui.visuals().window_stroke)
+                        .shadow(ui.visuals().window_shadow);
+                    frame.show(ui, |ui| {
+                        let inner = rect.shrink2(frame.total_margin().sum() / 2.0);
+                        ui.set_min_size(inner.size());
+                        ui.set_max_size(inner.size());
+                        view.panel(ui, &db);
+                    });
+                });
+            if area.response.clicked_elsewhere() && !ui.ctx().is_being_dragged(area.response.id) {
+                view.close_drawer();
+            }
+        }
+        // Escape: the filters over the table close, then the board alone gives the place
+        // back to the table (a field takes its own Escape first).
+        if !typing
+            && let Some(path) = self.selected_db.clone()
+            && let Some(view) = self.large.get_mut(&path)
+            && ui.input(|i| i.key_pressed(egui::Key::Escape))
+            && view.escape()
+        {
+            ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        }
         self.notes_window(ui.ctx());
         actions
     }
@@ -395,12 +497,28 @@ impl Library {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default()
         };
+        // The list of databases gives way first (to 180), then the buttons on the right
+        // show their icons, then the list goes down to 140 (narrow-windows.md §2.5).
+        let gap = ui.spacing().item_spacing.x;
+        let others = button_w(ui, "+")
+            + if self.online {
+                button_w(ui, "🌐")
+            } else {
+                0.0
+            }
+            + 16.0;
+        let free = ui.available_width() - others;
+        let icons = free - shelf_buttons_w(ui, self.update.as_deref(), false) < 180.0 + gap;
+        let list = (free - shelf_buttons_w(ui, self.update.as_deref(), icons) - gap)
+            .clamp(140.0, 260.0)
+            .floor();
         ui.horizontal(|ui| {
             let current = self.selected_db.as_deref().map(name).unwrap_or_default();
             let mut pick = None;
             egui::ComboBox::from_id_salt("shelf_db")
                 .selected_text(format!("🗄 {current}"))
-                .width(260.0)
+                .width(list)
+                .truncate()
                 .show_ui(ui, |ui| {
                     for p in databases {
                         if ui
@@ -432,51 +550,68 @@ impl Library {
                 actions.push(LibraryAction::OnlineGames);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(tr("⚙ Settings")).clicked() {
-                    actions.push(LibraryAction::OpenSettings);
-                }
-                if let Some(v) = &self.update
-                    && crate::widgets::update_button(ui, v).clicked()
-                {
-                    actions.push(LibraryAction::OpenUpdate);
-                }
-                if ui.button(tr("📋 Paste PGN")).clicked() {
-                    actions.push(LibraryAction::PastePgn);
-                }
-                if ui.button(tr("♟ New game")).clicked() {
-                    actions.push(LibraryAction::NewGame);
-                }
+                self.shelf_buttons(ui, icons, actions);
             });
         });
     }
 
+    /// "♟ New game · 📋 Paste PGN · ⚙ Settings" (right to left), or their icons with
+    /// the names in the tooltips.
+    fn shelf_buttons(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
+        let label = |full: &'static str, icon: &'static str| if icons { icon } else { full };
+        let hint = |full: &str, hint: &str| {
+            if icons {
+                format!(
+                    "{}\n{hint}",
+                    full.trim_start_matches(|c: char| !c.is_alphabetic())
+                )
+            } else {
+                hint.to_owned()
+            }
+        };
+        if ui
+            .button(label(tr("⚙ Settings"), "⚙"))
+            .on_hover_text(hint(tr("⚙ Settings"), "Ctrl+,"))
+            .clicked()
+        {
+            actions.push(LibraryAction::OpenSettings);
+        }
+        if let Some(v) = &self.update
+            && crate::widgets::update_button(ui, v).clicked()
+        {
+            actions.push(LibraryAction::OpenUpdate);
+        }
+        if ui
+            .button(label(tr("📋 Paste PGN"), "📋"))
+            .on_hover_text(hint(
+                tr("📋 Paste PGN"),
+                tr("Open a game from the clipboard"),
+            ))
+            .clicked()
+        {
+            actions.push(LibraryAction::PastePgn);
+        }
+        if ui
+            .button(label(tr("♟ New game"), "♟"))
+            .on_hover_text(hint(
+                tr("♟ New game"),
+                tr("Empty board in the starting position (Ctrl+N)"),
+            ))
+            .clicked()
+        {
+            actions.push(LibraryAction::NewGame);
+        }
+    }
+
     fn shelf(&mut self, ui: &mut Ui, databases: &[PathBuf], actions: &mut Vec<LibraryAction>) {
         ui.add_space(8.0);
+        let heading = text_w(ui, tr("Databases"), egui::TextStyle::Heading) + 16.0;
+        let icons =
+            ui.available_width() - heading < shelf_buttons_w(ui, self.update.as_deref(), false);
         ui.horizontal(|ui| {
             ui.heading(tr("Databases"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(tr("⚙ Settings")).clicked() {
-                    actions.push(LibraryAction::OpenSettings);
-                }
-                if let Some(v) = &self.update
-                    && crate::widgets::update_button(ui, v).clicked()
-                {
-                    actions.push(LibraryAction::OpenUpdate);
-                }
-                if ui
-                    .button(tr("📋 Paste PGN"))
-                    .on_hover_text(tr("Open a game from the clipboard"))
-                    .clicked()
-                {
-                    actions.push(LibraryAction::PastePgn);
-                }
-                if ui
-                    .button(tr("♟ New game"))
-                    .on_hover_text(tr("Empty board in the starting position (Ctrl+N)"))
-                    .clicked()
-                {
-                    actions.push(LibraryAction::NewGame);
-                }
+                self.shelf_buttons(ui, icons, actions);
             });
         });
         ui.add_space(4.0);

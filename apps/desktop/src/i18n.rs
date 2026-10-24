@@ -2208,6 +2208,14 @@ const ROWS: &[[&str; 6]] = &[
         "Filtri: giocatori, torneo, anni, Elo… (Ctrl+F)",
     ],
     [
+        "Show the list of games (Esc)",
+        "Показать список партий (Esc)",
+        "Afficher la liste des parties (Échap)",
+        "Partienliste anzeigen (Esc)",
+        "Mostrar la lista de partidas (Esc)",
+        "Mostra l'elenco delle partite (Esc)",
+    ],
+    [
         "Hide the panel",
         "Скрыть панель",
         "Masquer le panneau",
