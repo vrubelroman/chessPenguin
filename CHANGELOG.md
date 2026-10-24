@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.1] — 2026-10-24
 
 - The update check goes through the ChessPenguin site (GitHub when the site does not
   answer), which counts installations that run: once a day, only a random number of the

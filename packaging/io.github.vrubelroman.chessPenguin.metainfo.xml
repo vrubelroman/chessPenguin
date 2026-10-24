@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.0.1" date="2026-10-24">
+      <description>
+        <p>The update check goes through the ChessPenguin site, which counts installations that run: only a random number of the installation, the version and the system are sent.</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-10-24">
       <description>
         <p>ChessPenguin 1.0: three more interface languages — Brazilian Portuguese, Uzbek and Kazakh, nine in all. On Android the players stand above and below the board, and both names are shown in full in the list of games.</p>
