@@ -664,9 +664,9 @@ impl Library {
             if let Some(p) = pick {
                 self.select_db(&p, ui.ctx());
             }
-            self.shelf_actions(ui, true, actions);
-            ui.add_space(GROUP_GAP - ui.spacing().item_spacing.x);
             self.game_buttons(ui, icons, actions);
+            ui.add_space(GROUP_GAP - ui.spacing().item_spacing.x);
+            self.shelf_actions(ui, true, actions);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.app_buttons(ui, icons, actions);
             });
@@ -691,7 +691,7 @@ impl Library {
         }
     }
 
-    /// "♟ New game · 📋 Paste PGN" after the database actions: what to put in, together.
+    /// "♟ New game · 📋 Paste PGN" before the database actions: what to put in, together.
     fn game_buttons(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
         let label = |full: &'static str, icon: &'static str| if icons { icon } else { full };
         let hint = |full: &str, hint: &str| shelf_hint(icons, full, hint);
@@ -720,7 +720,8 @@ impl Library {
     fn shelf(&mut self, ui: &mut Ui, databases: &[PathBuf], actions: &mut Vec<LibraryAction>) {
         ui.add_space(8.0);
         // The title row (library-layout.md §1.4): «Databases», then what to put in — the
-        // database actions and, apart, the game ones; the program's on the right.
+        // game ones first (used daily), then, apart, the database actions; the program's
+        // on the right.
         // Narrowing: the database actions fold to «+ ▾ 🌐» first (databases are added
         // seldom), then the other buttons show icons, then the title goes.
         let avail = ui.available_width();
@@ -744,9 +745,9 @@ impl Library {
                 ui.heading(tr("Databases"));
                 ui.add_space(16.0 - ui.spacing().item_spacing.x);
             }
-            self.shelf_actions(ui, folded, actions);
-            ui.add_space(GROUP_GAP - ui.spacing().item_spacing.x);
             self.game_buttons(ui, icons, actions);
+            ui.add_space(GROUP_GAP - ui.spacing().item_spacing.x);
+            self.shelf_actions(ui, folded, actions);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.app_buttons(ui, icons, actions);
             });

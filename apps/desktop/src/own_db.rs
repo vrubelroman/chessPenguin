@@ -315,7 +315,9 @@ impl Chooser {
                 ui.label(RichText::new(&self.title).weak());
             }
             ui.add_space(6.0);
-            let many = self.rows.len() > 8;
+            // The field that narrows the list, for a long list only (of the databases
+            // offered, not of the whole shelf).
+            let many = self.rows.iter().filter(|r| r.block.is_none()).count() > 8;
             if many {
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut self.search)
