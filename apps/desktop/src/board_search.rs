@@ -126,6 +126,16 @@ impl SearchBoard {
     }
 
     /// A position is a search condition once it differs from the usual start.
+    /// A piece is picked up or dragged, or a promotion is being chosen.
+    pub fn is_busy(&self) -> bool {
+        self.board.is_busy()
+    }
+
+    /// Puts the piece back (Escape).
+    pub fn drop_pick(&mut self) {
+        self.board.clear();
+    }
+
     pub fn is_set(&self) -> bool {
         self.cursor > 0 || self.start_fen.is_some()
     }

@@ -324,6 +324,8 @@ pub struct LargeView {
     narrow_filters: bool,
     narrow_board: bool,
     drawer_open: bool,
+    /// Something asked for the filters this frame (it was clicked, not "elsewhere").
+    drawer_asked: bool,
     /// Where the filters open over the table: under its header and conditions.
     drawer_top: f32,
     /// The quick search has the keyboard (arrows and Enter go to the table).
@@ -408,6 +410,7 @@ impl LargeView {
             narrow_filters: drawer,
             narrow_board: false,
             drawer_open: drawer,
+            drawer_asked: false,
             drawer_top: 0.0,
         }
     }
@@ -459,12 +462,16 @@ impl LargeView {
     /// The layout the window allows (§2.1). Narrowing closes the filters rather than
     /// laying them over the table; widening docks the filters opened over it.
     pub fn set_layout(&mut self, narrow_filters: bool, narrow_board: bool) {
+        // Called first in each frame: what asked for the filters is this frame's.
+        self.drawer_asked = false;
         if narrow_filters && !self.narrow_filters {
             self.drawer_open = false;
         }
         if !narrow_filters && self.narrow_filters && self.drawer_open {
+            // The filters opened over the list dock; opened over the board, they close
+            // and the board stays (beside the list now, or alone).
             self.drawer_open = false;
-            if self.pane != Pane::Board || !narrow_board {
+            if self.pane != Pane::Board {
                 self.pane = Pane::Filters;
             }
         }
@@ -477,8 +484,12 @@ impl LargeView {
         (self.narrow_filters && self.drawer_open).then_some(self.drawer_top)
     }
 
-    pub fn close_drawer(&mut self) {
-        self.drawer_open = false;
+    /// A click elsewhere closes the filters over the list, unless that click asked for
+    /// them (a condition's chip).
+    pub fn close_drawer_on_click(&mut self) {
+        if !self.drawer_asked {
+            self.drawer_open = false;
+        }
     }
 
     /// The board takes the place of the table (a narrow window).
@@ -489,7 +500,11 @@ impl LargeView {
     /// Escape in the library with no field typing: the filters over the table close,
     /// then the board alone gives the place back to the table.
     pub fn escape(&mut self) -> bool {
-        if self.drawer().is_some() {
+        if self.board_alone() && self.board.is_busy() {
+            // A piece picked up on the board is put back first, as in a game.
+            self.board.drop_pick();
+            true
+        } else if self.drawer().is_some() {
             self.drawer_open = false;
             true
         } else if self.board_alone() {
@@ -505,6 +520,7 @@ impl LargeView {
     fn open_filters(&mut self) {
         if self.narrow_filters {
             self.drawer_open = true;
+            self.drawer_asked = true;
             if !self.board_alone() {
                 self.pane = Pane::Filters;
             }
@@ -1655,17 +1671,19 @@ impl LargeView {
         let avail = ui.available_width();
         let right = |field: f32| switch_w + 8.0 + search_w(field);
         // One line: the widest field that leaves the counter and at least 80 of the name.
-        let one_line = [(220.0, true), (220.0, false), (140.0, false)]
-            .into_iter()
-            .find(|(field, with_format)| {
-                let rest =
-                    avail - right(*field) - info_w - if *with_format { format_w } else { 0.0 };
-                if *with_format {
-                    rest >= name_w
-                } else {
-                    rest >= 80.0 + gap
-                }
-            });
+        // (field, format, the name's least room: 0 leaves the name out)
+        let one_line = [
+            (220.0, true, name_w),
+            (220.0, false, 80.0 + gap),
+            (140.0, false, 80.0 + gap),
+            (140.0, false, 0.0),
+        ]
+        .into_iter()
+        .find(|(field, with_format, name_least)| {
+            let format = if *with_format { format_w } else { 0.0 };
+            avail - right(*field) - info_w - format >= *name_least
+        })
+        .map(|(field, with_format, _)| (field, with_format));
         let field = match one_line {
             Some((field, _)) => field,
             None if avail - right(220.0) >= 80.0 + gap => 220.0,

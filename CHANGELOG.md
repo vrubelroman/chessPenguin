@@ -12,6 +12,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   - a narrow tall window shows the notation under the board;
   - the header of the list and the shelf shorten what does not fit, or take a second
     line; the window can be made as small as 640×480.
+- Desktop: Escape in the "Game modified" question quits nothing: when closing the program
+  it is Cancel (leaving a game, it still goes on without saving).
 
 ## [0.16.1] — 2026-10-24
 

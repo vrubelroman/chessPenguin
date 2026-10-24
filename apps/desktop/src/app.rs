@@ -31,6 +31,12 @@ pub const TOAST: &str = "toast";
 /// Something is open over the screen — a window, a menu, a dialog — in this frame or the
 /// last one: Escape is meant for it (it closes itself), not for leaving the screen.
 pub fn overlay_open(ctx: &egui::Context) -> bool {
+    overlay_open_besides(ctx, &[])
+}
+
+/// `overlay_open`, not counting these layers of the screen itself (the filters over
+/// the list).
+pub fn overlay_open_besides(ctx: &egui::Context, own: &[egui::Id]) -> bool {
     let passive = [
         egui::Id::new(TOAST),
         egui::Id::new(crate::engine_offer::DOWNLOAD_INDICATOR),
@@ -40,6 +46,7 @@ pub fn overlay_open(ctx: &egui::Context) -> bool {
         .any(|l| {
             matches!(l.order, egui::Order::Middle | egui::Order::Foreground)
                 && !passive.contains(&l.id)
+                && !own.contains(&l.id)
         })
 }
 
@@ -761,14 +768,27 @@ impl App {
                 if ui.button(tr("Save as…")).clicked() {
                     choice = Some(0);
                 }
-                // Escape goes on where the user was going (the owner's choice): the
-                // second Escape of "Escape, Escape" leaves without saving. Cancel stays.
-                if ui.button(tr("Don't save")).on_hover_text("Esc").clicked()
-                    || ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape))
-                {
+                // Escape goes on where the user was going back to (the owner's choice):
+                // the second Escape of "Escape, Escape" leaves the game without saving.
+                // Quitting the program is not undone that lightly: there it is Cancel.
+                let leaving = intent != CloseIntent::QuitApp;
+                let esc = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+                let dont = ui.button(tr("Don't save"));
+                let dont = if leaving {
+                    dont.on_hover_text("Esc")
+                } else {
+                    dont
+                };
+                if dont.clicked() || (esc && leaving) {
                     choice = Some(1);
                 }
-                if ui.button(tr("Cancel")).clicked() {
+                let cancel = ui.button(tr("Cancel"));
+                let cancel = if leaving {
+                    cancel
+                } else {
+                    cancel.on_hover_text("Esc")
+                };
+                if cancel.clicked() || (esc && !leaving) {
                     choice = Some(2);
                 }
             });

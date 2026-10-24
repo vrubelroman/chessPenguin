@@ -632,7 +632,8 @@ impl Review {
                         if let Some(c) = color {
                             t = t.color(c);
                         }
-                        ui.label(t);
+                        // A long name ("Average centipawn loss") wraps in a narrow panel.
+                        ui.add(egui::Label::new(t).wrap());
                         ui.end_row();
                     };
                 let dash = || "—".to_string();

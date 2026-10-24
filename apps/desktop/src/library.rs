@@ -443,13 +443,14 @@ impl Library {
                         view.panel(ui, &db);
                     });
                 });
-            if area.response.clicked_elsewhere() && !ui.ctx().is_being_dragged(area.response.id) {
-                view.close_drawer();
+            if area.response.clicked_elsewhere() {
+                view.close_drawer_on_click();
             }
         }
         // Escape: the filters over the table close, then the board alone gives the place
         // back to the table (a field takes its own Escape first).
         if !typing
+            && !crate::app::overlay_open_besides(ui.ctx(), &[egui::Id::new("filters_drawer")])
             && let Some(path) = self.selected_db.clone()
             && let Some(view) = self.large.get_mut(&path)
             && ui.input(|i| i.key_pressed(egui::Key::Escape))
