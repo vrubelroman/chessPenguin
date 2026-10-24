@@ -7,6 +7,7 @@ import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -232,8 +233,11 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
 
     val g = game
     val tag = { name: String -> g?.tags?.firstOrNull { it.name == name }?.value ?: "" }
-    val white = surname(tag("White"))
-    val black = surname(tag("Black"))
+    // The player bars above and below the board (§7.11); the top bar names the event.
+    val whiteName = tag("White").trim().takeIf { it.isNotEmpty() && it != "?" }
+    val blackName = tag("Black").trim().takeIf { it.isNotEmpty() && it != "?" }
+    val whiteLabel = stringResource(R.string.tag_white)
+    val blackLabel = stringResource(R.string.tag_black)
     val resultText = g?.let { resultLine(context, it.result) } ?: ""
     val (items, where) = remember(g, resultText) { g?.let { layout(it, resultText) } ?: (emptyList<Item>() to emptyMap()) }
     val nodes = g?.nodes
@@ -547,22 +551,34 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.back)) }
                 },
                 title = {
-                    Column {
+                    // The event and year (else the site); the game's place and round. A tap
+                    // shows the game's details.
+                    val event = joinKnown(tag("Event"), year(tag("Date"))).ifEmpty { joinKnown(tag("Site")) }
+                    val round = tag("Round").trim().takeIf { it.isNotEmpty() && it != "?" && it != "-" }
+                    val placeLine = joinKnown(
+                        if (total > 0) stringResource(R.string.game_of, place + 1, total) else "",
+                        round?.let { stringResource(R.string.tag_round) + " " + it } ?: "",
+                    )
+                    Column(
+                        Modifier.clickable(
+                            enabled = g != null,
+                            onClickLabel = stringResource(R.string.game_info),
+                            role = Role.Button,
+                        ) { info = true },
+                    ) {
                         Text(
-                            when {
-                                g == null -> ""
-                                black == "?" && white != "?" -> white
-                                else -> "$white – $black"
-                            },
+                            event.ifEmpty { placeLine },
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (total > 0) {
+                        if (event.isNotEmpty() && placeLine.isNotEmpty()) {
                             Text(
-                                joinKnown(stringResource(R.string.game_of, place + 1, total), g?.let { shortResult(it.result) }?.takeIf { it != "*" } ?: ""),
+                                placeLine,
                                 style = MaterialTheme.typography.bodyMedium.merge(Tabular),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
@@ -635,18 +651,35 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         bottomBar = { if (!landscape) controls(Modifier) },
     ) { padding ->
         val inner = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())
+        // Black above the board, White below (swapped with the board, §7.11). A study with
+        // a title for White and no Black keeps both bars, so the board does not jump.
+        val study = whiteName != null && blackName == null
+        val result = g?.result ?: ""
+        val whiteBar: @Composable () -> Unit = {
+            PlayerBar(whiteName ?: whiteLabel, elo(tag("WhiteElo")), true, sideResult(result, true), known = whiteName != null, abbreviate = !study)
+        }
+        val blackBar: @Composable () -> Unit = {
+            PlayerBar(blackName ?: blackLabel, elo(tag("BlackElo")), false, sideResult(result, false), known = blackName != null)
+        }
+        val topBar = if (flipped) whiteBar else blackBar
+        val bottomBar = if (flipped) blackBar else whiteBar
         if (landscape) {
             // The navigation buttons stand on a side of the screen: nothing goes under them.
+            // The bars go beside the board, so it keeps the full height.
             Row(inner.windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))) {
                 board(Modifier.fillMaxHeight())
                 Column(Modifier.weight(1f).fillMaxHeight()) {
+                    topBar()
                     side(Modifier.weight(1f))
+                    bottomBar()
                     controls(Modifier)
                 }
             }
         } else {
             Column(inner) {
+                topBar()
                 board(Modifier.fillMaxWidth())
+                bottomBar()
                 side(Modifier.weight(1f))
             }
         }
@@ -712,12 +745,10 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         )
     }
     if (reviewReport && rs != null) {
-        val whiteName = tag("White").takeIf { it.isNotBlank() && it != "?" } ?: stringResource(R.string.tag_white)
-        val blackName = tag("Black").takeIf { it.isNotBlank() && it != "?" } ?: stringResource(R.string.tag_black)
         ReviewSheet(
             state = rs,
-            white = whiteName,
-            black = blackName,
+            white = whiteName ?: whiteLabel,
+            black = blackName ?: blackLabel,
             onError = { w, j ->
                 reviewReport = false
                 val hits = rs.moves.filter { it.white == w && it.judgement == j }
@@ -898,7 +929,21 @@ private fun pgnDate(date: String): String {
 }
 
 /// "Carlsen, Magnus" → "Carlsen"; "Magnus Carlsen" stays as it is.
-private fun surname(name: String): String = name.substringBefore(',').trim().ifEmpty { "?" }
+/// A player above or below the board (§7.11): the side's disc, the name (full while it
+/// fits), the rating, the share of the result. A missing name shows the side, greyed.
+@Composable
+private fun PlayerBar(name: String, elo: String, white: Boolean, result: String?, known: Boolean, abbreviate: Boolean = true) {
+    PlayerLine(
+        name = name,
+        elo = elo,
+        result = result,
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp).padding(horizontal = 16.dp),
+        disc = white,
+        nameColor = if (known) androidx.compose.ui.graphics.Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
+        abbreviate = abbreviate,
+    )
+}
 
 /// "1-0 · White won" for the end of the notation.
 private fun resultLine(context: Context, result: String): String = when (result) {

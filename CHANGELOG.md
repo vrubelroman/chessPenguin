@@ -7,6 +7,10 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 - Three more interface languages on the desktop, on Android and on the website: Brazilian
   Portuguese, Uzbek (Latin script) and Kazakh (Cyrillic script) — nine in all. The
   system's language is picked up; Portuguese notation uses its own piece letters.
+- Android: the players stand above and below the board, as on Lichess (Black above,
+  swapped with the board), with their ratings and their share of the result; the top bar
+  names the event, the year and the round. In the list of games White and Black have a
+  line each, so neither name is cut.
 
 ## [0.16.2] — 2026-10-24
 

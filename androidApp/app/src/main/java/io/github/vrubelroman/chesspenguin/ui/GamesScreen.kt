@@ -50,6 +50,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -276,27 +277,30 @@ private fun numberWidth(count: Int): androidx.compose.ui.unit.Dp {
     }
 }
 
-/// One game: its number in the database, "White – Black" and the result, then event ·
-/// year · ECO (§6.2). An unfinished game ("*", most book positions) shows no result.
+/// One game (§6.2): its number, White and Black each on a line of their own (with the
+/// rating and the share of the result), then event · year · ECO. The row is read as one
+/// sentence by TalkBack.
 @Composable
 private fun GameRowView(number: Int, numberWidth: androidx.compose.ui.unit.Dp, row: GameRow?, onClick: () -> Unit) {
+    val said = row?.let { rowDescription(number, it) } ?: ""
     Row(
         Modifier
             .fillMaxWidth()
-            .height(64.dp)
+            .height(80.dp)
             .clickable(enabled = row != null, onClick = onClick)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clearAndSetSemantics { if (row != null) contentDescription = said }
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        val said = stringResource(R.string.game_number, groupDigits(number))
-        Text(
-            groupDigits(number),
-            style = MaterialTheme.typography.bodySmall.merge(Tabular),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.End,
-            maxLines = 1,
-            modifier = Modifier.width(numberWidth).semantics { contentDescription = said },
-        )
+        // Level with White's line.
+        Box(Modifier.width(numberWidth).height(24.dp), contentAlignment = Alignment.CenterEnd) {
+            Text(
+                groupDigits(number),
+                style = MaterialTheme.typography.bodySmall.merge(Tabular),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
         Spacer(Modifier.width(12.dp))
         GameRowText(row, Modifier.weight(1f))
     }
@@ -304,48 +308,52 @@ private fun GameRowView(number: Int, numberWidth: androidx.compose.ui.unit.Dp, r
 
 @Composable
 private fun GameRowText(row: GameRow?, modifier: Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.Center) {
+    Column(modifier) {
         if (row == null) return@Column
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f)) {
-                Text(
-                    shortName(row.white),
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                // A study or a book position often has a title for White and no Black.
-                if (shortName(row.black) != "?" || shortName(row.white) == "?") {
-                    Text(" – ", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        shortName(row.black),
-                        style = MaterialTheme.typography.bodyLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                }
-            }
-            val result = shortResult(row.result)
-            if (result != "*") {
-                Text(
-                    result,
-                    style = MaterialTheme.typography.bodyLarge.merge(Tabular),
-                    textAlign = TextAlign.End,
-                    modifier = Modifier.width(48.dp).padding(start = 8.dp),
-                )
-            }
+        val style = MaterialTheme.typography.bodyLarge
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        val white = row.white.trim().takeIf { it.isNotEmpty() && it != "?" }
+        val black = row.black.trim().takeIf { it.isNotEmpty() && it != "?" }
+        if (white != null && black == null) {
+            // A study or a book position: a title for White and no Black — two lines of it.
+            PlayerLine(white, elo(row.whiteElo), null, style, Modifier.height(48.dp), maxLines = 2, abbreviate = false)
+        } else {
+            PlayerLine(white ?: "?", elo(row.whiteElo), sideResult(row.result, true), style, Modifier.height(24.dp), nameColor = if (white == null) muted else androidx.compose.ui.graphics.Color.Unspecified)
+            PlayerLine(black ?: "?", elo(row.blackElo), sideResult(row.result, false), style, Modifier.height(24.dp), nameColor = if (black == null) muted else androidx.compose.ui.graphics.Color.Unspecified)
         }
         val details = joinKnown(row.event, year(row.date), row.eco)
         if (details.isNotEmpty()) {
             Text(
                 details,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.height(20.dp),
             )
         }
     }
 }
+
+/// "No. 12. White: Carlsen, Magnus, 2830. Black: … . 1-0, White won. Event · 2025 · C42."
+@Composable
+private fun rowDescription(number: Int, row: GameRow): String {
+    val player = { label: String, name: String, rating: String ->
+        "$label: " + joinKnownComma(name.trim().takeIf { it.isNotEmpty() } ?: "?", elo(rating))
+    }
+    val result = when (row.result) {
+        "1-0" -> "1-0, " + stringResource(R.string.white_won)
+        "0-1" -> "0-1, " + stringResource(R.string.black_won)
+        "1/2-1/2" -> "½-½, " + stringResource(R.string.draw)
+        else -> ""
+    }
+    return listOf(
+        stringResource(R.string.game_number, groupDigits(number)),
+        player(stringResource(R.string.tag_white), row.white, row.whiteElo),
+        player(stringResource(R.string.tag_black), row.black, row.blackElo),
+        result,
+        joinKnown(row.event, year(row.date), row.eco),
+    ).filter { it.isNotEmpty() }.joinToString(". ")
+}
+
+private fun joinKnownComma(vararg parts: String): String = parts.filter { it.isNotEmpty() }.joinToString(", ")

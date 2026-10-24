@@ -2,6 +2,16 @@ package io.github.vrubelroman.chesspenguin.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.withStyle
 import io.github.vrubelroman.chesspenguin.ChessPenguinApp
 import io.github.vrubelroman.chesspenguin.R
+import io.github.vrubelroman.chesspenguin.theme.Tabular
 import io.github.vrubelroman.chesspenguin.data.Notation
 import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.Source
@@ -87,6 +98,81 @@ fun shortName(name: String): String {
     val surname = n.substring(0, comma).trim()
     val initials = n.substring(comma + 1).trim().split(' ', '-').filter { it.isNotEmpty() }.joinToString(" ") { "${it.first()}." }
     return if (initials.isEmpty()) surname else "$surname $initials"
+}
+
+/// A player's name (android-ui.md §7.11): in full while it fits, else "Surname F.", else
+/// cut with "…". `abbreviate = false` keeps the text as it is (a study's title for White).
+@Composable
+fun PlayerName(
+    name: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    maxLines: Int = 1,
+    abbreviate: Boolean = true,
+) {
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(modifier) {
+        val text = if (abbreviate && measurer.measure(name, style, softWrap = false).size.width > constraints.maxWidth) shortName(name) else name
+        Text(text, style = style, color = color, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/// A player's share of the result: "1", "0", "½", or null (unknown, unfinished).
+fun sideResult(result: String, white: Boolean): String? = when (result) {
+    "1-0" -> if (white) "1" else "0"
+    "0-1" -> if (white) "0" else "1"
+    "1/2-1/2" -> "½"
+    else -> null
+}
+
+/// The rating of a player, or nothing ("0", "?", "").
+fun elo(value: String): String = value.trim().takeIf { v -> v.toIntOrNull()?.let { it > 0 } == true } ?: ""
+
+/// The colour of a side: a small disc (white with a rim, or black).
+@Composable
+fun SideDisc(white: Boolean) {
+    Box(
+        Modifier.size(12.dp).clip(CircleShape)
+            .background(if (white) Color(0xFFF5F5F0) else Color(0xFF26282B))
+            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+    )
+}
+
+/// One player's line: name (giving way), Elo, the share of the result on the right.
+@Composable
+fun PlayerLine(
+    name: String,
+    elo: String,
+    result: String?,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    disc: Boolean? = null,
+    nameColor: Color = Color.Unspecified,
+    maxLines: Int = 1,
+    abbreviate: Boolean = true,
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (disc != null) {
+            SideDisc(disc)
+            Spacer(Modifier.width(10.dp))
+        }
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            PlayerName(name, style, Modifier.weight(1f, fill = false), nameColor, maxLines, abbreviate)
+            if (elo.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                Text(elo, style = MaterialTheme.typography.bodyMedium.merge(Tabular), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+        Text(
+            result ?: "",
+            style = style.merge(Tabular),
+            color = if (result == "1") MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            maxLines = 1,
+            modifier = Modifier.width(24.dp),
+        )
+    }
 }
 
 /// "1/2-1/2" → "½-½".
