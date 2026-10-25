@@ -2109,16 +2109,6 @@ impl GameView {
         {
             self.board.set_premove(from, to);
         }
-        let maia = format!("Maia {}", start.strength);
-        let you = if start.user_name.is_empty() {
-            "?".to_owned()
-        } else {
-            start.user_name.clone()
-        };
-        let (white, black) = match start.user {
-            Color::White => (you, maia),
-            Color::Black => (maia, you),
-        };
         let event = match start.clock {
             Some(tc) => trf(
                 "Game vs computer, {speed}",
@@ -2127,30 +2117,16 @@ impl GameView {
             None => tr("Game vs computer").to_owned(),
         };
         let g = &mut self.game;
-        g.set_tag("Event", &event);
-        g.set_tag("Site", "ChessPenguin");
-        g.set_tag("White", &white);
-        g.set_tag("Black", &black);
-        let (we, be) = match start.user {
-            Color::White => (start.user_elo, Some(start.strength)),
-            Color::Black => (Some(start.strength), start.user_elo),
-        };
-        if let Some(e) = we {
-            g.set_tag("WhiteElo", &e.to_string());
-        }
-        if let Some(e) = be {
-            g.set_tag("BlackElo", &e.to_string());
-        }
-        let (wt, bt) = match start.user {
-            Color::White => ("human", "program"),
-            Color::Black => ("program", "human"),
-        };
-        g.set_tag("WhiteType", wt);
-        g.set_tag("BlackType", bt);
-        g.set_tag(
-            "TimeControl",
+        for (name, value) in ::play::game_tags(
+            &event,
+            start.user,
+            &start.user_name,
+            start.user_elo,
+            start.strength,
             &start.clock.map_or_else(|| "-".to_owned(), |tc| tc.pgn()),
-        );
+        ) {
+            g.set_tag(&name, &value);
+        }
         // From a position of another game: its moves are already here; after the last
         // of them, where the game comes from (a comment of the game, written in PGN).
         let floor = match &start.from {

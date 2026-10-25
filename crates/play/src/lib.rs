@@ -126,6 +126,47 @@ pub fn pause(clock: Option<(Duration, u32)>, ply: usize, only_move: bool) -> Dur
     Duration::from_secs_f32(secs)
 }
 
+// ----- the game's tags -----------------------------------------------------------------
+
+/// The tags of a game against Maia (as Lichess writes a game against a program):
+/// `event` in the app's language, the user's name ("?" unknown) and rating, Maia's
+/// strength, the time control in PGN ("-": none). The rest (date, result) is the game's.
+pub fn game_tags(
+    event: &str,
+    user: Color,
+    user_name: &str,
+    user_elo: Option<u32>,
+    strength: u32,
+    time_control: &str,
+) -> Vec<(String, String)> {
+    let maia = format!("Maia {strength}");
+    let you = if user_name.trim().is_empty() {
+        "?".to_owned()
+    } else {
+        user_name.trim().to_owned()
+    };
+    let (white, black, we, be, wt, bt) = match user {
+        Color::White => (you, maia, user_elo, Some(strength), "human", "program"),
+        Color::Black => (maia, you, Some(strength), user_elo, "program", "human"),
+    };
+    let mut tags = vec![
+        ("Event".to_owned(), event.to_owned()),
+        ("Site".to_owned(), "ChessPenguin".to_owned()),
+        ("White".to_owned(), white),
+        ("Black".to_owned(), black),
+    ];
+    if let Some(e) = we {
+        tags.push(("WhiteElo".to_owned(), e.to_string()));
+    }
+    if let Some(e) = be {
+        tags.push(("BlackElo".to_owned(), e.to_string()));
+    }
+    tags.push(("WhiteType".to_owned(), wt.to_owned()));
+    tags.push(("BlackType".to_owned(), bt.to_owned()));
+    tags.push(("TimeControl".to_owned(), time_control.to_owned()));
+    tags
+}
+
 // ----- Maia resigns --------------------------------------------------------------------
 
 /// Nodes the judge searches a position: a tenth of a second or two, enough to see that

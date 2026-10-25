@@ -60,6 +60,26 @@ pub fn maia_pause_ms(ply: u32, only_move: bool) -> u64 {
     ::play::pause(None, ply as usize, only_move).as_millis() as u64
 }
 
+/// The tags of a game against Maia on the phone (no clocks): `event` in the app's
+/// language; the user plays White when `user_white`.
+#[uniffi::export]
+pub fn maia_game_tags(
+    event: String,
+    user_white: bool,
+    user_name: String,
+    strength: u32,
+) -> Vec<crate::Tag> {
+    let user = if user_white {
+        shakmaty::Color::White
+    } else {
+        shakmaty::Color::Black
+    };
+    ::play::game_tags(&event, user, &user_name, None, strength, "-")
+        .into_iter()
+        .map(|(name, value)| crate::Tag { name, value })
+        .collect()
+}
+
 /// Maia's turns in a row with her position hopeless before she offers to resign.
 #[uniffi::export]
 pub fn hopeless_turns() -> u32 {
