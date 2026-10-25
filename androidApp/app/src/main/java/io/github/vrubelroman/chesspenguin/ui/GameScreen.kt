@@ -394,6 +394,9 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     @Suppress("UNUSED_EXPRESSION") saves
     val modified = g != null && edit?.isModified() == true
     var saving by remember { mutableStateOf(false) }
+    // The game's data form; `firstSave`: a new game's first save asks for it first.
+    var editingData by remember { mutableStateOf(false) }
+    var firstSave by remember { mutableStateOf(false) }
     var leaving by remember { mutableStateOf(false) }
     var afterSave by remember { mutableStateOf<(() -> Unit)?>(null) }
     val ownEntries = libraryEntries.filter { it.source == Source.Own }
@@ -424,6 +427,11 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         when {
             ownGame -> games?.getOrNull(place)?.let { saveInto(db, it) }
             to != null -> saveInto(to.first, to.second)
+            // A new game's names and result first, as the desktop asks when adding.
+            newGame -> {
+                firstSave = true
+                editingData = true
+            }
             else -> saving = true
         }
     }
@@ -830,6 +838,40 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 }
             },
             confirmButton = { TextButton(onClick = { info = false }) { Text(stringResource(R.string.close)) } },
+            // The user's own game, or a new one: its data can be changed (§30.5).
+            dismissButton = if (ownGame || newGame || held.savedTo != null) {
+                {
+                    TextButton(onClick = {
+                        info = false
+                        editingData = true
+                    }) { Text(stringResource(R.string.edit)) }
+                }
+            } else {
+                null
+            },
+        )
+    }
+    if (editingData && g != null) {
+        GameDataForm(
+            g,
+            doneLabel = stringResource(if (firstSave) R.string.next else R.string.done),
+            onDone = { tags, result ->
+                editingData = false
+                edit?.let { e ->
+                    e.setData(tags, result)
+                    game = e.data().copy(notes = held.notes)
+                    saves++
+                }
+                if (firstSave) {
+                    firstSave = false
+                    saving = true
+                }
+            },
+            onDismiss = {
+                editingData = false
+                firstSave = false
+                afterSave = null
+            },
         )
     }
     if (saving) {

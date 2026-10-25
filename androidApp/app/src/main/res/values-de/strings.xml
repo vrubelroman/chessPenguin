@@ -425,4 +425,12 @@
     <string name="save_changes_in">Änderungen in „%1$s“ speichern?</string>
     <string name="save_game_question">Partie speichern?</string>
     <string name="dont_save">Nicht speichern</string>
+    <string name="game_data">Partiedaten</string>
+    <string name="date_hint">JJJJ.MM.TT</string>
+    <string name="date_wrong">Kein Datum: 2026.10.26, 2026 oder 26.10.2026</string>
+    <string name="discard_changes">Änderungen verwerfen?</string>
+    <string name="discard">Verwerfen</string>
+    <string name="keep_editing">Weiter bearbeiten</string>
+    <string name="edit">Bearbeiten</string>
+    <string name="next">Weiter</string>
 </resources>

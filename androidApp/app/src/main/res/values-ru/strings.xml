@@ -439,4 +439,12 @@
     <string name="save_changes_in">Сохранить изменения в «%1$s»?</string>
     <string name="save_game_question">Сохранить партию?</string>
     <string name="dont_save">Не сохранять</string>
+    <string name="game_data">Данные партии</string>
+    <string name="date_hint">ГГГГ.ММ.ДД</string>
+    <string name="date_wrong">Не дата: 2026.10.26, 2026 или 26.10.2026</string>
+    <string name="discard_changes">Отменить изменения?</string>
+    <string name="discard">Отменить</string>
+    <string name="keep_editing">Продолжить правку</string>
+    <string name="edit">Изменить</string>
+    <string name="next">Далее</string>
 </resources>

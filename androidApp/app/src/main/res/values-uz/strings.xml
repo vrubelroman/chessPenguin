@@ -424,4 +424,12 @@
     <string name="save_changes_in">O‘zgarishlar “%1$s” ga saqlansinmi?</string>
     <string name="save_game_question">O‘yin saqlansinmi?</string>
     <string name="dont_save">Saqlamaslik</string>
+    <string name="game_data">O‘yin ma’lumotlari</string>
+    <string name="date_hint">YYYY.OO.KK</string>
+    <string name="date_wrong">Sana emas: 2026.10.26, 2026 yoki 26.10.2026</string>
+    <string name="discard_changes">O‘zgarishlar bekor qilinsinmi?</string>
+    <string name="discard">Bekor qilish</string>
+    <string name="keep_editing">Tahrirlashni davom ettirish</string>
+    <string name="edit">Tahrirlash</string>
+    <string name="next">Keyingi</string>
 </resources>

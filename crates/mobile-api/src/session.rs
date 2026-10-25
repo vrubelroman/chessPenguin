@@ -173,8 +173,8 @@ impl GameSession {
         self.with(|g| g.redo().map(|o| edited(g, o.cursor)))
     }
 
-    /// Sets the game's tags (an empty value removes the tag) and its result ("1-0",
-    /// "0-1", "1/2-1/2", "*").
+    /// Sets the game's tags (an empty value removes the tag; one of the Seven Tag Roster
+    /// becomes "?") and its result ("1-0", "0-1", "1/2-1/2", "*").
     pub fn set_data(&self, tags: Vec<Tag>, result: String) {
         self.with(|g| {
             for t in tags {
@@ -187,6 +187,8 @@ impl GameSession {
             if let Some(r) = GameResult::from_pgn(&result) {
                 g.set_result(r);
             }
+            // The Seven Tag Roster first, in its order, "?" where unknown (as the desktop).
+            g.order_roster();
         })
     }
 
@@ -365,6 +367,20 @@ mod tests {
         s2.play(1, "e7e5".into()).unwrap();
         assert_eq!(own_save(p.clone(), Some(0), s2.pgn()).unwrap(), 0);
 
+        // The roster stays whole and in order, unknown values "?".
+        let pgn = s.pgn();
+        let order: Vec<&str> = pgn
+            .lines()
+            .take(7)
+            .map(|l| l.split(' ').next().unwrap())
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "[Event", "[Site", "[Date", "[Round", "[White", "[Black", "[Result"
+            ]
+        );
+        assert!(pgn.contains("[Event \"?\"]"));
         let db = crate::open_path(p.clone()).unwrap();
         assert_eq!(db.len(), 2);
         let first = db.game(0).unwrap();

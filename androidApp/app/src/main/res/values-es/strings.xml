@@ -432,4 +432,12 @@
     <string name="save_changes_in">¿Guardar los cambios en «%1$s»?</string>
     <string name="save_game_question">¿Guardar la partida?</string>
     <string name="dont_save">No guardar</string>
+    <string name="game_data">Datos de la partida</string>
+    <string name="date_hint">AAAA.MM.DD</string>
+    <string name="date_wrong">No es una fecha: 2026.10.26, 2026 o 26.10.2026</string>
+    <string name="discard_changes">¿Descartar los cambios?</string>
+    <string name="discard">Descartar</string>
+    <string name="keep_editing">Seguir editando</string>
+    <string name="edit">Editar</string>
+    <string name="next">Siguiente</string>
 </resources>

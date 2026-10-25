@@ -426,4 +426,12 @@
     <string name="save_changes_in">Өзгерістер «%1$s» ішіне сақталсын ба?</string>
     <string name="save_game_question">Ойын сақталсын ба?</string>
     <string name="dont_save">Сақтамау</string>
+    <string name="game_data">Ойын деректері</string>
+    <string name="date_hint">ЖЖЖЖ.АА.КК</string>
+    <string name="date_wrong">Күн емес: 2026.10.26, 2026 немесе 26.10.2026</string>
+    <string name="discard_changes">Өзгерістер болдырылмасын ба?</string>
+    <string name="discard">Болдырмау</string>
+    <string name="keep_editing">Өңдеуді жалғастыру</string>
+    <string name="edit">Өзгерту</string>
+    <string name="next">Келесі</string>
 </resources>

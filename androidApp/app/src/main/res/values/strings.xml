@@ -429,4 +429,12 @@
     <string name="save_changes_in">Save the changes to “%1$s”?</string>
     <string name="save_game_question">Save the game?</string>
     <string name="dont_save">Don’t save</string>
+    <string name="game_data">Game data</string>
+    <string name="date_hint">YYYY.MM.DD</string>
+    <string name="date_wrong">Not a date: 2026.10.26, 2026 or 26.10.2026</string>
+    <string name="discard_changes">Discard the changes?</string>
+    <string name="discard">Discard</string>
+    <string name="keep_editing">Keep editing</string>
+    <string name="edit">Edit</string>
+    <string name="next">Next</string>
 </resources>
