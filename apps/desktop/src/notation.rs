@@ -1065,6 +1065,38 @@ fn variation_block(
     });
 }
 
+/// A move in flowing text: the current one highlighted as in the main-line table,
+/// the others lit under the mouse. Painted by hand, so its size never changes with the
+/// mouse (a button's frame does).
+fn move_chip(ui: &mut Ui, label: &str, color: Option<Color32>, current: bool) -> egui::Response {
+    let sel = ui.visuals().selection;
+    let font = FontId::proportional(15.0);
+    let text_color = if current {
+        sel.stroke.color
+    } else {
+        color.unwrap_or_else(|| ui.visuals().text_color())
+    };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, text_color);
+    let pad = vec2(4.0, 2.0);
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + 2.0 * pad, Sense::click());
+    if current {
+        ui.painter().rect(
+            rect,
+            2.0,
+            sel.bg_fill,
+            Stroke::new(1.0, sel.stroke.color),
+            egui::StrokeKind::Inside,
+        );
+    } else if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    ui.painter().galley(rect.min + pad, galley, text_color);
+    resp
+}
+
 /// Lays out tokens as flowing text.
 fn flow(
     ui: &mut Ui,
@@ -1093,23 +1125,7 @@ fn flow(
                     } else {
                         label
                     };
-                    let mut text = RichText::new(label).size(15.0);
-                    if let Some(c) = color
-                        && !current
-                    {
-                        text = text.color(*c);
-                    }
-                    // Same strong highlight as the main-line table, so the current move is
-                    // visible inside text.
-                    let button = if current {
-                        let sel = ui.visuals().selection;
-                        egui::Button::new(text.color(sel.stroke.color).strong())
-                            .fill(sel.bg_fill)
-                            .stroke(egui::Stroke::new(1.0, sel.stroke.color))
-                    } else {
-                        egui::Button::new(text).frame_when_inactive(false)
-                    };
-                    let resp = ui.add(button);
+                    let resp = move_chip(ui, label, *color, current);
                     handle_move_response(ui, &resp, n, *id, out);
                 }
                 Token::Comment { slot, text } => {
