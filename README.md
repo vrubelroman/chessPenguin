@@ -47,6 +47,11 @@
   Undo. Any PGN file on the shelf takes games; writes happen only when you ask, by appending
   to the file or rewriting it atomically. Online and ChessBase databases stay read-only; a
   file in a legacy encoding gets a UTF-8 copy.
+- **Paste a line** — moves or a whole PGN game from the clipboard go into the open game as a
+  variation, from where they part from it, with their comments and variations (Ctrl+V).
+- **Learn an opening** — replay from memory the moves of both sides of a game up to a chosen
+  move; mistakes are counted, the runs of each line remembered. Or play on from any move
+  against Maia.
 - **Play against the computer** — Maia, a neural network trained on human games, plays like a
   human of the rating you choose (600–2600), mistakes included. Lichess time controls (3+0 to
   30+20, your own, unlimited), clocks, premoves, take-backs; Maia offers to resign when lost.

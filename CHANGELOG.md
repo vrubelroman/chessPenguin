@@ -2,8 +2,9 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.4.0] — 2026-10-25
 
+- The library's title row in three groups: databases | a game to enter | Play.
 - Paste a line from the clipboard (Ctrl+V on a game, or the move menu): moves («Nf3 d5»,
   «12...Rd8», UCI) go after the selected move or instead of it; a PGN game goes where its
   moves part from this game — along any branch, or by another move order — with its

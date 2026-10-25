@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.4.0" date="2026-10-25">
+      <description>
+        <p>Paste a line from the clipboard into a game: moves or a whole PGN game go where they part from it, with their comments and variations. Play on from any move against Maia, with the moves of the game kept. Learn an opening: replay from memory the moves of both sides up to a chosen move; mistakes are counted and the runs of each line remembered.</p>
+      </description>
+    </release>
     <release version="1.3.0" date="2026-10-25">
       <description>
         <p>Play against the computer: Maia, a neural network trained on human games, plays like a human of the rating you choose, from 600 to 2600, mistakes included. Lichess time controls from 3+0 to 30+20, your own or unlimited; clocks, premoves, take-backs. No engine hints during the game; when her position is hopeless Maia offers to resign. Afterwards the game can be analysed or saved. Maia (21 MB) is downloaded on request. New board setting: always promote to a queen.</p>
