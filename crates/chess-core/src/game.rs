@@ -591,6 +591,15 @@ impl Game {
         self.unsaved_meta || self.saved_depth != Some(self.undo_stack.len())
     }
 
+    /// Forgets the undo and redo history (the moves of a game played against the
+    /// computer are not edits to undo); whether the game is saved stays as it is.
+    pub fn forget_history(&mut self) {
+        let saved = self.saved_depth == Some(self.undo_stack.len());
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.saved_depth = saved.then_some(0);
+    }
+
     pub fn mark_saved(&mut self) {
         self.saved_depth = Some(self.undo_stack.len());
         self.unsaved_meta = false;

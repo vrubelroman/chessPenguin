@@ -30,6 +30,15 @@ pub fn installed() -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
+/// The downloaded weights did not load: removed, so that the dialog offers them again.
+pub fn forget_broken() {
+    if std::env::var_os("CP_MAIA").is_none()
+        && let Some(d) = dir()
+    {
+        let _ = std::fs::remove_file(d.join(FILE));
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stage {
     Downloading { done: u64 },

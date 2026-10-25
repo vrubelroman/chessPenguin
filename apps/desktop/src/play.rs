@@ -218,15 +218,31 @@ impl Clock {
     }
 
     /// `c` has moved: its time is taken (not on its first move), the increment added,
-    /// the other side's clock starts.
-    pub fn moved(&mut self, c: Color, now: Instant) {
+    /// the other side's clock starts. `spent`: the time to take instead of what passed
+    /// (Maia's pause: the program's own computing is not her thinking).
+    pub fn moved(&mut self, c: Color, now: Instant, spent: Option<Duration>) {
         let i = idx(c);
         if self.moved[i] {
-            self.left[i] = self.left(c, now);
+            self.left[i] = match spent {
+                Some(d) => self.left[i].saturating_sub(d),
+                None => self.left(c, now),
+            };
         }
         self.moved[i] = true;
         self.left[i] += Duration::from_secs(u64::from(self.control.increment));
         self.running = Some((!c, now));
+    }
+
+    /// A take-back: `side` moves now (its clock runs from `now`); `moved`: it has
+    /// moved before in the game left (else its next move is its first, free one).
+    pub fn take_back(&mut self, side: Color, moved: bool, now: Instant) {
+        if let Some((c, since)) = self.running
+            && self.moved[idx(c)]
+        {
+            self.left[idx(c)] = self.left[idx(c)].saturating_sub(now - since);
+        }
+        self.moved[idx(side)] = moved;
+        self.running = Some((side, now));
     }
 
     /// The side to move, its clock running (after its first move).
@@ -369,7 +385,7 @@ struct Request {
 /// An answer for an older generation (after a take-back, a resignation) is dropped.
 pub struct Opponent {
     tx: Sender<Request>,
-    rx: Receiver<(u64, Option<Move>)>,
+    rx: Receiver<(u64, Option<Move>, Duration)>,
     generation: u64,
     /// Loading failed: why (shown to the user).
     pub error: Arc<Mutex<Option<String>>>,
@@ -402,11 +418,16 @@ impl Opponent {
                         r = newer;
                     }
                     let started = Instant::now();
-                    let p = maia.predict(&r.positions, r.self_elo, r.oppo_elo);
+                    let mut p = maia.predict(&r.positions, r.self_elo, r.oppo_elo);
+                    // Human mistakes, not accidents: a move less than a tenth as likely as
+                    // the most likely one is not played (a 2600 does not hang the queen
+                    // one time in five thousand).
+                    let top = p.moves.first().map_or(0.0, |(_, pr)| *pr);
+                    p.moves.retain(|(_, pr)| *pr >= 0.1 * top);
                     let m = maia::pick(&p, 1.0, random_unit());
                     let rest = r.pause.saturating_sub(started.elapsed());
                     std::thread::sleep(rest);
-                    if ans_tx.send((r.generation, m)).is_err() {
+                    if ans_tx.send((r.generation, m, r.pause)).is_err() {
                         return;
                     }
                     ctx.request_repaint();
@@ -440,13 +461,13 @@ impl Opponent {
         self.thinking = false;
     }
 
-    /// The move asked for last, when it has come.
-    pub fn answer(&mut self) -> Option<Move> {
+    /// The move asked for last, when it has come, with the pause it was given.
+    pub fn answer(&mut self) -> Option<(Move, Duration)> {
         let mut out = None;
-        while let Ok((g, m)) = self.rx.try_recv() {
+        while let Ok((g, m, pause)) = self.rx.try_recv() {
             if g == self.generation {
                 self.thinking = false;
-                out = m;
+                out = m.map(|m| (m, pause));
             }
         }
         out
@@ -475,15 +496,16 @@ pub fn pause(clock: Option<(Duration, u32)>, ply: usize, only_move: bool) -> Dur
         None => 0.5 + 1.5 * r,
         Some((left, inc)) => {
             let left = left.as_secs_f32();
-            if left < 10.0 {
-                0.2 + 0.8 * r
-            } else {
-                let mut t = (left / 30.0 + 0.75 * inc as f32) * factor;
-                if ply < 10 {
-                    t *= 0.3;
-                }
-                t.clamp(0.4, (left / 8.0).min(60.0))
+            let inc = inc as f32;
+            let mut t = (left / 30.0 + 0.75 * inc) * factor;
+            if ply < 10 {
+                t *= 0.3;
             }
+            // Never more than a fortieth of the time left plus most of the increment:
+            // the clock only shrinks geometrically and never runs out, however long the
+            // game (a move also costs about 0.1 s of computing).
+            let most = (left / 40.0 + 0.8 * inc).min(60.0);
+            t.min(most).max(0.4f32.min(most))
         }
     };
     let secs = if only_move {
@@ -544,10 +566,10 @@ mod tests {
             increment: 2,
         });
         let t0 = Instant::now();
-        c.moved(Color::White, t0); // the first move takes nothing
+        c.moved(Color::White, t0, None); // the first move takes nothing
         assert_eq!(c.left(Color::White, t0), Duration::from_secs(62));
         // Black's first move: no time taken either.
-        c.moved(Color::Black, t0 + Duration::from_secs(5));
+        c.moved(Color::Black, t0 + Duration::from_secs(5), None);
         assert_eq!(
             c.left(Color::Black, t0 + Duration::from_secs(5)),
             Duration::from_secs(62)
@@ -555,7 +577,7 @@ mod tests {
         // White thinks 10 s.
         let t1 = t0 + Duration::from_secs(15);
         assert_eq!(c.left(Color::White, t1), Duration::from_secs(52));
-        c.moved(Color::White, t1);
+        c.moved(Color::White, t1, None);
         assert_eq!(c.left(Color::White, t1), Duration::from_secs(54));
         assert_eq!(c.running(), Some(Color::Black));
         assert_eq!(clock_text(Duration::from_millis(9_450)), "0:09.4");
@@ -610,11 +632,16 @@ mod tests {
 
     #[test]
     fn pauses_never_lose_on_time() {
-        for _ in 0..200 {
-            let p = pause(Some((Duration::from_secs(20), 0)), 30, false);
-            assert!(p <= Duration::from_millis(2500), "{p:?}");
-            let p = pause(Some((Duration::from_secs(5), 0)), 30, false);
-            assert!(p <= Duration::from_millis(1000));
+        // Whole games of 300 moves at 1+0, 3+0, 5+0 with 0.1 s of computing per move.
+        for base in [60.0f32, 180.0, 300.0] {
+            for _ in 0..20 {
+                let mut left = base;
+                for ply in 0..300 {
+                    let p = pause(Some((Duration::from_secs_f32(left), 0)), ply * 2, false);
+                    left -= p.as_secs_f32();
+                    assert!(left > 0.0, "flagged at {ply} with {base}");
+                }
+            }
         }
         assert_eq!(strength_like(1350), 1400);
         assert_eq!(strength_like(300), 600);
@@ -630,8 +657,6 @@ pub struct Session {
     pub user_elo: Option<u32>,
     pub clock: Option<Clock>,
     pub opponent: Opponent,
-    /// The low-time warning was given (once).
-    pub warned: bool,
     /// «Resign?» waits for the second click.
     pub resign_asked: bool,
 }
@@ -694,9 +719,15 @@ impl Dialog {
         use egui::RichText;
         let mut out = None;
         let installed = crate::maia_download::installed();
+        let body_h = (ctx.content_rect().height() - 140.0).max(160.0);
         egui::Modal::new(egui::Id::new("play_dialog")).show(ctx, |ui| {
             ui.set_width(460.0);
             ui.heading(tr("Play against the computer"));
+            // The body scrolls in a low window; the buttons below it stay in view.
+            let (ready, rating) = egui::ScrollArea::vertical()
+                .max_height(body_h)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
             ui.label(
                 RichText::new(tr(
                     "Maia plays like a human of the chosen rating: it makes the moves people of that level make, mistakes included.",
@@ -875,7 +906,9 @@ impl Dialog {
                     }
                 }
             }
-
+            (ready, rating)
+                })
+                .inner;
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let play = ui
@@ -954,7 +987,10 @@ impl End {
             Ending::InsufficientMaterial => tr("neither side can checkmate"),
             Ending::Threefold => tr("the position occurred three times"),
             Ending::FiftyMoves => tr("50 moves without a capture or a pawn move"),
-            Ending::Time { draw: true, .. } => tr("time is up, but Maia cannot checkmate"),
+            Ending::Time { draw: true, loser } if loser == self.user => {
+                tr("time is up, but Maia cannot checkmate")
+            }
+            Ending::Time { draw: true, .. } => tr("Maia's time is up, but you cannot checkmate"),
             Ending::Time { .. } => tr("time is up"),
             Ending::Resigned { .. } => "",
         }

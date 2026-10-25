@@ -76,6 +76,18 @@ enum Value {
     None,
 }
 
+/// How many values `v` holds (a value too big to be a checkpoint's is refused: clones
+/// of the memo could otherwise grow without end).
+fn size(v: &Value) -> usize {
+    match v {
+        Value::Tuple(items) => 1 + items.iter().map(size).sum::<usize>(),
+        Value::Dict(items) => 1 + items.iter().map(|(k, v)| size(k) + size(v)).sum::<usize>(),
+        _ => 1,
+    }
+}
+
+const MAX_VALUE: usize = 100_000;
+
 fn as_usizes(v: &Value) -> Result<Vec<usize>, WeightsError> {
     match v {
         Value::Tuple(items) => items
@@ -121,12 +133,20 @@ fn unpickle(p: &[u8]) -> Result<Value, WeightsError> {
             b'(' => stack.push(Value::Mark),          // MARK
             b'q' => {
                 // BINPUT
-                memo.insert(usize::from(byte(i)?), stack.last().ok_or_else(bad)?.clone());
+                let v = stack.last().ok_or_else(bad)?;
+                if size(v) > MAX_VALUE {
+                    return Err(bad());
+                }
+                memo.insert(usize::from(byte(i)?), v.clone());
                 i += 1;
             }
             b'r' => {
                 // LONG_BINPUT
-                memo.insert(le(i, 4)?, stack.last().ok_or_else(bad)?.clone());
+                let v = stack.last().ok_or_else(bad)?;
+                if size(v) > MAX_VALUE {
+                    return Err(bad());
+                }
+                memo.insert(le(i, 4)?, v.clone());
                 i += 4;
             }
             b'h' => {
@@ -213,7 +233,9 @@ fn unpickle(p: &[u8]) -> Result<Value, WeightsError> {
                 };
                 match f.as_str() {
                     "torch._utils._rebuild_tensor_v2" => match args.as_slice() {
-                        [Value::Storage(key), Value::Int(offset), shape, stride, ..] => {
+                        [Value::Storage(key), Value::Int(offset), shape, stride, ..]
+                            if *offset >= 0 =>
+                        {
                             stack.push(Value::Tensor(
                                 key.clone(),
                                 *offset as usize,
@@ -280,11 +302,14 @@ pub fn read(bytes: &[u8]) -> Result<HashMap<String, Tensor>, WeightsError> {
         let (Value::Str(name), Value::Tensor(key, offset, shape, stride)) = (k, v) else {
             continue;
         };
-        let n: usize = shape.iter().product();
+        let n = shape
+            .iter()
+            .try_fold(1usize, |a, &d| a.checked_mul(d))
+            .ok_or(WeightsError::Format)?;
         // Contiguous, row-major: what a saved state dict holds.
         let mut want = vec![1usize; shape.len()];
         for d in (0..shape.len().saturating_sub(1)).rev() {
-            want[d] = want[d + 1] * shape[d + 1];
+            want[d] = want[d + 1].saturating_mul(shape[d + 1]);
         }
         if n > 1 && stride != want {
             return Err(WeightsError::Format);
@@ -292,7 +317,13 @@ pub fn read(bytes: &[u8]) -> Result<HashMap<String, Tensor>, WeightsError> {
         let raw = members
             .get(&format!("{root}data/{key}"))
             .ok_or(WeightsError::Format)?
-            .get(offset * 4..(offset + n) * 4)
+            .get(
+                offset.checked_mul(4).ok_or(WeightsError::Format)?
+                    ..offset
+                        .checked_add(n)
+                        .and_then(|e| e.checked_mul(4))
+                        .ok_or(WeightsError::Format)?,
+            )
             .ok_or(WeightsError::Format)?;
         let data = raw
             .as_chunks::<4>()
@@ -315,7 +346,9 @@ mod tests {
         assert!(read(b"PK\x05\x06garbage").is_err());
         assert!(read(&[0u8; 100]).is_err());
         // A pickle that calls anything but the state-dict constructors is refused.
-        assert!(unpickle(b"\x80\x02cos\nsystem\nq\x00X\x02\x00\x00\x00lsq\x01\x85q\x02R.").is_err());
+        assert!(
+            unpickle(b"\x80\x02cos\nsystem\nq\x00X\x02\x00\x00\x00lsq\x01\x85q\x02R.").is_err()
+        );
         assert!(unpickle(b"\x80\x02}q\x00.").is_ok());
     }
 }

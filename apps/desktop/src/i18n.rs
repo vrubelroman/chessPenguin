@@ -10891,6 +10891,17 @@ const ROWS: &[[&str; 9]] = &[
         "vaqt tugadi",
         "уақыт бітті",
     ],
+    [
+        "Maia's time is up, but you cannot checkmate",
+        "у Maia вышло время, но вам нечем поставить мат",
+        "le temps de Maia est écoulé, mais vous ne pouvez pas mater",
+        "Maias Zeit ist abgelaufen, aber Sie können nicht mattsetzen",
+        "a Maia se le acabó el tiempo, pero no puedes dar mate",
+        "il tempo di Maia è scaduto, ma non puoi dare scacco matto",
+        "o tempo de Maia acabou, mas você não consegue dar mate",
+        "Maiada vaqt tugadi, lekin sizda mot qilishga yetarli kuch yo‘q",
+        "Maia-ның уақыты бітті, бірақ сізде мат қоюға күш жоқ",
+    ],
 ];
 
 #[cfg(test)]

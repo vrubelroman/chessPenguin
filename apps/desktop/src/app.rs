@@ -1748,10 +1748,15 @@ impl App {
     }
 
     fn request_close(&mut self, ctx: &egui::Context, intent: CloseIntent) {
-        // A comment being written goes into the game first; a game against Maia still
-        // being played ends (resigned, or dropped before the first moves).
+        // A comment being written goes into the game first. A game against Maia in
+        // progress asks «The game is on» (its answer leaves, or not); before its first
+        // moves it is just dropped.
         if let Some(g) = self.game.as_mut() {
             g.commit_editor();
+            if g.playing_started() {
+                g.ask_leave(intent);
+                return;
+            }
             g.resign_if_playing();
         }
         if self.game.as_ref().is_some_and(|g| g.game.is_modified()) {
@@ -2079,7 +2084,12 @@ impl eframe::App for App {
             && let Some(g) = self.game.as_mut()
         {
             g.commit_editor();
-            g.resign_if_playing();
+            if g.playing_started() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                g.ask_leave(CloseIntent::QuitApp);
+            } else {
+                g.resign_if_playing();
+            }
         }
         // Quitting with a modified game left for another (reference tab): show that one,
         // so the question "save?" is about the game that has the changes.
@@ -2094,9 +2104,13 @@ impl eframe::App for App {
             self.previous_games.truncate(k + 1);
             self.game = self.previous_games.pop();
         }
+        // (A game against Maia in progress has asked «The game is on» instead.)
         if ctx.input(|i| i.viewport().close_requested())
             && !self.allow_quit
-            && self.game.as_ref().is_some_and(|g| g.game.is_modified())
+            && self
+                .game
+                .as_ref()
+                .is_some_and(|g| g.game.is_modified() && !g.playing_started())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm_close = Some(CloseIntent::QuitApp);
@@ -2214,6 +2228,8 @@ impl eframe::App for App {
                         self.toast(&ctx, msg);
                     }
                     GameAction::Save => self.save_current(&ctx, None),
+                    GameAction::Leave(intent) => self.request_close(&ctx, intent),
+                    GameAction::SaveAndLeave(intent) => self.save_current(&ctx, Some(intent)),
                     GameAction::Rematch => {
                         let next = self
                             .game

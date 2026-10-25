@@ -69,8 +69,8 @@ pub struct GameView {
     /// What the play started with (for the end, a rematch).
     play_start: Option<crate::play::Start>,
     /// «The game is on» asked (leaving during a game); the clocks wait meanwhile.
-    /// `true`: back to the previous game, not to the library.
-    play_leave: Option<(bool, std::time::Instant)>,
+    /// Where leaving goes, and since when the question is open.
+    play_leave: Option<(crate::app::CloseIntent, std::time::Instant)>,
     show_diagnostics: bool,
     engine_settings_open: bool,
     review: Review,
@@ -103,6 +103,10 @@ pub enum GameAction {
     Save,
     /// After a game against Maia: the same again with colours swapped.
     Rematch,
+    /// Leaving after «The game is on» was answered.
+    Leave(crate::app::CloseIntent),
+    /// Saving into a database, then leaving.
+    SaveAndLeave(crate::app::CloseIntent),
     /// After a game against Maia: the play dialog.
     PlayAgain,
     /// Ctrl+Shift+S: choose the database to add the game to.
@@ -941,12 +945,12 @@ impl GameView {
                         let title = self.title();
                         ui.allocate_ui(vec2((title_room - result_w - mark_w).max(0.0), height), |ui| {
                             // The title opens the game's data (players, event, date…).
-                            if ui
-                                .add(
-                                    egui::Label::new(RichText::new(&title).strong().size(16.0))
-                                        .truncate()
-                                        .sense(Sense::click()),
-                                )
+                            let label = egui::Label::new(RichText::new(&title).strong().size(16.0))
+                                .truncate();
+                            if self.play.is_some() {
+                                ui.add(label);
+                            } else if ui
+                                .add(label.sense(Sense::click()))
                                 .on_hover_text(tr("Game data (F2)"))
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .clicked()
@@ -990,7 +994,9 @@ impl GameView {
                 // Find the position in a database: the last chosen one, or another.
                 let searchable = self.search_line().is_some();
                 let why = tr("After a null move (--) this is a teaching scheme, not a position of a game: it is not searched");
-                ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
+                // Not during a game against Maia: it would leave the game.
+                let playing = self.play.is_some();
+                if !playing { ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
                     ui.menu_button("⏷", |ui| {
                         for db in databases {
                             let name = db
@@ -1013,7 +1019,7 @@ impl GameView {
                     {
                         actions.push(GameAction::FindPosition(None));
                     }
-                });
+                }); }
                 if let Some(text) = notes
                     && ui
                         .button(text)
@@ -1991,7 +1997,6 @@ impl GameView {
             user_elo: start.user_elo,
             clock: start.clock.map(Clock::new),
             opponent: Opponent::start(weights, ctx),
-            warned: false,
             resign_asked: false,
         });
         self.play_start = Some(start);
@@ -2073,7 +2078,12 @@ impl GameView {
 
     /// A move at the end of the main line by the side to move: the clock, `[%clk]`, the
     /// sound, the end of the game, Maia's turn.
-    fn play_add(&mut self, m: Move, actions: &mut Vec<GameAction>) {
+    fn play_add(
+        &mut self,
+        m: Move,
+        spent: Option<std::time::Duration>,
+        actions: &mut Vec<GameAction>,
+    ) {
         let end = self.play_end_node();
         let mover = self.play_turn();
         let Ok(id) = self.game.add_move(end, m) else {
@@ -2083,14 +2093,13 @@ impl GameView {
         if let Some(s) = self.play.as_mut() {
             s.resign_asked = false;
             if let Some(c) = s.clock.as_mut() {
-                c.moved(mover, now);
+                c.moved(mover, now, spent);
                 let left = c.left(mover, now);
                 let _ = self
                     .game
                     .annotate(id, Vec::new(), vec![crate::play::clk_command(left)]);
             }
         }
-        // The moves of a game played are not undone as edits (the take-back is).
         self.goto(id);
         if let Some(snd) = self.sound_for(id) {
             actions.push(GameAction::Sound(snd));
@@ -2109,7 +2118,7 @@ impl GameView {
             self.goto(end);
             return;
         }
-        self.play_add(m, actions);
+        self.play_add(m, None, actions);
     }
 
     /// The clock and Maia's answers, each frame.
@@ -2119,6 +2128,7 @@ impl GameView {
         }
         let Some(s) = self.play.as_mut() else { return };
         if let Some(err) = s.opponent.failed() {
+            crate::maia_download::forget_broken();
             actions.push(GameAction::Toast(trf(
                 "Maia did not start: {e}",
                 &[("e", &err)],
@@ -2128,8 +2138,9 @@ impl GameView {
             actions.push(GameAction::Back);
             return;
         }
-        if let Some(m) = s.opponent.answer() {
-            self.play_add(m, actions);
+        if let Some((m, pause)) = s.opponent.answer() {
+            // Maia's clock takes her pause, not the program's computing.
+            self.play_add(m, Some(pause), actions);
         }
         let now = std::time::Instant::now();
         let end_pos = self.game.position(self.play_end_node()).cloned();
@@ -2143,9 +2154,6 @@ impl GameView {
                 let draw = end_pos.is_some_and(|p| p.has_insufficient_material(!side));
                 self.finish_play(crate::play::Ending::Time { loser: side, draw }, actions);
                 return;
-            }
-            if side == s.user && left <= c.low() {
-                s.warned = true;
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -2165,6 +2173,7 @@ impl GameView {
         });
         self.game.set_result(ending.result());
         self.game.set_tag("Termination", ending.termination());
+        self.game.forget_history();
         let end = self.play_end_node();
         self.goto(end);
         if matches!(ending, crate::play::Ending::Checkmate { .. }) {
@@ -2216,6 +2225,15 @@ impl GameView {
             && let Ok(parent) = self.game.delete_variation(id)
         {
             self.goto(parent);
+            let moved = self.game.mainline().iter().any(|&n| {
+                self.game
+                    .parent(n)
+                    .and_then(|p| self.game.position(p))
+                    .is_some_and(|p| p.turn() == user)
+            });
+            if let Some(c) = self.play.as_mut().and_then(|s| s.clock.as_mut()) {
+                c.take_back(user, moved, std::time::Instant::now());
+            }
         }
         self.ask_maia();
     }
@@ -2293,8 +2311,12 @@ impl GameView {
         if let Some(k) = leaving {
             let a = actions.remove(k);
             if self.play_started() {
-                let previous = matches!(a, GameAction::ReturnToPrevious);
-                self.play_leave = Some((previous, std::time::Instant::now()));
+                let intent = if matches!(a, GameAction::ReturnToPrevious) {
+                    crate::app::CloseIntent::ReturnToPrevious
+                } else {
+                    crate::app::CloseIntent::BackToLibrary
+                };
+                self.ask_leave(intent);
             } else {
                 if let Some(s) = self.play.as_mut() {
                     s.opponent.forget();
@@ -2306,15 +2328,23 @@ impl GameView {
         }
     }
 
+    /// Leaving a game in progress (any way: back, the window closed, …) asks first;
+    /// the clocks wait while the question is open.
+    pub fn ask_leave(&mut self, intent: crate::app::CloseIntent) {
+        if self.play_leave.is_none() {
+            self.play_leave = Some((intent, std::time::Instant::now()));
+        }
+    }
+
+    /// A game is in progress and its first moves are made (leaving it costs a result).
+    pub fn playing_started(&self) -> bool {
+        self.play.is_some() && self.play_started()
+    }
+
     /// «The game is on»: resign and add, resign and leave, keep playing.
     fn leave_question(&mut self, ctx: &egui::Context, actions: &mut Vec<GameAction>) {
-        let Some((previous, since)) = self.play_leave else {
+        let Some((intent, since)) = self.play_leave else {
             return;
-        };
-        let action = if previous {
-            GameAction::ReturnToPrevious
-        } else {
-            GameAction::Back
         };
         let mut choice = None;
         egui::Modal::new(egui::Id::new("play_leave")).show(ctx, |ui| {
@@ -2345,13 +2375,16 @@ impl GameView {
             c.pause(waited);
         }
         match choice {
+            // Then the game goes on where the user was going once it is saved.
             0 => {
                 self.resign_if_playing();
-                actions.push(GameAction::Save);
+                actions.push(GameAction::SaveAndLeave(intent));
             }
+            // Leaving was the answer: no second question about saving.
             1 => {
                 self.resign_if_playing();
-                actions.push(action);
+                self.game.mark_saved();
+                actions.push(GameAction::Leave(intent));
             }
             _ => {}
         }
@@ -2384,6 +2417,24 @@ impl GameView {
         egui::Panel::top("play_card_top")
             .show_separator_line(false)
             .show(ui, |ui| self.clock_card(ui, top, user));
+        if self.cursor != self.play_end_node() {
+            egui::Panel::bottom("play_viewing")
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    if ui
+                        .link(
+                            RichText::new(tr(
+                                "Viewing an earlier position · back to the game — End",
+                            ))
+                            .weak(),
+                        )
+                        .clicked()
+                    {
+                        let end = self.play_end_node();
+                        self.goto(end);
+                    }
+                });
+        }
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
@@ -2404,24 +2455,16 @@ impl GameView {
                     }
                     self.scroll_to_cursor = false;
                 });
-            if self.cursor != self.play_end_node()
-                && ui
-                    .link(
-                        RichText::new(tr("Viewing an earlier position · back to the game — End"))
-                            .weak(),
-                    )
-                    .clicked()
-            {
-                let end = self.play_end_node();
-                self.goto(end);
-            }
         });
     }
 
     /// A player's card: name, rating, the clock and what is going on.
     fn clock_card(&self, ui: &mut Ui, side: Color, user: Color) {
         let Some(s) = &self.play else { return };
-        let now = std::time::Instant::now();
+        // While «The game is on» is open, the clocks stand at the moment it opened.
+        let now = self
+            .play_leave
+            .map_or_else(std::time::Instant::now, |(_, since)| since);
         let turn = self.play_turn();
         let active = turn == side;
         let left = s.clock.as_ref().map(|c| c.left(side, now));
