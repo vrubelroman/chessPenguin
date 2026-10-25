@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "chess-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "encoding_rs",
  "pgn-reader",
@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "chess-import"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chess-core",
  "encoding_rs",
@@ -791,7 +791,7 @@ dependencies = [
 
 [[package]]
 name = "chesspenguin"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "game-review"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chess-core",
  "serde",
@@ -2450,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "mobile-api"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chess-core",
  "chess-import",
@@ -3046,7 +3046,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "online-games"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chess-core",
  "serde",
@@ -3590,7 +3590,7 @@ dependencies = [
 
 [[package]]
 name = "releases"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "serde_json",
  "ureq",
@@ -4617,7 +4617,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "uci"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "libc",
  "thiserror 2.0.21",

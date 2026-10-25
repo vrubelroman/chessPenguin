@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.2.0" date="2026-10-25">
+      <description>
+        <p>Your own comments in a game: press Enter on a move and write right in the notation, after any move of the main line or a variation, or at the start of the game. Put symbols on moves and positions (! ? !! ?? !? ?! and = ∞ ± ∓ …) with the mouse or Ctrl+1…6, draw arrows and circles on the board with the right mouse button. Book comments can be edited; their paragraphs and embedded commands are kept.</p>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-10-25">
       <description>
         <p>Your own databases: create an empty PGN database, add any game to it, save your changes back with Ctrl+S, edit the game data (players, event, date, result, annotator) and delete games with Undo. A new game can be started right in a database with «+ Game». The library's title row holds the actions: new game, paste PGN, add or create a database, online games.</p>

@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] — 2026-10-25
 
 - Your own comments in a game (desktop): Enter on a move (or the right-click menu, a
   double click on a comment, the ☰ menu) opens an editor right where the comment stands
