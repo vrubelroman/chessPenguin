@@ -502,6 +502,18 @@ pub fn pause(clock: Option<(Duration, u32)>, ply: usize, only_move: bool) -> Dur
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn maia_resigns_only_when_hopeless() {
+        use uci::Score;
+        assert!(hopeless(Score::Cp(-1200)));
+        assert!(hopeless(Score::Cp(-3000)));
+        assert!(!hopeless(Score::Cp(-1199)));
+        assert!(!hopeless(Score::Cp(900)));
+        // Mated by force: hopeless; mating: not.
+        assert!(hopeless(Score::Mate(-3)));
+        assert!(!hopeless(Score::Mate(2)));
+    }
+
     use super::*;
     use chess_core::shakmaty::uci::UciMove;
 
@@ -652,6 +664,14 @@ pub struct Session {
     pub opponent: Opponent,
     /// «Resign?» waits for the second click.
     pub resign_asked: bool,
+    /// The engine judging the game for Maia's resignation (none without an engine).
+    pub judge: Option<Judge>,
+    /// Maia's turns in a row with her position hopeless.
+    pub hopeless: u32,
+    /// Maia offers to resign: since when the offer is open (the clocks wait).
+    pub resign_offer: Option<Instant>,
+    /// «Play to the end»: no more offers in this game.
+    pub play_on: bool,
 }
 
 /// What the play dialog starts.
@@ -662,6 +682,129 @@ pub struct Start {
     pub user_elo: Option<u32>,
     pub user_name: String,
     pub clock: Option<TimeControl>,
+}
+
+// ----- Maia resigns --------------------------------------------------------------------
+
+/// Nodes the judge searches a position: a tenth of a second or two, enough to see that
+/// a position is lost by twelve pawns.
+const JUDGE_NODES: u64 = 150_000;
+
+/// Maia resigns when her position is worse than this (centipawns) or she is mated…
+const HOPELESS_CP: i32 = -1200;
+/// …on this many of her turns in a row (one tactic in passing is not a lost game).
+pub const HOPELESS_TURNS: u32 = 2;
+
+/// A position lost for the side to move: twelve pawns down, or mated by force.
+pub fn hopeless(score: uci::Score) -> bool {
+    match score {
+        uci::Score::Cp(cp) => cp <= HOPELESS_CP,
+        uci::Score::Mate(n) => n < 0,
+    }
+}
+
+/// The engine (Stockfish, unseen by the user) judging the positions where Maia is to
+/// move, in its own thread for the whole game: the newest request is searched, older
+/// ones are dropped; an engine that does not start or dies leaves the game without
+/// resignations.
+pub struct Judge {
+    tx: Sender<(u64, uci::EnginePosition)>,
+    rx: Receiver<(u64, uci::Score)>,
+    generation: u64,
+}
+
+impl Judge {
+    pub fn start(path: std::path::PathBuf, ctx: &egui::Context) -> Judge {
+        let (tx, req_rx) = channel::<(u64, uci::EnginePosition)>();
+        let (ans_tx, rx) = channel();
+        let ctx = ctx.clone();
+        let _ = std::thread::Builder::new()
+            .name("maia-judge".into())
+            .spawn(move || {
+                let Ok(engine) =
+                    uci::Engine::spawn_with(uci::EngineConfig::new(&path), Box::new(|| {}))
+                else {
+                    return;
+                };
+                let _ = engine.set_threads(1);
+                let _ = engine.set_hash_mb(16);
+                let _ = engine.set_multipv(1);
+                let _ = engine.new_game();
+                while let Ok(mut req) = req_rx.recv() {
+                    while let Ok(newer) = req_rx.try_recv() {
+                        req = newer;
+                    }
+                    let (generation, pos) = req;
+                    let id = uci::SearchId(generation);
+                    if engine
+                        .search(pos, id, uci::SearchLimits::Nodes(JUDGE_NODES))
+                        .is_err()
+                    {
+                        break;
+                    }
+                    let started = Instant::now();
+                    let mut stopping = false;
+                    let mut last = None;
+                    loop {
+                        if !stopping && started.elapsed() > Duration::from_secs(10) {
+                            let _ = engine.stop();
+                            stopping = true;
+                        }
+                        match engine.recv_timeout(Duration::from_millis(100)) {
+                            Some(uci::EngineEvent::Info { search_id, info }) if search_id == id => {
+                                if let Some(s) = info.score
+                                    && (s.bound == uci::ScoreBound::Exact || last.is_none())
+                                {
+                                    last = Some(s.score);
+                                }
+                            }
+                            Some(uci::EngineEvent::BestMove { search_id, .. })
+                                if search_id == id =>
+                            {
+                                if let Some(score) = last {
+                                    if ans_tx.send((generation, score)).is_err() {
+                                        engine.quit();
+                                        return;
+                                    }
+                                    ctx.request_repaint();
+                                }
+                                break;
+                            }
+                            Some(uci::EngineEvent::Terminated(_)) => return,
+                            _ => {}
+                        }
+                    }
+                }
+                engine.quit();
+            });
+        Judge {
+            tx,
+            rx,
+            generation: 0,
+        }
+    }
+
+    /// Judges `pos` (Maia to move); the answer to an older request is dropped.
+    pub fn ask(&mut self, pos: uci::EnginePosition) {
+        self.generation += 1;
+        let _ = self.tx.send((self.generation, pos));
+    }
+
+    /// Drops the request in flight: its answer would be about a position gone.
+    pub fn forget(&mut self) {
+        self.generation += 1;
+    }
+
+    /// The score of the position asked last, for the side to move, once it has come.
+    pub fn answer(&mut self) -> Option<uci::Score> {
+        let mut out = None;
+        while let Ok((g, s)) = self.rx.try_recv() {
+            if g == self.generation {
+                out = Some(s);
+            }
+        }
+        out
+    }
 }
 
 // ----- the dialog ---------------------------------------------------------------------
@@ -899,12 +1042,23 @@ impl Dialog {
                     .num_columns(3)
                     .spacing(egui::vec2(10.0, GAP))
                     .show(ui, |ui| {
-                        ui.spacing_mut().slider_width = W - 120.0 - 28.0 - 20.0;
-                        ui.add_sized([120.0, 18.0], egui::Label::new(tr("Minutes:")));
+                        ui.spacing_mut().slider_width = W - 90.0 - 28.0 - 20.0;
+                        // Both labels flush left in one column.
+                        let label = |ui: &mut egui::Ui, text: &str| {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(90.0, 18.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.set_min_width(90.0);
+                                    ui.label(text);
+                                },
+                            );
+                        };
+                        label(ui, tr("Minutes:"));
                         ui.add(egui::Slider::new(&mut b, 0..=CUSTOM_BASES.len() - 1).show_value(false));
                         ui.add_sized([28.0, 18.0], egui::Label::new(RichText::new((CUSTOM_BASES[b] / 60).to_string()).strong()));
                         ui.end_row();
-                        ui.label(tr("Increment, s:"));
+                        label(ui, tr("Increment, s:"));
                         ui.add(egui::Slider::new(&mut i, 0..=CUSTOM_INCREMENTS.len() - 1).show_value(false));
                         ui.add_sized([28.0, 18.0], egui::Label::new(RichText::new(CUSTOM_INCREMENTS[i].to_string()).strong()));
                         ui.end_row();
@@ -1017,7 +1171,8 @@ impl End {
     /// «You won» / «You lost» / «Draw» / «You resigned».
     pub fn heading(&self) -> &'static str {
         match self.ending {
-            Ending::Resigned { .. } => tr("You resigned"),
+            Ending::Resigned { loser } if loser == self.user => tr("You resigned"),
+            Ending::Resigned { .. } => tr("You won"),
             e => match e.result() {
                 chess_core::GameResult::Draw => tr("Draw"),
                 r if r == Ending::Checkmate { winner: self.user }.result() => tr("You won"),
@@ -1038,7 +1193,8 @@ impl End {
             }
             Ending::Time { draw: true, .. } => tr("Maia's time is up, but you cannot checkmate"),
             Ending::Time { .. } => tr("time is up"),
-            Ending::Resigned { .. } => "",
+            Ending::Resigned { loser } if loser == self.user => "",
+            Ending::Resigned { .. } => tr("Maia resigned"),
         }
     }
 }

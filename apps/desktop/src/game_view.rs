@@ -1960,6 +1960,7 @@ impl GameView {
         &mut self,
         start: crate::play::Start,
         weights: std::path::PathBuf,
+        judge: Option<std::path::PathBuf>,
         ctx: &egui::Context,
     ) {
         use crate::play::{Clock, Opponent, Session};
@@ -2021,6 +2022,10 @@ impl GameView {
             clock: start.clock.map(Clock::new),
             opponent: Opponent::start(weights, ctx),
             resign_asked: false,
+            judge: judge.map(|p| crate::play::Judge::start(p, ctx)),
+            hopeless: 0,
+            resign_offer: None,
+            play_on: false,
         });
         self.play_start = Some(start);
         self.ask_maia();
@@ -2051,6 +2056,76 @@ impl GameView {
             .map_or(Color::White, |p| p.turn())
     }
 
+    /// Closes Maia's offer to resign: the clocks waited while it was open.
+    fn close_resign_offer(&mut self) {
+        let Some(s) = self.play.as_mut() else { return };
+        if let Some(since) = s.resign_offer.take()
+            && let Some(c) = s.clock.as_mut()
+        {
+            c.pause(since.elapsed());
+        }
+    }
+
+    /// Maia offers to resign: accept the win, or play to the end (no more offers).
+    fn resign_offer(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+        let Some(s) = &self.play else { return };
+        let user = s.user;
+        ui.add_space(4.0);
+        let mut choice = None;
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .corner_radius(4)
+            .fill(ui.visuals().extreme_bg_color)
+            .stroke(egui::Stroke::new(1.0, ui.visuals().selection.bg_fill))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(tr("Maia resigns")).strong().size(16.0));
+                ui.label(
+                    RichText::new(tr(
+                        "Her position is lost. Accept the win, or play to the end?",
+                    ))
+                    .weak(),
+                );
+                ui.add_space(4.0);
+                // One under the other, as wide as the card: they fit a narrow panel.
+                let w = ui.available_width();
+                if ui
+                    .add_sized(
+                        [w, 30.0],
+                        egui::Button::new(RichText::new(tr("Accept the win")).strong().size(14.0))
+                            .fill(ui.visuals().selection.bg_fill),
+                    )
+                    .clicked()
+                {
+                    choice = Some(true);
+                }
+                if ui
+                    .add_sized(
+                        [w, 30.0],
+                        egui::Button::new(RichText::new(tr("Play to the end")).size(14.0)),
+                    )
+                    .on_hover_text(tr("Maia plays on and will not offer again in this game"))
+                    .clicked()
+                {
+                    choice = Some(false);
+                }
+            });
+        match choice {
+            Some(true) => {
+                self.close_resign_offer();
+                self.finish_play(crate::play::Ending::Resigned { loser: !user }, actions);
+            }
+            Some(false) => {
+                self.close_resign_offer();
+                if let Some(s) = self.play.as_mut() {
+                    s.play_on = true;
+                }
+                self.ask_maia();
+            }
+            None => {}
+        }
+    }
+
     /// The side that may set a premove now: the user, while Maia is to move, at the
     /// current position of the game.
     fn premove_side(&self) -> Option<Color> {
@@ -2079,6 +2154,11 @@ impl GameView {
     /// too, quickly — a whole game without a mouse).
     fn ask_maia(&mut self) {
         let turn = self.play_turn();
+        let end = self.play_end_node();
+        let engine_pos = self.game.engine_history(end).map(|h| match h.start_fen {
+            None => uci::EnginePosition::startpos(h.moves),
+            Some(fen) => uci::EnginePosition::fen(fen, h.moves),
+        });
         let positions = self.mainline_positions();
         let ply = positions.len() - 1;
         let only = positions.last().is_some_and(|p| p.legal_moves().len() == 1);
@@ -2101,13 +2181,20 @@ impl GameView {
             .clock
             .as_ref()
             .map(|c| (c.left(turn, now), c.control.increment));
+        // (Self-play: Maia slower than the user, so that the judge is heard.)
         let pause = if auto {
-            std::time::Duration::from_millis(30)
+            std::time::Duration::from_millis(300)
         } else {
             crate::play::pause(clock, ply, only)
         };
         let oppo = s.user_elo.unwrap_or(s.strength);
         s.opponent.ask(positions, s.strength, oppo, pause);
+        // Is her position lost? (Unless the user wants to play to the end.)
+        if !s.play_on
+            && let (Some(j), Some(ep)) = (s.judge.as_mut(), engine_pos)
+        {
+            j.ask(ep);
+        }
     }
 
     /// A move at the end of the main line by the side to move: the clock, `[%clk]`, the
@@ -2133,6 +2220,13 @@ impl GameView {
                     .game
                     .annotate(id, Vec::new(), vec![crate::play::clk_command(left)]);
             }
+        }
+        // Her move made, a verdict still on its way is about a position gone.
+        if let Some(s) = self.play.as_mut()
+            && mover != s.user
+            && let Some(j) = s.judge.as_mut()
+        {
+            j.forget();
         }
         // Maia's move: what the user holds in hand stays there (Lichess); any other
         // move goes to its position as usual.
@@ -2173,7 +2267,33 @@ impl GameView {
         if self.play_leave.is_some() {
             return;
         }
+        let maia_to_move = self
+            .play
+            .as_ref()
+            .is_some_and(|s| self.play_turn() != s.user);
         let Some(s) = self.play.as_mut() else { return };
+        if s.resign_offer.is_some() {
+            return;
+        }
+        // The judge's verdict on the position Maia is to move in: lost for two of her
+        // turns in a row, she offers to resign instead of moving (the clocks wait).
+        if let Some(score) = s.judge.as_mut().and_then(|j| j.answer()) {
+            s.hopeless = if crate::play::hopeless(score) {
+                s.hopeless + 1
+            } else {
+                0
+            };
+            if maia_to_move
+                && !s.play_on
+                && s.hopeless >= crate::play::HOPELESS_TURNS
+                && s.opponent.thinking
+            {
+                s.opponent.forget();
+                s.resign_offer = Some(std::time::Instant::now());
+                self.scroll_to_cursor = true;
+                return;
+            }
+        }
         if let Some(err) = s.opponent.failed() {
             crate::maia_download::forget_broken();
             actions.push(GameAction::Toast(trf(
@@ -2218,6 +2338,7 @@ impl GameView {
     /// The game is over: the result, the tags, the strip; the screen becomes an ordinary
     /// new game.
     fn finish_play(&mut self, ending: crate::play::Ending, actions: &mut Vec<GameAction>) {
+        self.close_resign_offer();
         let Some(mut s) = self.play.take() else {
             return;
         };
@@ -2268,7 +2389,12 @@ impl GameView {
     /// Takes back the user's last move and Maia's answer to it (no variation is left).
     fn take_back(&mut self) {
         self.board.clear_premove();
+        self.close_resign_offer();
         let Some(s) = self.play.as_mut() else { return };
+        s.hopeless = 0;
+        if let Some(j) = s.judge.as_mut() {
+            j.forget();
+        }
         s.opponent.forget();
         let user = s.user;
         // The last move of the user on the main line.
@@ -2429,8 +2555,13 @@ impl GameView {
         let Some(choice) = choice else { return };
         self.play_leave = None;
         // The clocks waited while the question was open.
+        // (Over Maia's offer to resign the clocks wait since the offer: its closing
+        // gives that time back, all of it.)
         let waited = since.elapsed();
-        if let Some(c) = self.play.as_mut().and_then(|s| s.clock.as_mut()) {
+        if let Some(s) = self.play.as_mut()
+            && s.resign_offer.is_none()
+            && let Some(c) = s.clock.as_mut()
+        {
             c.pause(waited);
         }
         match choice {
@@ -2476,6 +2607,11 @@ impl GameView {
         egui::Panel::top("play_card_top")
             .show_separator_line(false)
             .show(ui, |ui| self.clock_card(ui, top, user));
+        if self.play.as_ref().is_some_and(|s| s.resign_offer.is_some()) {
+            egui::Panel::bottom("play_resign_offer")
+                .show_separator_line(false)
+                .show(ui, |ui| self.resign_offer(ui, actions));
+        }
         if self.cursor != self.play_end_node() {
             egui::Panel::bottom("play_viewing")
                 .show_separator_line(false)
@@ -2523,7 +2659,11 @@ impl GameView {
         // While «The game is on» is open, the clocks stand at the moment it opened.
         let now = self
             .play_leave
-            .map_or_else(std::time::Instant::now, |(_, since)| since);
+            .map(|(_, since)| since)
+            .into_iter()
+            .chain(s.resign_offer)
+            .min()
+            .unwrap_or_else(std::time::Instant::now);
         let turn = self.play_turn();
         let active = turn == side;
         let left = s.clock.as_ref().map(|c| c.left(side, now));
@@ -2561,7 +2701,9 @@ impl GameView {
                         format!("{king} Maia {}", s.strength)
                     };
                     ui.label(RichText::new(name).size(15.0));
-                    let state = if side != user && s.opponent.thinking {
+                    let state = if side != user && s.resign_offer.is_some() {
+                        tr("resigns")
+                    } else if side != user && s.opponent.thinking {
                         tr("thinking…")
                     } else if side == user && active {
                         tr("your move")
@@ -2646,19 +2788,20 @@ impl GameView {
                 }
             } else if self.play.as_ref().is_some_and(|s| s.resign_asked) {
                 ui.label(RichText::new(tr("Resign?")).size(14.0));
+                // «Yes» and «No» of one size, side by side.
                 if ui
-                    .add(
+                    .add_sized(
+                        [56.0, 28.0],
                         egui::Button::new(
                             RichText::new(tr("Yes")).size(14.0).color(Color32::WHITE),
                         )
-                        .fill(ui.visuals().error_fg_color)
-                        .min_size(vec2(0.0, 28.0)),
+                        .fill(ui.visuals().error_fg_color),
                     )
                     .clicked()
                 {
                     let user = self.play.as_ref().map_or(Color::White, |s| s.user);
                     self.finish_play(crate::play::Ending::Resigned { loser: user }, actions);
-                } else if ui.add(word(tr("No"))).clicked()
+                } else if ui.add_sized([56.0, 28.0], word(tr("No"))).clicked()
                     && let Some(s) = self.play.as_mut()
                 {
                     s.resign_asked = false;

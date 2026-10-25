@@ -1290,9 +1290,18 @@ impl App {
             self.play_dialog = Some(crate::play::Dialog::new(&self.settings));
             return;
         };
+        // The engine judging Maia's resignation: ChessPenguin's Stockfish (its node count
+        // and the twelve pawns are Stockfish's measures), else the active engine when its
+        // file is there; none — she plays every game to its end.
+        let judge = crate::engines::own_stockfish().or_else(|| {
+            self.settings
+                .active_engine()
+                .and_then(|e| e.executable())
+                .filter(|p| p.is_file())
+        });
         self.new_game();
         if let Some(g) = self.game.as_mut() {
-            g.start_play(start, weights, ctx);
+            g.start_play(start, weights, judge, ctx);
         }
     }
 

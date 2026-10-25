@@ -17,6 +17,12 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   game, Save to a database (tags: players, ratings, TimeControl, Termination, [%clk]).
   Maia is computed in plain Rust, about 0.1 s a move on one core; its weights (21 MB,
   the authors' own file from huggingface.co) are downloaded once on request.
+- Premoves against Maia, as on Lichess: while she thinks, set your next move; it is
+  played at once after hers when legal.
+- Maia resigns: when her position is lost by twelve pawns or more for two of her turns
+  (judged by Stockfish, unseen), she offers to resign — accept the win, or play to the
+  end.
+- Settings › Board: «Always promote to a queen» (off: the piece is chosen).
 
 ## [1.2.0] — 2026-10-25
 
