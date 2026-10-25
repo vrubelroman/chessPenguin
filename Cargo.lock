@@ -2469,6 +2469,7 @@ dependencies = [
  "game-review",
  "maia",
  "online-games",
+ "play",
  "releases",
  "shakmaty",
  "thiserror 2.0.21",

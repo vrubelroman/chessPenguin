@@ -25,7 +25,7 @@ pub use online::{
     AccountLookup, DownloadState, OnlineAccount, OnlineDatabase, OnlineDownload, OnlineFailure,
     OnlineProblem, OnlineTarget, Site,
 };
-pub use play::{MaiaPlayer, maia_range};
+pub use play::{GameEnding, MaiaPlayer, ResignJudge, hopeless_turns, maia_pause_ms, maia_range};
 pub use review::{GameReview, MoveJudgement, ReviewMove, ReviewPoint, ReviewState, SideReview};
 pub use session::{Edited, GameSession, own_create, own_remove, own_save};
 pub use train::{TrainState, TrainStats, TrainVerdict, Trainer, trainer_set_file};

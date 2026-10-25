@@ -7,8 +7,123 @@ use std::sync::Arc;
 use maia::strength::{Model, choose, rating_input, temperature};
 use shakmaty::{CastlingMode, Chess};
 
+use std::sync::Mutex;
+
 use crate::ApiError;
 use crate::session::GameSession;
+
+/// How a game stands at a position: over or not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum GameEnding {
+    /// The side named won by mate.
+    Checkmate {
+        white_won: bool,
+    },
+    Stalemate,
+    InsufficientMaterial,
+    Threefold,
+    FiftyMoves,
+}
+
+#[uniffi::export]
+impl GameSession {
+    /// How the game stands at the move at place `at` (its line from the start counts
+    /// for repetitions); none while it goes on.
+    pub fn ending(&self, at: u32) -> Option<GameEnding> {
+        let line = self.read(|g| {
+            let id = crate::order(g).get(at as usize).copied()?;
+            Some(
+                g.path(id)
+                    .iter()
+                    .filter_map(|n| g.position(*n).cloned())
+                    .collect::<Vec<Chess>>(),
+            )
+        })?;
+        Some(match ::play::ending(&line)? {
+            ::play::Ending::Checkmate { winner } => GameEnding::Checkmate {
+                white_won: winner == shakmaty::Color::White,
+            },
+            ::play::Ending::Stalemate => GameEnding::Stalemate,
+            ::play::Ending::InsufficientMaterial => GameEnding::InsufficientMaterial,
+            ::play::Ending::Threefold => GameEnding::Threefold,
+            ::play::Ending::FiftyMoves => GameEnding::FiftyMoves,
+            // No clocks and no resignations here: the app knows those itself.
+            ::play::Ending::Time { .. } | ::play::Ending::Resigned { .. } => return None,
+        })
+    }
+}
+
+/// How long Maia "thinks" before her move `ply` of an untimed game (milliseconds):
+/// as a person would, quicker with one legal move.
+#[uniffi::export]
+pub fn maia_pause_ms(ply: u32, only_move: bool) -> u64 {
+    ::play::pause(None, ply as usize, only_move).as_millis() as u64
+}
+
+/// Maia's turns in a row with her position hopeless before she offers to resign.
+#[uniffi::export]
+pub fn hopeless_turns() -> u32 {
+    ::play::HOPELESS_TURNS
+}
+
+/// Stockfish judging the positions where Maia is to move (unseen by the user), for her
+/// resignation; one for the whole game.
+#[derive(uniffi::Object)]
+pub struct ResignJudge {
+    judge: Mutex<::play::Judge>,
+}
+
+#[uniffi::export]
+impl ResignJudge {
+    /// The engine at `path` with its network `eval_file`.
+    #[uniffi::constructor]
+    pub fn start(path: String, eval_file: String) -> Arc<ResignJudge> {
+        let config = uci::EngineConfig {
+            nice: 10,
+            ..uci::EngineConfig::new(path)
+        };
+        let options = if eval_file.is_empty() {
+            Vec::new()
+        } else {
+            vec![("EvalFile".to_owned(), eval_file)]
+        };
+        Arc::new(ResignJudge {
+            judge: Mutex::new(::play::Judge::start(config, options, Box::new(|| {}))),
+        })
+    }
+
+    /// Judges the position at place `at` of the game (Maia to move there).
+    pub fn ask(&self, game: Arc<GameSession>, at: u32) {
+        let pos = game.read(|g| {
+            let id = crate::order(g).get(at as usize).copied()?;
+            g.engine_history(id)
+        });
+        if let Some(h) = pos {
+            let p = match h.start_fen {
+                None => uci::EnginePosition::startpos(h.moves),
+                Some(fen) => uci::EnginePosition::fen(fen, h.moves),
+            };
+            self.judge.lock().unwrap_or_else(|e| e.into_inner()).ask(p);
+        }
+    }
+
+    /// Whether the position asked last is hopeless for Maia, once the answer came.
+    pub fn hopeless(&self) -> Option<bool> {
+        self.judge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .answer()
+            .map(::play::hopeless)
+    }
+
+    /// Drops the request in flight (its position is gone).
+    pub fn forget(&self) {
+        self.judge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .forget();
+    }
+}
 
 /// The weakest and strongest Maia on the phone (the small model's measured range).
 pub const PHONE_MIN: u32 = 1100;
@@ -84,6 +199,18 @@ mod tests {
         let uci = m.choose(s.clone(), e4, 1500, None, 0.3).unwrap();
         assert!(s.legal_moves(e4).contains(&uci), "{uci}");
         let mated = GameSession::from_pgn("1. f3 e5 2. g4 Qh4# *".into()).unwrap();
+        let end_id = mated
+            .data()
+            .nodes
+            .iter()
+            .find(|n| n.san == "Qh4#")
+            .unwrap()
+            .id;
+        assert_eq!(
+            mated.ending(end_id),
+            Some(GameEnding::Checkmate { white_won: false })
+        );
+        assert_eq!(mated.ending(0), None);
         let end = mated
             .data()
             .nodes
