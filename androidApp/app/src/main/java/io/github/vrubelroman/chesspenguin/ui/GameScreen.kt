@@ -677,6 +677,18 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             val end = lineEnd(g)
             val endDepth = depth(g, end)
             val floor = run.meta.floor
+            Column(modifier) {
+            // Looking back during the game: a strip leads back to it (§31.3).
+            if (current != end) {
+                val n = g.nodes[current]
+                val label = if (current == 0) stringResource(R.string.start_position) else (if (n.white) "${n.moveNumber}." else "${n.moveNumber}…") + san(n.san).text
+                Row(
+                    Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.primaryContainer).clickable { go(end) }.padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.play_viewing, label), color = MaterialTheme.colorScheme.onPrimaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
             PlayControls(
                 // While Maia thinks the last move is the user's; else hers and the user's before.
                 canTakeBack = if (runThinking) endDepth > floor else endDepth - 1 > floor,
@@ -693,6 +705,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 onBack = ::back,
                 onForward = ::forward,
             )
+            }
         } else Column(modifier) {
             val p = preview
             if (p == null && node != null && nodes != null && node.children.size > 1) {
@@ -915,14 +928,18 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     } else if (newGame && held.savedTo == null) {
                         stringResource(R.string.new_game)
                     } else {
-                        joinKnown(tag("Event"), year(tag("Date"))).ifEmpty { joinKnown(tag("Site")) }
-                            .ifEmpty { dbEntry?.let { displayName(it) } ?: "" }
+                        // No event: the site, else the database; a year alone is no title.
+                        joinKnown(tag("Event")).let { e -> if (e.isEmpty()) e else joinKnown(e, year(tag("Date"))) }
+                            .ifEmpty { joinKnown(tag("Site")) }
+                            .ifEmpty { (held.savedTo?.first?.let { app.library.entry(it) } ?: dbEntry)?.let { displayName(it) } ?: "" }
                     }
+                    val yearInLine = if (joinKnown(tag("Event")).isEmpty()) year(tag("Date")) else ""
                     val round = tag("Round").trim().takeIf { it.isNotEmpty() && it != "?" && it != "-" }
                     val placeLine = if (playGame && run != null) {
                         stringResource(R.string.play_adjourned_sub, stringResource(if (run.meta.userWhite) R.string.play_as_white else R.string.play_as_black), stringResource(R.string.play_untimed))
                     } else joinKnown(
                         if (total > 0 && held.savedTo == null) stringResource(R.string.game_of, place + 1, total) else "",
+                        yearInLine,
                         round?.let { stringResource(R.string.tag_round).lowercase() + " " + it } ?: "",
                     )
                     Column(
@@ -965,7 +982,8 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                             Icon(Icons.Rounded.ChevronRight, stringResource(R.string.next_game))
                         }
                     }
-                    Box {
+                    // No menu during a game against Maia (§31.3): its moves go by its own buttons.
+                    if (!gameOn) Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, stringResource(R.string.menu)) }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             // First, and only when there is something to take back (§29.6).
@@ -1048,11 +1066,16 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         // In a game: «thinking…» on Maia's bar while she computes (§31.3).
         val thinkingText = stringResource(R.string.play_thinking)
         val maiaThinks = { white: Boolean -> if (gameOn && runThinking && run?.meta?.userWhite != white) thinkingText else null }
+        // In a game against Maia: the user without a name is «You»; Maia's rating is in her name.
+        val youText = stringResource(R.string.play_you)
+        val playName = { white: Boolean ->
+            if (playGame && run?.meta?.userWhite == white && (if (white) whiteName else blackName) == null) youText else null
+        }
         val whiteBar: @Composable () -> Unit = {
-            PlayerBar(whiteName ?: whiteLabel, elo(tag("WhiteElo")), true, sideResult(result, true), known = whiteName != null, abbreviate = !study, status = maiaThinks(true))
+            PlayerBar(playName(true) ?: whiteName ?: whiteLabel, if (playGame) "" else elo(tag("WhiteElo")), true, sideResult(result, true), known = whiteName != null || playGame, abbreviate = !study, status = maiaThinks(true))
         }
         val blackBar: @Composable () -> Unit = {
-            PlayerBar(blackName ?: blackLabel, elo(tag("BlackElo")), false, sideResult(result, false), known = blackName != null, status = maiaThinks(false))
+            PlayerBar(playName(false) ?: blackName ?: blackLabel, if (playGame) "" else elo(tag("BlackElo")), false, sideResult(result, false), known = blackName != null || playGame, status = maiaThinks(false))
         }
         val topBar = if (flipped) whiteBar else blackBar
         val bottomBar = if (flipped) blackBar else whiteBar

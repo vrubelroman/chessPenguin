@@ -533,4 +533,8 @@
     <string name="undo_menu">Отменить</string>
     <string name="made_main">Теперь основной вариант</string>
     <string name="elo">Эло</string>
+    <string name="play_analyse_short">Анализ</string>
+    <string name="play_on_short">Доиграть</string>
+    <string name="play_viewing">Просмотр %1$s · к игре ›</string>
+    <string name="start_position">начальная позиция</string>
 </resources>

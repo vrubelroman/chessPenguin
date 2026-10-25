@@ -153,7 +153,7 @@ fun OfferCard(onAccept: () -> Unit, onPlayOn: () -> Unit) {
         Text(stringResource(R.string.play_her_position_lost), style = MaterialTheme.typography.bodyMedium)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onAccept, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_accept_win)) }
-            OutlinedButton(onClick = onPlayOn, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_to_end)) }
+            OutlinedButton(onClick = onPlayOn, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_on_short)) }
         }
     }
 }
@@ -164,17 +164,20 @@ fun ResultCard(over: PlayOver, saved: Boolean, onAnalyse: () -> Unit, onRematch:
     Card {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                (if (over.result == "1/2-1/2") "½-½" else over.result) + "  " + stringResource(over.heading) + (over.detail?.let { " · " + stringResource(it) } ?: ""),
+                (if (over.result == "1/2-1/2") "½-½" else over.result) + " · " + stringResource(over.heading) + (over.detail?.let { " · " + stringResource(it) } ?: ""),
                 Modifier.weight(1f),
                 style = MaterialTheme.typography.titleMedium,
             )
             IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, stringResource(R.string.close)) }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onAnalyse, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_analyse), maxLines = 1) }
-            OutlinedButton(onClick = onRematch, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_rematch).removePrefix("↻ "), maxLines = 1) }
-            OutlinedButton(onClick = onSave, enabled = !saved, modifier = Modifier.weight(1f)) {
-                Text(stringResource(if (saved) R.string.play_saved else R.string.play_save), maxLines = 1)
+            val pad = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)
+            Button(onClick = onAnalyse, modifier = Modifier.weight(1f), contentPadding = pad) { Text(stringResource(R.string.play_analyse_short), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            OutlinedButton(onClick = onRematch, modifier = Modifier.weight(1f), contentPadding = pad) {
+                Text(stringResource(R.string.play_rematch).removePrefix("↻ "), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            OutlinedButton(onClick = onSave, enabled = !saved, modifier = Modifier.weight(1f), contentPadding = pad) {
+                Text(stringResource(if (saved) R.string.play_saved else R.string.play_save), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

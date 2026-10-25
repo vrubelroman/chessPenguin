@@ -517,4 +517,8 @@
     <string name="undo_menu">Rückgängig</string>
     <string name="made_main">Jetzt die Hauptvariante</string>
     <string name="elo">Elo</string>
+    <string name="play_analyse_short">Analyse</string>
+    <string name="play_on_short">Weiterspielen</string>
+    <string name="play_viewing">Ansicht %1$s · zurück zur Partie ›</string>
+    <string name="start_position">die Ausgangsstellung</string>
 </resources>

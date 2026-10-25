@@ -518,4 +518,8 @@
     <string name="undo_menu">Болдырмау</string>
     <string name="made_main">Енді негізгі нұсқа</string>
     <string name="elo">Эло</string>
+    <string name="play_analyse_short">Талдау</string>
+    <string name="play_on_short">Жалғастыру</string>
+    <string name="play_viewing">Қарау %1$s · ойынға оралу ›</string>
+    <string name="start_position">бастапқы позиция</string>
 </resources>

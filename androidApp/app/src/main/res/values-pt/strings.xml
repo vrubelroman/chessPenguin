@@ -526,4 +526,8 @@
     <string name="undo_menu">Desfazer</string>
     <string name="made_main">Agora é a linha principal</string>
     <string name="elo">Elo</string>
+    <string name="play_analyse_short">Analisar</string>
+    <string name="play_on_short">Continuar</string>
+    <string name="play_viewing">Vendo %1$s · voltar à partida ›</string>
+    <string name="start_position">a posição inicial</string>
 </resources>

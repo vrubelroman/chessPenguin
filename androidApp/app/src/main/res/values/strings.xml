@@ -521,4 +521,8 @@
     <string name="undo_menu">Undo</string>
     <string name="made_main">Now the main line</string>
     <string name="elo">Elo</string>
+    <string name="play_analyse_short">Analyse</string>
+    <string name="play_on_short">Play on</string>
+    <string name="play_viewing">Viewing %1$s · back to the game ›</string>
+    <string name="start_position">the starting position</string>
 </resources>

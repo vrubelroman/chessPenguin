@@ -306,7 +306,13 @@ fun Board(
             if (i == from || i == to) drawRect(colors.lastMove, cell(i), Size(sq, sq))
         }
         alert?.let { (a, b) ->
-            for (sqName in listOf(a, b)) squareIndex(sqName)?.let { drawRect(Color(220, 40, 40, 115), cell(it), Size(sq, sq)) }
+            // A fill and a ring: seen on dark squares of every board too.
+            for (sqName in listOf(a, b)) squareIndex(sqName)?.let {
+                val c = cell(it)
+                drawRect(Color(220, 40, 40, 153), c, Size(sq, sq))
+                val w = with(density) { 3.dp.toPx() }
+                drawRect(Color(186, 26, 26), c + Offset(w / 2, w / 2), Size(sq - w, sq - w), style = Stroke(width = w))
+            }
         }
         val chosen = selected
         if (chosen != null) drawRect(colors.lastMove.copy(alpha = 0.5f), cell(chosen), Size(sq, sq))

@@ -202,8 +202,10 @@ fun TrainScreen(trainer: Trainer, ply0: Int, startFlipped: Boolean, onPly: (Int)
                             changes++
                         }) { Text(stringResource(R.string.train_show)) }
                     } else if (ply > 0 || st.mistakes > 0u) {
+                        // With the message of a wrong move, the count stays in sight.
                         Text(
-                            stringResource(R.string.train_run, (st.before.runs + 1u).toString()),
+                            if (missed && st.hint == null) stringResource(R.string.train_mistakes, st.mistakes.toString())
+                            else stringResource(R.string.train_run, (st.before.runs + 1u).toString()),
                             Modifier.padding(end = 12.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodyMedium,
@@ -270,8 +272,9 @@ private fun Result(st: uniffi.mobile_api.TrainState, onAgain: () -> Unit, onExit
             Text(stringResource(R.string.train_recent, runs), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onAgain, modifier = Modifier.weight(1f).height(48.dp)) { Text(stringResource(R.string.train_again)) }
-            OutlinedButton(onClick = onExit, modifier = Modifier.weight(1f).height(48.dp)) { Text(stringResource(R.string.train_back)) }
+            // The desktop's texts carry their signs; here the buttons are the signs.
+            Button(onClick = onAgain, modifier = Modifier.weight(1f).height(48.dp)) { Text(stringResource(R.string.train_again).removePrefix("↻ "), maxLines = 1) }
+            OutlinedButton(onClick = onExit, modifier = Modifier.weight(1f).height(48.dp)) { Text(stringResource(R.string.train_back).removePrefix("⬅ "), maxLines = 1) }
         }
     }
 }

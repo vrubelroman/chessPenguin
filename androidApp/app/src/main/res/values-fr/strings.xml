@@ -525,4 +525,8 @@
     <string name="undo_menu">Annuler</string>
     <string name="made_main">Ligne principale désormais</string>
     <string name="elo">Elo</string>
+    <string name="play_analyse_short">Analyser</string>
+    <string name="play_on_short">Continuer</string>
+    <string name="play_viewing">Consultation %1$s · retour à la partie ›</string>
+    <string name="start_position">la position initiale</string>
 </resources>
