@@ -460,4 +460,5 @@
         <item quantity="one">%1$d Durchgang</item>
         <item quantity="other">%1$d Durchgänge</item>
     </plurals>
+    <string name="maia_download_title">Maia für ChessPenguin</string>
 </resources>

@@ -464,4 +464,5 @@
         <item quantity="one">%1$d run</item>
         <item quantity="other">%1$d runs</item>
     </plurals>
+    <string name="maia_download_title">Maia for ChessPenguin</string>
 </resources>

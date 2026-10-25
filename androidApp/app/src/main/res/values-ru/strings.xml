@@ -476,4 +476,5 @@
         <item quantity="many">прохождений: %1$d</item>
         <item quantity="other">прохождений: %1$d</item>
     </plurals>
+    <string name="maia_download_title">Maia для ChessPenguin</string>
 </resources>

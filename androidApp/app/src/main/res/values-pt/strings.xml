@@ -469,4 +469,5 @@
         <item quantity="many">%1$d passagens</item>
         <item quantity="other">%1$d passagens</item>
     </plurals>
+    <string name="maia_download_title">Maia para o ChessPenguin</string>
 </resources>

@@ -461,4 +461,5 @@
         <item quantity="one">%1$d рет</item>
         <item quantity="other">%1$d рет</item>
     </plurals>
+    <string name="maia_download_title">ChessPenguin үшін Maia</string>
 </resources>

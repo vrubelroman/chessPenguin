@@ -459,4 +459,5 @@
         <item quantity="one">%1$d marta</item>
         <item quantity="other">%1$d marta</item>
     </plurals>
+    <string name="maia_download_title">ChessPenguin uchun Maia</string>
 </resources>

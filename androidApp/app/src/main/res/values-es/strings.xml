@@ -468,4 +468,5 @@
         <item quantity="many">%1$d repasos</item>
         <item quantity="other">%1$d repasos</item>
     </plurals>
+    <string name="maia_download_title">Maia para ChessPenguin</string>
 </resources>
