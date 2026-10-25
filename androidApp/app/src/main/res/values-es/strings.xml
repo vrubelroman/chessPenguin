@@ -440,4 +440,32 @@
     <string name="keep_editing">Seguir editando</string>
     <string name="edit">Editar</string>
     <string name="next">Siguiente</string>
+    <string name="train_title">Aprendiendo la apertura</string>
+    <string name="train_up_to">hasta %1$s</string>
+    <string name="train_learn">Aprender la apertura hasta esta jugada</string>
+    <string name="train_move_of">Jugada %1$s de %2$s</string>
+    <string name="train_white">♔ Juegan blancas</string>
+    <string name="train_black">♚ Juegan negras</string>
+    <string name="train_mistakes">Errores: %1$s</string>
+    <string name="train_run">Repaso %1$s</string>
+    <string name="train_wrong">× En la partida hay otra jugada aquí</string>
+    <string name="train_show">Mostrar la jugada</string>
+    <string name="train_not_done">Línea aún no repasada</string>
+    <string name="train_last_streak">La última vez: %1$s · sin errores seguidos: %2$s</string>
+    <string name="train_last_best">La última vez: %1$s · mejor: %2$s</string>
+    <string name="train_done_clean">Completado sin errores</string>
+    <string name="train_done_hint">Completado con pista · errores: %1$s</string>
+    <string name="train_done">Completado · errores: %1$s</string>
+    <string name="train_run_best">Repaso %1$s · mejor: %2$s</string>
+    <string name="train_streak">sin errores seguidos: %1$s</string>
+    <string name="train_recent">Recientes: %1$s</string>
+    <string name="train_arrow">Juega la jugada de la flecha</string>
+    <string name="train_again">↻ Otra vez</string>
+    <string name="train_back">⬅ Volver a la partida</string>
+    <string name="train_restart">Desde el principio</string>
+    <plurals name="train_runs">
+        <item quantity="one">%1$d repaso</item>
+        <item quantity="many">%1$d repasos</item>
+        <item quantity="other">%1$d repasos</item>
+    </plurals>
 </resources>

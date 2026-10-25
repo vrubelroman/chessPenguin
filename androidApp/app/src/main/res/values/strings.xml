@@ -437,4 +437,31 @@
     <string name="keep_editing">Keep editing</string>
     <string name="edit">Edit</string>
     <string name="next">Next</string>
+    <string name="train_title">Learning the opening</string>
+    <string name="train_up_to">up to %1$s</string>
+    <string name="train_learn">Learn the opening up to this move</string>
+    <string name="train_move_of">Move %1$s of %2$s</string>
+    <string name="train_white">♔ White to move</string>
+    <string name="train_black">♚ Black to move</string>
+    <string name="train_mistakes">Mistakes: %1$s</string>
+    <string name="train_run">Run %1$s</string>
+    <string name="train_wrong">× The game has another move here</string>
+    <string name="train_show">Show the move</string>
+    <string name="train_not_done">Not done before</string>
+    <string name="train_last_streak">Last time: %1$s · clean in a row: %2$s</string>
+    <string name="train_last_best">Last time: %1$s · best: %2$s</string>
+    <string name="train_done_clean">Done without mistakes</string>
+    <string name="train_done_hint">Done with a hint · mistakes: %1$s</string>
+    <string name="train_done">Done · mistakes: %1$s</string>
+    <string name="train_run_best">Run %1$s · best: %2$s</string>
+    <string name="train_streak">clean in a row: %1$s</string>
+    <string name="train_recent">Recent: %1$s</string>
+    <string name="train_arrow">Play the move on the arrow</string>
+    <string name="train_again">↻ Again</string>
+    <string name="train_back">⬅ Back to the game</string>
+    <string name="train_restart">From the start</string>
+    <plurals name="train_runs">
+        <item quantity="one">%1$d run</item>
+        <item quantity="other">%1$d runs</item>
+    </plurals>
 </resources>

@@ -441,4 +441,32 @@
     <string name="keep_editing">Continuar editando</string>
     <string name="edit">Editar</string>
     <string name="next">Avançar</string>
+    <string name="train_title">Aprendendo a abertura</string>
+    <string name="train_up_to">até %1$s</string>
+    <string name="train_learn">Aprender a abertura até este lance</string>
+    <string name="train_move_of">Lance %1$s de %2$s</string>
+    <string name="train_white">♔ Brancas jogam</string>
+    <string name="train_black">♚ Pretas jogam</string>
+    <string name="train_mistakes">Erros: %1$s</string>
+    <string name="train_run">Rodada %1$s</string>
+    <string name="train_wrong">× Na partida há outro lance aqui</string>
+    <string name="train_show">Mostrar o lance</string>
+    <string name="train_not_done">Linha ainda não treinada</string>
+    <string name="train_last_streak">Última vez: %1$s · sem erros seguidos: %2$s</string>
+    <string name="train_last_best">Última vez: %1$s · melhor: %2$s</string>
+    <string name="train_done_clean">Concluído sem erros</string>
+    <string name="train_done_hint">Concluído com dica · erros: %1$s</string>
+    <string name="train_done">Concluído · erros: %1$s</string>
+    <string name="train_run_best">Rodada %1$s · melhor: %2$s</string>
+    <string name="train_streak">sem erros seguidos: %1$s</string>
+    <string name="train_recent">Recentes: %1$s</string>
+    <string name="train_arrow">Jogue o lance da seta</string>
+    <string name="train_again">↻ De novo</string>
+    <string name="train_back">⬅ Voltar à partida</string>
+    <string name="train_restart">Do início</string>
+    <plurals name="train_runs">
+        <item quantity="one">%1$d passagem</item>
+        <item quantity="many">%1$d passagens</item>
+        <item quantity="other">%1$d passagens</item>
+    </plurals>
 </resources>

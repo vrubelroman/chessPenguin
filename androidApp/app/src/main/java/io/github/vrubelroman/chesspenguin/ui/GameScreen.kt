@@ -39,6 +39,7 @@ import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.VerticalAlignTop
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Download
@@ -90,6 +91,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -148,6 +150,14 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var game by held.data
     var edit by held.session
     val newGame = db == NEW_GAME
+    // Learning the opening of this game: its own screen over the game (§32).
+    held.trainer.value?.let { t ->
+        TrainScreen(t, held.trainPly, held.trainFlipped, onPly = { held.trainPly = it }, onExit = {
+            held.trainer.value = null
+            t.close()
+        })
+        return
+    }
     var failed by remember { mutableStateOf(false) }
     var current by rememberSaveable(place) { mutableIntStateOf(0) }
     var flipped by rememberSaveable { mutableStateOf(false) }
@@ -927,6 +937,17 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             MoveSheet(
                 label = AnnotatedString(if (n.white) "${n.moveNumber}." else "${n.moveNumber}…") + san(n.san),
                 inVariation = g.nodes[n.parent!!.toInt()].children.firstOrNull()?.toInt() != sheetMove,
+                runs = remember(sheetMove) { edit?.trainingRuns(sheetMove.toUInt())?.toInt() },
+                canTrain = !n.nullMove,
+                onTrain = {
+                    moveSheet = null
+                    edit?.trainer(sheetMove.toUInt())?.let { t ->
+                        preview = null
+                        held.trainPly = 0
+                        held.trainFlipped = flipped
+                        held.trainer.value = t
+                    }
+                },
                 onMakeMain = {
                     moveSheet = null
                     runCatching { edit?.makeMain(sheetMove.toUInt()) }.getOrNull()?.let { apply(it) }
@@ -1202,23 +1223,42 @@ private fun Live(content: @Composable () -> Unit) = content()
 /// one (in a variation), remove it with what follows.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MoveSheet(label: AnnotatedString, inVariation: Boolean, onMakeMain: () -> Unit, onDelete: () -> Unit, onDismiss: () -> Unit) {
+private fun MoveSheet(
+    label: AnnotatedString,
+    inVariation: Boolean,
+    runs: Int?,
+    canTrain: Boolean,
+    onMakeMain: () -> Unit,
+    onDelete: () -> Unit,
+    onTrain: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
             Text(label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-            if (inVariation) SheetAction(Icons.Rounded.VerticalAlignTop, stringResource(R.string.make_main), onMakeMain)
-            SheetAction(Icons.Rounded.Close, stringResource(R.string.delete_move), onDelete)
+            if (inVariation) SheetAction(Icons.Rounded.VerticalAlignTop, stringResource(R.string.make_main), onClick = onMakeMain)
+            SheetAction(Icons.Rounded.Close, stringResource(R.string.delete_move), onClick = onDelete)
+            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            SheetAction(
+                Icons.Rounded.School,
+                stringResource(R.string.train_learn),
+                trailing = runs?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.train_runs, it, it) },
+                enabled = canTrain,
+                onClick = onTrain,
+            )
         }
     }
 }
 
 @Composable
-private fun SheetAction(icon: ImageVector, text: String, onClick: () -> Unit) {
+private fun SheetAction(icon: ImageVector, text: String, trailing: String? = null, enabled: Boolean = true, onClick: () -> Unit) {
+    val alpha = if (enabled) 1f else 0.38f
     Row(
-        Modifier.fillMaxWidth().height(56.dp).clickable(onClick = onClick).padding(horizontal = 24.dp),
+        Modifier.fillMaxWidth().height(56.dp).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(text, Modifier.padding(start = 16.dp), style = MaterialTheme.typography.bodyLarge)
+        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha))
+        Text(text, Modifier.weight(1f).padding(start = 16.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
+        trailing?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }

@@ -433,4 +433,31 @@
     <string name="keep_editing">Weiter bearbeiten</string>
     <string name="edit">Bearbeiten</string>
     <string name="next">Weiter</string>
+    <string name="train_title">Eröffnung lernen</string>
+    <string name="train_up_to">bis %1$s</string>
+    <string name="train_learn">Eröffnung bis zu diesem Zug lernen</string>
+    <string name="train_move_of">Zug %1$s von %2$s</string>
+    <string name="train_white">♔ Weiß am Zug</string>
+    <string name="train_black">♚ Schwarz am Zug</string>
+    <string name="train_mistakes">Fehler: %1$s</string>
+    <string name="train_run">Durchgang %1$s</string>
+    <string name="train_wrong">× In der Partie folgt hier ein anderer Zug</string>
+    <string name="train_show">Zug zeigen</string>
+    <string name="train_not_done">Diese Linie noch nicht geübt</string>
+    <string name="train_last_streak">Zuletzt: %1$s · fehlerfrei in Folge: %2$s</string>
+    <string name="train_last_best">Zuletzt: %1$s · Bestwert: %2$s</string>
+    <string name="train_done_clean">Fehlerfrei geschafft</string>
+    <string name="train_done_hint">Mit Hinweis geschafft · Fehler: %1$s</string>
+    <string name="train_done">Geschafft · Fehler: %1$s</string>
+    <string name="train_run_best">Durchgang %1$s · Bestwert: %2$s</string>
+    <string name="train_streak">fehlerfrei in Folge: %1$s</string>
+    <string name="train_recent">Letzte: %1$s</string>
+    <string name="train_arrow">Spielen Sie den Zug des Pfeils</string>
+    <string name="train_again">↻ Noch einmal</string>
+    <string name="train_back">⬅ Zurück zur Partie</string>
+    <string name="train_restart">Von vorn</string>
+    <plurals name="train_runs">
+        <item quantity="one">%1$d Durchgang</item>
+        <item quantity="other">%1$d Durchgänge</item>
+    </plurals>
 </resources>

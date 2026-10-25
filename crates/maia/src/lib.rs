@@ -11,6 +11,7 @@
 
 mod checkpoint;
 mod net;
+pub mod strength;
 mod weights;
 
 pub use net::Prediction;

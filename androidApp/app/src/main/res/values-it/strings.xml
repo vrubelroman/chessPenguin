@@ -440,4 +440,32 @@
     <string name="keep_editing">Continua a modificare</string>
     <string name="edit">Modifica</string>
     <string name="next">Avanti</string>
+    <string name="train_title">Studio dell\'apertura</string>
+    <string name="train_up_to">fino a %1$s</string>
+    <string name="train_learn">Studia l\'apertura fino a questa mossa</string>
+    <string name="train_move_of">Mossa %1$s di %2$s</string>
+    <string name="train_white">♔ Muove il Bianco</string>
+    <string name="train_black">♚ Muove il Nero</string>
+    <string name="train_mistakes">Errori: %1$s</string>
+    <string name="train_run">Giro %1$s</string>
+    <string name="train_wrong">× Nella partita qui c\'è un\'altra mossa</string>
+    <string name="train_show">Mostra la mossa</string>
+    <string name="train_not_done">Linea mai ripassata</string>
+    <string name="train_last_streak">L\'ultima volta: %1$s · senza errori di fila: %2$s</string>
+    <string name="train_last_best">L\'ultima volta: %1$s · migliore: %2$s</string>
+    <string name="train_done_clean">Completato senza errori</string>
+    <string name="train_done_hint">Completato con un aiuto · errori: %1$s</string>
+    <string name="train_done">Completato · errori: %1$s</string>
+    <string name="train_run_best">Giro %1$s · migliore: %2$s</string>
+    <string name="train_streak">senza errori di fila: %1$s</string>
+    <string name="train_recent">Recenti: %1$s</string>
+    <string name="train_arrow">Gioca la mossa indicata dalla freccia</string>
+    <string name="train_again">↻ Ancora</string>
+    <string name="train_back">⬅ Torna alla partita</string>
+    <string name="train_restart">Da capo</string>
+    <plurals name="train_runs">
+        <item quantity="one">%1$d ripasso</item>
+        <item quantity="many">%1$d ripassi</item>
+        <item quantity="other">%1$d ripassi</item>
+    </plurals>
 </resources>

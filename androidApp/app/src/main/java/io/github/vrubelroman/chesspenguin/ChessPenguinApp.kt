@@ -35,6 +35,12 @@ class ChessPenguinApp : Application() {
     /// The app's own updates (android-ui.md §25).
     val updates by lazy { AppUpdates(this, scope, engineFiles) }
 
+    override fun onCreate() {
+        super.onCreate()
+        // The opening trainer's runs (android-play.md §32.3).
+        uniffi.mobile_api.trainerSetFile(java.io.File(filesDir, "training.json").path)
+    }
+
     /// The games shown on the list of each database (after a search), for paging
     /// games from the game screen: database id → game numbers.
     val shown = HashMap<String, List<UInt>>()

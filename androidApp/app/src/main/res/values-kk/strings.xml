@@ -434,4 +434,31 @@
     <string name="keep_editing">Өңдеуді жалғастыру</string>
     <string name="edit">Өзгерту</string>
     <string name="next">Келесі</string>
+    <string name="train_title">Дебютті үйрену</string>
+    <string name="train_up_to">%1$s дейін</string>
+    <string name="train_learn">Дебютті осы жүріске дейін үйрену</string>
+    <string name="train_move_of">Жүріс %1$s / %2$s</string>
+    <string name="train_white">♔ Ақтар жүреді</string>
+    <string name="train_black">♚ Қаралар жүреді</string>
+    <string name="train_mistakes">Қателер: %1$s</string>
+    <string name="train_run">Әрекет %1$s</string>
+    <string name="train_wrong">× Партияда мұнда басқа жүріс</string>
+    <string name="train_show">Жүрісті көрсету</string>
+    <string name="train_not_done">Бұл линия әлі өтілмеген</string>
+    <string name="train_last_streak">Соңғы рет: %1$s · қатарынан қатесіз: %2$s</string>
+    <string name="train_last_best">Соңғы рет: %1$s · ең үздігі: %2$s</string>
+    <string name="train_done_clean">Қатесіз өтілді</string>
+    <string name="train_done_hint">Көмекпен өтілді · қателер: %1$s</string>
+    <string name="train_done">Өтілді · қателер: %1$s</string>
+    <string name="train_run_best">Әрекет %1$s · ең үздігі: %2$s</string>
+    <string name="train_streak">қатарынан қатесіз: %1$s</string>
+    <string name="train_recent">Соңғылары: %1$s</string>
+    <string name="train_arrow">Көрсеткідегі жүрісті жасаңыз</string>
+    <string name="train_again">↻ Қайталау</string>
+    <string name="train_back">⬅ Партияға оралу</string>
+    <string name="train_restart">Басынан</string>
+    <plurals name="train_runs">
+        <item quantity="one">%1$d рет</item>
+        <item quantity="other">%1$d рет</item>
+    </plurals>
 </resources>

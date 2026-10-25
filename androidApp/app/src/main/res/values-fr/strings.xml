@@ -440,4 +440,32 @@
     <string name="keep_editing">Continuer</string>
     <string name="edit">Modifier</string>
     <string name="next">Suivant</string>
+    <string name="train_title">Apprentissage de l\'ouverture</string>
+    <string name="train_up_to">jusqu\'à %1$s</string>
+    <string name="train_learn">Apprendre l\'ouverture jusqu\'à ce coup</string>
+    <string name="train_move_of">Coup %1$s sur %2$s</string>
+    <string name="train_white">♔ Trait aux Blancs</string>
+    <string name="train_black">♚ Trait aux Noirs</string>
+    <string name="train_mistakes">Erreurs : %1$s</string>
+    <string name="train_run">Passage %1$s</string>
+    <string name="train_wrong">× La partie a un autre coup ici</string>
+    <string name="train_show">Montrer le coup</string>
+    <string name="train_not_done">Ligne jamais parcourue</string>
+    <string name="train_last_streak">La dernière fois : %1$s · sans erreur d\'affilée : %2$s</string>
+    <string name="train_last_best">La dernière fois : %1$s · meilleur : %2$s</string>
+    <string name="train_done_clean">Terminé sans erreur</string>
+    <string name="train_done_hint">Terminé avec un indice · erreurs : %1$s</string>
+    <string name="train_done">Terminé · erreurs : %1$s</string>
+    <string name="train_run_best">Passage %1$s · meilleur : %2$s</string>
+    <string name="train_streak">sans erreur d\'affilée : %1$s</string>
+    <string name="train_recent">Récents : %1$s</string>
+    <string name="train_arrow">Jouez le coup indiqué par la flèche</string>
+    <string name="train_again">↻ Encore</string>
+    <string name="train_back">⬅ Retour à la partie</string>
+    <string name="train_restart">Recommencer</string>
+    <plurals name="train_runs">
+        <item quantity="one">%1$d passage</item>
+        <item quantity="many">%1$d passages</item>
+        <item quantity="other">%1$d passages</item>
+    </plurals>
 </resources>

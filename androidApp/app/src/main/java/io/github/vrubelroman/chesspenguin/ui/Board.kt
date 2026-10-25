@@ -188,6 +188,8 @@ fun Board(
     check: Boolean = false,
     animated: Boolean = true,
     input: BoardInput? = null,
+    /// Two squares lit red: a wrong move of the trainer, shown for a moment (§32.2).
+    alert: Pair<String, String>? = null,
 ) {
     val colors = LocalChessColors.current
     val context = LocalContext.current
@@ -302,6 +304,9 @@ fun Board(
             val light = (i / 8 + i % 8) % 2 == 0
             if (image == null) drawRect(if (light) theme.light else theme.dark, cell(i), Size(sq, sq))
             if (i == from || i == to) drawRect(colors.lastMove, cell(i), Size(sq, sq))
+        }
+        alert?.let { (a, b) ->
+            for (sqName in listOf(a, b)) squareIndex(sqName)?.let { drawRect(Color(220, 40, 40, 115), cell(it), Size(sq, sq)) }
         }
         val chosen = selected
         if (chosen != null) drawRect(colors.lastMove.copy(alpha = 0.5f), cell(chosen), Size(sq, sq))

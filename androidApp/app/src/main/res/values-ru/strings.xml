@@ -447,4 +447,33 @@
     <string name="keep_editing">Продолжить правку</string>
     <string name="edit">Изменить</string>
     <string name="next">Далее</string>
+    <string name="train_title">Учим дебют</string>
+    <string name="train_up_to">до %1$s</string>
+    <string name="train_learn">Учить дебют до этого хода</string>
+    <string name="train_move_of">Ход %1$s из %2$s</string>
+    <string name="train_white">♔ ход белых</string>
+    <string name="train_black">♚ ход чёрных</string>
+    <string name="train_mistakes">Ошибок: %1$s</string>
+    <string name="train_run">Прохождение %1$s</string>
+    <string name="train_wrong">× В партии — другой ход</string>
+    <string name="train_show">Показать ход</string>
+    <string name="train_not_done">Эту линию ещё не проходили</string>
+    <string name="train_last_streak">Прошлое: %1$s · без ошибок подряд: %2$s</string>
+    <string name="train_last_best">Прошлое: %1$s · лучшее: %2$s</string>
+    <string name="train_done_clean">Пройдено без ошибок</string>
+    <string name="train_done_hint">Пройдено с подсказкой · ошибок: %1$s</string>
+    <string name="train_done">Пройдено · ошибок: %1$s</string>
+    <string name="train_run_best">Прохождение %1$s · лучшее: %2$s</string>
+    <string name="train_streak">без ошибок подряд: %1$s</string>
+    <string name="train_recent">Последние: %1$s</string>
+    <string name="train_arrow">Сделайте ход со стрелки</string>
+    <string name="train_again">↻ Повторить</string>
+    <string name="train_back">⬅ К партии</string>
+    <string name="train_restart">Сначала</string>
+    <plurals name="train_runs">
+        <item quantity="one">прохождений: %1$d</item>
+        <item quantity="few">прохождений: %1$d</item>
+        <item quantity="many">прохождений: %1$d</item>
+        <item quantity="other">прохождений: %1$d</item>
+    </plurals>
 </resources>

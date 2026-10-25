@@ -50,8 +50,13 @@ class GameEdit : ViewModel() {
     var notes: List<String> = emptyList()
     /// Where a new game or a copy was saved: saving again replaces it there.
     var savedTo: Pair<String, UInt>? = null
+    /// An opening being learned over the game (android-play.md §32), how far, the board's side.
+    val trainer = mutableStateOf<uniffi.mobile_api.Trainer?>(null)
+    var trainPly = 0
+    var trainFlipped = false
 
     override fun onCleared() {
+        trainer.value?.close()
         session.value?.close()
     }
 }

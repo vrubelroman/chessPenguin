@@ -11,16 +11,18 @@ use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
-/// The published models.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Model {
-    /// 5M parameters: plays up to about 1800.
-    Small,
-    /// 79M parameters: stronger and closer to people, several times slower.
-    Large,
+pub use maia::strength::Model;
+
+/// Where each model is published.
+pub trait Published {
+    fn repo(self) -> &'static str;
+    fn revision(self) -> &'static str;
+    fn file(self) -> &'static str;
+    fn sha256(self) -> &'static str;
+    fn size(self) -> u64;
 }
 
-impl Model {
+impl Published for Model {
     fn repo(self) -> &'static str {
         match self {
             Model::Small => "Maia3-5M",
@@ -49,7 +51,7 @@ impl Model {
         }
     }
 
-    pub fn size(self) -> u64 {
+    fn size(self) -> u64 {
         match self {
             Model::Small => 20_968_049,
             Model::Large => 315_651_851,

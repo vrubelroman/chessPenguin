@@ -432,4 +432,31 @@
     <string name="keep_editing">Tahrirlashni davom ettirish</string>
     <string name="edit">Tahrirlash</string>
     <string name="next">Keyingi</string>
+    <string name="train_title">Debyutni o‘rganish</string>
+    <string name="train_up_to">%1$s gacha</string>
+    <string name="train_learn">Debyutni shu yurishgacha o‘rganish</string>
+    <string name="train_move_of">Yurish %1$s / %2$s</string>
+    <string name="train_white">♔ Oqlar yuradi</string>
+    <string name="train_black">♚ Qoralar yuradi</string>
+    <string name="train_mistakes">Xatolar: %1$s</string>
+    <string name="train_run">Urinish %1$s</string>
+    <string name="train_wrong">× Partiyada bu yerda boshqa yurish</string>
+    <string name="train_show">Yurishni ko‘rsatish</string>
+    <string name="train_not_done">Bu liniya hali o‘tilmagan</string>
+    <string name="train_last_streak">Oxirgi marta: %1$s · ketma-ket xatosiz: %2$s</string>
+    <string name="train_last_best">Oxirgi marta: %1$s · eng yaxshi: %2$s</string>
+    <string name="train_done_clean">Xatosiz o‘tildi</string>
+    <string name="train_done_hint">Yordam bilan o‘tildi · xatolar: %1$s</string>
+    <string name="train_done">O‘tildi · xatolar: %1$s</string>
+    <string name="train_run_best">Urinish %1$s · eng yaxshi: %2$s</string>
+    <string name="train_streak">ketma-ket xatosiz: %1$s</string>
+    <string name="train_recent">So‘nggilari: %1$s</string>
+    <string name="train_arrow">Strelkadagi yurishni qiling</string>
+    <string name="train_again">↻ Yana</string>
+    <string name="train_back">⬅ Partiyaga qaytish</string>
+    <string name="train_restart">Boshidan</string>
+    <plurals name="train_runs">
+        <item quantity="one">%1$d marta</item>
+        <item quantity="other">%1$d marta</item>
+    </plurals>
 </resources>
