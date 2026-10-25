@@ -93,8 +93,10 @@ official Stockfish 19 (about 80 MB, checked before use, installed for your accou
 button is also in **Settings → Engines**. A `stockfish` installed on the system is found
 automatically, any other UCI engine can be added from a file. The Flatpak includes Stockfish.
 
-The **Android app** (alpha) views databases and games (the same formats), with the notation under
-the board and Stockfish. The two APKs install over each other; databases and settings are kept.
+The **Android app** (alpha) opens databases and games (the same formats), with the notation under
+the board and Stockfish. Moves are made on the board (variations, undo); your own databases live on
+the phone; play against Maia (the small model, no clocks) and learn an opening up to a move. The two
+APKs install over each other; databases and settings are kept.
 
 ### Build from source
 

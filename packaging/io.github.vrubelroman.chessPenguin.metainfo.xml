@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.5.0" date="2026-10-26">
+      <description>
+        <p>Play against the large Maia model (downloaded once): the strength slider shows her measured strength on the Lichess blitz scale, from 1100 to 2100. Game analysis starts at once with the options chosen before. On Android: moves on the board, your own databases, games against Maia and the opening trainer.</p>
+      </description>
+    </release>
     <release version="1.4.0" date="2026-10-25">
       <description>
         <p>Paste a line from the clipboard into a game: moves or a whole PGN game go where they part from it, with their comments and variations. Play on from any move against Maia, with the moves of the game kept. Learn an opening: replay from memory the moves of both sides up to a chosen move; mistakes are counted and the runs of each line remembered.</p>

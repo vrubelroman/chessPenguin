@@ -2,7 +2,7 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.0] — 2026-10-26
 
 - Play against Maia: the large model (79M parameters, 316 MB, downloaded once from the
   authors' page) plays every strength; it is stronger and closer to how people play.
