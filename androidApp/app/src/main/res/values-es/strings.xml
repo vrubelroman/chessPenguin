@@ -521,4 +521,5 @@
     <string name="play_adjourned_sub">juegas con %1$s · %2$s</string>
     <string name="play_from_maia">Seguir desde aquí contra Maia…</string>
     <string name="play_from_label">Tras %1$s</string>
+    <string name="sound">Sonido</string>
 </resources>

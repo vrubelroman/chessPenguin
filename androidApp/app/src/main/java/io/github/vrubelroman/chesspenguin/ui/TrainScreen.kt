@@ -87,17 +87,26 @@ fun TrainScreen(trainer: Trainer, ply0: Int, startFlipped: Boolean, onPly: (Int)
     }
     fun move(uci: String) {
         when (trainer.judge(ply.toUInt(), uci)) {
-            TrainVerdict.RIGHT, TrainVerdict.FINISHED -> {
+            TrainVerdict.RIGHT -> {
                 missed = false
                 ply += 1
                 onPly(ply)
                 buzz(false)
+                trainer.state(ply.toUInt()).played.lastOrNull()?.let { app.sounds.move(it) }
+            }
+            TrainVerdict.FINISHED -> {
+                missed = false
+                ply += 1
+                onPly(ply)
+                buzz(false)
+                app.sounds.play(io.github.vrubelroman.chesspenguin.data.Sound.Success)
             }
             TrainVerdict.WRONG -> {
                 trainer.fenAfter(ply.toUInt(), uci)?.let { wrong = Wrong(it, uci.substring(0, 2), uci.substring(2, 4)) }
                 missed = true
                 changes++
                 buzz(true)
+                app.sounds.play(io.github.vrubelroman.chesspenguin.data.Sound.Wrong)
             }
             TrainVerdict.DONE -> {}
         }

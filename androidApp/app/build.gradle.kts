@@ -68,8 +68,8 @@ val stockfish = tasks.register<Exec>("stockfish") {
     outputs.dir(stockfishOut)
 }
 
-/// The sample games, the piece sets and the board images of the desktop app, as app
-/// assets.
+/// The sample games, the piece sets, the board images and sounds of the desktop app, as
+/// app assets.
 val bundleAssets = tasks.register<Copy>("bundleAssets") {
     from(File(repo, "examples")) {
         include("*.pgn")
@@ -82,6 +82,15 @@ val bundleAssets = tasks.register<Copy>("bundleAssets") {
     from(File(repo, "apps/desktop/assets/boards")) {
         include("*.jpg", "*.png")
         into("boards")
+    }
+    // One set of sounds (the desktop's «SFX») and the trainer's wrong move (§33).
+    from(File(repo, "apps/desktop/assets/sounds/sfx")) {
+        include("*.ogg")
+        into("sounds")
+    }
+    from(File(repo, "apps/desktop/assets/sounds/common")) {
+        include("Wrong.ogg")
+        into("sounds")
     }
     from(stockfishOut.map { it.dir("source") }) {
         into("licenses/stockfish")

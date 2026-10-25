@@ -446,6 +446,13 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         game = e.data().copy(notes = held.notes)
         r.over.value = over
         app.maiaGames.finish(e.pgn())
+        app.sounds.play(
+            when (over.heading) {
+                R.string.play_won -> io.github.vrubelroman.chesspenguin.data.Sound.Success
+                R.string.play_draw -> io.github.vrubelroman.chesspenguin.data.Sound.Move
+                else -> io.github.vrubelroman.chesspenguin.data.Sound.Defeat
+            },
+        )
     }
     // After a move of either side: kept, and the end of the game if it came.
     fun afterMove(e: Edited) {
@@ -485,10 +492,12 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             r.judge?.hopeless()?.let { if (it) r.hopeless++ else r.hopeless = 0u }
             if (!r.playOn && r.hopeless >= uniffi.mobile_api.hopelessTurns()) {
                 r.offer.value = true
+                app.sounds.play(io.github.vrubelroman.chesspenguin.data.Sound.Defeat)
                 return@LaunchedEffect
             }
             runCatching { e.play(end.toUInt(), uci) }.getOrNull()?.let { ed ->
                 apply(ed)
+                app.sounds.move(ed.data.nodes[ed.cursor.toInt()].san)
                 afterMove(ed)
             }
         } finally {
@@ -764,6 +773,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 BoardInput(legal, onMove = { uci ->
                     runCatching { e.play(current.toUInt(), uci) }.getOrNull()?.let {
                         apply(it)
+                        app.sounds.move(it.data.nodes[it.cursor.toInt()].san)
                         if (gameOn) afterMove(it)
                     }
                 })

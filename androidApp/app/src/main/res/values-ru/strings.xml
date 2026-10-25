@@ -529,4 +529,5 @@
     <string name="play_adjourned_sub">вы %1$s · %2$s</string>
     <string name="play_from_maia">Играть отсюда с Maia…</string>
     <string name="play_from_label">После %1$s</string>
+    <string name="sound">Звук</string>
 </resources>

@@ -517,4 +517,5 @@
     <string name="play_adjourned_sub">you play %1$s · %2$s</string>
     <string name="play_from_maia">Play on from here with Maia…</string>
     <string name="play_from_label">After %1$s</string>
+    <string name="sound">Sound</string>
 </resources>

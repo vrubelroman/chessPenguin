@@ -514,4 +514,5 @@
     <string name="play_adjourned_sub">сіз %1$s · %2$s</string>
     <string name="play_from_maia">Осы жерден Maia-мен жалғастыру…</string>
     <string name="play_from_label">%1$s кейін</string>
+    <string name="sound">Дыбыс</string>
 </resources>
