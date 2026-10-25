@@ -65,7 +65,7 @@ struct Linear {
 
 impl Linear {
     fn load(
-        w: &Weights,
+        w: &mut Weights,
         name: &str,
         out: usize,
         inp: usize,
@@ -152,7 +152,7 @@ struct LayerNorm {
 }
 
 impl LayerNorm {
-    fn load(w: &Weights, name: &str, n: usize) -> Result<LayerNorm, WeightsError> {
+    fn load(w: &mut Weights, name: &str, n: usize) -> Result<LayerNorm, WeightsError> {
         Ok(LayerNorm {
             w: w.get(&format!("{name}.weight"), &[n])?,
             b: w.get(&format!("{name}.bias"), &[n])?,
@@ -246,7 +246,7 @@ pub struct Prediction {
 }
 
 impl Net {
-    pub fn new(w: &Weights) -> Result<Net, WeightsError> {
+    pub fn new(w: &mut Weights) -> Result<Net, WeightsError> {
         let dims = Dims::read(w)?;
         let Dims {
             d,

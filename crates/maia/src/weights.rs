@@ -44,11 +44,11 @@ impl Weights {
         shape.get(axis).copied().ok_or(WeightsError::Format)
     }
 
-    /// The tensor `name` of this shape.
-    pub fn get(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>, WeightsError> {
+    /// The tensor `name` of this shape, taken out (each is used once: no copy).
+    pub fn get(&mut self, name: &str, shape: &[usize]) -> Result<Vec<f32>, WeightsError> {
         let t = self
             .tensors
-            .get(name)
+            .remove(name)
             .ok_or_else(|| WeightsError::Missing(name.to_owned()))?;
         if t.shape != shape {
             return Err(WeightsError::Shape(
@@ -57,6 +57,6 @@ impl Weights {
                 shape.to_vec(),
             ));
         }
-        Ok(t.data.clone())
+        Ok(t.data)
     }
 }

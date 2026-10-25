@@ -26,14 +26,23 @@ pub struct Maia {
 impl Maia {
     /// Reads the checkpoint (`maia3-5m.pt`).
     pub fn load(path: &std::path::Path) -> Result<Maia, WeightsError> {
-        let bytes = std::fs::read(path).map_err(WeightsError::Io)?;
-        Maia::from_bytes(&bytes)
+        // The file's bytes are let go once read into tensors, and the tensors move into
+        // the network: at most two copies of the weights at once (the large model: its
+        // 316 MB twice, not three times).
+        let w = {
+            let bytes = std::fs::read(path).map_err(WeightsError::Io)?;
+            weights::Weights::parse(&bytes)?
+        };
+        Maia::from_weights(w)
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Maia, WeightsError> {
-        let w = weights::Weights::parse(bytes)?;
+        Maia::from_weights(weights::Weights::parse(bytes)?)
+    }
+
+    fn from_weights(mut w: weights::Weights) -> Result<Maia, WeightsError> {
         Ok(Maia {
-            net: net::Net::new(&w)?,
+            net: net::Net::new(&mut w)?,
         })
     }
 
