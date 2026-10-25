@@ -404,17 +404,11 @@ impl Database {
     }
 }
 
-/// Node ids in tree order (the root first, each line before its variations' tails),
-/// mapped to their places in [`GameData::nodes`].
+/// The nodes of [`GameData::nodes`]: every node the game ever had, by its id. A move
+/// keeps its place when the game is changed (new moves come at the end, a removed one
+/// stays as an unreachable entry), so a cursor or a report's marks stay on their moves.
 fn order(game: &Game) -> Vec<NodeId> {
-    let mut order = vec![NodeId::ROOT];
-    let mut i = 0;
-    while i < order.len() {
-        let id = order[i];
-        order.extend(game.children(id).iter().copied());
-        i += 1;
-    }
-    order
+    game.all_nodes().collect()
 }
 
 /// The place in [`GameData::nodes`] of every node of the game.
@@ -497,10 +491,16 @@ fn game_data(game: &Game, diagnostics: &[chess_core::Diagnostic]) -> GameData {
             let nags: Vec<u8> = node
                 .map(|n| n.nags().iter().map(|g| g.0).collect())
                 .unwrap_or_default();
+            // A removed move: kept in its place, reached from nowhere.
+            let attached = game.is_attached(id);
             MoveNode {
                 id: place(id).unwrap_or(0),
-                parent: game.parent(id).and_then(place),
-                children: game.children(id).iter().filter_map(|c| place(*c)).collect(),
+                parent: game.parent(id).filter(|_| attached).and_then(place),
+                children: if attached {
+                    game.children(id).iter().filter_map(|c| place(*c)).collect()
+                } else {
+                    Vec::new()
+                },
                 san: mv.map(|m| m.san.clone()).unwrap_or_default(),
                 move_number,
                 white: color == shakmaty::Color::White,

@@ -301,6 +301,24 @@ mod tests {
     }
 
     #[test]
+    fn a_move_keeps_its_id_when_the_game_changes() {
+        let s = GameSession::from_pgn("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *".into()).unwrap();
+        let before = s.data();
+        let nf3 = before.nodes.iter().find(|n| n.san == "Nf3").unwrap().id;
+        // A variation at the first move, then removed: Nf3 stays where it was.
+        let v = s.play(0, "d2d4".into()).unwrap();
+        assert_eq!(v.data.nodes[nf3 as usize].san, "Nf3");
+        let gone = s.delete_from(v.cursor).unwrap();
+        assert_eq!(gone.data.nodes[nf3 as usize].san, "Nf3");
+        // The removed move is reached from nowhere.
+        assert!(gone.data.nodes[v.cursor as usize].parent.is_none());
+        assert!(!gone.data.nodes[0].children.contains(&v.cursor));
+        // Undo brings it back under the same id.
+        let back = s.undo().unwrap();
+        assert!(back.data.nodes[0].children.contains(&v.cursor));
+    }
+
+    #[test]
     fn an_illegal_move_changes_nothing() {
         let s = GameSession::new_game(String::new());
         assert!(s.play(0, "e2e5".into()).is_err());

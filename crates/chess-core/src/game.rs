@@ -373,6 +373,12 @@ impl Game {
         self.nodes.len()
     }
 
+    /// Every node ever made, by id (detached ones too: an id never changes and is never
+    /// reused, so it can name a move across edits).
+    pub fn all_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        (0..self.nodes.len()).map(|i| NodeId(i as u32))
+    }
+
     /// Ids of all attached nodes in depth-first PGN order (root first).
     pub fn attached_nodes(&self) -> Vec<NodeId> {
         let mut out = Vec::new();
