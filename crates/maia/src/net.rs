@@ -1,24 +1,60 @@
-//! The forward pass of Maia-3 "5M": 8 post-norm transformer blocks over the 64 squares,
-//! with an attention bias generated from the position (GAB), a source-destination
-//! policy head and a win/draw/loss head. Plain loops over f32 slices.
+//! The forward pass of Maia-3: post-norm transformer blocks over the 64 squares, with
+//! an attention bias generated from the position (GAB), a source-destination policy
+//! head and a win/draw/loss head. Plain loops over f32 slices. The sizes come from the
+//! checkpoint, so one code serves the published 5M, 23M and 79M models.
 
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Color, Move, Position, Role, Square};
 
 use crate::weights::{Weights, WeightsError};
 
-const D: usize = 256; // width of the squares' vectors
-const HEADS: usize = 8;
-const HD: usize = D / HEADS;
-const FF: usize = 512;
 const EMB: usize = 128; // rating embedding
 const HISTORY: usize = 8;
 const PLANES: usize = 12;
 const INPUT: usize = PLANES * HISTORY + 2 * EMB;
-const GAB_HID: usize = 64;
-const GAB_GEN: usize = 64;
-const HEAD: usize = 256;
-const BLOCKS: usize = 8;
+
+/// The sizes of one model, read from its tensors.
+struct Dims {
+    d: usize, // width of the squares' vectors
+    heads: usize,
+    ff: usize,
+    gab_square: usize, // per-square width before the bias generator; 0: the squares' mean
+    gab_hid: usize,
+    gab_gen: usize,
+    head: usize,
+    blocks: usize,
+}
+
+impl Dims {
+    fn read(w: &Weights) -> Result<Dims, WeightsError> {
+        let l0 = "transformer.layers.0";
+        let gab_gen = w.dim("gab_shared_weight", 1)?;
+        let heads = w.dim(&format!("{l0}.self_attn.sm3.weight"), 0)? / gab_gen.max(1);
+        let d = w.dim("token_projection.weight", 0)?;
+        if heads == 0 || d % heads != 0 {
+            return Err(WeightsError::Format);
+        }
+        let blocks = (0..)
+            .take_while(|i| {
+                w.shape(&format!("transformer.layers.{i}.linear1.weight"))
+                    .is_some()
+            })
+            .count();
+        Ok(Dims {
+            d,
+            heads,
+            ff: w.dim(&format!("{l0}.linear1.weight"), 0)?,
+            gab_square: match w.shape(&format!("{l0}.self_attn.sm1.weight")) {
+                Some(s) => s[0],
+                None => 0,
+            },
+            gab_hid: w.dim(&format!("{l0}.self_attn.sm2.weight"), 0)?,
+            gab_gen,
+            head: w.dim("proj_sq_from.weight", 0)?,
+            blocks,
+        })
+    }
+}
 
 struct Linear {
     w: Vec<f32>, // out × in
@@ -140,11 +176,12 @@ fn gelu(x: &mut [f32]) {
 }
 
 struct Block {
-    in_proj: Linear,  // 3D × D, no bias
-    out_proj: Linear, // D × D, no bias
-    gab_in: Linear,   // sm2: D → GAB_HID
+    in_proj: Linear,            // 3D × D, no bias
+    out_proj: Linear,           // D × D, no bias
+    gab_square: Option<Linear>, // sm1: d → gab_square per square (larger models)
+    gab_in: Linear,             // sm2: the squares' mean or 64 × gab_square → gab_hid
     gab_ln1: LayerNorm,
-    gab_out: Linear, // sm3: GAB_HID → HEADS × GAB_GEN
+    gab_out: Linear, // sm3: gab_hid → heads × gab_gen
     gab_ln2: LayerNorm,
     ff1: Linear,
     ff2: Linear,
@@ -153,10 +190,11 @@ struct Block {
 }
 
 pub struct Net {
+    dims: Dims,
     elo_low: Vec<f32>,
     elo_high: Vec<f32>,
     projection: Linear,
-    gab_weight: Vec<f32>, // 4096 × GAB_GEN, shared by the blocks
+    gab_weight: Vec<f32>, // 4096 × gab_gen, shared by the blocks
     blocks: Vec<Block>,
     final_norm: LayerNorm,
     last_ln: LayerNorm,
@@ -177,46 +215,76 @@ pub struct Prediction {
 
 impl Net {
     pub fn new(w: &Weights) -> Result<Net, WeightsError> {
-        let mut blocks = Vec::with_capacity(BLOCKS);
-        for i in 0..BLOCKS {
+        let dims = Dims::read(w)?;
+        let Dims {
+            d,
+            heads,
+            ff,
+            gab_square,
+            gab_hid,
+            gab_gen,
+            head,
+            blocks: count,
+        } = dims;
+        let mut blocks = Vec::with_capacity(count);
+        for i in 0..count {
             let p = format!("transformer.layers.{i}");
+            let gab_in_width = if gab_square == 0 { d } else { 64 * gab_square };
             blocks.push(Block {
                 in_proj: Linear {
-                    w: w.get(&format!("{p}.self_attn.mha.in_proj_weight"), &[3 * D, D])?,
+                    w: w.get(&format!("{p}.self_attn.mha.in_proj_weight"), &[3 * d, d])?,
                     b: None,
-                    inp: D,
-                    out: 3 * D,
+                    inp: d,
+                    out: 3 * d,
                 },
-                out_proj: Linear::load(w, &format!("{p}.self_attn.mha.out_proj"), D, D, false)?,
-                gab_in: Linear::load(w, &format!("{p}.self_attn.sm2"), GAB_HID, D, true)?,
-                gab_ln1: LayerNorm::load(w, &format!("{p}.self_attn.ln1"), GAB_HID)?,
+                out_proj: Linear::load(w, &format!("{p}.self_attn.mha.out_proj"), d, d, false)?,
+                gab_square: if gab_square == 0 {
+                    None
+                } else {
+                    Some(Linear::load(
+                        w,
+                        &format!("{p}.self_attn.sm1"),
+                        gab_square,
+                        d,
+                        true,
+                    )?)
+                },
+                gab_in: Linear::load(
+                    w,
+                    &format!("{p}.self_attn.sm2"),
+                    gab_hid,
+                    gab_in_width,
+                    true,
+                )?,
+                gab_ln1: LayerNorm::load(w, &format!("{p}.self_attn.ln1"), gab_hid)?,
                 gab_out: Linear::load(
                     w,
                     &format!("{p}.self_attn.sm3"),
-                    HEADS * GAB_GEN,
-                    GAB_HID,
+                    heads * gab_gen,
+                    gab_hid,
                     true,
                 )?,
-                gab_ln2: LayerNorm::load(w, &format!("{p}.self_attn.ln2"), HEADS * GAB_GEN)?,
-                ff1: Linear::load(w, &format!("{p}.linear1"), FF, D, true)?,
-                ff2: Linear::load(w, &format!("{p}.linear2"), D, FF, true)?,
-                norm1: w.get(&format!("{p}.norm1.weight"), &[D])?,
-                norm2: w.get(&format!("{p}.norm2.weight"), &[D])?,
+                gab_ln2: LayerNorm::load(w, &format!("{p}.self_attn.ln2"), heads * gab_gen)?,
+                ff1: Linear::load(w, &format!("{p}.linear1"), ff, d, true)?,
+                ff2: Linear::load(w, &format!("{p}.linear2"), d, ff, true)?,
+                norm1: w.get(&format!("{p}.norm1.weight"), &[d])?,
+                norm2: w.get(&format!("{p}.norm2.weight"), &[d])?,
             });
         }
         Ok(Net {
             elo_low: w.get("elo_embedding_low.weight", &[1, EMB])?,
             elo_high: w.get("elo_embedding_high.weight", &[1, EMB])?,
-            projection: Linear::load(w, "token_projection", D, INPUT, true)?,
-            gab_weight: w.get("gab_shared_weight", &[64 * 64, GAB_GEN])?,
+            projection: Linear::load(w, "token_projection", d, INPUT, true)?,
+            gab_weight: w.get("gab_shared_weight", &[64 * 64, gab_gen])?,
             blocks,
-            final_norm: LayerNorm::load(w, "transformer.norm", D)?,
-            last_ln: LayerNorm::load(w, "last_ln", D)?,
-            value_hid: Linear::load(w, "fc_value_hid", HEAD, D, true)?,
-            value: Linear::load(w, "fc_value", 3, HEAD, true)?,
-            sq_from: Linear::load(w, "proj_sq_from", HEAD, D, false)?,
-            sq_to: Linear::load(w, "proj_sq_to", HEAD, D, false)?,
-            promo: Linear::load(w, "promo_bias_proj", 4, HEAD, false)?,
+            final_norm: LayerNorm::load(w, "transformer.norm", d)?,
+            last_ln: LayerNorm::load(w, "last_ln", d)?,
+            value_hid: Linear::load(w, "fc_value_hid", head, d, true)?,
+            value: Linear::load(w, "fc_value", 3, head, true)?,
+            sq_from: Linear::load(w, "proj_sq_from", head, d, false)?,
+            sq_to: Linear::load(w, "proj_sq_to", head, d, false)?,
+            promo: Linear::load(w, "promo_bias_proj", 4, head, false)?,
+            dims,
         })
     }
 
@@ -275,16 +343,17 @@ impl Net {
         self.final_norm.apply(&mut h);
 
         // Moves: from-square × to-square scores, and promotions with a bias per piece.
+        let (d, head) = (self.dims.d, self.dims.head);
         let from = self.sq_from.apply(&h, 64);
         let to = self.sq_to.apply(&h, 64);
-        let scale = (HEAD as f32).sqrt();
+        let scale = (head as f32).sqrt();
         let score = |i: usize, j: usize| {
             dot(
-                &from[i * HEAD..(i + 1) * HEAD],
-                &to[j * HEAD..(j + 1) * HEAD],
+                &from[i * head..(i + 1) * head],
+                &to[j * head..(j + 1) * head],
             ) / scale
         };
-        let promo_bias = self.promo.apply(&to[56 * HEAD..64 * HEAD], 8); // 8 × 4
+        let promo_bias = self.promo.apply(&to[56 * head..64 * head], 8); // 8 × 4
         let black = pos.turn() == Color::Black;
         let mut logits: Vec<(Move, f32)> = Vec::with_capacity(legal.len());
         for m in &legal {
@@ -324,8 +393,8 @@ impl Net {
         moves.sort_by(|a, b| b.1.total_cmp(&a.1));
 
         // Win, draw, loss of the side to move (the network gives loss, draw, win).
-        let mut mean = vec![0.0f32; D];
-        for row in h.chunks(D) {
+        let mut mean = vec![0.0f32; d];
+        for row in h.chunks(d) {
             for (m, v) in mean.iter_mut().zip(row) {
                 *m += v / 64.0;
             }
@@ -347,49 +416,60 @@ impl Net {
 
     /// One post-norm block: attention with the generated bias, then the feed-forward.
     fn block(&self, b: &Block, x: Vec<f32>) -> Vec<f32> {
-        // The attention bias from the mean of the squares.
-        let mut mean = vec![0.0f32; D];
-        for row in x.chunks(D) {
-            for (m, v) in mean.iter_mut().zip(row) {
-                *m += v / 64.0;
+        let Dims {
+            d, heads, gab_gen, ..
+        } = self.dims;
+        let hd = d / heads;
+        // The attention bias from the squares, each compressed (larger models) or their
+        // mean.
+        let summary = match &b.gab_square {
+            Some(compress) => compress.apply(&x, 64), // 64 × gab_square, square by square
+            None => {
+                let mut mean = vec![0.0f32; d];
+                for row in x.chunks(d) {
+                    for (m, v) in mean.iter_mut().zip(row) {
+                        *m += v / 64.0;
+                    }
+                }
+                mean
             }
-        }
-        let mut g = b.gab_in.apply(&mean, 1);
+        };
+        let mut g = b.gab_in.apply(&summary, 1);
         gelu(&mut g);
         b.gab_ln1.apply(&mut g);
         let mut g = b.gab_out.apply(&g, 1);
         gelu(&mut g);
-        b.gab_ln2.apply(&mut g); // HEADS × GAB_GEN
+        b.gab_ln2.apply(&mut g); // heads × gab_gen
         // bias[h][q][k] = g[h] · gab_weight[q*64 + k]
-        let mut bias = vec![0.0f32; HEADS * 64 * 64];
-        for hh in 0..HEADS {
-            let gh = &g[hh * GAB_GEN..(hh + 1) * GAB_GEN];
+        let mut bias = vec![0.0f32; heads * 64 * 64];
+        for hh in 0..heads {
+            let gh = &g[hh * gab_gen..(hh + 1) * gab_gen];
             for o in 0..64 * 64 {
-                bias[hh * 4096 + o] = dot(gh, &self.gab_weight[o * GAB_GEN..(o + 1) * GAB_GEN]);
+                bias[hh * 4096 + o] = dot(gh, &self.gab_weight[o * gab_gen..(o + 1) * gab_gen]);
             }
         }
 
-        let qkv = b.in_proj.apply(&x, 64); // 64 × 3D
-        let mut att = vec![0.0f32; 64 * D];
-        let scale = 1.0 / (HD as f32).sqrt();
-        let mut q = vec![0.0f32; HD];
+        let qkv = b.in_proj.apply(&x, 64); // 64 × 3d
+        let mut att = vec![0.0f32; 64 * d];
+        let scale = 1.0 / (hd as f32).sqrt();
+        let mut q = vec![0.0f32; hd];
         let mut scores = vec![0.0f32; 64];
-        let mut kh = vec![0.0f32; 64 * HD];
-        let mut vh = vec![0.0f32; 64 * HD];
-        for hh in 0..HEADS {
+        let mut kh = vec![0.0f32; 64 * hd];
+        let mut vh = vec![0.0f32; 64 * hd];
+        for hh in 0..heads {
             for j in 0..64 {
-                kh[j * HD..(j + 1) * HD]
-                    .copy_from_slice(&qkv[j * 3 * D + D + hh * HD..j * 3 * D + D + (hh + 1) * HD]);
-                vh[j * HD..(j + 1) * HD].copy_from_slice(
-                    &qkv[j * 3 * D + 2 * D + hh * HD..j * 3 * D + 2 * D + (hh + 1) * HD],
+                kh[j * hd..(j + 1) * hd]
+                    .copy_from_slice(&qkv[j * 3 * d + d + hh * hd..j * 3 * d + d + (hh + 1) * hd]);
+                vh[j * hd..(j + 1) * hd].copy_from_slice(
+                    &qkv[j * 3 * d + 2 * d + hh * hd..j * 3 * d + 2 * d + (hh + 1) * hd],
                 );
             }
             for i in 0..64 {
-                q.copy_from_slice(&qkv[i * 3 * D + hh * HD..i * 3 * D + (hh + 1) * HD]);
+                q.copy_from_slice(&qkv[i * 3 * d + hh * hd..i * 3 * d + (hh + 1) * hd]);
                 let mut max = f32::NEG_INFINITY;
                 for j in 0..64 {
                     let s =
-                        dot(&q, &kh[j * HD..(j + 1) * HD]) * scale + bias[hh * 4096 + i * 64 + j];
+                        dot(&q, &kh[j * hd..(j + 1) * hd]) * scale + bias[hh * 4096 + i * 64 + j];
                     scores[j] = s;
                     max = max.max(s);
                 }
@@ -398,10 +478,10 @@ impl Net {
                     *s = (*s - max).exp();
                     sum += *s;
                 }
-                let out = &mut att[i * D + hh * HD..i * D + (hh + 1) * HD];
+                let out = &mut att[i * d + hh * hd..i * d + (hh + 1) * hd];
                 for j in 0..64 {
                     let w = scores[j] / sum;
-                    for (o, v) in out.iter_mut().zip(&vh[j * HD..(j + 1) * HD]) {
+                    for (o, v) in out.iter_mut().zip(&vh[j * hd..(j + 1) * hd]) {
                         *o += w * v;
                     }
                 }

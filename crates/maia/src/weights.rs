@@ -24,11 +24,24 @@ pub struct Weights {
 }
 
 impl Weights {
-    /// The tensors of a PyTorch checkpoint (`maia3-5m.pt`).
+    /// The tensors of a PyTorch checkpoint (`maia3-5m.pt`, `maia3-79m.pt`).
     pub fn parse(bytes: &[u8]) -> Result<Weights, WeightsError> {
         Ok(Weights {
             tensors: crate::checkpoint::read(bytes)?,
         })
+    }
+
+    /// The shape of the tensor `name`, if there is one.
+    pub fn shape(&self, name: &str) -> Option<&[usize]> {
+        self.tensors.get(name).map(|t| t.shape.as_slice())
+    }
+
+    /// The size `axis` of the tensor `name`.
+    pub fn dim(&self, name: &str, axis: usize) -> Result<usize, WeightsError> {
+        let shape = self
+            .shape(name)
+            .ok_or_else(|| WeightsError::Missing(name.to_owned()))?;
+        shape.get(axis).copied().ok_or(WeightsError::Format)
     }
 
     /// The tensor `name` of this shape.

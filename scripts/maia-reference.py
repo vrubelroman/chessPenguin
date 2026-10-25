@@ -2,6 +2,7 @@
 # Writes crates/maia/tests/reference.json from the original Maia-3 code and weights:
 #   python3 -m venv v && v/bin/pip install torch chess --index-url ... ; git clone https://github.com/CSSLab/maia3
 #   v/bin/python scripts/maia-reference.py maia3/ maia3-5m.pt crates/maia/tests/reference.json
+# Another size: add its name, e.g. `... maia3-79m.pt reference-79m.json maia3-79m`.
 import sys, json, types
 sys.path.insert(0, sys.argv[1])
 import torch, chess
@@ -10,7 +11,7 @@ from maia3.models import MAIA3Model
 from maia3.dataset import tokenize_board, get_legal_moves_mask, get_historical_tokens
 from maia3.utils import get_all_possible_moves, mirror_move
 from maia3.model_registry import resolve_model_spec, BASE_SIZE_CONFIG
-spec = resolve_model_spec('maia3-5m')
+spec = resolve_model_spec(sys.argv[4] if len(sys.argv) > 4 else 'maia3-5m')
 cfg = types.SimpleNamespace(**spec.config); cfg.device='cpu'
 cfg.include_time_info=False
 model = MAIA3Model(cfg)

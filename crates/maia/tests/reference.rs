@@ -1,6 +1,7 @@
 //! Agreement with the original PyTorch model (tests/reference.json, written by
 //! scripts/maia-reference.py): the same top moves with close probabilities. Needs the
-//! weights: `MAIA_WEIGHTS=/path/maia3-5m.pt cargo test -p maia -- --ignored`.
+//! weights: `MAIA_WEIGHTS=/path/maia3-5m.pt cargo test -p maia -- --ignored`. Another
+//! model: its reference file in `MAIA_REFERENCE`.
 
 use maia::Maia;
 use shakmaty::fen::Fen;
@@ -12,8 +13,11 @@ use shakmaty::{CastlingMode, Chess};
 fn matches_the_original_model() {
     let path = std::env::var("MAIA_WEIGHTS").expect("MAIA_WEIGHTS");
     let maia = Maia::load(std::path::Path::new(&path)).expect("weights");
-    let cases: serde_json::Value =
-        serde_json::from_str(include_str!("reference.json")).expect("json");
+    let reference = match std::env::var("MAIA_REFERENCE") {
+        Ok(file) => std::fs::read_to_string(file).expect("MAIA_REFERENCE"),
+        Err(_) => include_str!("reference.json").to_owned(),
+    };
+    let cases: serde_json::Value = serde_json::from_str(&reference).expect("json");
     for case in cases.as_array().unwrap() {
         let start = case["start"].as_str().unwrap();
         let mut pos: Chess = if start == "startpos" {
