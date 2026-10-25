@@ -8,6 +8,7 @@ members = [
     "crates/online-games",
     "crates/releases",
     "crates/mobile-api",
+    "crates/maia",
     "apps/desktop",
 ]
 
@@ -38,6 +39,7 @@ directories = "6"
 chess-core = { path = "crates/chess-core" }
 chess-import = { path = "crates/chess-import" }
 uci = { path = "crates/uci" }
+maia = { path = "crates/maia" }
 game-review = { path = "crates/game-review" }
 online-games = { path = "crates/online-games" }
 releases = { path = "crates/releases" }

@@ -1,0 +1,14 @@
+[package]
+name = "maia"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A human-like chess move predictor (the Maia-3 network), computed in plain Rust"
+
+[dependencies]
+shakmaty.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
