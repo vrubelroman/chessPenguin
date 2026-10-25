@@ -119,13 +119,13 @@ fn legacy_pgn(path: &Path) -> bool {
 /// database actions.
 fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
     let texts: [&str; 4] = if icons {
-        ["⚙", "📋", "♟", "⚔"]
+        ["⚙", "📋", "♟", "♞"]
     } else {
         [
             tr("⚙ Settings"),
             tr("📋 Paste PGN"),
             tr("♟ New game"),
-            tr("⚔ Play"),
+            tr("♞ Play"),
         ]
     };
     texts.iter().map(|t| button_w(ui, t)).sum::<f32>()
@@ -713,9 +713,9 @@ impl Library {
             actions.push(LibraryAction::NewGame);
         }
         if ui
-            .button(label(tr("⚔ Play"), "⚔"))
+            .button(label(tr("♞ Play"), "♞"))
             .on_hover_text(hint(
-                tr("⚔ Play"),
+                tr("♞ Play"),
                 tr("A game against Maia, which plays like a human of the chosen rating (Ctrl+G)"),
             ))
             .clicked()

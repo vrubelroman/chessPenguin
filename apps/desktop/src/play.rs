@@ -680,6 +680,8 @@ pub struct Dialog {
     prefs: PlayPrefs,
     custom: bool,
     download: Option<crate::maia_download::Download>,
+    /// «Download and play» was pressed: the game starts once Maia is there.
+    play_after: bool,
     focus: bool,
 }
 
@@ -698,6 +700,7 @@ impl Dialog {
             prefs,
             custom,
             download: None,
+            play_after: false,
             focus: true,
         }
     }
@@ -724,7 +727,7 @@ impl Dialog {
             ui.set_width(460.0);
             ui.heading(tr("Play against the computer"));
             // The body scrolls in a low window; the buttons below it stay in view.
-            let (ready, rating) = egui::ScrollArea::vertical()
+            let rating = egui::ScrollArea::vertical()
                 .max_height(body_h)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
@@ -873,17 +876,23 @@ impl Dialog {
                     .weak()
                     .size(11.5),
             );
-            ui.add_space(10.0);
+            rating
+                })
+                .inner;
 
-            // Maia itself: downloaded once.
+            // Maia itself, downloaded once: under the body, by the buttons, always seen.
+            let stage = self.download.as_ref().map(|d| d.stage());
             let mut ready = installed.is_some();
+            let busy = !ready
+                && matches!(
+                    stage,
+                    Some(crate::maia_download::Stage::Downloading { .. } | crate::maia_download::Stage::Checking)
+                );
             if !ready {
-                match self.download.as_ref().map(|d| d.stage()) {
+                ui.add_space(6.0);
+                match stage {
                     None => {
-                        ui.label(trf_size());
-                        if ui.button(tr("Download Maia")).clicked() {
-                            self.download = Some(crate::maia_download::Download::start(ctx));
-                        }
+                        ui.label(RichText::new(trf_size()).weak());
                     }
                     Some(crate::maia_download::Stage::Downloading { done }) => {
                         ui.add(
@@ -900,22 +909,23 @@ impl Dialog {
                     Some(crate::maia_download::Stage::Done(_)) => ready = true,
                     Some(crate::maia_download::Stage::Failed(e)) => {
                         ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
-                        if ui.button(tr("Try again")).clicked() {
-                            self.download = Some(crate::maia_download::Download::start(ctx));
-                        }
                     }
                 }
             }
-            (ready, rating)
-                })
-                .inner;
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let play = ui
-                    .add_enabled_ui(ready, |ui| crate::widgets::primary(ui, tr("Play")))
+                let label = if ready { tr("Play") } else { tr("Download and play") };
+                let main = ui
+                    .add_enabled_ui(!busy, |ui| crate::widgets::primary(ui, label))
                     .inner;
-                let enter = ready && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if play.clicked() || enter {
+                let pressed = !busy
+                    && (main.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                if pressed && !ready {
+                    self.download = Some(crate::maia_download::Download::start(ctx));
+                    self.play_after = true;
+                }
+                if ready && (pressed || self.play_after) {
+                    self.play_after = false;
                     let user = match self.prefs.color {
                         ColorChoice::White => Color::White,
                         ColorChoice::Black => Color::Black,

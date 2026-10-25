@@ -194,12 +194,27 @@ impl GameView {
 
     pub fn title(&self) -> String {
         let g = &self.game;
-        let white = g.tag("White").filter(|s| *s != "?").unwrap_or(tr("White"));
+        // In a game against Maia an unnamed user is «You».
+        let user = self.play.as_ref().map(|s| s.user);
+        let unnamed = |c: Color| {
+            if user == Some(c) {
+                tr("You")
+            } else {
+                c.fold_wb(tr("White"), tr("Black"))
+            }
+        };
+        let white = g
+            .tag("White")
+            .filter(|s| *s != "?")
+            .unwrap_or(unnamed(Color::White));
         // A book chapter imported from ChessBase: its title is in White, Black is empty.
         if g.tag("Black") == Some("") {
             return white.to_string();
         }
-        let black = g.tag("Black").filter(|s| *s != "?").unwrap_or(tr("Black"));
+        let black = g
+            .tag("Black")
+            .filter(|s| *s != "?")
+            .unwrap_or(unnamed(Color::Black));
         format!("{white} — {black}")
     }
 
@@ -936,7 +951,7 @@ impl GameView {
                         ui.set_max_width(title_room);
                         // The unsaved mark first: it must not be truncated away.
                         let mut mark_w = 0.0;
-                        if self.game.is_modified() {
+                        if self.game.is_modified() && self.play.is_none() {
                             let mark = ui
                                 .label(RichText::new("•").strong().size(16.0))
                                 .on_hover_text(tr("Unsaved changes"));
@@ -2538,6 +2553,9 @@ impl GameView {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             let big = |s: &str| RichText::new(s).size(18.0);
+            // The words as tall as the icon buttons beside them.
+            let word =
+                |s: &str| egui::Button::new(RichText::new(s).size(14.0)).min_size(vec2(0.0, 28.0));
             if ui.button(big("⏮")).clicked() {
                 self.goto(NodeId::ROOT);
             }
@@ -2568,7 +2586,7 @@ impl GameView {
                     .is_some_and(|p| p.turn() == user)
             });
             if ui
-                .add_enabled(user_moved, egui::Button::new(tr("↶ Take back")))
+                .add_enabled(user_moved, word(tr("↶ Take back")))
                 .on_hover_text(tr("Take back a move (Ctrl+Z)"))
                 .clicked()
             {
@@ -2576,29 +2594,32 @@ impl GameView {
             }
             if !self.play_started() {
                 if ui
-                    .button(tr("× Abort"))
+                    .add(word(tr("× Abort")))
                     .on_hover_text(tr("Leave without a result: no moves made yet"))
                     .clicked()
                 {
                     actions.push(GameAction::Back);
                 }
             } else if self.play.as_ref().is_some_and(|s| s.resign_asked) {
-                ui.label(tr("Resign?"));
+                ui.label(RichText::new(tr("Resign?")).size(14.0));
                 if ui
                     .add(
-                        egui::Button::new(RichText::new(tr("Yes")).color(Color32::WHITE))
-                            .fill(ui.visuals().error_fg_color),
+                        egui::Button::new(
+                            RichText::new(tr("Yes")).size(14.0).color(Color32::WHITE),
+                        )
+                        .fill(ui.visuals().error_fg_color)
+                        .min_size(vec2(0.0, 28.0)),
                     )
                     .clicked()
                 {
                     let user = self.play.as_ref().map_or(Color::White, |s| s.user);
                     self.finish_play(crate::play::Ending::Resigned { loser: user }, actions);
-                } else if ui.button(tr("No")).clicked()
+                } else if ui.add(word(tr("No"))).clicked()
                     && let Some(s) = self.play.as_mut()
                 {
                     s.resign_asked = false;
                 }
-            } else if ui.button(tr("⚑ Resign")).clicked()
+            } else if ui.add(word(tr("⚑ Resign"))).clicked()
                 && let Some(s) = self.play.as_mut()
             {
                 s.resign_asked = true;
@@ -2657,28 +2678,72 @@ impl GameView {
                     );
                 }
                 ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    if crate::widgets::primary(ui, tr("📈 Analyse")).clicked() {
-                        self.review.dialog_open = true;
+                // All four in a row when they fit; else Analyse, then Rematch and New
+                // game side by side, then Save — each as wide as the strip.
+                let labels = [
+                    tr("📈 Analyse"),
+                    tr("↻ Rematch"),
+                    tr("♞ New game"),
+                    tr("💾 Save to a database…"),
+                ];
+                let font = egui::FontId::proportional(14.0);
+                let pad = 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x;
+                let one_row: f32 = labels
+                    .iter()
+                    .map(|l| {
+                        ui.painter()
+                            .layout_no_wrap((*l).to_owned(), font.clone(), Color32::WHITE)
+                            .size()
+                            .x
+                            + pad
+                    })
+                    .sum();
+                let fits = one_row <= ui.available_width();
+                let mut clicked = [false; 4];
+                let mut button = |ui: &mut Ui, k: usize, w: f32| {
+                    let mut text = RichText::new(labels[k]).size(14.0);
+                    let mut b = egui::Button::new(text.clone());
+                    if k == 0 {
+                        text = text.strong();
+                        b = egui::Button::new(text).fill(ui.visuals().selection.bg_fill);
                     }
-                    if ui
-                        .button(tr("↻ Rematch"))
-                        .on_hover_text(tr("Same settings, colours swapped"))
-                        .clicked()
-                    {
-                        actions.push(GameAction::Rematch);
+                    let mut r = ui.add(b.min_size(vec2(w, 30.0)));
+                    if k == 1 {
+                        r = r.on_hover_text(tr("Same settings, colours swapped"));
                     }
-                    if ui.button(tr("⚔ New game")).clicked() {
-                        actions.push(GameAction::PlayAgain);
+                    if k == 3 {
+                        r = r.on_hover_text("Ctrl+S");
                     }
-                    if ui
-                        .button(tr("💾 Save to a database…"))
-                        .on_hover_text("Ctrl+S")
-                        .clicked()
-                    {
-                        actions.push(GameAction::Save);
-                    }
-                });
+                    clicked[k] = r.clicked();
+                };
+                if fits {
+                    ui.horizontal(|ui| {
+                        for k in 0..4 {
+                            button(ui, k, 0.0);
+                        }
+                    });
+                } else {
+                    let full = ui.available_width();
+                    button(ui, 0, full);
+                    ui.horizontal(|ui| {
+                        let half = (full - ui.spacing().item_spacing.x) / 2.0;
+                        button(ui, 1, half);
+                        button(ui, 2, half);
+                    });
+                    button(ui, 3, full);
+                }
+                if clicked[0] {
+                    self.review.dialog_open = true;
+                }
+                if clicked[1] {
+                    actions.push(GameAction::Rematch);
+                }
+                if clicked[2] {
+                    actions.push(GameAction::PlayAgain);
+                }
+                if clicked[3] {
+                    actions.push(GameAction::Save);
+                }
             });
         if close {
             self.play_end = None;
