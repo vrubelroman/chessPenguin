@@ -1323,6 +1323,9 @@ impl GameView {
                         Some(EditorOutcome::Cancel) => self.cancel_editor(),
                         None => {}
                     }
+                    if resp.insert_preview {
+                        self.insert_preview(actions);
+                    }
                     if let Some(slot) = resp.edit {
                         self.open_editor(slot);
                     }
@@ -1504,9 +1507,25 @@ impl GameView {
             let base = self.cursor;
             let root = self.game.position(base).cloned();
             let lines: Vec<PvLine> = analysis.lines.clone();
+            let mut insert = false;
             for line in &lines {
+                let previewed = self
+                    .preview
+                    .as_ref()
+                    .is_some_and(|p| p.base == base && p.san == line.san);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
+                    // The line being stepped through on the board: added from here.
+                    if previewed
+                        && ui
+                            .small_button(tr("+ Add as variation"))
+                            .on_hover_text(tr(
+                                "Puts the line into the game as a variation (Ctrl+Z to undo)",
+                            ))
+                            .clicked()
+                    {
+                        insert = true;
+                    }
                     ui.label(
                         RichText::new(analysis::format_eval(&line.score))
                             .strong()
@@ -1561,35 +1580,8 @@ impl GameView {
                         });
                 });
             }
-        }
-        if let Some(p) = &self.preview {
-            let mut exit = false;
-            let mut insert = false;
-            egui::Frame::new()
-                .fill(ui.visuals().selection.bg_fill.gamma_multiply(0.35))
-                .inner_margin(6)
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(tr("Engine line preview")).strong());
-                        ui.label(
-                            RichText::new(trf(
-                                "move {a}/{b}",
-                                &[("a", &p.shown), ("b", &p.moves.len())],
-                            ))
-                            .weak(),
-                        );
-                        if ui.button(tr("Add as variation")).clicked() {
-                            insert = true;
-                        }
-                        if ui.button(tr("Exit (Esc)")).clicked() {
-                            exit = true;
-                        }
-                    });
-                });
             if insert {
                 self.insert_preview(actions);
-            } else if exit {
-                self.preview = None;
             }
         }
         ui.add_space(4.0);

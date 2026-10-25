@@ -39,6 +39,8 @@ pub struct NotationResponse {
     pub nag: Option<(NodeId, Nag)>,
     /// The editor's «Done» or «Cancel».
     pub editor: Option<EditorOutcome>,
+    /// The engine line shown on the board goes into the game as a variation.
+    pub insert_preview: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -552,6 +554,18 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
                 }
                 if mark.best_san.len() > visible {
                     ui.label(RichText::new("…").weak());
+                }
+                // The line being stepped through on the board: added from here (there is
+                // no separate strip for it).
+                if shown.is_some()
+                    && ui
+                        .small_button(tr("+ Add as variation"))
+                        .on_hover_text(tr(
+                            "Puts the line into the game as a variation (Ctrl+Z to undo)",
+                        ))
+                        .clicked()
+                {
+                    out.insert_preview = true;
                 }
             });
         });

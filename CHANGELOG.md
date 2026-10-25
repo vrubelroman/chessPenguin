@@ -16,6 +16,11 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   deleted (Ctrl+Z puts them back); their `[%clk]`, `[%eval]` and board commands are kept,
   an untouched comment keeps its bytes. One edit is one undo step; the game is marked
   modified and Ctrl+S saves it. Paragraphs of comments survive writing now.
+- The strip «Engine line preview … Add as variation · Exit» above the notation is gone:
+  stepping through a line of the report or of the engine panel just shows it on the
+  board, Esc leaves it, and a small «+ Add as variation» stands at the end of the line
+  being shown. Moves of variations and of the report's better lines keep their size under
+  the mouse.
 
 ## [1.1.0] — 2026-10-25
 
