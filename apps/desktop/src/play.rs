@@ -153,7 +153,7 @@ impl Default for PlayPrefs {
 }
 
 pub const STRENGTH_MIN: u32 = 1100;
-pub const STRENGTH_MAX: u32 = 2000;
+pub const STRENGTH_MAX: u32 = 2100;
 
 // ----- Maia's strength ----------------------------------------------------------------
 
@@ -172,7 +172,7 @@ const SMALL: &[(u32, u32)] = &[
     (1900, 1632),
     (2100, 1683),
     (2300, 1737),
-    (2600, 1800),
+    (2600, 1767),
 ];
 const LARGE: &[(u32, u32)] = &[
     (600, 1078),
@@ -182,6 +182,34 @@ const LARGE: &[(u32, u32)] = &[
     (2300, 1964),
     (2600, 2000),
 ];
+
+/// Above what a model plays choosing among the likely moves (temperature 1), it is made
+/// stronger by choosing more surely: measured strength at its top rating input → the
+/// temperature (0: always the most likely move).
+const SMALL_SURE: &[(u32, f32)] = &[(1767, 1.0), (1854, 0.5)];
+const LARGE_SURE: &[(u32, f32)] = &[(1976, 1.0), (2053, 0.5), (2126, 0.0)];
+
+/// How surely `model` chooses its move to play at `strength` (1 below its top).
+pub fn temperature(model: Model, strength: u32) -> f32 {
+    let table = match model {
+        Model::Small => SMALL_SURE,
+        Model::Large => LARGE_SURE,
+    };
+    let (first, last) = (table[0], table[table.len() - 1]);
+    if strength <= first.0 {
+        return first.1;
+    }
+    if strength >= last.0 {
+        return last.1;
+    }
+    let i = table
+        .iter()
+        .position(|p| p.0 >= strength)
+        .unwrap_or(table.len() - 1);
+    let ((a_s, a_t), (b_s, b_t)) = (table[i - 1], table[i]);
+    let k = (strength - a_s) as f32 / (b_s - a_s) as f32;
+    a_t + k * (b_t - a_t)
+}
 
 /// The rating to give `model` for it to play at `strength` (between the measured
 /// points, in proportion; outside them, the nearest).
@@ -424,6 +452,7 @@ struct Request {
     positions: Vec<Chess>,
     self_elo: u32,
     oppo_elo: u32,
+    temperature: f32,
     pause: Duration,
 }
 
@@ -470,7 +499,7 @@ impl Opponent {
                     // one time in five thousand).
                     let top = p.moves.first().map_or(0.0, |(_, pr)| *pr);
                     p.moves.retain(|(_, pr)| *pr >= 0.1 * top);
-                    let m = maia::pick(&p, 1.0, random_unit());
+                    let m = maia::pick(&p, r.temperature, random_unit());
                     let rest = r.pause.saturating_sub(started.elapsed());
                     std::thread::sleep(rest);
                     // Her clock: the pause, or the computing when it took longer (a slow
@@ -492,7 +521,13 @@ impl Opponent {
     }
 
     /// Asks for a move in the last of `positions`.
-    pub fn ask(&mut self, positions: Vec<Chess>, self_elo: u32, oppo_elo: u32, pause: Duration) {
+    pub fn ask(
+        &mut self,
+        positions: Vec<Chess>,
+        (self_elo, temperature): (u32, f32),
+        oppo_elo: u32,
+        pause: Duration,
+    ) {
         self.generation += 1;
         self.thinking = true;
         let _ = self.tx.send(Request {
@@ -500,6 +535,7 @@ impl Opponent {
             positions,
             self_elo,
             oppo_elo,
+            temperature,
             pause,
         });
     }
@@ -574,6 +610,11 @@ mod tests {
         // The measured points themselves, in proportion between them, the ends held.
         assert_eq!(rating_input(Model::Large, 1605), 1500);
         assert_eq!(rating_input(Model::Large, 2000), 2600);
+        // Above the top input: surer choices, down to the most likely move.
+        assert_eq!(temperature(Model::Large, 1900), 1.0);
+        assert!((temperature(Model::Large, 2053) - 0.5).abs() < 1e-6);
+        assert!(temperature(Model::Large, STRENGTH_MAX) < 0.5);
+        assert!(temperature(Model::Small, SMALL_MAX) < 1.0);
         assert_eq!(rating_input(Model::Small, 1485), 1500);
         assert_eq!(rating_input(Model::Small, SMALL_MAX), 2600);
         let mid = rating_input(Model::Large, (1605 + 1794) / 2);

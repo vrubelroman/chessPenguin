@@ -2344,7 +2344,10 @@ impl GameView {
                 let elo = s.user_elo.unwrap_or(s.strength);
                 s.opponent.ask(
                     positions,
-                    crate::play::rating_input(s.model, elo),
+                    (
+                        crate::play::rating_input(s.model, elo),
+                        crate::play::temperature(s.model, elo),
+                    ),
                     s.strength,
                     std::time::Duration::from_millis(30),
                 );
@@ -2364,7 +2367,10 @@ impl GameView {
         };
         // Her rating input is what makes her play at her strength; the user's is as is.
         let oppo = s.user_elo.unwrap_or(s.strength);
-        let own = crate::play::rating_input(s.model, s.strength);
+        let own = (
+            crate::play::rating_input(s.model, s.strength),
+            crate::play::temperature(s.model, s.strength),
+        );
         s.opponent.ask(positions, own, oppo, pause);
         // Is her position lost? (Unless the user wants to play to the end.)
         if !s.play_on

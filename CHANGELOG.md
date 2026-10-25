@@ -6,8 +6,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 - Play against Maia: the large model (79M parameters, 316 MB, downloaded once from the
   authors' page) plays every strength; it is stronger and closer to how people play.
-  The slider shows her measured strength on the Lichess blitz scale (1100–2000). The
-  small model, when it is there, still plays up to 1800. Maia thinks on half the cores;
+  The slider shows her measured strength on the Lichess blitz scale (1100–2100; at the
+  top she chooses her moves more surely). The small model, when it is there, still plays up to 1800. Maia thinks on half the cores;
   her clock counts the computing when it takes longer than her pause.
 - Game analysis: «Analyse» starts at once with the options chosen the last time; the
   options dialog comes the first time and with «Analyse again…».
