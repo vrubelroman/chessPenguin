@@ -399,4 +399,37 @@
     <string name="make_main">En faire la ligne principale</string>
     <string name="delete_move">Supprimer le coup et la suite</string>
     <string name="move_actions">Actions sur le coup</string>
+    <string name="new_game">Nouvelle partie</string>
+    <string name="own_databases">Mes bases</string>
+    <string name="own_new">+ Nouvelle base</string>
+    <string name="own_empty">Ici seront les parties que vous saisirez ou jouerez contre Maia</string>
+    <string name="files">Fichiers</string>
+    <string name="own_default_name">Mes parties</string>
+    <string name="own_new_title">Nouvelle base</string>
+    <string name="own_name">Nom</string>
+    <string name="own_new_hint">Conservée sur le téléphone, dans ChessPenguin. Le fichier s’exporte depuis le menu de la base.</string>
+    <string name="create">Créer</string>
+    <string name="own_on_phone">sur le téléphone</string>
+    <string name="own_export">Exporter le fichier…</string>
+    <string name="own_delete">Supprimer la base</string>
+    <string name="own_exported">Fichier enregistré</string>
+    <string name="own_export_failed">Impossible d’enregistrer le fichier</string>
+    <string name="own_removed">Base supprimée</string>
+    <string name="own_delete_title">Supprimer « %1$s » ?</string>
+    <plurals name="own_delete_text">
+        <item quantity="one">%1$s partie sera supprimée du téléphone. Si vous en avez besoin, exportez d’abord le fichier.</item>
+        <item quantity="many">%1$s parties seront supprimées du téléphone. Si vous en avez besoin, exportez d’abord le fichier.</item>
+        <item quantity="other">%1$s parties seront supprimées du téléphone. Si vous en avez besoin, exportez d’abord le fichier.</item>
+    </plurals>
+    <string name="saved_to">Enregistrée dans « %1$s », n° %2$s</string>
+    <string name="save_failed">Impossible d’enregistrer la partie</string>
+    <string name="save_in">Enregistrer dans « %1$s »</string>
+    <string name="save_to_mine">Enregistrer dans ma base…</string>
+    <string name="save_to_db">Enregistrer dans une base</string>
+    <string name="save_to_db_ellipsis">Enregistrer dans une base…</string>
+    <string name="own_new_ellipsis">Nouvelle base…</string>
+    <string name="create_and_save">Créer et enregistrer</string>
+    <string name="save_changes_in">Enregistrer les modifications dans « %1$s » ?</string>
+    <string name="save_game_question">Enregistrer la partie ?</string>
+    <string name="dont_save">Ne pas enregistrer</string>
 </resources>

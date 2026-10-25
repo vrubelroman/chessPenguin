@@ -400,4 +400,37 @@
     <string name="make_main">Tornar linha principal</string>
     <string name="delete_move">Excluir o lance e a continuação</string>
     <string name="move_actions">Ações do lance</string>
+    <string name="new_game">Nova partida</string>
+    <string name="own_databases">Minhas bases</string>
+    <string name="own_new">+ Nova base</string>
+    <string name="own_empty">Aqui ficarão as partidas que você inserir ou jogar contra a Maia</string>
+    <string name="files">Arquivos</string>
+    <string name="own_default_name">Minhas partidas</string>
+    <string name="own_new_title">Nova base</string>
+    <string name="own_name">Nome</string>
+    <string name="own_new_hint">Fica no telefone, no ChessPenguin. O arquivo pode ser exportado no menu da base.</string>
+    <string name="create">Criar</string>
+    <string name="own_on_phone">no telefone</string>
+    <string name="own_export">Exportar o arquivo…</string>
+    <string name="own_delete">Excluir a base</string>
+    <string name="own_exported">Arquivo salvo</string>
+    <string name="own_export_failed">Não foi possível salvar o arquivo</string>
+    <string name="own_removed">Base excluída</string>
+    <string name="own_delete_title">Excluir “%1$s”?</string>
+    <plurals name="own_delete_text">
+        <item quantity="one">%1$s partida será excluída do telefone. Se precisar dela, exporte o arquivo antes.</item>
+        <item quantity="many">%1$s partidas serão excluídas do telefone. Se precisar delas, exporte o arquivo antes.</item>
+        <item quantity="other">%1$s partidas serão excluídas do telefone. Se precisar delas, exporte o arquivo antes.</item>
+    </plurals>
+    <string name="saved_to">Salva em “%1$s”, nº %2$s</string>
+    <string name="save_failed">Não foi possível salvar a partida</string>
+    <string name="save_in">Salvar em “%1$s”</string>
+    <string name="save_to_mine">Salvar na minha base…</string>
+    <string name="save_to_db">Salvar numa base</string>
+    <string name="save_to_db_ellipsis">Salvar numa base…</string>
+    <string name="own_new_ellipsis">Nova base…</string>
+    <string name="create_and_save">Criar e salvar</string>
+    <string name="save_changes_in">Salvar as alterações em “%1$s”?</string>
+    <string name="save_game_question">Salvar a partida?</string>
+    <string name="dont_save">Não salvar</string>
 </resources>

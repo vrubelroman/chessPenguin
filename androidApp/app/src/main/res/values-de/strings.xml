@@ -393,4 +393,36 @@
     <string name="make_main">Zur Hauptvariante machen</string>
     <string name="delete_move">Zug und Fortsetzung löschen</string>
     <string name="move_actions">Aktionen zum Zug</string>
+    <string name="new_game">Neue Partie</string>
+    <string name="own_databases">Meine Datenbanken</string>
+    <string name="own_new">+ Neue Datenbank</string>
+    <string name="own_empty">Hier stehen die Partien, die Sie eingeben oder gegen Maia spielen</string>
+    <string name="files">Dateien</string>
+    <string name="own_default_name">Meine Partien</string>
+    <string name="own_new_title">Neue Datenbank</string>
+    <string name="own_name">Name</string>
+    <string name="own_new_hint">Wird auf dem Telefon in ChessPenguin gespeichert. Die Datei lässt sich im Menü der Datenbank exportieren.</string>
+    <string name="create">Erstellen</string>
+    <string name="own_on_phone">auf dem Telefon</string>
+    <string name="own_export">Datei exportieren…</string>
+    <string name="own_delete">Datenbank löschen</string>
+    <string name="own_exported">Datei gespeichert</string>
+    <string name="own_export_failed">Die Datei konnte nicht gespeichert werden</string>
+    <string name="own_removed">Datenbank gelöscht</string>
+    <string name="own_delete_title">„%1$s“ löschen?</string>
+    <plurals name="own_delete_text">
+        <item quantity="one">%1$s Partie wird vom Telefon gelöscht. Wenn Sie sie brauchen, exportieren Sie zuerst die Datei.</item>
+        <item quantity="other">%1$s Partien werden vom Telefon gelöscht. Wenn Sie sie brauchen, exportieren Sie zuerst die Datei.</item>
+    </plurals>
+    <string name="saved_to">In „%1$s“ gespeichert, Nr. %2$s</string>
+    <string name="save_failed">Die Partie konnte nicht gespeichert werden</string>
+    <string name="save_in">In „%1$s“ speichern</string>
+    <string name="save_to_mine">In meiner Datenbank speichern…</string>
+    <string name="save_to_db">In einer Datenbank speichern</string>
+    <string name="save_to_db_ellipsis">In einer Datenbank speichern…</string>
+    <string name="own_new_ellipsis">Neue Datenbank…</string>
+    <string name="create_and_save">Erstellen und speichern</string>
+    <string name="save_changes_in">Änderungen in „%1$s“ speichern?</string>
+    <string name="save_game_question">Partie speichern?</string>
+    <string name="dont_save">Nicht speichern</string>
 </resources>

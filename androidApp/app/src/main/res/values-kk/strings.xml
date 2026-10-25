@@ -394,4 +394,36 @@
     <string name="make_main">Негізгі ету</string>
     <string name="delete_move">Жүрісті және жалғасын жою</string>
     <string name="move_actions">Жүріспен әрекеттер</string>
+    <string name="new_game">Жаңа ойын</string>
+    <string name="own_databases">Менің базаларым</string>
+    <string name="own_new">+ Жаңа база</string>
+    <string name="own_empty">Мұнда сіз енгізген немесе Maia-мен ойнаған ойындар болады</string>
+    <string name="files">Файлдар</string>
+    <string name="own_default_name">Менің ойындарым</string>
+    <string name="own_new_title">Жаңа база</string>
+    <string name="own_name">Атауы</string>
+    <string name="own_new_hint">Телефонда, ChessPenguin ішінде сақталады. Файлды база мәзірінен экспорттауға болады.</string>
+    <string name="create">Құру</string>
+    <string name="own_on_phone">телефонда</string>
+    <string name="own_export">Файлды экспорттау…</string>
+    <string name="own_delete">Базаны жою</string>
+    <string name="own_exported">Файл сақталды</string>
+    <string name="own_export_failed">Файлды сақтау мүмкін болмады</string>
+    <string name="own_removed">База жойылды</string>
+    <string name="own_delete_title">«%1$s» жойылсын ба?</string>
+    <plurals name="own_delete_text">
+        <item quantity="one">Телефоннан %1$s ойын жойылады. Керек болса, алдымен файлды экспорттаңыз.</item>
+        <item quantity="other">Телефоннан %1$s ойын жойылады. Керек болса, алдымен файлды экспорттаңыз.</item>
+    </plurals>
+    <string name="saved_to">«%1$s» ішіне сақталды, № %2$s</string>
+    <string name="save_failed">Ойынды сақтау мүмкін болмады</string>
+    <string name="save_in">«%1$s» ішіне сақтау</string>
+    <string name="save_to_mine">Менің базама сақтау…</string>
+    <string name="save_to_db">Базаға сақтау</string>
+    <string name="save_to_db_ellipsis">Базаға сақтау…</string>
+    <string name="own_new_ellipsis">Жаңа база…</string>
+    <string name="create_and_save">Құру және сақтау</string>
+    <string name="save_changes_in">Өзгерістер «%1$s» ішіне сақталсын ба?</string>
+    <string name="save_game_question">Ойын сақталсын ба?</string>
+    <string name="dont_save">Сақтамау</string>
 </resources>

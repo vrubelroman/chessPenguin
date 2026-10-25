@@ -399,4 +399,37 @@
     <string name="make_main">Rendi linea principale</string>
     <string name="delete_move">Elimina la mossa e il seguito</string>
     <string name="move_actions">Azioni sulla mossa</string>
+    <string name="new_game">Nuova partita</string>
+    <string name="own_databases">I miei database</string>
+    <string name="own_new">+ Nuovo database</string>
+    <string name="own_empty">Qui ci saranno le partite che inserisci o giochi contro Maia</string>
+    <string name="files">File</string>
+    <string name="own_default_name">Le mie partite</string>
+    <string name="own_new_title">Nuovo database</string>
+    <string name="own_name">Nome</string>
+    <string name="own_new_hint">Conservato sul telefono, in ChessPenguin. Il file si esporta dal menu del database.</string>
+    <string name="create">Crea</string>
+    <string name="own_on_phone">sul telefono</string>
+    <string name="own_export">Esporta il file…</string>
+    <string name="own_delete">Elimina il database</string>
+    <string name="own_exported">File salvato</string>
+    <string name="own_export_failed">Impossibile salvare il file</string>
+    <string name="own_removed">Database eliminato</string>
+    <string name="own_delete_title">Eliminare «%1$s»?</string>
+    <plurals name="own_delete_text">
+        <item quantity="one">%1$s partita sarà eliminata dal telefono. Se ti serve, esporta prima il file.</item>
+        <item quantity="many">%1$s partite saranno eliminate dal telefono. Se ti servono, esporta prima il file.</item>
+        <item quantity="other">%1$s partite saranno eliminate dal telefono. Se ti servono, esporta prima il file.</item>
+    </plurals>
+    <string name="saved_to">Salvata in «%1$s», n. %2$s</string>
+    <string name="save_failed">Impossibile salvare la partita</string>
+    <string name="save_in">Salva in «%1$s»</string>
+    <string name="save_to_mine">Salva nel mio database…</string>
+    <string name="save_to_db">Salva in un database</string>
+    <string name="save_to_db_ellipsis">Salva in un database…</string>
+    <string name="own_new_ellipsis">Nuovo database…</string>
+    <string name="create_and_save">Crea e salva</string>
+    <string name="save_changes_in">Salvare le modifiche in «%1$s»?</string>
+    <string name="save_game_question">Salvare la partita?</string>
+    <string name="dont_save">Non salvare</string>
 </resources>

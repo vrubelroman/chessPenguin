@@ -20,6 +20,10 @@ import uniffi.mobile_api.FolderFile
 import uniffi.mobile_api.openBytes
 import uniffi.mobile_api.openChessbase
 import uniffi.mobile_api.openFile
+import uniffi.mobile_api.openPath
+import uniffi.mobile_api.ownCreate
+import uniffi.mobile_api.ownRemove
+import uniffi.mobile_api.ownSave
 import java.io.File
 import java.util.UUID
 
@@ -43,9 +47,13 @@ enum class Source {
     /// A player's games downloaded from Lichess and Chess.com (`files/online/`, with the
     /// state of the download beside it, android-ui.md §23).
     Online,
+
+    /// The user's own database (`files/own/`, android-play.md §30): the only file the app
+    /// writes, and only on "Save".
+    Own,
 }
 
-/// A database on the list. The file itself is never changed.
+/// A database on the list. Its file is never changed, except an own database's.
 @Serializable
 data class DbEntry(
     val id: String,
@@ -119,6 +127,8 @@ class Library(private val context: Context) {
     private val copies = File(context.filesDir, "copies")
     /// Downloaded databases (android-ui.md §23).
     val onlineDir = File(context.filesDir, "online")
+    /// The user's own databases (android-play.md §30).
+    val ownDir = File(context.filesDir, "own")
     private val json = Json { ignoreUnknownKeys = true }
     private val _entries = MutableStateFlow(load())
     val entries: StateFlow<List<DbEntry>> = _entries.asStateFlow()
@@ -291,6 +301,36 @@ class Library(private val context: Context) {
     /// The file of a downloaded database.
     fun onlineFile(e: DbEntry): File = File(onlineDir, e.location)
 
+    /// The file of an own database.
+    fun ownFile(e: DbEntry): File = File(ownDir, e.location)
+
+    /// A new empty own database named `name`, first among the own ones.
+    suspend fun createOwn(name: String): DbEntry = withContext(Dispatchers.IO) {
+        val id = UUID.randomUUID().toString()
+        val entry = DbEntry(id = id, name = name, source = Source.Own, location = "$id.pgn", fileName = "$id.pgn", games = 0, format = "PGN")
+        ownCreate(ownFile(entry).path)
+        update { list -> listOf(entry) + list }
+        entry
+    }
+
+    /// Saves the game `pgn` into the own database `id`: as game `index`, or at the end.
+    /// Returns its number; the database is read again when next opened.
+    suspend fun saveOwn(id: String, index: UInt?, pgn: String): UInt = lock.withLock {
+        val e = entry(id)?.takeIf { it.source == Source.Own } ?: throw IllegalArgumentException("not an own database")
+        val n = withContext(Dispatchers.IO) { ownSave(ownFile(e).path, index, pgn) }
+        open.remove(id)
+        update { list -> list.map { if (it.id == id) it.copy(games = if (index == null) (it.games ?: 0) + 1 else it.games) else it } }
+        n
+    }
+
+    /// Takes game `index` out of the own database `id`.
+    suspend fun removeOwnGame(id: String, index: UInt) = lock.withLock {
+        val e = entry(id)?.takeIf { it.source == Source.Own } ?: return@withLock
+        withContext(Dispatchers.IO) { ownRemove(ownFile(e).path, index) }
+        open.remove(id)
+        update { list -> list.map { if (it.id == id) it.copy(games = ((it.games ?: 1) - 1).coerceAtLeast(0)) else it } }
+    }
+
     /// Puts a downloaded database (a file of [onlineDir]) on the list, or gives its entry.
     fun addOnline(file: File): DbEntry = synchronized(this) {
         _entries.value.firstOrNull { it.source == Source.Online && it.location == file.name }?.let { return it }
@@ -349,6 +389,12 @@ class Library(private val context: Context) {
         }
         if (entry.source == Source.Online) {
             uniffi.mobile_api.deleteOnlineDatabase(onlineFile(entry).path)
+            return
+        }
+        // The only copy of the user's games: gone once "Undo" is (asked before when not
+        // empty, android-play.md §30.3).
+        if (entry.source == Source.Own) {
+            ownFile(entry).delete()
             return
         }
         // The permission of a folder is given back with the last of its databases, also
@@ -544,6 +590,7 @@ class Library(private val context: Context) {
                         e.fileName,
                         android.os.ParcelFileDescriptor.open(onlineFile(e), android.os.ParcelFileDescriptor.MODE_READ_ONLY).detachFd(),
                     )
+                    Source.Own -> openPath(ownFile(e).path)
                 }
             }
         }

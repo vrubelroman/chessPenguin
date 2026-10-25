@@ -397,4 +397,36 @@
     <string name="make_main">Make it the main line</string>
     <string name="delete_move">Delete the move and what follows</string>
     <string name="move_actions">Move actions</string>
+    <string name="new_game">New game</string>
+    <string name="own_databases">My databases</string>
+    <string name="own_new">+ New database</string>
+    <string name="own_empty">Games you enter or play against Maia will be here</string>
+    <string name="files">Files</string>
+    <string name="own_default_name">My games</string>
+    <string name="own_new_title">New database</string>
+    <string name="own_name">Name</string>
+    <string name="own_new_hint">Kept on the phone, in ChessPenguin. You can export the file from the database\'s menu.</string>
+    <string name="create">Create</string>
+    <string name="own_on_phone">on the phone</string>
+    <string name="own_export">Export the file…</string>
+    <string name="own_delete">Delete the database</string>
+    <string name="own_exported">File saved</string>
+    <string name="own_export_failed">Could not save the file</string>
+    <string name="own_removed">Database deleted</string>
+    <string name="own_delete_title">Delete “%1$s”?</string>
+    <plurals name="own_delete_text">
+        <item quantity="one">%1$s game will be deleted from the phone. If you need it, export the file first.</item>
+        <item quantity="other">%1$s games will be deleted from the phone. If you need them, export the file first.</item>
+    </plurals>
+    <string name="saved_to">Saved to “%1$s”, No. %2$s</string>
+    <string name="save_failed">Could not save the game</string>
+    <string name="save_in">Save to “%1$s”</string>
+    <string name="save_to_mine">Save to my database…</string>
+    <string name="save_to_db">Save to a database</string>
+    <string name="save_to_db_ellipsis">Save to a database…</string>
+    <string name="own_new_ellipsis">New database…</string>
+    <string name="create_and_save">Create and save</string>
+    <string name="save_changes_in">Save the changes to “%1$s”?</string>
+    <string name="save_game_question">Save the game?</string>
+    <string name="dont_save">Don’t save</string>
 </resources>

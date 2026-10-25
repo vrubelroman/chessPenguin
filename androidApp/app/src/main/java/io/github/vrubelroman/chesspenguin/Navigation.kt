@@ -39,6 +39,7 @@ import io.github.vrubelroman.chesspenguin.ui.BoardStyleScreen
 import io.github.vrubelroman.chesspenguin.ui.DatabasesScreen
 import io.github.vrubelroman.chesspenguin.ui.SettingsScreen
 import io.github.vrubelroman.chesspenguin.ui.GameScreen
+import io.github.vrubelroman.chesspenguin.ui.NEW_GAME
 import io.github.vrubelroman.chesspenguin.ui.GamesScreen
 import io.github.vrubelroman.chesspenguin.ui.OnlineScreen
 import kotlinx.serialization.Serializable
@@ -50,6 +51,9 @@ import kotlinx.serialization.Serializable
 /// The game at `place` on the list of games found by `query` in the database (kept, so
 /// the same game comes back after Android restarts the app).
 @Serializable data class GameAt(val db: String, val place: Int, val query: String = "") : NavKey
+
+/// A new game from the start position (android-play.md §30.4).
+@Serializable data object NewGameKey : NavKey
 
 @Serializable data object SettingsKey : NavKey
 
@@ -114,7 +118,11 @@ fun MainNavigation() {
                     onAdded = ::show,
                     onSettings = { backStack.add(SettingsKey) },
                     onOnline = { backStack.add(OnlineKey) },
+                    onNewGame = { backStack.add(NewGameKey) },
                 )
+            }
+            entry<NewGameKey> {
+                GameScreen(NEW_GAME, 0, "", onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) })
             }
             entry<Games> { key ->
                 GamesScreen(key.db, onBack = { backStack.removeLastOrNull() }, onGame = { place, query -> backStack.add(GameAt(key.db, place, query)) })

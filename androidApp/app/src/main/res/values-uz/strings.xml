@@ -392,4 +392,36 @@
     <string name="make_main">Asosiy qilish</string>
     <string name="delete_move">Yurish va davomini o‘chirish</string>
     <string name="move_actions">Yurish amallari</string>
+    <string name="new_game">Yangi o‘yin</string>
+    <string name="own_databases">Mening bazalarim</string>
+    <string name="own_new">+ Yangi baza</string>
+    <string name="own_empty">Bu yerda siz kiritgan yoki Maia bilan o‘ynagan o‘yinlar bo‘ladi</string>
+    <string name="files">Fayllar</string>
+    <string name="own_default_name">Mening o‘yinlarim</string>
+    <string name="own_new_title">Yangi baza</string>
+    <string name="own_name">Nomi</string>
+    <string name="own_new_hint">Telefonda, ChessPenguin ichida saqlanadi. Faylni baza menyusidan eksport qilish mumkin.</string>
+    <string name="create">Yaratish</string>
+    <string name="own_on_phone">telefonda</string>
+    <string name="own_export">Faylni eksport qilish…</string>
+    <string name="own_delete">Bazani o‘chirish</string>
+    <string name="own_exported">Fayl saqlandi</string>
+    <string name="own_export_failed">Faylni saqlab bo‘lmadi</string>
+    <string name="own_removed">Baza o‘chirildi</string>
+    <string name="own_delete_title">“%1$s” o‘chirilsinmi?</string>
+    <plurals name="own_delete_text">
+        <item quantity="one">Telefondan %1$s ta o‘yin o‘chiriladi. Agar kerak bo‘lsa, avval faylni eksport qiling.</item>
+        <item quantity="other">Telefondan %1$s ta o‘yin o‘chiriladi. Agar kerak bo‘lsa, avval faylni eksport qiling.</item>
+    </plurals>
+    <string name="saved_to">“%1$s” ga saqlandi, № %2$s</string>
+    <string name="save_failed">O‘yinni saqlab bo‘lmadi</string>
+    <string name="save_in">“%1$s” ga saqlash</string>
+    <string name="save_to_mine">Mening bazamga saqlash…</string>
+    <string name="save_to_db">Bazaga saqlash</string>
+    <string name="save_to_db_ellipsis">Bazaga saqlash…</string>
+    <string name="own_new_ellipsis">Yangi baza…</string>
+    <string name="create_and_save">Yaratish va saqlash</string>
+    <string name="save_changes_in">O‘zgarishlar “%1$s” ga saqlansinmi?</string>
+    <string name="save_game_question">O‘yin saqlansinmi?</string>
+    <string name="dont_save">Saqlamaslik</string>
 </resources>

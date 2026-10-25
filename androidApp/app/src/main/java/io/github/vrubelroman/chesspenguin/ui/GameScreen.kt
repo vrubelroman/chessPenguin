@@ -38,6 +38,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.VerticalAlignTop
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Download
@@ -103,6 +104,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.vrubelroman.chesspenguin.data.Source
 import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.EngineSession
 import io.github.vrubelroman.chesspenguin.data.NetState
@@ -139,12 +142,12 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val dbEntry = libraryEntries.firstOrNull { it.id == db }
     var games by remember { mutableStateOf(app.shown[db]) }
     var place by rememberSaveable { mutableIntStateOf(startPlace) }
-    var game by remember { mutableStateOf<GameData?>(null) }
-    // The game as changed on the board (android-play.md §29): moves for analysis; a game
-    // of someone else's file is not saved (owner's decision), its file never changes.
-    var edit by remember { mutableStateOf<GameSession?>(null) }
-    // What reading the game noticed: kept when the game is changed.
-    var notes by remember { mutableStateOf<List<String>>(emptyList()) }
+    // The game as changed on the board (android-play.md §29), kept while the phone turns:
+    // a game of someone else's file is changed for analysis and never written there.
+    val held: GameEdit = viewModel()
+    var game by held.data
+    var edit by held.session
+    val newGame = db == NEW_GAME
     var failed by remember { mutableStateOf(false) }
     var current by rememberSaveable(place) { mutableIntStateOf(0) }
     var flipped by rememberSaveable { mutableStateOf(false) }
@@ -153,6 +156,14 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val review = remember { ReviewSession(java.io.File(context.cacheDir, "analysis").path, app.scope) }
     LaunchedEffect(db, place) {
         preview = null
+        if (newGame) {
+            if (held.key != NEW_GAME) {
+                held.key = NEW_GAME
+                edit = GameSession.newGame(java.text.SimpleDateFormat("yyyy.MM.dd", java.util.Locale.ROOT).format(java.util.Date()))
+                game = edit?.data()
+            }
+            return@LaunchedEffect
+        }
         val database = app.library.database(db).getOrNull()
         if (database == null) {
             failed = true
@@ -164,13 +175,19 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             app.shown[db] = it
         }
         val index = list.getOrNull(place) ?: return@LaunchedEffect
-        game = null
-        edit = null
-        val loaded = withContext(Dispatchers.Default) { runCatching { database.game(index) to database.session(index) } }
-        failed = loaded.isFailure
-        game = loaded.getOrNull()?.first
-        edit = loaded.getOrNull()?.second
-        notes = game?.notes ?: emptyList()
+        val key = "$db/$index"
+        // The phone turned: the game as it was changed is still there.
+        if (held.key != key || edit == null) {
+            game = null
+            edit = null
+            held.savedTo = null
+            val loaded = withContext(Dispatchers.Default) { runCatching { database.game(index) to database.session(index) } }
+            failed = loaded.isFailure
+            game = loaded.getOrNull()?.first
+            edit = loaded.getOrNull()?.second
+            held.notes = game?.notes ?: emptyList()
+            held.key = key
+        }
         if (game != null) review.open(db, database, index)
     }
     val pieces = remember { Pieces(context) }
@@ -359,7 +376,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     // A change of the game: shown at once, the cursor where the change says.
     fun apply(e: Edited) {
         preview = null
-        game = e.data.copy(notes = notes)
+        game = e.data.copy(notes = held.notes)
         current = e.cursor.toInt()
     }
     // The move sheet of a long press on a move (§29.6): which move.
@@ -368,6 +385,53 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val undoText = stringResource(R.string.undo_action)
     fun undo() {
         edit?.undo()?.let { apply(it) }
+    }
+
+    // Saving (android-play.md §30.4): an own database's game in its place; a new game or
+    // a copy of someone else's into an own database chosen once, then in its place there.
+    val ownGame = dbEntry?.source == Source.Own && !newGame
+    var saves by remember { mutableIntStateOf(0) }
+    @Suppress("UNUSED_EXPRESSION") saves
+    val modified = g != null && edit?.isModified() == true
+    var saving by remember { mutableStateOf(false) }
+    var leaving by remember { mutableStateOf(false) }
+    var afterSave by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val ownEntries = libraryEntries.filter { it.source == Source.Own }
+    val savedText = stringResource(R.string.saved_to)
+    val saveFailedText = stringResource(R.string.save_failed)
+    val lastOwn = remember { context.getSharedPreferences("own", Context.MODE_PRIVATE) }
+    fun saveInto(id: String, index: UInt?) {
+        val e = edit ?: return
+        val then = afterSave
+        afterSave = null
+        scope.launch {
+            val pgn = withContext(Dispatchers.Default) { e.pgn() }
+            val done = runCatching { app.library.saveOwn(id, index, pgn) }
+            snackbar.currentSnackbarData?.dismiss()
+            done.onSuccess { n ->
+                e.markSaved()
+                saves++
+                if (!ownGame) held.savedTo = id to n
+                lastOwn.edit().putString("last", id).apply()
+                val name = app.library.entry(id)?.name ?: ""  // own databases: their own names
+                then?.invoke() ?: snackbar.showSnackbar(String.format(savedText, name, (n + 1u).toString()))
+            }.onFailure { snackbar.showSnackbar(saveFailedText) }
+        }
+    }
+    fun save(then: (() -> Unit)? = null) {
+        afterSave = then
+        val to = held.savedTo
+        when {
+            ownGame -> games?.getOrNull(place)?.let { saveInto(db, it) }
+            to != null -> saveInto(to.first, to.second)
+            else -> saving = true
+        }
+    }
+    // Leaving with changes asks only where they are the user's to keep (an own game, a
+    // new one); moves in someone else's game are for trying out (owner's decision).
+    val asksOnLeave = modified && (ownGame || newGame)
+    fun leave() {
+        if (asksOnLeave) leaving = true else onBack()
     }
     fun go(to: Int) {
         preview = null
@@ -420,6 +484,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         }
     }
     BackHandler(preview != null) { preview = null }
+    BackHandler(preview == null && asksOnLeave) { leaving = true }
 
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val controls: @Composable (Modifier) -> Unit = { modifier ->
@@ -588,14 +653,18 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.back)) }
+                    IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.back)) }
                 },
                 title = {
                     // The event and year (else the site); the game's place and round. A tap
                     // shows the game's details.
                     // No event and no site: the database's name.
-                    val event = joinKnown(tag("Event"), year(tag("Date"))).ifEmpty { joinKnown(tag("Site")) }
-                        .ifEmpty { dbEntry?.let { displayName(it) } ?: "" }
+                    val event = if (newGame && held.savedTo == null) {
+                        stringResource(R.string.new_game)
+                    } else {
+                        joinKnown(tag("Event"), year(tag("Date"))).ifEmpty { joinKnown(tag("Site")) }
+                            .ifEmpty { dbEntry?.let { displayName(it) } ?: "" }
+                    }
                     val round = tag("Round").trim().takeIf { it.isNotEmpty() && it != "?" && it != "-" }
                     val placeLine = joinKnown(
                         if (total > 0) stringResource(R.string.game_of, place + 1, total) else "",
@@ -626,11 +695,20 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     }
                 },
                 actions = {
-                    IconButton(onClick = { place -= 1 }, enabled = place > 0) {
-                        Icon(Icons.Rounded.ChevronLeft, stringResource(R.string.previous_game))
-                    }
-                    IconButton(onClick = { place += 1 }, enabled = place + 1 < total) {
-                        Icon(Icons.Rounded.ChevronRight, stringResource(R.string.next_game))
+                    // Changes not saved: "Save" in place of ‹ › (they would need a decision).
+                    if (modified) {
+                        val where = when {
+                            ownGame -> dbEntry?.let { stringResource(R.string.save_in, displayName(it)) }
+                            else -> held.savedTo?.first?.let { app.library.entry(it) }?.let { stringResource(R.string.save_in, displayName(it)) }
+                        } ?: stringResource(R.string.save_to_mine)
+                        IconButton(onClick = { save() }) { Icon(Icons.Rounded.Save, where) }
+                    } else if (!newGame) {
+                        IconButton(onClick = { place -= 1 }, enabled = place > 0) {
+                            Icon(Icons.Rounded.ChevronLeft, stringResource(R.string.previous_game))
+                        }
+                        IconButton(onClick = { place += 1 }, enabled = place + 1 < total) {
+                            Icon(Icons.Rounded.ChevronRight, stringResource(R.string.next_game))
+                        }
                     }
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, stringResource(R.string.menu)) }
@@ -752,6 +830,50 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 }
             },
             confirmButton = { TextButton(onClick = { info = false }) { Text(stringResource(R.string.close)) } },
+        )
+    }
+    if (saving) {
+        SaveSheet(
+            own = ownEntries,
+            last = lastOwn.getString("last", null),
+            onSave = { e ->
+                saving = false
+                saveInto(e.id, null)
+            },
+            onCreate = { name ->
+                saving = false
+                scope.launch { runCatching { app.library.createOwn(name) }.onSuccess { saveInto(it.id, null) } }
+            },
+            onDismiss = {
+                saving = false
+                afterSave = null
+            },
+        )
+    }
+    if (leaving) {
+        AlertDialog(
+            onDismissRequest = { leaving = false },
+            title = {
+                Text(
+                    if (ownGame) stringResource(R.string.save_changes_in, dbEntry?.let { displayName(it) } ?: "")
+                    else stringResource(R.string.save_game_question),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    leaving = false
+                    save(then = onBack)
+                }) { Text(stringResource(if (ownGame || held.savedTo != null) R.string.save else R.string.save_to_db_ellipsis)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        leaving = false
+                        onBack()
+                    }) { Text(stringResource(R.string.dont_save)) }
+                    TextButton(onClick = { leaving = false }) { Text(stringResource(R.string.cancel)) }
+                }
+            },
         )
     }
     val sheetMove = moveSheet

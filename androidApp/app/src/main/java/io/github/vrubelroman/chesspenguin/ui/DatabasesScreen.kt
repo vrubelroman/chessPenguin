@@ -22,12 +22,19 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -82,7 +89,7 @@ import kotlinx.coroutines.launch
 /// The first screen: the databases on the list (android-ui.md §3).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSettings: () -> Unit, onOnline: () -> Unit) {
+fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSettings: () -> Unit, onOnline: () -> Unit, onNewGame: () -> Unit) {
     val library = app().library
     val downloads = app().downloads
     val views by downloads.views.collectAsState()
@@ -91,6 +98,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     val scope = rememberCoroutineScope()
     val removedText = stringResource(R.string.removed)
     val removedCopyText = stringResource(R.string.removed_copy)
+    val removedOwnText = stringResource(R.string.own_removed)
     val update = shownUpdate()
     val offersOffText = stringResource(R.string.upd_offers_off_snack)
     val offersUndoText = stringResource(R.string.undo)
@@ -141,6 +149,29 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     }
     val add = { choosing = true }
     var renaming by remember { mutableStateOf<DbEntry?>(null) }
+    // Own databases (android-play.md §30): a new one asked for, one to delete asked about.
+    var creating by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf<DbEntry?>(null) }
+    var exporting by remember { mutableStateOf<DbEntry?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val exportedText = stringResource(R.string.own_exported)
+    val exportFailedText = stringResource(R.string.own_export_failed)
+    val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-chess-pgn")) { uri ->
+        val e = exporting
+        exporting = null
+        if (uri == null || e == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri, "wt")!!.use { out -> library.ownFile(e).inputStream().use { it.copyTo(out) } }
+                }.isSuccess
+            }
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(if (ok) exportedText else exportFailedText)
+        }
+    }
+    val own = entries.filter { it.source == Source.Own }
+    val files = entries.filter { it.source != Source.Own }
     val list = rememberLazyListState()
     // The card comes when GitHub answers, after the list is drawn: a list at its top then
     // keeps its first database in place and the card lands above the screen. It is
@@ -198,7 +229,71 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
             ) {
                 // A newer version of the app (android-ui.md §25.2): the first item of the list.
                 update?.let { u -> item(key = "update") { UpdateCard(u, onDismissed = onUpdateDismissed, modifier = Modifier.animateItem()) } }
-                items(entries, key = { it.id }) { e ->
+                item(key = "actions") {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(onClick = onNewGame, modifier = Modifier.height(48.dp)) {
+                            Icon(Icons.Rounded.Add, null)
+                            Spacer(Modifier.size(8.dp))
+                            Text(stringResource(R.string.new_game))
+                        }
+                    }
+                }
+                item(key = "own-head") {
+                    Row(Modifier.fillMaxWidth().height(48.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.own_databases), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        TextButton(onClick = { creating = true }) { Text(stringResource(R.string.own_new)) }
+                    }
+                }
+                if (own.isEmpty()) {
+                    item(key = "own-empty") {
+                        Text(
+                            stringResource(R.string.own_empty),
+                            Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                items(own, key = { it.id }) { e ->
+                    OwnRow(
+                        e,
+                        onOpen = { onOpen(e.id) },
+                        onRename = { renaming = e },
+                        onExport = {
+                            exporting = e
+                            export.launch(e.name + ".pgn")
+                        },
+                        onDelete = {
+                            if ((e.games ?: 0) == 0) {
+                                val removed = library.remove(e.id) ?: return@OwnRow
+                                scope.launch {
+                                    snackbar.currentSnackbarData?.dismiss()
+                                    var restored = false
+                                    try {
+                                        if (snackbar.showSnackbar(removedOwnText, undoText, withDismissAction = false, duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) {
+                                            library.restore(removed.first, removed.second)
+                                            restored = true
+                                        }
+                                    } finally {
+                                        if (!restored) library.forget(removed.second)
+                                    }
+                                }
+                            } else {
+                                deleting = e
+                            }
+                        },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
+                item(key = "files-head") {
+                    Text(
+                        stringResource(R.string.files),
+                        Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                items(files, key = { it.id }) { e ->
                     DatabaseRow(
                         e,
                         download = views[e.id],
@@ -237,7 +332,6 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
             }
         }
     }
-    val context = androidx.compose.ui.platform.LocalContext.current
     val pasteNone = stringResource(R.string.paste_none)
     val resources = LocalResources.current
     if (choosing) {
@@ -304,10 +398,114 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
         )
     }
     renaming?.let { e ->
-        RenameDialog(displayName(e), onDismiss = { renaming = null }, onSave = {
+        RenameDialog(displayName(e), own = e.source == Source.Own, onDismiss = { renaming = null }, onSave = {
             library.rename(e.id, it)
             renaming = null
         })
+    }
+    if (creating) {
+        NewOwnDialog(
+            suggested = freeName(stringResource(R.string.own_default_name), own.map { it.name }),
+            onDismiss = { creating = false },
+            onCreate = { name ->
+                creating = false
+                scope.launch { runCatching { library.createOwn(name) } }
+            },
+        )
+    }
+    deleting?.let { e ->
+        val n = e.games ?: 0
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text(stringResource(R.string.own_delete_title, displayName(e))) },
+            text = { Text(pluralStringResource(R.plurals.own_delete_text, n, groupDigits(n))) },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleting = null
+                    library.remove(e.id)?.let { library.forget(it.second) }
+                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+}
+
+/// "My games", or "My games 2" when that one is taken.
+private fun freeName(base: String, taken: List<String>): String {
+    if (base !in taken) return base
+    var i = 2
+    while ("$base $i" in taken) i++
+    return "$base $i"
+}
+
+@Composable
+private fun NewOwnDialog(suggested: String, onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+    var value by remember { mutableStateOf(TextFieldValue(suggested, TextRange(0, suggested.length))) }
+    val trimmed = value.text.trim()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.own_new_title)) },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                singleLine = true,
+                label = { Text(stringResource(R.string.own_name)) },
+                supportingText = { Text(stringResource(R.string.own_new_hint)) },
+            )
+        },
+        confirmButton = { TextButton(onClick = { onCreate(trimmed) }, enabled = trimmed.isNotEmpty()) { Text(stringResource(R.string.create)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+/// An own database: its games are the user's, kept on the phone (android-play.md §30.2).
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun OwnRow(e: DbEntry, onOpen: () -> Unit, onRename: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit, modifier: Modifier) {
+    var menu by remember { mutableStateOf(false) }
+    val n = e.games ?: 0
+    Box(modifier) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .combinedClickable(onClick = onOpen, onLongClick = { menu = true })
+                .padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.EditNote, null, tint = MaterialTheme.colorScheme.onPrimaryContainer) }
+            Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                Text(displayName(e), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    pluralStringResource(R.plurals.games_count, n, groupDigits(n)) + " · " + stringResource(R.string.own_on_phone),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, stringResource(R.string.menu)) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, onClick = {
+                        menu = false
+                        onRename()
+                    })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.own_export)) }, onClick = {
+                        menu = false
+                        onExport()
+                    })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.own_delete)) }, onClick = {
+                        menu = false
+                        onDelete()
+                    })
+                }
+            }
+        }
     }
 }
 
@@ -425,7 +623,7 @@ private fun DatabaseRow(
 }
 
 @Composable
-private fun RenameDialog(name: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+private fun RenameDialog(name: String, own: Boolean = false, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var value by remember { mutableStateOf(TextFieldValue(name, TextRange(0, name.length))) }
     val trimmed = value.text.trim()
     AlertDialog(
@@ -436,7 +634,8 @@ private fun RenameDialog(name: String, onDismiss: () -> Unit, onSave: (String) -
                 value = value,
                 onValueChange = { value = it },
                 singleLine = true,
-                supportingText = { Text(stringResource(R.string.rename_hint)) },
+                // An own database's file is ours: no "the file does not change".
+                supportingText = if (own) null else { { Text(stringResource(R.string.rename_hint)) } },
             )
         },
         confirmButton = { TextButton(onClick = { onSave(trimmed) }, enabled = trimmed.isNotEmpty()) { Text(stringResource(R.string.save)) } },
