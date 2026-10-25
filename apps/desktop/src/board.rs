@@ -176,6 +176,8 @@ pub struct BoardView<'a> {
     pub premove: Option<Color>,
     /// A pawn reaching the last rank becomes a queen without asking.
     pub auto_queen: bool,
+    /// The squares of a wrong move, in red (learning an opening).
+    pub alert: Option<(Square, Square)>,
 }
 
 impl BoardView<'_> {
@@ -326,6 +328,11 @@ impl BoardView<'_> {
         }
         if let Some(sel) = state.selected {
             hl(&painter, sel, self.theme.selected);
+        }
+        if let Some((from, to)) = self.alert {
+            let red = ui.visuals().error_fg_color.gamma_multiply(0.45);
+            hl(&painter, from, red);
+            hl(&painter, to, red);
         }
         if self.pos.is_check()
             && let Some(k) = self.pos.board().king_of(self.pos.turn())

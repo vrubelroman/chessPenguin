@@ -24,6 +24,11 @@ pub struct Notation<'a> {
     pub editor: Option<&'a mut CommentEditor>,
     /// A game being played: moves only show their position (no menus, no editing).
     pub read_only: bool,
+    /// Main-line moves up to this ply are dimmed (the moves of the game a game against
+    /// Maia goes on from).
+    pub dim_until: Option<u32>,
+    /// Mistakes on main-line moves (learning an opening): how many, the move was shown.
+    pub mistakes: Option<&'a HashMap<NodeId, (u32, bool)>>,
 }
 
 /// Result of a frame of the notation panel.
@@ -49,6 +54,12 @@ pub struct NotationResponse {
 pub enum NotationCommand {
     Promote,
     Delete,
+    /// Paste a line from the clipboard (docs/design/paste-variation.md).
+    Paste,
+    /// A game against Maia from this position (docs/design/play-from-position.md).
+    PlayFrom,
+    /// Learn the opening up to this move (docs/design/opening-trainer.md).
+    Train,
 }
 
 /// Which comment of the game: after a move (`After(ROOT)`: the start of the game), or
@@ -295,9 +306,42 @@ impl Row {
             match id {
                 Some(id) => {
                     let resp = ui.interact(cell, ui.id().with(("mv", id.index())), Sense::click());
-                    paint_move_cell(ui, cell, n.game, id, id == n.cursor, resp.hovered());
+                    let dim = n
+                        .dim_until
+                        .is_some_and(|p| n.game.node(id).is_some_and(|nd| nd.ply() <= p));
+                    let text_right =
+                        paint_move_cell(ui, cell, n.game, id, id == n.cursor, resp.hovered(), dim);
                     if let Some(mark) = n.marks.and_then(|m| m.get(&id)) {
                         paint_badge(ui, cell, mark);
+                    }
+                    if let Some(&(count, shown)) = n.mistakes.and_then(|m| m.get(&id)) {
+                        let color = if shown {
+                            ui.visuals().warn_fg_color
+                        } else {
+                            ui.visuals().error_fg_color
+                        };
+                        // A pill right after the move: its own, readable on the selected one.
+                        let galley = ui.painter().layout_no_wrap(
+                            format!("×{count}"),
+                            FontId::proportional(12.0),
+                            Color32::WHITE,
+                        );
+                        let pill = egui::Rect::from_min_size(
+                            egui::pos2(
+                                text_right + 4.0,
+                                cell.center().y - galley.size().y / 2.0 - 1.0,
+                            ),
+                            galley.size() + vec2(8.0, 2.0),
+                        );
+                        ui.painter().rect_filled(pill, 7.0, color);
+                        ui.painter()
+                            .galley(pill.min + vec2(4.0, 1.0), galley, Color32::WHITE);
+                        let tip = if shown {
+                            crate::i18n::trf("Mistakes: {n}; the move was shown", &[("n", &count)])
+                        } else {
+                            crate::i18n::trf("Mistakes on this move: {n}", &[("n", &count)])
+                        };
+                        resp.clone().on_hover_text(tip);
                     }
                     handle_move_response(ui, &resp, n, id, out);
                 }
@@ -372,12 +416,73 @@ fn handle_move_response(
             }
         }
         ui.separator();
+        if ui
+            .add(egui::Button::new(tr("Paste a line from the clipboard")).shortcut_text("Ctrl+V"))
+            .on_hover_text(tr(
+                "Moves or a PGN game from the clipboard, as a variation from where they part from this game",
+            ))
+            .clicked()
+        {
+            out.context = Some((id, NotationCommand::Paste));
+            ui.close();
+        }
         if is_variation && ui.button(tr("Make main line")).clicked() {
             out.context = Some((id, NotationCommand::Promote));
             ui.close();
         }
         if ui.button(tr("Delete move and continuation")).clicked() {
             out.context = Some((id, NotationCommand::Delete));
+            ui.close();
+        }
+        ui.separator();
+        // A finished position has nothing to play.
+        let over = n.game.position(id).and_then(|p| {
+            if p.is_checkmate() {
+                Some(tr("checkmate"))
+            } else if p.is_stalemate() {
+                Some(tr("stalemate"))
+            } else if p.is_insufficient_material() {
+                Some(tr("neither side can checkmate"))
+            } else {
+                None
+            }
+        });
+        let play = ui
+            .add_enabled(
+                over.is_none(),
+                egui::Button::new(tr("Play on from here…")).shortcut_text("Ctrl+G"),
+            )
+            .on_hover_text(tr("A game against Maia from this position"));
+        let play = match over {
+            Some(why) => play.on_disabled_hover_text(crate::i18n::trf(
+                "The game is over here: {why}",
+                &[("why", &why)],
+            )),
+            None => play,
+        };
+        if play.clicked() {
+            out.context = Some((id, NotationCommand::PlayFrom));
+            ui.close();
+        }
+        // Learning the opening: the runs of this line so far on the right.
+        let runs = crate::train::runs_to(n.game, id);
+        let label = runs
+            .filter(|&r| r > 0)
+            .map(|r| crate::i18n::trf("runs: {n}", &[("n", &r)]))
+            .unwrap_or_default();
+        let learn = ui
+            .add_enabled(
+                runs.is_some(),
+                egui::Button::new(tr("Learn the opening up to this move")).shortcut_text(label),
+            )
+            .on_hover_text(tr(
+                "Replay from memory the moves of both sides from the start of the game up to this move",
+            ))
+            .on_disabled_hover_text(tr(
+                "The line has a null move (--): it cannot be played on the board",
+            ));
+        if learn.clicked() {
+            out.context = Some((id, NotationCommand::Train));
             ui.close();
         }
     });
@@ -447,7 +552,8 @@ fn paint_move_cell(
     id: NodeId,
     current: bool,
     hovered: bool,
-) {
+    dim: bool,
+) -> f32 {
     let visuals = ui.visuals();
     if current {
         ui.painter()
@@ -464,16 +570,20 @@ fn paint_move_cell(
         .unwrap_or((String::new(), None));
     let text_color = if current {
         visuals.selection.stroke.color
+    } else if dim {
+        visuals.weak_text_color()
     } else {
         color.unwrap_or(visuals.text_color())
     };
-    ui.painter().text(
-        cell.left_center() + vec2(10.0, 0.0),
-        Align2::LEFT_CENTER,
-        format!("{san}{sym}"),
-        FontId::proportional(16.0),
-        text_color,
-    );
+    ui.painter()
+        .text(
+            cell.left_center() + vec2(10.0, 0.0),
+            Align2::LEFT_CENTER,
+            format!("{san}{sym}"),
+            FontId::proportional(16.0),
+            text_color,
+        )
+        .right()
 }
 
 /// Engine verdict at the right edge of a move cell: a filled pill, unlike the author's NAGs.

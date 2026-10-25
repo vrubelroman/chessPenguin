@@ -2,6 +2,24 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Paste a line from the clipboard (Ctrl+V on a game, or the move menu): moves («Nf3 d5»,
+  «12...Rd8», UCI) go after the selected move or instead of it; a PGN game goes where its
+  moves part from this game — along any branch, or by another move order — with its
+  comments, symbols and variations and the players' names at the end. A game that shares
+  no position with this one is not pasted, with a message; a line starting before the
+  selected move is asked about. One Ctrl+Z takes it all back.
+- Play on from here (the move menu, Ctrl+G on a game): a game against Maia from the
+  position, its moves up to it kept (Maia sees the history, repetitions count); the
+  game you came from waits under it, «⬅ Back to the game» returns to it. The side to
+  move plays by default; a rematch keeps the colour.
+- Learn the opening (the move menu): replay from memory the moves of both sides up to
+  the chosen move. A wrong move is counted, shown for a moment with a short sound and
+  taken back; from the third mistake on a move you may ask to see it. At the end: the
+  mistakes by move, the runs of the line (last, best, clean in a row, recent), «Again».
+  The runs are kept by the line itself, across games.
+
 ## [1.3.0] — 2026-10-25
 
 - Play against the computer (desktop): «♞ Play» in the library (Ctrl+G) starts a game

@@ -558,6 +558,10 @@ pub enum Sound {
     Checkmate,
     /// A game lost — here: Maia offers to resign.
     Defeat,
+    /// Not the move of the line (learning an opening).
+    Wrong,
+    /// The line done (learning an opening).
+    Success,
 }
 
 pub fn sound_bytes(set: SoundSet, sound: Sound) -> &'static [u8] {
@@ -599,6 +603,15 @@ pub fn sound_bytes(set: SoundSet, sound: Sound) -> &'static [u8] {
         (SoundSet::Wood, Sound::Defeat) => s!("wood", "Defeat"),
         (SoundSet::Glass, Sound::Defeat) => s!("glass", "Defeat"),
         (SoundSet::Clicks, Sound::Defeat) => s!("clicks", "Defeat"),
+        // One short falling tone for every set (Kenney, CC0).
+        (_, Sound::Wrong) => s!("common", "Wrong"),
+        (SoundSet::Sfx, Sound::Success) => s!("sfx", "Success"),
+        (SoundSet::Piano, Sound::Success) => s!("piano", "Success"),
+        (SoundSet::Futuristic, Sound::Success) => s!("futuristic", "Success"),
+        (SoundSet::Nes, Sound::Success) => s!("nes", "Success"),
+        (SoundSet::Wood, Sound::Success) => s!("wood", "Success"),
+        (SoundSet::Glass, Sound::Success) => s!("glass", "Success"),
+        (SoundSet::Clicks, Sound::Success) => s!("clicks", "Success"),
     }
 }
 

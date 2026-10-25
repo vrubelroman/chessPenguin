@@ -672,6 +672,9 @@ pub struct Session {
     pub resign_offer: Option<Instant>,
     /// «Play to the end»: no more offers in this game.
     pub play_on: bool,
+    /// The last move of the game it goes on from (`ROOT`: a game from the start): the
+    /// moves up to it are not taken back and do not count as played.
+    pub floor: chess_core::NodeId,
 }
 
 /// What the play dialog starts.
@@ -682,6 +685,31 @@ pub struct Start {
     pub user_elo: Option<u32>,
     pub user_name: String,
     pub clock: Option<TimeControl>,
+    /// A game from a position of another game (docs/design/play-from-position.md).
+    pub from: Option<Box<StartFrom>>,
+}
+
+/// Where a game against Maia starts when it goes on from a game: its start and the
+/// moves to the chosen one (the history Maia and the repetitions need).
+#[derive(Clone, Debug)]
+pub struct StartFrom {
+    /// The FEN of the game's start (`None`: the standard position) — after the last
+    /// null move of the path, if there is one.
+    pub start_fen: Option<String>,
+    /// The moves from that start to the chosen position.
+    pub moves: Vec<chess_core::shakmaty::Move>,
+    /// The position played from.
+    pub position: Chess,
+    /// Its last move, for the board (from, to).
+    pub last: Option<(chess_core::shakmaty::Square, chess_core::shakmaty::Square)>,
+    /// «14...Ke7» — the move played from (SAN, as data); `None`: the game's start.
+    pub after: Option<String>,
+    /// The same as shown («14…Ке7»).
+    pub after_shown: Option<String>,
+    /// «Carlsen — Caruana, Wijk aan Zee 2024», when the game says so.
+    pub game: Option<String>,
+    /// Null moves before the position were left out.
+    pub null_dropped: bool,
 }
 
 // ----- Maia resigns --------------------------------------------------------------------
@@ -818,6 +846,8 @@ pub struct Dialog {
     download: Option<crate::maia_download::Download>,
     /// «Download and play» was pressed: the game starts once Maia is there.
     play_after: bool,
+    /// The game goes on from a position of another game.
+    from: Option<StartFrom>,
     focus: bool,
 }
 
@@ -842,7 +872,19 @@ impl Dialog {
             download: None,
             play_after: false,
             focus: true,
+            from: None,
         }
+    }
+
+    /// The dialog for a game from a position: the side to move plays (not remembered).
+    pub fn new_from(settings: &crate::settings::Settings, from: StartFrom) -> Dialog {
+        let mut d = Dialog::new(settings);
+        d.prefs.color = match from.position.turn() {
+            Color::White => ColorChoice::White,
+            Color::Black => ColorChoice::Black,
+        };
+        d.from = Some(from);
+        d
     }
 
     fn rating(&self) -> Option<u32> {
@@ -874,8 +916,11 @@ impl Dialog {
                 .auto_shrink([false, true])
                 .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                 .show(ui, |ui| {
-            // In a low window the choices matter more than the introduction.
-            if body_h >= 420.0 {
+            // A game from a position: that position, instead of the introduction.
+            if let Some(from) = &self.from {
+                position_block(ui, settings, from, self.prefs.color, body_h >= 420.0);
+            } else if body_h >= 420.0 {
+                // In a low window the choices matter more than the introduction.
                 ui.label(
                     RichText::new(tr(
                         "Maia plays like a human of the chosen rating: it makes the moves people of that level make, mistakes included.",
@@ -1129,13 +1174,19 @@ impl Dialog {
                     };
                     settings.your_name = self.name.trim().to_owned();
                     settings.rating = rating;
+                    // From a position the colour is the side to move's, not a habit.
+                    let color = settings.play.color;
                     settings.play = self.prefs.clone();
+                    if self.from.is_some() {
+                        settings.play.color = color;
+                    }
                     out = Some(DialogOutcome::Play(Start {
                         user,
                         strength: self.prefs.strength,
                         user_elo: rating,
                         user_name: self.name.trim().to_owned(),
                         clock: self.prefs.clock,
+                        from: self.from.clone().map(Box::new),
                     }));
                 }
                 if ui.add(egui::Button::new(tr("Cancel")).min_size(egui::vec2(0.0, 30.0))).clicked() {
@@ -1148,6 +1199,103 @@ impl Dialog {
         }
         out
     }
+}
+
+/// The position a game goes on from: a small board (turned to the colour chosen) and
+/// where it comes from. `board`: room for the board (not in a low window).
+fn position_block(
+    ui: &mut egui::Ui,
+    settings: &crate::settings::Settings,
+    from: &StartFrom,
+    color: ColorChoice,
+    board: bool,
+) {
+    use egui::RichText;
+    let bottom = match color {
+        ColorChoice::White => Color::White,
+        ColorChoice::Black => Color::Black,
+        ColorChoice::Random => from.position.turn(),
+    };
+    egui::Frame::new()
+        .inner_margin(egui::Margin::same(8))
+        .corner_radius(4)
+        .stroke(egui::Stroke::new(
+            1.0,
+            ui.visuals().widgets.noninteractive.bg_stroke.color,
+        ))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                if board {
+                    ui.allocate_ui(egui::vec2(112.0, 112.0), |ui| {
+                        let view = crate::board::BoardView {
+                            pos: &from.position,
+                            orientation: bottom,
+                            last_move: from.last,
+                            arrows: &[],
+                            circles: &[],
+                            badge: None,
+                            interactive: false,
+                            show_coords: false,
+                            theme: settings.board_theme.theme(),
+                            pieces: settings.piece_set,
+                            animation: 0.0,
+                            premove: None,
+                            auto_queen: false,
+                            alert: None,
+                        };
+                        let mut state = crate::board::BoardState::default();
+                        view.show(ui, &mut state);
+                    });
+                    ui.add_space(12.0 - ui.spacing().item_spacing.x);
+                }
+                ui.vertical(|ui| {
+                    let top = ui.cursor().top();
+                    let title = match &from.after_shown {
+                        Some(m) => {
+                            crate::i18n::trf("From the position after {move}", &[("move", m)])
+                        }
+                        None => tr("From the game's starting position").to_owned(),
+                    };
+                    ui.label(RichText::new(title).strong().size(15.0));
+                    if let Some(g) = &from.game {
+                        // Two lines at most; the whole of it under the pointer.
+                        let text = crate::i18n::trf("from the game {game}", &[("game", g)]);
+                        let mut job = egui::text::LayoutJob::simple(
+                            text.clone(),
+                            egui::FontId::proportional(13.0),
+                            ui.visuals().weak_text_color(),
+                            ui.available_width(),
+                        );
+                        job.wrap.max_rows = 2;
+                        ui.add(egui::Label::new(job)).on_hover_text(text);
+                    }
+                    if from.null_dropped {
+                        ui.label(
+                            RichText::new(tr(
+                                "The moves before the null move (--) are not carried over",
+                            ))
+                            .weak()
+                            .size(13.0),
+                        );
+                    }
+                    // The side to move level with the bottom of the board.
+                    let room = if board {
+                        top + 112.0 - ui.cursor().top() - 17.0
+                    } else {
+                        4.0
+                    };
+                    ui.add_space(room.max(4.0));
+                    ui.label(
+                        RichText::new(match from.position.turn() {
+                            Color::White => tr("White to move"),
+                            Color::Black => tr("Black to move"),
+                        })
+                        .size(13.0),
+                    );
+                });
+            });
+        });
 }
 
 fn trf_size() -> String {

@@ -346,7 +346,7 @@ impl Game {
 
     /// Applies a new command (the Attach of a freshly pushed node is already
     /// linked by `push_child`, so it is only recorded).
-    fn record(&mut self, cmd: Command) {
+    pub(crate) fn record(&mut self, cmd: Command) {
         if !matches!(cmd, Command::Attach { .. }) {
             self.apply(&cmd);
         }

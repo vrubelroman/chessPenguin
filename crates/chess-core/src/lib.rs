@@ -10,6 +10,7 @@ pub mod edit;
 pub mod encoding;
 pub mod game;
 pub mod nag;
+pub mod paste;
 pub mod pgn;
 pub mod repair;
 pub mod start;

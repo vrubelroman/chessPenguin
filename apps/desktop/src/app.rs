@@ -169,7 +169,8 @@ pub fn overlay_open_besides(ctx: &egui::Context, own: &[egui::Id]) -> bool {
 /// What starts once the played game is closed.
 enum PlayNext {
     Rematch(crate::play::Start),
-    Dialog,
+    /// The play dialog again (from the same position, for a game from a position).
+    Dialog(Option<Box<crate::play::StartFrom>>),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -239,6 +240,8 @@ pub struct App {
 #[derive(Default)]
 struct DebugStartup {
     open: Option<usize>,
+    /// `CP_PLAY_FROM=white|black`: the game against Maia from the move reached.
+    play_from: Option<crate::play::Start>,
     ply: usize,
     analyze: bool,
     /// `CP_SCREENSHOT=<file.png>`: go fullscreen, wait `CP_SCREENSHOT_DELAY` seconds,
@@ -264,6 +267,7 @@ impl DebugStartup {
         let num = |k| std::env::var(k).ok().and_then(|v| v.parse::<usize>().ok());
         Self {
             open: num("CP_OPEN"),
+            play_from: None,
             ply: num("CP_PLY").unwrap_or(0),
             analyze: std::env::var("CP_ANALYZE").is_ok(),
             screenshot: std::env::var_os("CP_SCREENSHOT").map(PathBuf::from),
@@ -482,6 +486,7 @@ impl App {
                         user_elo: self.settings.rating,
                         user_name: self.settings.your_name.clone(),
                         clock,
+                        from: None,
                     },
                 );
             }
@@ -572,6 +577,39 @@ impl App {
             if std::env::var_os("CP_COMMENT_EDIT").is_some() {
                 g.debug_comment_edit();
             }
+            if let Ok(text) = std::env::var("CP_PASTE_LINE") {
+                g.debug_paste(&text);
+            }
+            // `CP_PLAY_FROM=dialog`: the play dialog from the move reached;
+            // `white|black[,strength]`: the game at once.
+            if let Ok(spec) = std::env::var("CP_PLAY_FROM")
+                && let Some(from) = g.debug_play_from()
+            {
+                let mut parts = spec.split(',');
+                let side = parts.next().unwrap_or("dialog");
+                let strength = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1500);
+                let user = match side {
+                    "white" => Some(chess_core::shakmaty::Color::White),
+                    "black" => Some(chess_core::shakmaty::Color::Black),
+                    _ => None,
+                };
+                match user {
+                    Some(user) => {
+                        self.debug.play_from = Some(crate::play::Start {
+                            user,
+                            strength,
+                            user_elo: self.settings.rating,
+                            user_name: self.settings.your_name.clone(),
+                            clock: self.settings.play.clock,
+                            from: Some(Box::new(from)),
+                        })
+                    }
+                    None => {
+                        self.play_dialog =
+                            Some(crate::play::Dialog::new_from(&self.settings, from));
+                    }
+                }
+            }
             if std::env::var("CP_ENGINE_PANEL").is_ok() {
                 g.debug_open_engine_settings();
             }
@@ -584,6 +622,19 @@ impl App {
             // CP_REVIEW=dialog opens the game-analysis dialog, any other value starts the analysis.
             if let Ok(v) = std::env::var("CP_REVIEW") {
                 g.debug_review(&self.settings, ctx, v != "dialog");
+            }
+        }
+        if let Some(start) = self.debug.play_from.take() {
+            self.start_play(ctx, start);
+        }
+        // `CP_TRAIN=1`: learning the opening up to the move reached; `CP_TRAIN_MOVES`:
+        // moves made in it (UCI).
+        if std::env::var_os("CP_TRAIN").is_some()
+            && let Some(start) = self.game.as_ref().and_then(|g| g.debug_train())
+        {
+            self.open_training(start);
+            if let (Ok(moves), Some(g)) = (std::env::var("CP_TRAIN_MOVES"), self.game.as_mut()) {
+                g.debug_train_moves(&moves);
             }
         }
         if self.debug.analyze {
@@ -1284,6 +1335,70 @@ impl App {
         self.game = Some(GameView::new(g, None, Vec::new()));
     }
 
+    /// What comes after a game against Maia was closed: a rematch, the dialog.
+    fn play_next_now(&mut self, ctx: &egui::Context) {
+        match self.play_next.take() {
+            Some(PlayNext::Rematch(s)) => self.start_play(ctx, s),
+            Some(PlayNext::Dialog(None)) => {
+                self.play_dialog = Some(crate::play::Dialog::new(&self.settings))
+            }
+            Some(PlayNext::Dialog(Some(from))) => {
+                self.play_dialog = Some(crate::play::Dialog::new_from(&self.settings, *from))
+            }
+            None => {}
+        }
+    }
+
+    /// A game from a position of another game: its moves to that position, the game
+    /// it comes from waiting under it (as a game opened from the reference does).
+    fn game_from(&mut self, from: &crate::play::StartFrom) {
+        let mut g = match from
+            .start_fen
+            .as_deref()
+            .and_then(|f| chess_core::StartPosition::from_fen(f).ok())
+        {
+            Some(start) => Game::from_start(start),
+            None => Game::new(),
+        };
+        g.set_tag("Date", &chrono::Local::now().format("%Y.%m.%d").to_string());
+        if !from.moves.is_empty() {
+            let _ = g.add_line(chess_core::NodeId::ROOT, &from.moves);
+        }
+        g.forget_history();
+        g.mark_saved();
+        self.open_over(g);
+    }
+
+    /// `g` opens over the current game, which waits under it as it is (as a game
+    /// opened from the reference does); the engine stops.
+    fn open_over(&mut self, g: Game) {
+        self.analysis.stop();
+        let title = self.game.as_ref().map(|g| g.title());
+        if let Some(mut prev) = self.game.take() {
+            prev.suspend();
+            self.previous_games.push(prev);
+        }
+        let mut view = GameView::new(g, None, Vec::new());
+        view.previous = title;
+        self.game = Some(view);
+    }
+
+    /// Learning the opening of the current game: the training opens over it.
+    fn open_training(&mut self, start: crate::train::TrainStart) {
+        let g = match start
+            .start_fen
+            .as_deref()
+            .and_then(|f| chess_core::StartPosition::from_fen(f).ok())
+        {
+            Some(s) => Game::from_start(s),
+            None => Game::new(),
+        };
+        self.open_over(g);
+        if let Some(view) = self.game.as_mut() {
+            view.start_training(start);
+        }
+    }
+
     /// A new game against Maia (the weights are there: the dialog saw to it).
     fn start_play(&mut self, ctx: &egui::Context, start: crate::play::Start) {
         let Some(weights) = crate::maia_download::installed() else {
@@ -1299,7 +1414,10 @@ impl App {
                 .and_then(|e| e.executable())
                 .filter(|p| p.is_file())
         });
-        self.new_game();
+        match &start.from {
+            Some(from) => self.game_from(from),
+            None => self.new_game(),
+        }
         if let Some(g) = self.game.as_mut() {
             g.start_play(start, weights, judge, ctx);
         }
@@ -1781,6 +1899,8 @@ impl App {
         let closed = self.game.take();
         if intent == CloseIntent::ReturnToPrevious {
             self.game = self.previous_games.pop();
+            // A rematch from a position goes on over the same game.
+            self.play_next_now(ctx);
             return;
         }
         // Games left for others (reference tab) with unsaved edits are asked about one
@@ -1804,13 +1924,7 @@ impl App {
         {
             self.library.reveal(&src.path, src.index);
         }
-        match self.play_next.take() {
-            Some(PlayNext::Rematch(s)) => self.start_play(ctx, s),
-            Some(PlayNext::Dialog) => {
-                self.play_dialog = Some(crate::play::Dialog::new(&self.settings))
-            }
-            None => {}
-        }
+        self.play_next_now(ctx);
         if let Some((path, start, line, flipped)) = self.find_after_close.take() {
             self.library.show_position(&path, start, line, flipped, ctx);
         }
@@ -2154,7 +2268,9 @@ impl eframe::App for App {
             self.own.then_close = None;
             self.new_base_dialog(own_db::AfterCreate::Shelf);
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G))) && self.game.is_none() {
+        // In the library a game from the start; on a game's screen the game plays on
+        // from its position (the game view takes Ctrl+G there).
+        if self.game.is_none() && ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G))) {
             self.play_dialog = Some(crate::play::Dialog::new(&self.settings));
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))) && self.game.is_none() {
@@ -2246,7 +2362,9 @@ impl eframe::App for App {
                             .and_then(|g| g.play_end.clone())
                             .map(|e| {
                                 let mut s = e.start;
+                                // From a position the colour is part of the task: the same.
                                 s.user = match self.settings.play.color {
+                                    _ if s.from.is_some() => s.user,
                                     crate::play::ColorChoice::Random => {
                                         if crate::play::random_unit() < 0.5 {
                                             chess_core::shakmaty::Color::White
@@ -2259,13 +2377,34 @@ impl eframe::App for App {
                                 s
                             });
                         if let Some(s) = next {
+                            // From a position: back over the game it came from.
+                            let intent = if s.from.is_some() && !self.previous_games.is_empty() {
+                                CloseIntent::ReturnToPrevious
+                            } else {
+                                CloseIntent::BackToLibrary
+                            };
                             self.play_next = Some(PlayNext::Rematch(s));
-                            self.request_close(&ctx, CloseIntent::BackToLibrary);
+                            self.request_close(&ctx, intent);
                         }
                     }
                     GameAction::PlayAgain => {
-                        self.play_next = Some(PlayNext::Dialog);
-                        self.request_close(&ctx, CloseIntent::BackToLibrary);
+                        let from = self
+                            .game
+                            .as_ref()
+                            .and_then(|g| g.play_end.as_ref())
+                            .and_then(|e| e.start.from.clone());
+                        let intent = if from.is_some() && !self.previous_games.is_empty() {
+                            CloseIntent::ReturnToPrevious
+                        } else {
+                            CloseIntent::BackToLibrary
+                        };
+                        self.play_next = Some(PlayNext::Dialog(from));
+                        self.request_close(&ctx, intent);
+                    }
+                    GameAction::Train(start) => self.open_training(*start),
+                    GameAction::PlayFrom(from) => {
+                        self.play_dialog =
+                            Some(crate::play::Dialog::new_from(&self.settings, *from));
                     }
                     GameAction::AddToDatabase => {
                         if let Some(g) = self.game.as_mut() {
@@ -2538,8 +2677,12 @@ impl eframe::App for App {
                     .order(egui::Order::Foreground)
                     .show(&ctx, |ui| {
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(msg.as_str()).size(14.0));
+                            // Long messages wrap: at most 560 wide, inside a narrow window.
+                            ui.set_max_width((ctx.content_rect().width() - 32.0).min(560.0));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add(
+                                    egui::Label::new(RichText::new(msg.as_str()).size(14.0)).wrap(),
+                                );
                                 if undo && ui.button(tr("Undo")).on_hover_text("Ctrl+Z").clicked() {
                                     undo_clicked = true;
                                 }

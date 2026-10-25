@@ -525,6 +525,7 @@ impl SearchBoard {
             animation: settings.animation.seconds(),
             premove: None,
             auto_queen: settings.auto_queen,
+            alert: None,
         };
         let played = ui
             .allocate_ui(vec2(side, side), |ui| view.show(ui, &mut self.board))

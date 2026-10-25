@@ -71,6 +71,12 @@ pub struct GameView {
     /// «The game is on» asked (leaving during a game); the clocks wait meanwhile.
     /// Where leaving goes, and since when the question is open.
     play_leave: Option<(crate::app::CloseIntent, std::time::Instant)>,
+    /// Learning an opening (this screen is the training).
+    pub train: Option<crate::train::Training>,
+    /// A line from the clipboard that would go elsewhere than the user stands: asked.
+    paste_pending: Option<chess_core::paste::PastePlan>,
+    /// Text to paste on the next frame (dev hook `CP_PASTE_LINE`).
+    paste_request: Option<String>,
     show_diagnostics: bool,
     engine_settings_open: bool,
     review: Review,
@@ -97,6 +103,10 @@ enum SideTab {
 
 pub enum GameAction {
     Back,
+    /// «Play on from here»: the play dialog for this position.
+    PlayFrom(Box<crate::play::StartFrom>),
+    /// «Learn the opening up to this move»: the training over this game.
+    Train(Box<crate::train::TrainStart>),
     Sound(Sound),
     CopyText(String, &'static str),
     /// Ctrl+S: into the game's own database, else "Add to database…".
@@ -159,6 +169,9 @@ impl GameView {
             play_end: None,
             play_start: None,
             play_leave: None,
+            paste_pending: None,
+            train: None,
+            paste_request: None,
             show_diagnostics: false,
             engine_settings_open: false,
             review,
@@ -193,6 +206,12 @@ impl GameView {
     }
 
     pub fn title(&self) -> String {
+        if let Some(t) = &self.train {
+            return match &t.start.game {
+                Some(game) => trf("Learning the opening: {game}", &[("game", game)]),
+                None => tr("Learning the opening").to_owned(),
+            };
+        }
         let g = &self.game;
         // In a game against Maia an unnamed user is «You».
         let user = self.play.as_ref().map(|s| s.user);
@@ -261,6 +280,13 @@ impl GameView {
     }
 
     fn subtitle(&self) -> String {
+        if let Some(t) = &self.train {
+            let up_to = trf("up to {move}", &[("move", &t.start.up_to)]);
+            return match &t.start.event {
+                Some(e) => format!("{e} · {up_to}"),
+                None => up_to,
+            };
+        }
         let g = &self.game;
         let mut parts = Vec::new();
         for t in ["Event", "Site", "Date", "ECO", "Annotator"] {
@@ -277,6 +303,10 @@ impl GameView {
     /// A move made on the board or picked in the reference tab: goes to it if the
     /// game has it, else adds it (undoable).
     fn play_move(&mut self, m: Move, actions: &mut Vec<GameAction>) {
+        if self.train.is_some() {
+            self.train_move(m, actions);
+            return;
+        }
         if self.play.is_some() {
             self.user_move(m, actions);
             return;
@@ -726,6 +756,12 @@ impl GameView {
             None => {}
         }
 
+        // A line from the clipboard: pasted, or asked about.
+        if let Some(text) = self.paste_request.take() {
+            self.paste_text(&text, &mut actions);
+        }
+        self.paste_question(ui.ctx(), &mut actions);
+
         // Leaving during a game asks first; the question itself.
         self.guard_leaving(&mut actions);
         self.leave_question(ui.ctx(), &mut actions);
@@ -962,7 +998,7 @@ impl GameView {
                             // The title opens the game's data (players, event, date…).
                             let label = egui::Label::new(RichText::new(&title).strong().size(16.0))
                                 .truncate();
-                            if self.play.is_some() {
+                            if self.play.is_some() || self.train.is_some() {
                                 ui.add(label);
                             } else if ui
                                 .add(label.sense(Sense::click()))
@@ -1010,7 +1046,7 @@ impl GameView {
                 let searchable = self.search_line().is_some();
                 let why = tr("After a null move (--) this is a teaching scheme, not a position of a game: it is not searched");
                 // Not during a game against Maia: it would leave the game.
-                let playing = self.play.is_some();
+                let playing = self.play.is_some() || self.train.is_some();
                 if !playing { ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
                     ui.menu_button("⏷", |ui| {
                         for db in databases {
@@ -1056,6 +1092,7 @@ impl GameView {
         reference_hover: Option<shakmaty::uci::UciMove>,
         actions: &mut Vec<GameAction>,
     ) {
+        self.train_tick(ui.ctx());
         let preview_pos = self.preview.as_ref().map(|p| p.position());
         let Some(game_pos) = self.game.position(self.cursor) else {
             return;
@@ -1147,6 +1184,33 @@ impl GameView {
             });
         }
 
+        // Learning an opening: a wrong move stands on the board for a moment, in red; a
+        // hint is the arrow of the right move.
+        let flash = self
+            .train
+            .as_ref()
+            .and_then(|t| t.flash.as_ref())
+            .map(|f| (f.after.clone(), (f.from, f.to)));
+        let alert = flash.as_ref().map(|(_, sq)| *sq);
+        let last_move = flash.as_ref().map_or(last_move, |(_, sq)| Some(*sq));
+        let pos = flash.map_or(pos, |(p, _)| p);
+        if let Some(t) = &self.train
+            && t.hint
+            && self.cursor == self.game.line_end(NodeId::ROOT)
+            && let Some(sq) = t
+                .start
+                .line
+                .get(self.game.mainline().len())
+                .and_then(move_squares)
+        {
+            arrows.push(Arrow {
+                from: sq.0,
+                to: sq.1,
+                color: shape_color(ShapeColor::Green),
+                weight: 1.0,
+            });
+        }
+
         // Center the eval bar + board horizontally between the left edge and the side panel.
         let area = ui.available_rect_before_wrap();
         let show_bar = analysis.is_on();
@@ -1224,13 +1288,21 @@ impl GameView {
                     } else {
                         None
                     },
-                    interactive: self.preview.is_none() && self.user_may_move(),
+                    interactive: self.preview.is_none()
+                        && self.user_may_move()
+                        && self.train.as_ref().is_none_or(|t| {
+                            !t.done
+                                && t.flash.is_none()
+                                && self.cursor == self.game.line_end(NodeId::ROOT)
+                        }),
                     show_coords: settings.show_coords,
                     theme: settings.board_theme.theme(),
                     pieces: settings.piece_set,
                     animation: settings.animation.seconds(),
                     premove: self.premove_side(),
-                    auto_queen: settings.auto_queen,
+                    // Training: the piece is always chosen (a queen for a knight is a mistake).
+                    auto_queen: settings.auto_queen && self.train.is_none(),
+                    alert,
                 };
                 if let Some(m) = view.show(ui, &mut self.board) {
                     self.play_move(m, actions);
@@ -1238,6 +1310,7 @@ impl GameView {
                 if let Some(drawn) = self.board.take_shape()
                     && self.preview.is_none()
                     && self.play.is_none()
+                    && self.train.is_none()
                 {
                     self.apply_shape(drawn);
                 }
@@ -1271,6 +1344,10 @@ impl GameView {
     ) {
         if self.play.is_some() {
             self.play_side(ui, settings, analysis, reference, hub, actions);
+            return;
+        }
+        if self.train.is_some() {
+            self.train_side(ui, actions);
             return;
         }
         if self.play_end.is_some() {
@@ -1371,6 +1448,8 @@ impl GameView {
                         translations: self.translation.shown(),
                         editor: self.editor.as_mut(),
                         read_only: self.play.is_some(),
+                        dim_until: None,
+                        mistakes: None,
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
@@ -1412,8 +1491,17 @@ impl GameView {
                             shown: shown.min(mark.best.len()),
                         });
                     }
-                    if let Some((id, cmd)) = resp.context {
+                    if let Some((_, NotationCommand::Paste)) = resp.context {
+                        self.paste_clipboard(actions);
+                    } else if let Some((id, NotationCommand::PlayFrom)) = resp.context {
+                        self.play_from(id, actions);
+                    } else if let Some((id, NotationCommand::Train)) = resp.context {
+                        self.train_from(id, actions);
+                    } else if let Some((id, cmd)) = resp.context {
                         let result = match cmd {
+                            NotationCommand::Paste
+                            | NotationCommand::PlayFrom
+                            | NotationCommand::Train => Ok(self.cursor),
                             NotationCommand::Promote => {
                                 self.game.promote_variation(id).map(|_| self.cursor)
                             }
@@ -1789,6 +1877,39 @@ impl GameView {
                     }
                     ui.close();
                 }
+                if self.play.is_none()
+                    && ui
+                        .button(tr("Paste a line from the clipboard (Ctrl+V)"))
+                        .clicked()
+                {
+                    self.paste_clipboard(actions);
+                    ui.close();
+                }
+                if self.play.is_none() {
+                    ui.separator();
+                    if ui.button(tr("Play on from here… (Ctrl+G)")).clicked() {
+                        let at = self.cursor;
+                        self.play_from(at, actions);
+                        ui.close();
+                    }
+                    let line = crate::train::TrainStart::from_game(&self.game, self.cursor);
+                    if ui
+                        .add_enabled(
+                            line.is_some(),
+                            egui::Button::new(tr("Learn the opening up to this move")),
+                        )
+                        .on_disabled_hover_text(if self.cursor == NodeId::ROOT {
+                            tr("Select the move to learn up to")
+                        } else {
+                            tr("The line has a null move (--): it cannot be played on the board")
+                        })
+                        .clicked()
+                    {
+                        let at = self.cursor;
+                        self.train_from(at, actions);
+                        ui.close();
+                    }
+                }
                 if !self.diagnostics.is_empty() && ui.button(tr("Compatibility notes")).clicked() {
                     self.show_diagnostics = true;
                     ui.close();
@@ -2012,7 +2133,44 @@ impl GameView {
             "TimeControl",
             &start.clock.map_or_else(|| "-".to_owned(), |tc| tc.pgn()),
         );
+        // From a position of another game: its moves are already here; after the last
+        // of them, where the game comes from (a comment of the game, written in PGN).
+        let floor = match &start.from {
+            Some(from) => {
+                let floor = g.line_end(NodeId::ROOT);
+                let elo = start.strength.to_string();
+                let note = match (&from.game, &from.after) {
+                    (Some(game), Some(m)) => trf(
+                        "Continued from {game}, after {move}. From here on, a game against Maia {elo}.",
+                        &[("game", game), ("move", m), ("elo", &elo)],
+                    ),
+                    (None, Some(m)) => trf(
+                        "Continued after {move}. From here on, a game against Maia {elo}.",
+                        &[("move", m), ("elo", &elo)],
+                    ),
+                    (Some(game), None) => trf(
+                        "Continued from {game}. From here on, a game against Maia {elo}.",
+                        &[("game", game), ("elo", &elo)],
+                    ),
+                    (None, None) => {
+                        trf("From here on, a game against Maia {elo}.", &[("elo", &elo)])
+                    }
+                };
+                let (nags, mut comments) = g
+                    .node(floor)
+                    .map(|n| (n.nags().to_vec(), n.comments_after().to_vec()))
+                    .unwrap_or_default();
+                comments.push(note);
+                let _ = g.annotate(floor, nags, comments);
+                g.forget_history();
+                floor
+            }
+            None => NodeId::ROOT,
+        };
         g.mark_saved();
+        if floor != NodeId::ROOT {
+            self.goto(floor);
+        }
         self.flipped = start.user == Color::Black;
         self.play_end = None;
         self.play = Some(Session {
@@ -2026,6 +2184,7 @@ impl GameView {
             hopeless: 0,
             resign_offer: None,
             play_on: false,
+            floor,
         });
         self.play_start = Some(start);
         self.ask_maia();
@@ -2370,7 +2529,134 @@ impl GameView {
 
     /// Before both sides have moved there is nothing to lose: the game is dropped.
     fn play_started(&self) -> bool {
-        self.game.mainline().len() >= 2
+        self.played().len() >= 2
+    }
+
+    /// The moves of the game against Maia: the main line after the position it
+    /// started from.
+    fn played(&self) -> Vec<NodeId> {
+        let floor = self.play.as_ref().map_or(NodeId::ROOT, |s| s.floor);
+        let line = self.game.mainline();
+        match line.iter().position(|&n| n == floor) {
+            Some(k) => line[k + 1..].to_vec(),
+            None => line,
+        }
+    }
+
+    /// The user has made a move of the game against Maia.
+    fn user_moved(&self, user: Color) -> bool {
+        self.played().iter().any(|&n| {
+            self.game
+                .parent(n)
+                .and_then(|p| self.game.position(p))
+                .is_some_and(|p| p.turn() == user)
+        })
+    }
+
+    /// Leaving a game before its first moves: back to the game it went on from, if
+    /// there is one, else to the library.
+    fn leave_action(&self) -> GameAction {
+        if self.previous.is_some() {
+            GameAction::ReturnToPrevious
+        } else {
+            GameAction::Back
+        }
+    }
+
+    /// «Play on from here»: the dialog for a game against Maia from the position of
+    /// `at` (a finished position says why not).
+    fn play_from(&mut self, at: NodeId, actions: &mut Vec<GameAction>) {
+        if self.play.is_some() {
+            return;
+        }
+        self.commit_editor();
+        self.preview = None;
+        match self.start_from(at) {
+            Ok(from) => actions.push(GameAction::PlayFrom(Box::new(from))),
+            Err(why) => actions.push(GameAction::Toast(why)),
+        }
+    }
+
+    /// Where a game from the position of `at` starts: the moves to it (after the last
+    /// null move), the position, how to name it.
+    fn start_from(&self, at: NodeId) -> Result<crate::play::StartFrom, String> {
+        let g = &self.game;
+        let pos = g.position(at).ok_or_else(String::new)?.clone();
+        let over = if pos.is_checkmate() {
+            Some(tr("checkmate"))
+        } else if pos.is_stalemate() {
+            Some(tr("stalemate"))
+        } else if pos.is_insufficient_material() {
+            Some(tr("neither side can checkmate"))
+        } else {
+            None
+        };
+        if let Some(why) = over {
+            return Err(trf("The game is over here: {why}", &[("why", &why)]));
+        }
+        let path = g.path(at);
+        // A teaching null move: the game starts after the last one.
+        let null = path
+            .iter()
+            .rposition(|&n| g.game_move(n).is_some_and(|m| m.is_null()));
+        let (start_fen, from_k) = match null {
+            Some(k) => (g.fen(path[k]), k + 1),
+            None => ((!g.start().is_standard()).then(|| g.start().fen()), 1),
+        };
+        let moves = path[from_k.min(path.len())..]
+            .iter()
+            .filter_map(|&n| match g.game_move(n)?.kind {
+                chess_core::MoveKind::Normal(m) => Some(m),
+                chess_core::MoveKind::Null => None,
+            })
+            .collect();
+        let last = g.game_move(at).and_then(|m| match m.kind {
+            chess_core::MoveKind::Normal(m) => Some((m.from()?, crate::board::ui_target(&m))),
+            chess_core::MoveKind::Null => None,
+        });
+        let (after, after_shown) = match (g.move_number(at), g.game_move(at)) {
+            (Some((n, side)), Some(m)) => (
+                Some(match side {
+                    Color::White => format!("{n}.{}", m.san),
+                    Color::Black => format!("{n}...{}", m.san),
+                }),
+                Some(move_label(n, side, &m.san, true)),
+            ),
+            _ => (None, None),
+        };
+        let name = |t: &str| {
+            g.tag(t)
+                .map(str::trim)
+                .filter(|v| !v.is_empty() && *v != "?")
+        };
+        let players = match (name("White"), name("Black")) {
+            (None, None) => None,
+            (w, b) => Some(format!("{} — {}", w.unwrap_or("?"), b.unwrap_or("?"))),
+        };
+        let year = name("Date")
+            .map(|d| d.chars().take(4).collect::<String>())
+            .filter(|y| y.chars().all(|c| c.is_ascii_digit()));
+        let event = [name("Event").map(str::to_owned), year]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let game = match (players, event.is_empty()) {
+            (Some(p), false) => Some(format!("{p}, {event}")),
+            (Some(p), true) => Some(p),
+            (None, false) => Some(event),
+            (None, true) => None,
+        };
+        Ok(crate::play::StartFrom {
+            start_fen,
+            moves,
+            position: pos,
+            last,
+            after,
+            after_shown,
+            game,
+            null_dropped: null.is_some(),
+        })
     }
 
     /// Resigns the game in progress (leaving it, closing the program); before the first
@@ -2398,8 +2684,8 @@ impl GameView {
         }
         s.opponent.forget();
         let user = s.user;
-        // The last move of the user on the main line.
-        let line = self.game.mainline();
+        // The last move of the user in this game (never one of the game it went on from).
+        let line = self.played();
         let last = line.iter().rev().find(|&&id| {
             self.game
                 .parent(id)
@@ -2410,12 +2696,7 @@ impl GameView {
             && let Ok(parent) = self.game.delete_variation(id)
         {
             self.goto(parent);
-            let moved = self.game.mainline().iter().any(|&n| {
-                self.game
-                    .parent(n)
-                    .and_then(|p| self.game.position(p))
-                    .is_some_and(|p| p.turn() == user)
-            });
+            let moved = self.user_moved(user);
             if let Some(c) = self.play.as_mut().and_then(|s| s.clock.as_mut()) {
                 c.take_back(user, moved, std::time::Instant::now());
             }
@@ -2476,7 +2757,7 @@ impl GameView {
                         s.resign_asked = false;
                     } else {
                         ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
-                        actions.push(GameAction::Back);
+                        actions.push(self.leave_action());
                     }
                 }
                 _ => {}
@@ -2644,6 +2925,13 @@ impl GameView {
                         translations: None,
                         editor: None,
                         read_only: true,
+                        dim_until: self
+                            .play
+                            .as_ref()
+                            .filter(|s| s.floor != NodeId::ROOT)
+                            .and_then(|s| self.game.node(s.floor))
+                            .map(|n| n.ply()),
+                        mistakes: None,
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
@@ -2766,12 +3054,7 @@ impl GameView {
             }
             ui.separator();
             let user = self.play.as_ref().map_or(Color::White, |s| s.user);
-            let user_moved = self.game.mainline().iter().any(|&id| {
-                self.game
-                    .parent(id)
-                    .and_then(|p| self.game.position(p))
-                    .is_some_and(|p| p.turn() == user)
-            });
+            let user_moved = self.user_moved(user);
             if ui
                 .add_enabled(user_moved, word(tr("↶ Take back")))
                 .on_hover_text(tr("Take back a move (Ctrl+Z)"))
@@ -2785,7 +3068,7 @@ impl GameView {
                     .on_hover_text(tr("Leave without a result: no moves made yet"))
                     .clicked()
                 {
-                    actions.push(GameAction::Back);
+                    actions.push(self.leave_action());
                 }
             } else if self.play.as_ref().is_some_and(|s| s.resign_asked) {
                 ui.label(RichText::new(tr("Resign?")).size(14.0));
@@ -2887,6 +3170,8 @@ impl GameView {
                     })
                     .sum();
                 let fits = one_row <= ui.available_width();
+                // A rematch from a position keeps the colour (the position is the task).
+                let from_side = end.start.from.as_ref().map(|_| end.user);
                 let mut clicked = [false; 4];
                 let mut button = |ui: &mut Ui, k: usize, w: f32| {
                     let mut text = RichText::new(labels[k]).size(14.0);
@@ -2897,7 +3182,11 @@ impl GameView {
                     }
                     let mut r = ui.add(b.min_size(vec2(w, 30.0)));
                     if k == 1 {
-                        r = r.on_hover_text(tr("Same settings, colours swapped"));
+                        r = r.on_hover_text(match &from_side {
+                            Some(Color::White) => tr("The same position, you play White again"),
+                            Some(Color::Black) => tr("The same position, you play Black again"),
+                            None => tr("Same settings, colours swapped"),
+                        });
                     }
                     if k == 3 {
                         r = r.on_hover_text("Ctrl+S");
@@ -2964,6 +3253,819 @@ impl GameView {
         }
     }
 
+    // ----- learning an opening (docs/design/opening-trainer.md) ----------------------
+
+    /// «Learn the opening up to this move»: the training opens over this game.
+    fn train_from(&mut self, at: NodeId, actions: &mut Vec<GameAction>) {
+        if self.play.is_some() {
+            return;
+        }
+        self.commit_editor();
+        self.preview = None;
+        if let Some(mut t) = crate::train::TrainStart::from_game(&self.game, at) {
+            t.flipped = self.flipped;
+            actions.push(GameAction::Train(Box::new(t)));
+        }
+    }
+
+    /// This screen becomes the training of `start` (its game: the line's start).
+    pub fn start_training(&mut self, start: crate::train::TrainStart) {
+        self.flipped = start.flipped;
+        self.train = Some(crate::train::Training::new(start));
+        self.goto(NodeId::ROOT);
+    }
+
+    /// The wrong move shown long enough: taken back.
+    fn train_tick(&mut self, ctx: &egui::Context) {
+        if let Some(t) = self.train.as_mut()
+            && let Some(f) = &t.flash
+        {
+            let now = std::time::Instant::now();
+            if now >= f.until {
+                t.flash = None;
+            } else {
+                ctx.request_repaint_after(f.until - now);
+            }
+        }
+    }
+
+    /// A move on the board while training: the line's move goes on, another one is a
+    /// mistake (shown for a moment, then taken back).
+    fn train_move(&mut self, m: Move, actions: &mut Vec<GameAction>) {
+        let end = self.game.line_end(NodeId::ROOT);
+        if self.cursor != end {
+            // A move in a past position: back to the training.
+            self.goto(end);
+            return;
+        }
+        let k = self.game.mainline().len();
+        let Some(pos) = self.game.position(end).cloned() else {
+            return;
+        };
+        let Some(t) = self.train.as_mut() else { return };
+        if t.done || t.flash.is_some() {
+            return;
+        }
+        let Some(&want) = t.start.line.get(k) else {
+            return;
+        };
+        if m == want {
+            t.hint = false;
+            let last = k + 1 == t.start.line.len();
+            if let Ok(id) = self.game.add_move(end, m) {
+                // The game of the training is never «modified»: nothing to save.
+                self.game.forget_history();
+                self.game.mark_saved();
+                self.goto(id);
+                if last {
+                    if let Some(t) = self.train.as_mut() {
+                        t.finish();
+                    }
+                    actions.push(GameAction::Sound(Sound::Success));
+                } else if let Some(s) = self.sound_for(id) {
+                    actions.push(GameAction::Sound(s));
+                }
+            }
+        } else {
+            t.mistakes[k] += 1;
+            let mut after = pos;
+            after.play_unchecked(m);
+            t.flash = Some(crate::train::Flash {
+                after,
+                from: m.from().unwrap_or(m.to()),
+                to: crate::board::ui_target(&m),
+                until: std::time::Instant::now() + crate::train::WRONG_SHOWN,
+            });
+            actions.push(GameAction::Sound(Sound::Wrong));
+        }
+    }
+
+    /// The run again from the start (after the end, or «Restart»).
+    fn train_again(&mut self) {
+        if let Some(first) = self.game.main_child(NodeId::ROOT) {
+            let _ = self.game.delete_variation(first);
+        }
+        self.game.forget_history();
+        self.game.mark_saved();
+        self.goto(NodeId::ROOT);
+        if let Some(t) = self.train.as_mut() {
+            t.again();
+        }
+    }
+
+    /// Leaving the training: back to the game it came from.
+    fn train_leave(&self) -> GameAction {
+        if self.previous.is_some() {
+            GameAction::ReturnToPrevious
+        } else {
+            GameAction::Back
+        }
+    }
+
+    /// The side panel while training: the task above, the moves made, the user's card
+    /// below; at the end the result instead of both cards.
+    fn train_side(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+        let done = self.train.as_ref().is_some_and(|t| t.done);
+        egui::Panel::bottom("train_toolbar").show(ui, |ui| self.train_toolbar(ui, actions));
+        if !done {
+            egui::Panel::bottom("train_you")
+                .show_separator_line(false)
+                .show(ui, |ui| self.train_you(ui));
+        }
+        egui::Panel::top("train_task")
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                if done {
+                    self.train_result(ui, actions);
+                } else {
+                    self.train_task(ui);
+                }
+            });
+        let end = self.game.line_end(NodeId::ROOT);
+        if !done && self.cursor != end {
+            egui::Panel::bottom("train_viewing")
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    if ui
+                        .link(
+                            RichText::new(tr(
+                                "Viewing an earlier position · back to training — End",
+                            ))
+                            .weak(),
+                        )
+                        .clicked()
+                    {
+                        self.goto(end);
+                    }
+                });
+        }
+        // At the end the moves with mistakes are marked.
+        let marks: Option<std::collections::HashMap<NodeId, (u32, bool)>> =
+            self.train.as_ref().filter(|t| t.done).map(|t| {
+                self.game
+                    .mainline()
+                    .into_iter()
+                    .zip(t.mistakes.iter().zip(&t.shown))
+                    .filter(|(_, (n, _))| **n > 0)
+                    .map(|(id, (&n, &s))| (id, (n, s)))
+                    .collect()
+            });
+        egui::CentralPanel::default().show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    let resp = Notation {
+                        game: &self.game,
+                        cursor: self.cursor,
+                        scroll_to_cursor: self.scroll_to_cursor,
+                        marks: None,
+                        preview: None,
+                        translations: None,
+                        editor: None,
+                        read_only: true,
+                        dim_until: None,
+                        mistakes: marks.as_ref(),
+                    }
+                    .show(ui);
+                    if let Some(id) = resp.clicked {
+                        self.goto(id);
+                    }
+                    self.scroll_to_cursor = false;
+                });
+        });
+    }
+
+    /// The frame of a training card (as a clock card); red while a mistake is shown.
+    fn train_card(ui: &Ui, alert: bool) -> egui::Frame {
+        let color = if alert {
+            ui.visuals().error_fg_color
+        } else {
+            ui.visuals().widgets.noninteractive.bg_stroke.color
+        };
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .corner_radius(4)
+            .stroke(egui::Stroke::new(if alert { 1.5 } else { 1.0 }, color))
+    }
+
+    /// «Move 7 of 12 · ♔ White to move», «up to 12…Rd8», the progress bar.
+    fn train_task(&self, ui: &mut Ui) {
+        let Some(t) = &self.train else { return };
+        let end = self.game.line_end(NodeId::ROOT);
+        let Some(pos) = self.game.position(end) else {
+            return;
+        };
+        let played = self.game.mainline().len() as f32;
+        let total = t.start.line.len().max(1) as f32;
+        ui.add_space(4.0);
+        let frame = Self::train_card(ui, false).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(trf(
+                        "Move {n} of {last}",
+                        &[("n", &pos.fullmoves()), ("last", &t.start.last_number)],
+                    ))
+                    .size(15.0),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (short, long) = match pos.turn() {
+                        Color::White => ("♔", tr("♔ White to move")),
+                        Color::Black => ("♚", tr("♚ Black to move")),
+                    };
+                    // In a narrow panel the king alone says who moves.
+                    let text = if ui.available_width() < 110.0 {
+                        short
+                    } else {
+                        long
+                    };
+                    ui.label(RichText::new(text).strong().size(15.0))
+                        .on_hover_text(long);
+                });
+            });
+            ui.label(
+                RichText::new(trf("up to {move}", &[("move", &t.start.up_to)]))
+                    .weak()
+                    .size(13.0),
+            );
+            ui.add_space(3.0);
+        });
+        // The progress: a bar of 3 along the bottom, inside the frame.
+        let r = frame.response.rect.shrink2(vec2(10.0, 0.0));
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(r.left(), r.bottom() - 6.0),
+            egui::pos2(r.right(), r.bottom() - 3.0),
+        );
+        let p = ui.painter();
+        p.rect_filled(
+            bar,
+            1.0,
+            ui.visuals().widgets.noninteractive.bg_stroke.color,
+        );
+        let done = egui::Rect::from_min_max(
+            bar.min,
+            egui::pos2(bar.left() + bar.width() * played / total, bar.bottom()),
+        );
+        p.rect_filled(done, 1.0, ui.visuals().selection.bg_fill);
+    }
+
+    /// «Mistakes: 2 · Run 3», then the history of the line — or, after a wrong move,
+    /// «× The game has another move here» (and from the third: «Show the move»).
+    fn train_you(&mut self, ui: &mut Ui) {
+        let k = self.game.mainline().len();
+        let Some(t) = self.train.as_mut() else { return };
+        let total = t.total();
+        let here = t.mistakes.get(k).copied().unwrap_or(0);
+        let alert = t.flash.is_some();
+        let mut show = false;
+        ui.add_space(4.0);
+        Self::train_card(ui, alert).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let text = RichText::new(trf("Mistakes: {n}", &[("n", &total)])).size(15.0);
+                ui.label(if total == 0 { text.weak() } else { text });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(trf("Run {n}", &[("n", &(t.before.runs + 1))]))
+                            .weak()
+                            .size(13.0),
+                    );
+                });
+            });
+            let error = ui.visuals().error_fg_color;
+            if t.hint {
+                ui.label(
+                    RichText::new(tr("Play the move on the arrow"))
+                        .weak()
+                        .size(13.0),
+                );
+            } else if here > 0 {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(tr("× The game has another move here"))
+                            .color(error)
+                            .size(13.0),
+                    );
+                    if here >= crate::train::HINT_AFTER {
+                        ui.label(RichText::new("·").color(error).size(13.0));
+                        if ui
+                            .link(
+                                RichText::new(tr("Show the move"))
+                                    .color(error)
+                                    .size(13.0)
+                                    .underline(),
+                            )
+                            .clicked()
+                        {
+                            show = true;
+                        }
+                    }
+                });
+            } else {
+                let b = &t.before;
+                let history = match b.last {
+                    None => tr("Not done before").to_owned(),
+                    Some(last) if b.clean_streak >= 2 => trf(
+                        "Last time: {n} · clean in a row: {k}",
+                        &[("n", &last), ("k", &b.clean_streak)],
+                    ),
+                    Some(last) => trf(
+                        "Last time: {n} · best: {m}",
+                        &[
+                            ("n", &last),
+                            ("m", &b.best.map_or("—".to_owned(), |x| x.to_string())),
+                        ],
+                    ),
+                };
+                ui.add(egui::Label::new(RichText::new(history).weak().size(13.0)).truncate());
+            }
+        });
+        if show {
+            t.hint = true;
+            if let Some(s) = t.shown.get_mut(k) {
+                *s = true;
+            }
+        }
+    }
+
+    /// The end of a run: how it went, the runs so far, «Again» and «Back to the game».
+    fn train_result(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+        let Some(t) = &self.train else { return };
+        let Some(after) = t.after.clone() else { return };
+        let total = t.total();
+        let hinted = t.hinted();
+        let heading = if hinted {
+            trf("Done with a hint · mistakes: {n}", &[("n", &total)])
+        } else if total == 0 {
+            tr("Done without mistakes").to_owned()
+        } else {
+            trf("Done · mistakes: {n}", &[("n", &total)])
+        };
+        let line = trf(
+            "Run {n} · best: {m}",
+            &[
+                ("n", &after.runs),
+                ("m", &after.best.map_or("—".to_owned(), |x| x.to_string())),
+            ],
+        );
+        let streak = (after.clean_streak >= 2)
+            .then(|| trf("clean in a row: {k}", &[("k", &after.clean_streak)]));
+        // «Recent: 3 · 2 · 1 · 0», this run (the last) bold.
+        let recent = (after.recent.len() > 1).then(|| {
+            let runs: Vec<String> = after
+                .recent
+                .iter()
+                .map(|(n, h)| if *h { format!("{n}*") } else { n.to_string() })
+                .collect();
+            let (last, rest) = runs.split_last().unwrap_or((&runs[0], &[]));
+            let mut head = rest.join(" · ");
+            head.push_str(" · ");
+            let text = trf("Recent: {runs}", &[("runs", &format!("{head}{last}"))]);
+            let weak = ui.visuals().weak_text_color();
+            let strong = ui.visuals().strong_text_color();
+            let font = egui::FontId::proportional(13.0);
+            let mut job = egui::text::LayoutJob::default();
+            let cut = text.len() - last.len();
+            job.append(
+                &text[..cut],
+                0.0,
+                egui::TextFormat::simple(font.clone(), weak),
+            );
+            job.append(&text[cut..], 0.0, egui::TextFormat::simple(font, strong));
+            job
+        });
+        let mut again = false;
+        let mut back = false;
+        ui.add_space(4.0);
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .corner_radius(4)
+            .fill(ui.visuals().extreme_bg_color)
+            .stroke(egui::Stroke::new(
+                1.0,
+                ui.visuals().widgets.noninteractive.bg_stroke.color,
+            ))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let color = if total == 0 && !hinted {
+                    // Lichess's «good move» green.
+                    Color32::from_rgb(98, 153, 36)
+                } else {
+                    ui.visuals().strong_text_color()
+                };
+                ui.label(RichText::new(heading).strong().size(17.0).color(color));
+                ui.label(RichText::new(line).size(13.0));
+                if let Some(s) = streak {
+                    ui.label(RichText::new(s).size(13.0));
+                }
+                if let Some(r) = recent {
+                    ui.add(egui::Label::new(r).wrap());
+                }
+                ui.add_space(6.0);
+                let w = ui.available_width();
+                let row = w >= 300.0;
+                let half = if row {
+                    (w - ui.spacing().item_spacing.x) / 2.0
+                } else {
+                    w
+                };
+                let mut buttons = |ui: &mut Ui| {
+                    if ui
+                        .add_sized(
+                            [half, 30.0],
+                            egui::Button::new(RichText::new(tr("↻ Again")).strong().size(14.0))
+                                .fill(ui.visuals().selection.bg_fill),
+                        )
+                        .on_hover_text("Enter")
+                        .clicked()
+                    {
+                        again = true;
+                    }
+                    if ui
+                        .add_sized(
+                            [half, 30.0],
+                            egui::Button::new(RichText::new(tr("⬅ Back to the game")).size(14.0)),
+                        )
+                        .on_hover_text("Esc")
+                        .clicked()
+                    {
+                        back = true;
+                    }
+                };
+                if row {
+                    ui.horizontal(|ui| buttons(ui));
+                } else {
+                    buttons(ui);
+                }
+            });
+        if again {
+            self.train_again();
+        }
+        if back {
+            actions.push(self.train_leave());
+        }
+    }
+
+    /// ⏮ ◀ ▶ ⏭ │ 🔃 │ ↻ Restart │ × Leave
+    fn train_toolbar(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            let big = |s: &str| RichText::new(s).size(18.0);
+            let word =
+                |s: &str| egui::Button::new(RichText::new(s).size(14.0)).min_size(vec2(0.0, 28.0));
+            if ui.button(big("⏮")).clicked() {
+                self.goto(NodeId::ROOT);
+            }
+            if ui.button(big("◀")).clicked() {
+                self.step_back();
+            }
+            if ui.button(big("▶")).clicked() {
+                self.step_forward(actions);
+            }
+            if ui.button(big("⏭")).clicked() {
+                let end = self.game.line_end(NodeId::ROOT);
+                self.goto(end);
+            }
+            ui.separator();
+            if ui
+                .button(big("🔃"))
+                .on_hover_text(tr("Flip board (F)"))
+                .clicked()
+            {
+                self.flipped = !self.flipped;
+            }
+            let done = self.train.as_ref().is_some_and(|t| t.done);
+            if !done {
+                ui.separator();
+                let started = self.game.main_child(NodeId::ROOT).is_some();
+                if ui
+                    .add_enabled(started, word(tr("↻ Restart")))
+                    .on_hover_text(tr("Start the run again; this one is not counted"))
+                    .clicked()
+                {
+                    self.train_again();
+                }
+                if ui
+                    .add(word(tr("× Leave")))
+                    .on_hover_text(tr("Back to the game; the run is not counted (Esc)"))
+                    .clicked()
+                {
+                    actions.push(self.train_leave());
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+
+    /// Keys while training: looking through the moves, flipping, Esc back to the game,
+    /// Enter again after the end; the engine stays off.
+    fn train_keys(&mut self, ui: &Ui, actions: &mut Vec<GameAction>) {
+        let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
+        let done = self.train.as_ref().is_some_and(|t| t.done);
+        let mut cmds = Vec::new();
+        ui.input_mut(|i| {
+            if i.consume_shortcut(&ctrl(Key::W)) {
+                cmds.push("library");
+            }
+            if !i.modifiers.any() {
+                for (key, cmd) in [
+                    (Key::ArrowLeft, "back1"),
+                    (Key::ArrowRight, "fwd1"),
+                    (Key::ArrowUp, "end"),
+                    (Key::ArrowDown, "home"),
+                    (Key::Home, "home"),
+                    (Key::End, "end"),
+                    (Key::F, "flip"),
+                    (Key::L, "engine"),
+                ] {
+                    if i.key_pressed(key) {
+                        cmds.push(cmd);
+                    }
+                }
+                // Esc first lets go of a piece or the choice of a promotion.
+                if !self.board.is_busy() && i.consume_key(Modifiers::NONE, Key::Escape) {
+                    cmds.push("leave");
+                }
+                if done && i.consume_key(Modifiers::NONE, Key::Enter) {
+                    cmds.push("again");
+                }
+            }
+            if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::A)) {
+                cmds.push("engine");
+            }
+        });
+        for cmd in cmds {
+            match cmd {
+                "back1" => self.step_back(),
+                "fwd1" => self.step_forward(actions),
+                "home" => self.goto(NodeId::ROOT),
+                "end" => {
+                    let end = self.game.line_end(NodeId::ROOT);
+                    self.goto(end);
+                }
+                "flip" => self.flipped = !self.flipped,
+                "engine" => actions.push(GameAction::Toast(
+                    tr("The engine is off while training").to_owned(),
+                )),
+                "leave" => actions.push(self.train_leave()),
+                "library" => actions.push(GameAction::Back),
+                "again" => self.train_again(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Dev hook (`CP_TRAIN`): the training up to the current move.
+    pub fn debug_train(&self) -> Option<crate::train::TrainStart> {
+        let mut t = crate::train::TrainStart::from_game(&self.game, self.cursor)?;
+        t.flipped = self.flipped;
+        Some(t)
+    }
+
+    /// Dev hook (`CP_TRAIN_MOVES`): moves of the training made as on the board (UCI;
+    /// a wrong one is a mistake).
+    pub fn debug_train_moves(&mut self, uci: &str) {
+        let mut sink = Vec::new();
+        for w in uci.split_whitespace() {
+            self.train_tick_now();
+            let end = self.game.line_end(NodeId::ROOT);
+            let Some(pos) = self.game.position(end).cloned() else {
+                return;
+            };
+            if let Some(m) = w
+                .parse::<shakmaty::uci::UciMove>()
+                .ok()
+                .and_then(|u| u.to_move(&pos).ok())
+            {
+                self.train_move(m, &mut sink);
+            }
+        }
+    }
+
+    /// The wrong move taken back at once (the hook makes moves without waiting).
+    fn train_tick_now(&mut self) {
+        if let Some(t) = self.train.as_mut()
+            && t.flash
+                .as_ref()
+                .is_some_and(|_| std::env::var_os("CP_TRAIN_KEEP").is_none())
+        {
+            t.flash = None;
+        }
+    }
+
+    /// Dev hook (`CP_PLAY_FROM`): «Play on from here» at the current move.
+    pub fn debug_play_from(&mut self) -> Option<crate::play::StartFrom> {
+        self.start_from(self.cursor).ok()
+    }
+
+    /// Dev hook (`CP_PASTE_LINE`): the text pasted as a line, as by Ctrl+V.
+    pub fn debug_paste(&mut self, text: &str) {
+        self.paste_request = Some(text.to_owned());
+    }
+
+    // ----- a line from the clipboard (docs/design/paste-variation.md) ----------------
+
+    /// The menu's «Paste a line from the clipboard»: the clipboard read now.
+    fn paste_clipboard(&mut self, actions: &mut Vec<GameAction>) {
+        let text = arboard::Clipboard::new()
+            .and_then(|mut c| c.get_text())
+            .unwrap_or_default();
+        self.paste_text(&text, actions);
+    }
+
+    /// Pastes `text` as a line: at once where the user stands, a question when it
+    /// goes elsewhere, a message when it does not fit (the game then unchanged).
+    fn paste_text(&mut self, text: &str, actions: &mut Vec<GameAction>) {
+        use chess_core::paste::PasteError;
+        if self.play.is_some() {
+            return;
+        }
+        self.commit_editor();
+        self.preview = None;
+        match chess_core::paste::plan(&self.game, self.cursor, text) {
+            Ok(plan) if self.paste_elsewhere(&plan) => self.paste_pending = Some(plan),
+            Ok(plan) => self.paste_apply(plan, actions),
+            Err(e) => {
+                let msg = match &e {
+                    PasteError::NoMoves => tr("The clipboard holds no moves").to_owned(),
+                    PasteError::DoesNotFit => trf(
+                        "These moves fit neither after {move} nor instead of it",
+                        &[("move", &self.node_label(self.cursor))],
+                    ),
+                    PasteError::Illegal { number, side, san } => trf(
+                        "The move {move} is impossible — nothing inserted",
+                        &[("move", &move_label(*number, *side, san, true))],
+                    ),
+                    PasteError::Unrelated => tr(
+                        "The game in the clipboard does not fit: none of its positions occur in this game",
+                    )
+                    .to_owned(),
+                    PasteError::AlreadyThere { comments: false, .. } => {
+                        tr("These moves are already in the game").to_owned()
+                    }
+                    PasteError::AlreadyThere { comments: true, .. } => tr(
+                        "These moves are already in the game — the comments from the clipboard were not carried over",
+                    )
+                    .to_owned(),
+                };
+                // «Already there»: here they are.
+                if let PasteError::AlreadyThere { at, .. } = e {
+                    self.goto(at);
+                    self.scroll_to_cursor = true;
+                }
+                actions.push(GameAction::Toast(msg));
+            }
+        }
+    }
+
+    /// The line would not go where the user looks: not the selected move, not after
+    /// it, not instead of it (and the start of the game looks at everything).
+    fn paste_elsewhere(&self, plan: &chess_core::paste::PastePlan) -> bool {
+        let c = self.cursor;
+        !(c == NodeId::ROOT
+            || plan.at == c
+            || self.game.parent(c) == Some(plan.at)
+            || self.game.path(plan.at).contains(&c))
+    }
+
+    /// Inserts the line: the cursor on its first move, a message naming it.
+    fn paste_apply(
+        &mut self,
+        mut plan: chess_core::paste::PastePlan,
+        actions: &mut Vec<GameAction>,
+    ) {
+        // The note on the move order is written in the interface's language.
+        plan.transposition = plan
+            .transposition
+            .take()
+            .map(|m| trf("By another move order: {moves}", &[("moves", &m)]));
+        let line = paste_line(&plan.line);
+        let after = (plan.at != NodeId::ROOT).then(|| self.node_label(plan.at));
+        match self.game.apply_paste(&plan) {
+            Ok(first) => {
+                self.goto(first);
+                self.scroll_to_cursor = true;
+                let mut msg = if plan.continuation && plan.at != NodeId::ROOT {
+                    trf(
+                        "The game is continued: {moves} (Ctrl+Z to undo)",
+                        &[("moves", &line)],
+                    )
+                } else {
+                    match after {
+                        Some(m) => trf(
+                            "Line {moves} inserted after {move} (Ctrl+Z to undo)",
+                            &[("moves", &line), ("move", &m)],
+                        ),
+                        None => trf(
+                            "Line {moves} inserted at the start of the game (Ctrl+Z to undo)",
+                            &[("moves", &line)],
+                        ),
+                    }
+                };
+                if plan.games > 1 {
+                    msg.push(' ');
+                    msg.push_str(&trf(
+                        "The clipboard has {count} games — the first one is inserted.",
+                        &[("count", &plan.games)],
+                    ));
+                }
+                actions.push(GameAction::Toast(msg));
+            }
+            Err(e) => actions.push(GameAction::Toast(e.to_string())),
+        }
+    }
+
+    /// «12.Nf3» / «12…Nf6» of a node, as shown (the start: «the start of the game»).
+    fn node_label(&self, id: NodeId) -> String {
+        match (self.game.move_number(id), self.game.game_move(id)) {
+            (Some((n, side)), Some(m)) => move_label(n, side, &m.san, true),
+            _ => tr("the start of the game").to_owned(),
+        }
+    }
+
+    /// «Insert the line earlier?»: Enter inserts, Esc does not.
+    fn paste_question(&mut self, ctx: &egui::Context, actions: &mut Vec<GameAction>) {
+        let Some(plan) = &self.paste_pending else {
+            return;
+        };
+        let from = (plan.at != NodeId::ROOT).then(|| self.node_label(plan.at));
+        let cursor = self.node_label(self.cursor);
+        let earlier = self.game.path(self.cursor).contains(&plan.at);
+        let text = match (&from, earlier) {
+            (None, _) => {
+                tr("The game in the clipboard parts from this one at the start of the game.")
+                    .to_owned()
+            }
+            (Some(f), true) => trf(
+                "The game in the clipboard parts from this one before the selected move: after {from}, not after {cursor}.",
+                &[("from", f), ("cursor", &cursor)],
+            ),
+            (Some(f), false) => trf(
+                "The game in the clipboard parts from this one in another line: after {from}.",
+                &[("from", f)],
+            ),
+        };
+        let button = match &from {
+            Some(f) => trf("Insert after {move}", &[("move", f)]),
+            None => tr("Insert at the start").to_owned(),
+        };
+        let line = paste_line_full(&plan.line);
+        let source = plan.source_ref.clone();
+        let mut choice = None;
+        let width = (ctx.content_rect().width() - 32.0).min(460.0);
+        egui::Modal::new(egui::Id::new("paste_question")).show(ctx, |ui| {
+            ui.set_width(width);
+            ui.heading(tr("Insert the line earlier?"));
+            ui.add_space(4.0);
+            ui.label(text);
+            ui.add_space(8.0);
+            egui::Frame::new()
+                .inner_margin(egui::Margin::same(8))
+                .corner_radius(4)
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    ui.visuals().widgets.noninteractive.bg_stroke.color,
+                ))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(egui::Label::new(RichText::new(&line).size(14.0)).truncate());
+                    if let Some(s) = &source {
+                        ui.label(RichText::new(s).weak().size(13.0));
+                    }
+                });
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::widgets::primary(ui, &button).clicked() {
+                    choice = Some(true);
+                }
+                if ui
+                    .add(egui::Button::new(tr("Cancel")).min_size(vec2(0.0, 30.0)))
+                    .clicked()
+                {
+                    choice = Some(false);
+                }
+            });
+        });
+        if choice.is_none() {
+            ctx.input_mut(|i| {
+                if i.consume_key(Modifiers::NONE, Key::Enter) {
+                    choice = Some(true);
+                } else if i.consume_key(Modifiers::NONE, Key::Escape) {
+                    choice = Some(false);
+                }
+            });
+        }
+        match choice {
+            Some(true) => {
+                if let Some(plan) = self.paste_pending.take() {
+                    self.paste_apply(plan, actions);
+                }
+            }
+            Some(false) => self.paste_pending = None,
+            None => {}
+        }
+    }
+
     /// Dev hook (`CP_COMMENT_EDIT`): the editor on the current move.
     pub fn debug_comment_edit(&mut self) {
         self.open_editor(Slot::After(self.cursor));
@@ -3026,9 +4128,30 @@ impl GameView {
         if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
+        // A modal question or dialog over the game has the keys (its Enter and Esc);
+        // the game under it does not change.
+        if self.paste_pending.is_some() || ui.ctx().memory(|m| m.top_modal_layer()).is_some() {
+            return;
+        }
         if self.play.is_some() {
             self.play_keys(ui, actions);
             return;
+        }
+        if self.train.is_some() {
+            self.train_keys(ui, actions);
+            return;
+        }
+        // Ctrl+V: egui gives it as the text pasted, not as a key.
+        let pasted = ui.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Paste(t) => Some(t.clone()),
+                _ => None,
+            })
+        });
+        if let Some(text) = pasted
+            && self.paste_pending.is_none()
+        {
+            self.paste_text(&text, actions);
         }
         let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
         let ctrl_shift = |k| KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, k);
@@ -3058,6 +4181,9 @@ impl GameView {
             }
             if i.consume_shortcut(&ctrl(Key::W)) {
                 cmds.push("back");
+            }
+            if i.consume_shortcut(&ctrl(Key::G)) {
+                cmds.push("play_from");
             }
             if i.consume_shortcut(&ctrl_shift(Key::F)) {
                 cmds.push("find");
@@ -3132,6 +4258,10 @@ impl GameView {
                 }
                 "copy" => actions.push(self.copy_pgn()),
                 "save" => actions.push(GameAction::Save),
+                "play_from" => {
+                    let at = self.cursor;
+                    self.play_from(at, actions);
+                }
                 "add_to_db" => actions.push(GameAction::AddToDatabase),
                 "game_data" => actions.push(GameAction::EditGameData),
                 "back" => actions.push(GameAction::Back),
@@ -3490,4 +4620,32 @@ pub(crate) fn text_width(ui: &Ui, text: &str, style: egui::TextStyle) -> f32 {
         .layout_no_wrap(text.to_owned(), style.resolve(ui.style()), Color32::WHITE)
         .size()
         .x
+}
+
+/// A move as shown: «12.Nf3», «12…Nf6» (`numbered`: black's number too).
+fn move_label(n: u32, side: Color, san: &str, numbered: bool) -> String {
+    let label = match side {
+        Color::White => format!("{n}.{san}"),
+        Color::Black if numbered => format!("{n}…{san}"),
+        Color::Black => san.to_owned(),
+    };
+    crate::san::show(&label).into_owned()
+}
+
+/// The moves of a pasted line as shown: all of a short one, else «first … last».
+fn paste_line(line: &[(u32, Color, String)]) -> String {
+    if line.len() <= 3 {
+        return paste_line_full(line);
+    }
+    let one = |(n, side, san): &(u32, Color, String)| move_label(*n, *side, san, true);
+    format!("{} … {}", one(&line[0]), one(&line[line.len() - 1]))
+}
+
+/// Every move of a line, numbered as in the notation.
+fn paste_line_full(line: &[(u32, Color, String)]) -> String {
+    line.iter()
+        .enumerate()
+        .map(|(i, (n, side, san))| move_label(*n, *side, san, i == 0))
+        .collect::<Vec<_>>()
+        .join(" ")
 }

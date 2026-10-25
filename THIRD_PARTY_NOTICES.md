@@ -51,14 +51,18 @@ Downloaded unmodified (files renamed `wk.svg` → `wK.svg`) from https://github.
 "Interface Sounds" (https://kenney.nl, CC0 1.0): leading silence trimmed, loudness matched to the
 other sets, re-encoded as Ogg Vorbis.
 
-| Set | Move | Capture | Check | Checkmate | Defeat |
-| --- | --- | --- | --- | --- | --- |
-| wood | impactWood_light_002 | impactWood_heavy_002 | impactPlank_medium_002 | impactBell_heavy_001 | minimize_008 |
-| glass | impactGlass_light_001 | impactGlass_heavy_001 | glass_002 | impactBell_heavy_000 | minimize_004 |
-| clicks | click_002 | drop_002 | confirmation_001 | maximize_006 | minimize_006 |
+| Set | Move | Capture | Check | Checkmate | Defeat | Success |
+| --- | --- | --- | --- | --- | --- | --- |
+| wood | impactWood_light_002 | impactWood_heavy_002 | impactPlank_medium_002 | impactBell_heavy_001 | minimize_008 | confirmation_004 |
+| glass | impactGlass_light_001 | impactGlass_heavy_001 | glass_002 | impactBell_heavy_000 | minimize_004 | confirmation_002 |
+| clicks | click_002 | drop_002 | confirmation_001 | maximize_006 | minimize_006 | confirmation_003 |
 
-The Defeat sounds of the Lichess sets (`Defeat.ogg` of `public/sound/sfx`, `piano`,
-`futuristic`, `nes`, by Enigmahack, AGPLv3+) were downloaded unmodified on 2026-10-25.
+`apps/desktop/assets/sounds/common/Wrong.ogg` (a wrong move while learning an opening, every
+set) is Kenney's `error_003` of "Interface Sounds" (CC0), made the same way.
+
+The Defeat and Success sounds of the Lichess sets (`Defeat.ogg` and `Victory.ogg` of
+`public/sound/sfx`, `piano`, `futuristic`, `nes`, by Enigmahack, AGPLv3+) were downloaded
+unmodified on 2026-10-25.
 
 Notes:
 - Lichess keeps a set's checkmate sound as a link to its check sound; ChessPenguin plays the check

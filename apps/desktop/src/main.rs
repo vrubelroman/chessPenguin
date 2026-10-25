@@ -28,6 +28,7 @@ mod san;
 mod settings;
 mod settings_ui;
 mod sound;
+mod train;
 mod translate;
 mod translate_ui;
 mod update;
