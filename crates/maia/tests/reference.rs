@@ -1,6 +1,6 @@
 //! Agreement with the original PyTorch model (tests/reference.json, written by
 //! scripts/maia-reference.py): the same top moves with close probabilities. Needs the
-//! weights: `MAIA_WEIGHTS=/path/maia3-5m.bin cargo test -p maia -- --ignored`.
+//! weights: `MAIA_WEIGHTS=/path/maia3-5m.pt cargo test -p maia -- --ignored`.
 
 use maia::Maia;
 use shakmaty::fen::Fen;

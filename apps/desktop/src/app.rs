@@ -166,6 +166,12 @@ pub fn overlay_open_besides(ctx: &egui::Context, own: &[egui::Id]) -> bool {
         })
 }
 
+/// What starts once the played game is closed.
+enum PlayNext {
+    Rematch(crate::play::Start),
+    Dialog,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum CloseIntent {
     BackToLibrary,
@@ -186,6 +192,11 @@ pub struct App {
     settings_ui: SettingsWindow,
     toast: Option<Toast>,
     own: Own,
+    /// The play dialog («Play against the computer»).
+    play_dialog: Option<crate::play::Dialog>,
+    /// After the current game is closed: a new game against Maia (a rematch, or the
+    /// dialog for a new one).
+    play_next: Option<PlayNext>,
     tx: Sender<Async>,
     rx: Receiver<Async>,
     confirm_close: Option<CloseIntent>,
@@ -240,6 +251,8 @@ struct DebugStartup {
     /// (own_db.rs) after a short delay; `delete` and `chooser` without a game: the
     /// record `CP_OPEN` (default 0) of the first database.
     own: Option<String>,
+    /// `CP_PLAY`: a game against Maia at start (see `debug_screenshot`).
+    play: Option<String>,
     keys: std::collections::VecDeque<(Modifiers, Key)>,
     next_key: f64,
     /// `CP_TYPE=<text>`: typed into the field that has the keyboard, 2.5 s after start.
@@ -261,6 +274,7 @@ impl DebugStartup {
             screenshot_requested: false,
             open_settings: false,
             own: std::env::var("CP_OWN").ok(),
+            play: std::env::var("CP_PLAY").ok(),
             keys: std::env::var("CP_KEYS")
                 .unwrap_or_default()
                 .split_whitespace()
@@ -343,6 +357,8 @@ impl App {
             settings_ui: SettingsWindow::new(),
             toast: None,
             own: Own::default(),
+            play_dialog: None,
+            play_next: None,
             tx,
             rx,
             confirm_close: None,
@@ -431,6 +447,44 @@ impl App {
         if self.debug.open_settings && ctx.input(|i| i.time) > 1.5 {
             self.debug.open_settings = false;
             self.settings_ui.open = true;
+        }
+        // `CP_PLAY=white|black[,5+3|none][,1500]`: a game against Maia starts at once;
+        // `CP_PLAY=dialog`: the play dialog.
+        if let Some(spec) = self.debug.play.take() {
+            if spec == "dialog" {
+                self.play_dialog = Some(crate::play::Dialog::new(&self.settings));
+            } else {
+                let mut parts = spec.split(',');
+                let user = if parts.next() == Some("black") {
+                    chess_core::shakmaty::Color::Black
+                } else {
+                    chess_core::shakmaty::Color::White
+                };
+                let clock = match parts.next() {
+                    Some("none") => None,
+                    Some(tc) => tc.split_once('+').and_then(|(m, i)| {
+                        Some(crate::play::TimeControl {
+                            base: m.parse::<u32>().ok()? * 60,
+                            increment: i.parse().ok()?,
+                        })
+                    }),
+                    None => Some(crate::play::TimeControl {
+                        base: 300,
+                        increment: 3,
+                    }),
+                };
+                let strength = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1500);
+                self.start_play(
+                    ctx,
+                    crate::play::Start {
+                        user,
+                        strength,
+                        user_elo: self.settings.rating,
+                        user_name: self.settings.your_name.clone(),
+                        clock,
+                    },
+                );
+            }
         }
         if self.debug.own.is_some() && ctx.input(|i| i.time) > 1.5 {
             let what = self.debug.own.take().unwrap_or_default();
@@ -1230,6 +1284,18 @@ impl App {
         self.game = Some(GameView::new(g, None, Vec::new()));
     }
 
+    /// A new game against Maia (the weights are there: the dialog saw to it).
+    fn start_play(&mut self, ctx: &egui::Context, start: crate::play::Start) {
+        let Some(weights) = crate::maia_download::installed() else {
+            self.play_dialog = Some(crate::play::Dialog::new(&self.settings));
+            return;
+        };
+        self.new_game();
+        if let Some(g) = self.game.as_mut() {
+            g.start_play(start, weights, ctx);
+        }
+    }
+
     /// The game's data for editing (F2, the title, the menu).
     fn edit_game_data(&mut self) {
         let Some(g) = &self.game else { return };
@@ -1682,9 +1748,11 @@ impl App {
     }
 
     fn request_close(&mut self, ctx: &egui::Context, intent: CloseIntent) {
-        // A comment being written goes into the game first.
+        // A comment being written goes into the game first; a game against Maia still
+        // being played ends (resigned, or dropped before the first moves).
         if let Some(g) = self.game.as_mut() {
             g.commit_editor();
+            g.resign_if_playing();
         }
         if self.game.as_ref().is_some_and(|g| g.game.is_modified()) {
             self.confirm_close = Some(intent);
@@ -1721,6 +1789,13 @@ impl App {
             && let Some(src) = g.source
         {
             self.library.reveal(&src.path, src.index);
+        }
+        match self.play_next.take() {
+            Some(PlayNext::Rematch(s)) => self.start_play(ctx, s),
+            Some(PlayNext::Dialog) => {
+                self.play_dialog = Some(crate::play::Dialog::new(&self.settings))
+            }
+            None => {}
         }
         if let Some((path, start, line, flipped)) = self.find_after_close.take() {
             self.library.show_position(&path, start, line, flipped, ctx);
@@ -1972,6 +2047,7 @@ impl App {
             Some(2) => {
                 self.confirm_close = None;
                 self.find_after_close = None;
+                self.play_next = None;
                 // A restart asked for waits for no later quit.
                 self.restart_to = None;
             }
@@ -2003,6 +2079,7 @@ impl eframe::App for App {
             && let Some(g) = self.game.as_mut()
         {
             g.commit_editor();
+            g.resign_if_playing();
         }
         // Quitting with a modified game left for another (reference tab): show that one,
         // so the question "save?" is about the game that has the changes.
@@ -2053,6 +2130,9 @@ impl eframe::App for App {
         {
             self.own.then_close = None;
             self.new_base_dialog(own_db::AfterCreate::Shelf);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G))) && self.game.is_none() {
+            self.play_dialog = Some(crate::play::Dialog::new(&self.settings));
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))) && self.game.is_none() {
             self.new_game();
@@ -2134,6 +2214,34 @@ impl eframe::App for App {
                         self.toast(&ctx, msg);
                     }
                     GameAction::Save => self.save_current(&ctx, None),
+                    GameAction::Rematch => {
+                        let next = self
+                            .game
+                            .as_ref()
+                            .and_then(|g| g.play_end.clone())
+                            .map(|e| {
+                                let mut s = e.start;
+                                s.user = match self.settings.play.color {
+                                    crate::play::ColorChoice::Random => {
+                                        if crate::play::random_unit() < 0.5 {
+                                            chess_core::shakmaty::Color::White
+                                        } else {
+                                            chess_core::shakmaty::Color::Black
+                                        }
+                                    }
+                                    _ => !s.user,
+                                };
+                                s
+                            });
+                        if let Some(s) = next {
+                            self.play_next = Some(PlayNext::Rematch(s));
+                            self.request_close(&ctx, CloseIntent::BackToLibrary);
+                        }
+                    }
+                    GameAction::PlayAgain => {
+                        self.play_next = Some(PlayNext::Dialog);
+                        self.request_close(&ctx, CloseIntent::BackToLibrary);
+                    }
                     GameAction::AddToDatabase => {
                         if let Some(g) = self.game.as_mut() {
                             g.commit_editor();
@@ -2202,6 +2310,9 @@ impl eframe::App for App {
                     }
                     LibraryAction::OpenPgn(text) => self.open_pgn_text(&ctx, text, true),
                     LibraryAction::NewGame => self.new_game(),
+                    LibraryAction::Play => {
+                        self.play_dialog = Some(crate::play::Dialog::new(&self.settings))
+                    }
                     LibraryAction::NewGameIn(path) => {
                         self.new_game();
                         if let Some(g) = self.game.as_mut() {
@@ -2369,6 +2480,15 @@ impl eframe::App for App {
 
         self.confirm_dialog(&ctx);
         self.own_dialogs(&ctx);
+        if let Some(d) = self.play_dialog.as_mut()
+            && let Some(out) = d.show(&ctx, &mut self.settings)
+        {
+            self.play_dialog = None;
+            if let crate::play::DialogOutcome::Play(start) = out {
+                self.settings_dirty = true;
+                self.start_play(&ctx, start);
+            }
+        }
         // Ctrl+Z on the library while the deleted game can still come back.
         if self.game.is_none()
             && self.own.undo.is_some()

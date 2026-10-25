@@ -38,6 +38,8 @@ pub enum LibraryAction {
     /// Open PGN text as a new game.
     OpenPgn(String),
     NewGame,
+    /// A game against Maia: the play dialog.
+    Play,
     /// A new game meant for this database (the table's «+ Game»): Ctrl+S adds it there.
     NewGameIn(PathBuf),
     PastePgn,
@@ -116,10 +118,15 @@ fn legacy_pgn(path: &Path) -> bool {
 /// `Library::app_buttons`), with the gap that sets the game ones apart from the
 /// database actions.
 fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
-    let texts: [&str; 3] = if icons {
-        ["⚙", "📋", "♟"]
+    let texts: [&str; 4] = if icons {
+        ["⚙", "📋", "♟", "⚔"]
     } else {
-        [tr("⚙ Settings"), tr("📋 Paste PGN"), tr("♟ New game")]
+        [
+            tr("⚙ Settings"),
+            tr("📋 Paste PGN"),
+            tr("♟ New game"),
+            tr("⚔ Play"),
+        ]
     };
     texts.iter().map(|t| button_w(ui, t)).sum::<f32>()
         + update.map_or(0.0, |v| button_w(ui, v))
@@ -704,6 +711,16 @@ impl Library {
             .clicked()
         {
             actions.push(LibraryAction::NewGame);
+        }
+        if ui
+            .button(label(tr("⚔ Play"), "⚔"))
+            .on_hover_text(hint(
+                tr("⚔ Play"),
+                tr("A game against Maia, which plays like a human of the chosen rating (Ctrl+G)"),
+            ))
+            .clicked()
+        {
+            actions.push(LibraryAction::Play);
         }
         if ui
             .button(label(tr("📋 Paste PGN"), "📋"))

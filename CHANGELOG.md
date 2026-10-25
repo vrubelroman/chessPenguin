@@ -2,6 +2,22 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Play against the computer (desktop): «⚔ Play» in the library (Ctrl+G) starts a game
+  against Maia — a neural network (Maia-3, CSSLab, University of Toronto) that plays like
+  a human of the chosen rating, 600–2600, mistakes included. Your name and rating
+  (optional; «Weaker · As me · Stronger» choose the strength relative to it), colour,
+  Lichess time controls (bullet to classical, custom, no clock). During the game: the
+  board, the notation, both clocks (time runs after each side's first move, increment
+  after the move, low time in red), take back, resign; no engine or analysis. Maia
+  thinks like a human — a pause that depends on her clock — and never loses on time. The
+  game ends by mate, stalemate, no material, threefold repetition, fifty moves, time or
+  resignation; then it is an ordinary game with the result strip: Analyse, Rematch, New
+  game, Save to a database (tags: players, ratings, TimeControl, Termination, [%clk]).
+  Maia is computed in plain Rust, about 0.1 s a move on one core; its weights (21 MB,
+  the authors' own file from huggingface.co) are downloaded once on request.
+
 ## [1.2.0] — 2026-10-25
 
 - Your own comments in a game (desktop): Enter on a move (or the right-click menu, a

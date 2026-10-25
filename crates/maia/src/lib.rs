@@ -5,10 +5,11 @@
 //! move and the ratings of both players, and gives the probability of each legal move
 //! as a player of that rating would play it, plus the chances of win, draw and loss.
 //!
-//! The weights come from a file in our own simple format (`MAIA3W02`, written by
-//! `scripts/maia-convert.py` from the published PyTorch checkpoint): halves (f16),
-//! read once into f32.
+//! The weights are the published checkpoint itself (`maia3-5m.pt`, PyTorch's zip of a
+//! pickle and raw f32 storages), read without PyTorch: the network shares one bias
+//! tensor between its blocks.
 
+mod checkpoint;
 mod net;
 mod weights;
 
@@ -23,7 +24,7 @@ pub struct Maia {
 }
 
 impl Maia {
-    /// Reads the weights file.
+    /// Reads the checkpoint (`maia3-5m.pt`).
     pub fn load(path: &std::path::Path) -> Result<Maia, WeightsError> {
         let bytes = std::fs::read(path).map_err(WeightsError::Io)?;
         Maia::from_bytes(&bytes)

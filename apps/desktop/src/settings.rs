@@ -139,6 +139,10 @@ pub struct Settings {
     pub new_database_dir: Option<PathBuf>,
     /// The database a game was last added to (preselected in the chooser).
     pub last_target: Option<PathBuf>,
+    /// The user's rating (optional): the strength of Maia is chosen relative to it.
+    pub rating: Option<u32>,
+    /// The last choices of the play dialog.
+    pub play: crate::play::PlayPrefs,
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -203,6 +207,8 @@ impl Default for Settings {
             your_name: String::new(),
             new_database_dir: None,
             last_target: None,
+            rating: None,
+            play: Default::default(),
         }
     }
 }

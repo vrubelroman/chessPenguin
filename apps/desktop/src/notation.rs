@@ -22,6 +22,8 @@ pub struct Notation<'a> {
     pub translations: Option<&'a HashMap<String, Translated>>,
     /// The comment being written, drawn where the comment stands (user-comments.md §3).
     pub editor: Option<&'a mut CommentEditor>,
+    /// A game being played: moves only show their position (no menus, no editing).
+    pub read_only: bool,
 }
 
 /// Result of a frame of the notation panel.
@@ -328,6 +330,9 @@ fn handle_move_response(
         resp.scroll_to_me(Some(egui::Align::Center));
     }
     let is_variation = n.game.child_index(id).is_some_and(|i| i > 0) || !n.game.is_mainline(id);
+    if n.read_only {
+        return;
+    }
     // The menu is about the move it opens on: the move becomes the current one.
     if resp.secondary_clicked() && id != n.cursor {
         out.clicked = Some(id);

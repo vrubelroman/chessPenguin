@@ -62,6 +62,15 @@ pub struct GameView {
     scroll_to_cursor: bool,
     /// The comment being written (user-comments.md).
     editor: Option<CommentEditor>,
+    /// A game against Maia in progress (play-mode.md).
+    pub play: Option<crate::play::Session>,
+    /// The game just played: the result strip.
+    pub play_end: Option<crate::play::End>,
+    /// What the play started with (for the end, a rematch).
+    play_start: Option<crate::play::Start>,
+    /// «The game is on» asked (leaving during a game); the clocks wait meanwhile.
+    /// `true`: back to the previous game, not to the library.
+    play_leave: Option<(bool, std::time::Instant)>,
     show_diagnostics: bool,
     engine_settings_open: bool,
     review: Review,
@@ -92,6 +101,10 @@ pub enum GameAction {
     CopyText(String, &'static str),
     /// Ctrl+S: into the game's own database, else "Add to database…".
     Save,
+    /// After a game against Maia: the same again with colours swapped.
+    Rematch,
+    /// After a game against Maia: the play dialog.
+    PlayAgain,
     /// Ctrl+Shift+S: choose the database to add the game to.
     AddToDatabase,
     /// F2: players, event, date, result…
@@ -138,6 +151,10 @@ impl GameView {
             preview: None,
             scroll_to_cursor: true,
             editor: None,
+            play: None,
+            play_end: None,
+            play_start: None,
+            play_leave: None,
             show_diagnostics: false,
             engine_settings_open: false,
             review,
@@ -241,6 +258,10 @@ impl GameView {
     /// A move made on the board or picked in the reference tab: goes to it if the
     /// game has it, else adds it (undoable).
     fn play_move(&mut self, m: Move, actions: &mut Vec<GameAction>) {
+        if self.play.is_some() {
+            self.user_move(m, actions);
+            return;
+        }
         match self.game.add_move(self.cursor, m) {
             Ok(id) => {
                 self.goto(id);
@@ -601,7 +622,8 @@ impl GameView {
         {
             self.review.note_live_speed(analysis.nps, e.threads);
         }
-        if input_enabled && !self.review.dialog_open {
+        self.play_tick(ui.ctx(), &mut actions);
+        if input_enabled && !self.review.dialog_open && self.play_leave.is_none() {
             self.editor_keys(ui, &mut actions);
             self.keyboard(ui, &mut actions);
         }
@@ -684,6 +706,10 @@ impl GameView {
             Some(DialogAction::OpenEngines) => actions.push(GameAction::OpenEngineSettings),
             None => {}
         }
+
+        // Leaving during a game asks first; the question itself.
+        self.guard_leaving(&mut actions);
+        self.leave_question(ui.ctx(), &mut actions);
 
         if self.show_diagnostics {
             let mut open = true;
@@ -1177,7 +1203,7 @@ impl GameView {
                     } else {
                         None
                     },
-                    interactive: self.preview.is_none(),
+                    interactive: self.preview.is_none() && self.user_may_move(),
                     show_coords: settings.show_coords,
                     theme: settings.board_theme.theme(),
                     pieces: settings.piece_set,
@@ -1188,6 +1214,7 @@ impl GameView {
                 }
                 if let Some(drawn) = self.board.take_shape()
                     && self.preview.is_none()
+                    && self.play.is_none()
                 {
                     self.apply_shape(drawn);
                 }
@@ -1219,6 +1246,13 @@ impl GameView {
         hub: &mut crate::translate_ui::Hub,
         actions: &mut Vec<GameAction>,
     ) {
+        if self.play.is_some() {
+            self.play_side(ui, settings, analysis, reference, hub, actions);
+            return;
+        }
+        if self.play_end.is_some() {
+            egui::Panel::top("play_result").show(ui, |ui| self.result_strip(ui, actions));
+        }
         egui::Panel::bottom("game_toolbar").show(ui, |ui| self.toolbar(ui, actions));
         egui::Panel::top("engine_panel")
             .show(ui, |ui| self.engine_panel(ui, settings, analysis, actions));
@@ -1313,6 +1347,7 @@ impl GameView {
                             .map(|p| (p.base, p.san.as_slice(), p.shown)),
                         translations: self.translation.shown(),
                         editor: self.editor.as_mut(),
+                        read_only: self.play.is_some(),
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
@@ -1895,6 +1930,718 @@ impl GameView {
         }
     }
 
+    // ----- playing against Maia (docs/design/play-mode.md) -----------------------------
+
+    /// Starts a game against Maia in this (new, empty) game.
+    pub fn start_play(
+        &mut self,
+        start: crate::play::Start,
+        weights: std::path::PathBuf,
+        ctx: &egui::Context,
+    ) {
+        use crate::play::{Clock, Opponent, Session};
+        let maia = format!("Maia {}", start.strength);
+        let you = if start.user_name.is_empty() {
+            "?".to_owned()
+        } else {
+            start.user_name.clone()
+        };
+        let (white, black) = match start.user {
+            Color::White => (you, maia),
+            Color::Black => (maia, you),
+        };
+        let event = match start.clock {
+            Some(tc) => trf(
+                "Game vs computer, {speed}",
+                &[("speed", &tc.speed().name().to_lowercase())],
+            ),
+            None => tr("Game vs computer").to_owned(),
+        };
+        let g = &mut self.game;
+        g.set_tag("Event", &event);
+        g.set_tag("Site", "ChessPenguin");
+        g.set_tag("White", &white);
+        g.set_tag("Black", &black);
+        let (we, be) = match start.user {
+            Color::White => (start.user_elo, Some(start.strength)),
+            Color::Black => (Some(start.strength), start.user_elo),
+        };
+        if let Some(e) = we {
+            g.set_tag("WhiteElo", &e.to_string());
+        }
+        if let Some(e) = be {
+            g.set_tag("BlackElo", &e.to_string());
+        }
+        let (wt, bt) = match start.user {
+            Color::White => ("human", "program"),
+            Color::Black => ("program", "human"),
+        };
+        g.set_tag("WhiteType", wt);
+        g.set_tag("BlackType", bt);
+        g.set_tag(
+            "TimeControl",
+            &start.clock.map_or_else(|| "-".to_owned(), |tc| tc.pgn()),
+        );
+        g.mark_saved();
+        self.flipped = start.user == Color::Black;
+        self.play_end = None;
+        self.play = Some(Session {
+            user: start.user,
+            strength: start.strength,
+            user_elo: start.user_elo,
+            clock: start.clock.map(Clock::new),
+            opponent: Opponent::start(weights, ctx),
+            warned: false,
+            resign_asked: false,
+        });
+        self.play_start = Some(start);
+        self.ask_maia();
+    }
+
+    /// The positions of the main line, from the start to its end.
+    fn mainline_positions(&self) -> Vec<Chess> {
+        let mut out = Vec::new();
+        if let Some(p) = self.game.position(NodeId::ROOT) {
+            out.push(p.clone());
+        }
+        for id in self.game.mainline() {
+            if let Some(p) = self.game.position(id) {
+                out.push(p.clone());
+            }
+        }
+        out
+    }
+
+    fn play_end_node(&self) -> NodeId {
+        self.game.line_end(NodeId::ROOT)
+    }
+
+    /// The side to move at the end of the main line.
+    fn play_turn(&self) -> Color {
+        self.game
+            .position(self.play_end_node())
+            .map_or(Color::White, |p| p.turn())
+    }
+
+    /// The user may move: their turn, at the current position, Maia not thinking.
+    fn user_may_move(&self) -> bool {
+        match &self.play {
+            None => true,
+            Some(s) => {
+                self.play_leave.is_none()
+                    && self.play_turn() == s.user
+                    && self.cursor == self.play_end_node()
+                    && !s.opponent.thinking
+            }
+        }
+    }
+
+    /// Asks Maia for a move when it is her turn (dev hook `CP_PLAY_AUTO`: for the user
+    /// too, quickly — a whole game without a mouse).
+    fn ask_maia(&mut self) {
+        let turn = self.play_turn();
+        let positions = self.mainline_positions();
+        let ply = positions.len() - 1;
+        let only = positions.last().is_some_and(|p| p.legal_moves().len() == 1);
+        let auto = std::env::var_os("CP_PLAY_AUTO").is_some();
+        let Some(s) = self.play.as_mut() else { return };
+        if turn == s.user {
+            if auto {
+                let elo = s.user_elo.unwrap_or(s.strength);
+                s.opponent.ask(
+                    positions,
+                    elo,
+                    s.strength,
+                    std::time::Duration::from_millis(30),
+                );
+            }
+            return;
+        }
+        let now = std::time::Instant::now();
+        let clock = s
+            .clock
+            .as_ref()
+            .map(|c| (c.left(turn, now), c.control.increment));
+        let pause = if auto {
+            std::time::Duration::from_millis(30)
+        } else {
+            crate::play::pause(clock, ply, only)
+        };
+        let oppo = s.user_elo.unwrap_or(s.strength);
+        s.opponent.ask(positions, s.strength, oppo, pause);
+    }
+
+    /// A move at the end of the main line by the side to move: the clock, `[%clk]`, the
+    /// sound, the end of the game, Maia's turn.
+    fn play_add(&mut self, m: Move, actions: &mut Vec<GameAction>) {
+        let end = self.play_end_node();
+        let mover = self.play_turn();
+        let Ok(id) = self.game.add_move(end, m) else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        if let Some(s) = self.play.as_mut() {
+            s.resign_asked = false;
+            if let Some(c) = s.clock.as_mut() {
+                c.moved(mover, now);
+                let left = c.left(mover, now);
+                let _ = self
+                    .game
+                    .annotate(id, Vec::new(), vec![crate::play::clk_command(left)]);
+            }
+        }
+        // The moves of a game played are not undone as edits (the take-back is).
+        self.goto(id);
+        if let Some(snd) = self.sound_for(id) {
+            actions.push(GameAction::Sound(snd));
+        }
+        if let Some(e) = crate::play::ending(&self.mainline_positions()) {
+            self.finish_play(e, actions);
+        } else {
+            self.ask_maia();
+        }
+    }
+
+    fn user_move(&mut self, m: Move, actions: &mut Vec<GameAction>) {
+        if !self.user_may_move() {
+            // A move in a past position: back to the game.
+            let end = self.play_end_node();
+            self.goto(end);
+            return;
+        }
+        self.play_add(m, actions);
+    }
+
+    /// The clock and Maia's answers, each frame.
+    fn play_tick(&mut self, ctx: &egui::Context, actions: &mut Vec<GameAction>) {
+        if self.play_leave.is_some() {
+            return;
+        }
+        let Some(s) = self.play.as_mut() else { return };
+        if let Some(err) = s.opponent.failed() {
+            actions.push(GameAction::Toast(trf(
+                "Maia did not start: {e}",
+                &[("e", &err)],
+            )));
+            self.play = None;
+            self.game.mark_saved();
+            actions.push(GameAction::Back);
+            return;
+        }
+        if let Some(m) = s.opponent.answer() {
+            self.play_add(m, actions);
+        }
+        let now = std::time::Instant::now();
+        let end_pos = self.game.position(self.play_end_node()).cloned();
+        let Some(s) = self.play.as_mut() else { return };
+        if let Some(c) = &s.clock
+            && let Some(side) = c.running()
+        {
+            let left = c.left(side, now);
+            if left.is_zero() {
+                // Time is up; a draw when the other side cannot mate (FIDE 6.9).
+                let draw = end_pos.is_some_and(|p| p.has_insufficient_material(!side));
+                self.finish_play(crate::play::Ending::Time { loser: side, draw }, actions);
+                return;
+            }
+            if side == s.user && left <= c.low() {
+                s.warned = true;
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    /// The game is over: the result, the tags, the strip; the screen becomes an ordinary
+    /// new game.
+    fn finish_play(&mut self, ending: crate::play::Ending, actions: &mut Vec<GameAction>) {
+        let Some(mut s) = self.play.take() else {
+            return;
+        };
+        s.opponent.forget();
+        let now = std::time::Instant::now();
+        let left = s.clock.as_mut().map(|c| {
+            c.stop(now);
+            (c.left(s.user, now), c.left(!s.user, now))
+        });
+        self.game.set_result(ending.result());
+        self.game.set_tag("Termination", ending.termination());
+        let end = self.play_end_node();
+        self.goto(end);
+        if matches!(ending, crate::play::Ending::Checkmate { .. }) {
+            actions.push(GameAction::Sound(Sound::Checkmate));
+        }
+        if let Some(start) = self.play_start.clone() {
+            self.play_end = Some(crate::play::End {
+                ending,
+                user: s.user,
+                start,
+                left,
+            });
+        }
+    }
+
+    /// Before both sides have moved there is nothing to lose: the game is dropped.
+    fn play_started(&self) -> bool {
+        self.game.mainline().len() >= 2
+    }
+
+    /// Resigns the game in progress (leaving it, closing the program); before the first
+    /// moves it is dropped instead. The game stays as played.
+    pub fn resign_if_playing(&mut self) {
+        let Some(s) = &self.play else { return };
+        if self.play_started() {
+            let user = s.user;
+            let mut sink = Vec::new();
+            self.finish_play(crate::play::Ending::Resigned { loser: user }, &mut sink);
+        } else {
+            self.play = None;
+            self.game.mark_saved();
+        }
+    }
+
+    /// Takes back the user's last move and Maia's answer to it (no variation is left).
+    fn take_back(&mut self) {
+        let Some(s) = self.play.as_mut() else { return };
+        s.opponent.forget();
+        let user = s.user;
+        // The last move of the user on the main line.
+        let line = self.game.mainline();
+        let last = line.iter().rev().find(|&&id| {
+            self.game
+                .parent(id)
+                .and_then(|p| self.game.position(p))
+                .is_some_and(|p| p.turn() == user)
+        });
+        if let Some(&id) = last
+            && let Ok(parent) = self.game.delete_variation(id)
+        {
+            self.goto(parent);
+        }
+        self.ask_maia();
+    }
+
+    /// Keys during a game: looking through it, flipping, the take-back; Esc asks.
+    fn play_keys(&mut self, ui: &Ui, actions: &mut Vec<GameAction>) {
+        let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
+        let mut cmds = Vec::new();
+        ui.input_mut(|i| {
+            if i.consume_shortcut(&ctrl(Key::Z)) {
+                cmds.push("takeback");
+            }
+            if i.consume_shortcut(&ctrl(Key::W)) {
+                cmds.push("leave");
+            }
+            if i.modifiers.is_none() {
+                for (key, cmd) in [
+                    (Key::ArrowLeft, "back1"),
+                    (Key::ArrowRight, "fwd1"),
+                    (Key::ArrowUp, "end"),
+                    (Key::ArrowDown, "home"),
+                    (Key::Home, "home"),
+                    (Key::End, "end"),
+                    (Key::F, "flip"),
+                    (Key::L, "engine"),
+                    (Key::Escape, "leave"),
+                ] {
+                    if i.key_pressed(key) {
+                        cmds.push(cmd);
+                    }
+                }
+            }
+            if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, Key::A)) {
+                cmds.push("engine");
+            }
+        });
+        for cmd in cmds {
+            match cmd {
+                "takeback" => self.take_back(),
+                "back1" => self.step_back(),
+                "fwd1" => self.step_forward(actions),
+                "home" => self.goto(NodeId::ROOT),
+                "end" => {
+                    let end = self.play_end_node();
+                    self.goto(end);
+                }
+                "flip" => self.flipped = !self.flipped,
+                "engine" => actions.push(GameAction::Toast(
+                    tr("The engine is off during the game — analyse after it ends").to_owned(),
+                )),
+                "leave" => {
+                    if let Some(s) = self.play.as_mut()
+                        && s.resign_asked
+                    {
+                        s.resign_asked = false;
+                    } else {
+                        ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+                        actions.push(GameAction::Back);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Leaving during a game asks first (play-mode.md §6); before the first moves of
+    /// both sides the game is just dropped.
+    fn guard_leaving(&mut self, actions: &mut Vec<GameAction>) {
+        if self.play.is_none() {
+            return;
+        }
+        let leaving = actions
+            .iter()
+            .position(|a| matches!(a, GameAction::Back | GameAction::ReturnToPrevious));
+        if let Some(k) = leaving {
+            let a = actions.remove(k);
+            if self.play_started() {
+                let previous = matches!(a, GameAction::ReturnToPrevious);
+                self.play_leave = Some((previous, std::time::Instant::now()));
+            } else {
+                if let Some(s) = self.play.as_mut() {
+                    s.opponent.forget();
+                }
+                self.play = None;
+                self.game.mark_saved();
+                actions.push(a);
+            }
+        }
+    }
+
+    /// «The game is on»: resign and add, resign and leave, keep playing.
+    fn leave_question(&mut self, ctx: &egui::Context, actions: &mut Vec<GameAction>) {
+        let Some((previous, since)) = self.play_leave else {
+            return;
+        };
+        let action = if previous {
+            GameAction::ReturnToPrevious
+        } else {
+            GameAction::Back
+        };
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("play_leave")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.heading(tr("The game is on"));
+            ui.label(tr("If you leave, the game ends with your resignation."));
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(tr("Resign and add to a database…")).clicked() {
+                    choice = Some(0);
+                }
+                if ui.button(tr("Resign and leave")).clicked() {
+                    choice = Some(1);
+                }
+                if crate::widgets::primary(ui, tr("Keep playing")).clicked() {
+                    choice = Some(2);
+                }
+            });
+        });
+        if choice.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            choice = Some(2);
+        }
+        let Some(choice) = choice else { return };
+        self.play_leave = None;
+        // The clocks waited while the question was open.
+        let waited = since.elapsed();
+        if let Some(c) = self.play.as_mut().and_then(|s| s.clock.as_mut()) {
+            c.pause(waited);
+        }
+        match choice {
+            0 => {
+                self.resign_if_playing();
+                actions.push(GameAction::Save);
+            }
+            1 => {
+                self.resign_if_playing();
+                actions.push(action);
+            }
+            _ => {}
+        }
+    }
+
+    /// The side panel during a game: the opponent's clock, the notation, the user's
+    /// clock, the game's buttons.
+    fn play_side(
+        &mut self,
+        ui: &mut Ui,
+        settings: &mut Settings,
+        analysis: &mut Analysis,
+        reference: &mut crate::reference::Reference,
+        hub: &mut crate::translate_ui::Hub,
+        actions: &mut Vec<GameAction>,
+    ) {
+        let _ = (settings, analysis, reference, hub);
+        let Some(s) = &self.play else { return };
+        let user = s.user;
+        // The side whose pieces are at the top of the board is at the top.
+        let top = if self.flipped {
+            Color::White
+        } else {
+            Color::Black
+        };
+        egui::Panel::bottom("play_toolbar").show(ui, |ui| self.play_toolbar(ui, actions));
+        egui::Panel::bottom("play_card_bottom")
+            .show_separator_line(false)
+            .show(ui, |ui| self.clock_card(ui, !top, user));
+        egui::Panel::top("play_card_top")
+            .show_separator_line(false)
+            .show(ui, |ui| self.clock_card(ui, top, user));
+        egui::CentralPanel::default().show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    let resp = Notation {
+                        game: &self.game,
+                        cursor: self.cursor,
+                        scroll_to_cursor: self.scroll_to_cursor,
+                        marks: None,
+                        preview: None,
+                        translations: None,
+                        editor: None,
+                        read_only: true,
+                    }
+                    .show(ui);
+                    if let Some(id) = resp.clicked {
+                        self.goto(id);
+                    }
+                    self.scroll_to_cursor = false;
+                });
+            if self.cursor != self.play_end_node()
+                && ui
+                    .link(
+                        RichText::new(tr("Viewing an earlier position · back to the game — End"))
+                            .weak(),
+                    )
+                    .clicked()
+            {
+                let end = self.play_end_node();
+                self.goto(end);
+            }
+        });
+    }
+
+    /// A player's card: name, rating, the clock and what is going on.
+    fn clock_card(&self, ui: &mut Ui, side: Color, user: Color) {
+        let Some(s) = &self.play else { return };
+        let now = std::time::Instant::now();
+        let turn = self.play_turn();
+        let active = turn == side;
+        let left = s.clock.as_ref().map(|c| c.left(side, now));
+        let low = s
+            .clock
+            .as_ref()
+            .zip(left)
+            .is_some_and(|(c, l)| c.running() == Some(side) && l <= c.low());
+        let sel = ui.visuals().selection;
+        let mut frame = egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .corner_radius(4)
+            .stroke(egui::Stroke::new(
+                1.0,
+                ui.visuals().widgets.noninteractive.bg_stroke.color,
+            ));
+        if active {
+            frame = frame.fill(sel.bg_fill.gamma_multiply(0.35));
+        }
+        if low {
+            frame = frame.stroke(egui::Stroke::new(1.5, ui.visuals().error_fg_color));
+        }
+        ui.add_space(4.0);
+        frame.show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    let king = if side == Color::White { "♔" } else { "♚" };
+                    let name = if side == user {
+                        match s.user_elo {
+                            Some(r) => format!("{king} {} · {r}", tr("You")),
+                            None => format!("{king} {}", tr("You")),
+                        }
+                    } else {
+                        format!("{king} Maia {}", s.strength)
+                    };
+                    ui.label(RichText::new(name).size(15.0));
+                    let state = if side != user && s.opponent.thinking {
+                        tr("thinking…")
+                    } else if side == user && active {
+                        tr("your move")
+                    } else if side != user {
+                        tr("waiting")
+                    } else {
+                        ""
+                    };
+                    ui.label(RichText::new(state).weak().size(13.0));
+                });
+                if let Some(left) = left {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut t = RichText::new(crate::play::clock_text(left))
+                            .monospace()
+                            .size(28.0);
+                        if low {
+                            t = t.color(ui.visuals().error_fg_color);
+                        } else if active {
+                            t = t.strong();
+                        } else {
+                            t = t.weak();
+                        }
+                        ui.label(t);
+                    });
+                }
+            });
+        });
+        ui.add_space(4.0);
+    }
+
+    /// ⏮ ◀ ▶ ⏭ · 🔃 · ↶ Take back · 🏳 Resign (✕ Abort before the first moves).
+    fn play_toolbar(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            let big = |s: &str| RichText::new(s).size(18.0);
+            if ui.button(big("⏮")).clicked() {
+                self.goto(NodeId::ROOT);
+            }
+            if ui.button(big("◀")).clicked() {
+                self.step_back();
+            }
+            if ui.button(big("▶")).clicked() {
+                self.step_forward(actions);
+            }
+            if ui.button(big("⏭")).clicked() {
+                let end = self.play_end_node();
+                self.goto(end);
+            }
+            ui.separator();
+            if ui
+                .button(big("🔃"))
+                .on_hover_text(tr("Flip board (F)"))
+                .clicked()
+            {
+                self.flipped = !self.flipped;
+            }
+            ui.separator();
+            let user = self.play.as_ref().map_or(Color::White, |s| s.user);
+            let user_moved = self.game.mainline().iter().any(|&id| {
+                self.game
+                    .parent(id)
+                    .and_then(|p| self.game.position(p))
+                    .is_some_and(|p| p.turn() == user)
+            });
+            if ui
+                .add_enabled(user_moved, egui::Button::new(tr("↶ Take back")))
+                .on_hover_text(tr("Take back a move (Ctrl+Z)"))
+                .clicked()
+            {
+                self.take_back();
+            }
+            if !self.play_started() {
+                if ui
+                    .button(tr("× Abort"))
+                    .on_hover_text(tr("Leave without a result: no moves made yet"))
+                    .clicked()
+                {
+                    actions.push(GameAction::Back);
+                }
+            } else if self.play.as_ref().is_some_and(|s| s.resign_asked) {
+                ui.label(tr("Resign?"));
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new(tr("Yes")).color(Color32::WHITE))
+                            .fill(ui.visuals().error_fg_color),
+                    )
+                    .clicked()
+                {
+                    let user = self.play.as_ref().map_or(Color::White, |s| s.user);
+                    self.finish_play(crate::play::Ending::Resigned { loser: user }, actions);
+                } else if ui.button(tr("No")).clicked()
+                    && let Some(s) = self.play.as_mut()
+                {
+                    s.resign_asked = false;
+                }
+            } else if ui.button(tr("⚑ Resign")).clicked()
+                && let Some(s) = self.play.as_mut()
+            {
+                s.resign_asked = true;
+            }
+        });
+        ui.add_space(4.0);
+    }
+
+    /// The strip above the notation after a game: the result and what to do next.
+    fn result_strip(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
+        let Some(end) = self.play_end.clone() else {
+            return;
+        };
+        let mut close = false;
+        ui.add_space(4.0);
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .corner_radius(4)
+            .fill(ui.visuals().extreme_bg_color)
+            .stroke(egui::Stroke::new(
+                1.0,
+                ui.visuals().widgets.noninteractive.bg_stroke.color,
+            ))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!(" {} ", end.ending.result().as_str()))
+                            .strong()
+                            .size(15.0)
+                            .background_color(ui.visuals().widgets.inactive.weak_bg_fill),
+                    );
+                    ui.label(RichText::new(end.heading()).strong().size(17.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::widgets::small_close_button(ui)
+                            .on_hover_text(tr("Close"))
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+                if !end.detail().is_empty() {
+                    ui.label(end.detail());
+                }
+                if let Some((you, maia)) = end.left {
+                    ui.label(
+                        RichText::new(trf(
+                            "Left: you {you} · Maia {maia}",
+                            &[
+                                ("you", &crate::play::clock_text(you)),
+                                ("maia", &crate::play::clock_text(maia)),
+                            ],
+                        ))
+                        .weak(),
+                    );
+                }
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    if crate::widgets::primary(ui, tr("📈 Analyse")).clicked() {
+                        self.review.dialog_open = true;
+                    }
+                    if ui
+                        .button(tr("↻ Rematch"))
+                        .on_hover_text(tr("Same settings, colours swapped"))
+                        .clicked()
+                    {
+                        actions.push(GameAction::Rematch);
+                    }
+                    if ui.button(tr("⚔ New game")).clicked() {
+                        actions.push(GameAction::PlayAgain);
+                    }
+                    if ui
+                        .button(tr("💾 Save to a database…"))
+                        .on_hover_text("Ctrl+S")
+                        .clicked()
+                    {
+                        actions.push(GameAction::Save);
+                    }
+                });
+            });
+        if close {
+            self.play_end = None;
+        }
+    }
+
     /// Dev hook (`CP_SHAPE=Ge2e4,Rd5`): shapes drawn on the board at the current move.
     pub fn debug_shapes(&mut self, spec: &str) {
         for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -1981,6 +2728,10 @@ impl GameView {
 
     fn keyboard(&mut self, ui: &Ui, actions: &mut Vec<GameAction>) {
         if ui.ctx().egui_wants_keyboard_input() {
+            return;
+        }
+        if self.play.is_some() {
+            self.play_keys(ui, actions);
             return;
         }
         let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
