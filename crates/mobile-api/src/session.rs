@@ -210,6 +210,36 @@ impl GameSession {
     pub fn pgn(&self) -> String {
         self.with(|g| g.to_pgn())
     }
+
+    /// The analysis of the game as it is now (its report), with earlier results from
+    /// the cache folder `cache_dir` ("" for none).
+    pub fn review(&self, cache_dir: String) -> Arc<crate::GameReview> {
+        crate::GameReview::new(self.read(|g| g.clone()), cache_dir)
+    }
+
+    /// A new game of the moves from the start to the move at place `at` (to play on from
+    /// there, android-play.md §31.6): the same start position, no tags but those of the
+    /// position. Refused on a null move on the way (a position the board cannot reach).
+    pub fn play_from(&self, at: u32) -> Result<Arc<GameSession>, ApiError> {
+        self.read(|g| {
+            let id = node(g, at)?;
+            let mut game = Game::from_start(g.start().clone());
+            let mut cur = NodeId::ROOT;
+            for &n in &g.path(id)[1..] {
+                match g.game_move(n).map(|m| &m.kind) {
+                    Some(chess_core::MoveKind::Normal(m)) => cur = game.add_move(cur, *m)?,
+                    _ => {
+                        return Err(ApiError::Edit {
+                            detail: "a null move on the way".into(),
+                        });
+                    }
+                }
+            }
+            game.forget_history();
+            game.mark_saved();
+            Ok(GameSession::wrap(game))
+        })
+    }
 }
 
 // ----- own databases ----------------------------------------------------------------
@@ -323,6 +353,25 @@ mod tests {
         // Undo brings it back under the same id.
         let back = s.undo().unwrap();
         assert!(back.data.nodes[0].children.contains(&v.cursor));
+    }
+
+    #[test]
+    fn a_game_goes_on_from_a_move_of_another() {
+        let s =
+            GameSession::from_pgn("[White \"A\"]\n\n1. e4 e5 (1... c5) 2. Nf3 *".into()).unwrap();
+        let c5 = s.data().nodes.iter().find(|n| n.san == "c5").unwrap().id;
+        let p = s.play_from(c5).unwrap();
+        assert_eq!(san_line(&p.data()), ["e4", "c5"]);
+        assert!(!p.is_modified());
+        assert!(
+            !p.data()
+                .tags
+                .iter()
+                .any(|t| t.name == "White" && t.value == "A")
+        );
+        let n = GameSession::from_pgn("1. e4 -- 2. d4 *".into()).unwrap();
+        let d4 = n.data().nodes.iter().find(|x| x.san == "d4").unwrap().id;
+        assert!(n.play_from(d4).is_err());
     }
 
     #[test]
