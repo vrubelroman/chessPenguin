@@ -284,7 +284,10 @@ impl GameView {
 
     fn subtitle(&self) -> String {
         if let Some(t) = &self.train {
-            let up_to = trf("up to {move}", &[("move", &t.start.up_to)]);
+            let up_to = trf(
+                "up to {move}",
+                &[("move", &crate::san::show(&t.start.up_to))],
+            );
             return match &t.start.event {
                 Some(e) => format!("{e} · {up_to}"),
                 None => up_to,
@@ -3330,28 +3333,23 @@ impl GameView {
         if t.done || t.flash.is_some() {
             return;
         }
-        let Some(&want) = t.start.line.get(k) else {
-            return;
-        };
-        if m == want {
-            t.hint = false;
-            let last = k + 1 == t.start.line.len();
+        let verdict = t.judge(k, m);
+        if matches!(
+            verdict,
+            crate::train::Verdict::Right | crate::train::Verdict::Finished
+        ) {
             if let Ok(id) = self.game.add_move(end, m) {
                 // The game of the training is never «modified»: nothing to save.
                 self.game.forget_history();
                 self.game.mark_saved();
                 self.goto(id);
-                if last {
-                    if let Some(t) = self.train.as_mut() {
-                        t.finish();
-                    }
+                if verdict == crate::train::Verdict::Finished {
                     actions.push(GameAction::Sound(Sound::Success));
                 } else if let Some(s) = self.sound_for(id) {
                     actions.push(GameAction::Sound(s));
                 }
             }
-        } else {
-            t.mistakes[k] += 1;
+        } else if verdict == crate::train::Verdict::Wrong {
             let mut after = pos;
             after.play_unchecked(m);
             t.flash = Some(crate::train::Flash {
@@ -3508,9 +3506,12 @@ impl GameView {
                 });
             });
             ui.label(
-                RichText::new(trf("up to {move}", &[("move", &t.start.up_to)]))
-                    .weak()
-                    .size(13.0),
+                RichText::new(trf(
+                    "up to {move}",
+                    &[("move", &crate::san::show(&t.start.up_to))],
+                ))
+                .weak()
+                .size(13.0),
             );
             ui.add_space(3.0);
         });

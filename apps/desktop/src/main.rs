@@ -28,13 +28,15 @@ mod san;
 mod settings;
 mod settings_ui;
 mod sound;
-mod train;
 mod translate;
 mod translate_ui;
 mod update;
 mod update_ui;
 mod viewed;
 mod widgets;
+
+/// Learning an opening: shared with the Android app.
+use trainer as train;
 
 fn main() -> eframe::Result {
     // `chesspenguin --bench <database> [report.txt]`: timings instead of the window
@@ -58,6 +60,16 @@ fn main() -> eframe::Result {
         return Ok(());
     }
     crate::i18n::set_lang(settings::Settings::load().language);
+    // The runs of the opening trainer (`CP_TRAINING_FILE` elsewhere: development).
+    if let Some(file) = std::env::var_os("CP_TRAINING_FILE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
+                .map(|d| d.data_local_dir().join("training.json"))
+        })
+    {
+        train::set_file(file);
+    }
     graphics::install_panic_hook();
     graphics::init_library_log();
     let mode = graphics::choose();

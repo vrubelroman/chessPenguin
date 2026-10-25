@@ -24,6 +24,7 @@ rfd.workspace = true
 arboard.workspace = true
 rodio.workspace = true
 directories.workspace = true
+trainer.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 online-games.workspace = true

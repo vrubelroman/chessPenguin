@@ -1,0 +1,15 @@
+[package]
+name = "trainer"
+description = "Learning an opening of ChessPenguin: replaying a game's line from memory, its runs counted (the desktop and Android apps share it)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+chess-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

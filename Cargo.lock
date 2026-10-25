@@ -820,6 +820,7 @@ dependencies = [
  "skrifa",
  "sys-locale",
  "tar",
+ "trainer",
  "uci",
  "ureq",
  "whatlang",
@@ -4591,6 +4592,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "trainer"
+version = "1.4.0"
+dependencies = [
+ "chess-core",
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

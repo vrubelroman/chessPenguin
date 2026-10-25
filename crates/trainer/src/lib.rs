@@ -7,7 +7,7 @@
 //! mistake on a move the user may ask to see it (the run is then marked «with a hint»).
 //! The runs of each line are kept in `training.json`, by the line itself (its start
 //! position and moves), so they survive edits of the game and are shared between games
-//! with the same line.
+//! with the same line, in the file the app names ([`set_file`]).
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -37,7 +37,8 @@ pub struct TrainStart {
     pub game: Option<String>,
     /// «Wijk aan Zee 2024», when the game says so.
     pub event: Option<String>,
-    /// The last move of the line as shown («12…Rd8»).
+    /// The last move of the line («12…Rd8», SAN in Latin letters: the app shows it its
+    /// own way).
     pub up_to: String,
     /// Its move number.
     pub last_number: u32,
@@ -62,11 +63,10 @@ impl TrainStart {
         }
         let (n, side) = game.move_number(at)?;
         let san = &game.game_move(at)?.san;
-        let up_to = crate::san::show(&match side {
+        let up_to = match side {
             chess_core::shakmaty::Color::White => format!("{n}.{san}"),
             chess_core::shakmaty::Color::Black => format!("{n}…{san}"),
-        })
-        .into_owned();
+        };
         let name = |t: &str| {
             game.tag(t)
                 .map(str::trim)
@@ -194,6 +194,64 @@ impl Training {
         self.hint = false;
         self.after = Some(record(&self.key, self.total(), self.hinted()));
     }
+
+    /// The move the line wants on half-move `k` (none past its end).
+    pub fn wanted(&self, k: usize) -> Option<Move> {
+        self.start.line.get(k).copied()
+    }
+
+    /// Judges `m` played on half-move `k`: the line's move goes on (the last one ends
+    /// the run, counted), any other is a mistake on this move. Nothing once it is done.
+    pub fn judge(&mut self, k: usize, m: Move) -> Verdict {
+        if self.done {
+            return Verdict::Done;
+        }
+        let Some(want) = self.wanted(k) else {
+            return Verdict::Done;
+        };
+        if m != want {
+            self.mistakes[k] += 1;
+            return Verdict::Wrong;
+        }
+        self.hint = false;
+        if k + 1 == self.start.line.len() {
+            self.finish();
+            Verdict::Finished
+        } else {
+            Verdict::Right
+        }
+    }
+
+    /// Mistakes on half-move `k` so far in this run.
+    pub fn mistakes_on(&self, k: usize) -> u32 {
+        self.mistakes.get(k).copied().unwrap_or(0)
+    }
+
+    /// The user may ask to see the move of half-move `k` (enough mistakes on it).
+    pub fn may_show(&self, k: usize) -> bool {
+        !self.done && self.mistakes_on(k) >= HINT_AFTER
+    }
+
+    /// Shows the move of half-move `k` (the run is then marked «with a hint»).
+    pub fn show(&mut self, k: usize) {
+        if let Some(s) = self.shown.get_mut(k) {
+            *s = true;
+            self.hint = true;
+        }
+    }
+}
+
+/// What a move made in a training was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// The line's move: the line goes on.
+    Right,
+    /// The line's last move: the run is over and counted.
+    Finished,
+    /// Another move: a mistake, taken back.
+    Wrong,
+    /// The run was already over.
+    Done,
 }
 
 /// What is known of the runs of a line.
@@ -216,19 +274,30 @@ pub struct LineStats {
 /// The runs by line, as in the file: an entry that does not read is left as it is.
 static STATS: Mutex<Option<serde_json::Map<String, serde_json::Value>>> = Mutex::new(None);
 
-/// The file the tests write instead.
+/// The file of the runs, as the app names it.
 static FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-/// `<local data dir>/training.json` (`CP_TRAINING_FILE` elsewhere: development).
+/// Where the runs are kept (`training.json` in the app's data); read again from there
+/// when next needed. Without a file nothing is kept between starts.
+pub fn set_file(path: PathBuf) {
+    *FILE.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+    *STATS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 fn file() -> Option<PathBuf> {
-    if let Some(p) = FILE.lock().ok().and_then(|f| f.clone()) {
-        return Some(p);
+    FILE.lock().ok().and_then(|f| f.clone())
+}
+
+/// Writes through a file beside it: a run cut short leaves the old file whole.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
     }
-    if let Some(p) = std::env::var_os("CP_TRAINING_FILE") {
-        return Some(PathBuf::from(p));
-    }
-    directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
-        .map(|d| d.data_local_dir().join("training.json"))
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 fn with_stats<R>(f: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> R) -> R {
@@ -301,7 +370,7 @@ fn record(key: &str, mistakes: u32, hinted: bool) -> LineStats {
                 let _ = std::fs::create_dir_all(dir);
             }
             if let Ok(json) = serde_json::to_vec_pretty(m)
-                && let Err(e) = crate::settings::write_atomic(&path, &json)
+                && let Err(e) = write_atomic(&path, &json)
             {
                 eprintln!("training: save failed: {e}");
             }
@@ -325,7 +394,7 @@ mod tests {
     fn a_line_is_kept_by_its_moves_and_counted() {
         let dir = std::env::temp_dir().join(format!("cp-train-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        *FILE.lock().unwrap() = Some(dir.join("training.json"));
+        set_file(dir.join("training.json"));
         let a = chess_core::parse_str("[White \"A\"]\n\n1. e4 c5 2. Nf3 d6 *").game;
         let b = chess_core::parse_str("1. e4 c5 2. Nf3 d6 3. d4 (3. Bb5+) *").game;
         let at = |g: &Game, k: usize| g.mainline()[k];
@@ -334,6 +403,7 @@ mod tests {
         // The same line in two games: one key.
         assert_eq!(ta.key(), tb.key());
         assert_eq!(ta.game.as_deref(), Some("A — ?"));
+        assert_eq!(ta.up_to, "2…d6");
         let mut t = Training::new(ta);
         t.mistakes[1] = 2;
         t.finish();
@@ -379,6 +449,27 @@ mod tests {
             b"{ broken"
         );
         assert_eq!(stats(&t.key).runs, 1);
+        // The verdict of a move: a mistake counts on its move, the last right move ends.
+        let mut t = Training::new(tb);
+        let line = t.start.line.clone();
+        assert_eq!(t.judge(0, line[1]), Verdict::Wrong);
+        assert_eq!(t.mistakes_on(0), 1);
+        assert!(!t.may_show(0));
+        t.judge(0, line[1]);
+        t.judge(0, line[1]);
+        assert!(t.may_show(0));
+        t.show(0);
+        assert_eq!(t.judge(0, line[0]), Verdict::Right);
+        assert!(!t.hint);
+        for (k, m) in line.iter().enumerate().skip(1).take(line.len() - 2) {
+            assert_eq!(t.judge(k, *m), Verdict::Right);
+        }
+        assert_eq!(
+            t.judge(line.len() - 1, line[line.len() - 1]),
+            Verdict::Finished
+        );
+        assert!(t.done && t.hinted());
+        assert_eq!(t.judge(0, line[0]), Verdict::Done);
         // A null move on the way: nothing to train.
         let n = chess_core::parse_str("1. e4 -- 2. d4 *").game;
         assert!(TrainStart::from_game(&n, n.mainline()[2]).is_none());
