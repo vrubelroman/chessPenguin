@@ -2199,7 +2199,14 @@ impl GameView {
             clock: start.clock.map(Clock::new),
             opponent: Opponent::start(weights, ctx),
             resign_asked: false,
-            judge: judge.map(|p| crate::play::Judge::start(p, ctx)),
+            judge: judge.map(|p| {
+                let ctx = ctx.clone();
+                crate::play::Judge::start(
+                    uci::EngineConfig::new(p),
+                    Vec::new(),
+                    Box::new(move || ctx.request_repaint()),
+                )
+            }),
             hopeless: 0,
             resign_offer: None,
             play_on: false,

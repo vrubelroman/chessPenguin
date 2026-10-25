@@ -810,6 +810,7 @@ dependencies = [
  "log",
  "maia",
  "online-games",
+ "play",
  "releases",
  "rfd",
  "rodio",
@@ -3323,6 +3324,16 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "play"
+version = "1.4.0"
+dependencies = [
+ "chess-core",
+ "getrandom 0.3.4",
+ "shakmaty",
+ "uci",
+]
 
 [[package]]
 name = "png"
