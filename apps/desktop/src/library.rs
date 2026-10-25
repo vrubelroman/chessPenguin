@@ -114,9 +114,9 @@ fn legacy_pgn(path: &Path) -> bool {
     guess.encoding != chess_core::TextEncoding::Utf8 && !guess.ascii_only
 }
 
-/// The width of the game buttons and of the program's ones (`Library::game_buttons`,
-/// `Library::app_buttons`), with the gap that sets the game ones apart from the
-/// database actions.
+/// The width of the game buttons, «Play» and the program's ones
+/// (`Library::game_buttons`, `Library::play_button`, `Library::app_buttons`), with
+/// the two lines between the groups.
 fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
     let texts: [&str; 4] = if icons {
         ["⚙", "📋", "♟", "♞"]
@@ -130,7 +130,7 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
     };
     texts.iter().map(|t| button_w(ui, t)).sum::<f32>()
         + update.map_or(0.0, |v| button_w(ui, v))
-        + GROUP_GAP
+        + 2.0 * GROUP_GAP
 }
 
 /// A shelf button's tooltip: with icons only, its name first.
@@ -671,9 +671,7 @@ impl Library {
             if let Some(p) = pick {
                 self.select_db(&p, ui.ctx());
             }
-            self.game_buttons(ui, icons, actions);
-            ui.add_space(GROUP_GAP - ui.spacing().item_spacing.x);
-            self.shelf_actions(ui, true, actions);
+            self.groups(ui, true, icons, actions);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.app_buttons(ui, icons, actions);
             });
@@ -698,7 +696,33 @@ impl Library {
         }
     }
 
-    /// "♟ New game · 📋 Paste PGN" before the database actions: what to put in, together.
+    /// The three groups of the title row, apart by a line: the databases (add, new,
+    /// online games) | a game to enter (new, paste) | play against Maia.
+    fn groups(&self, ui: &mut Ui, folded: bool, icons: bool, actions: &mut Vec<LibraryAction>) {
+        self.shelf_actions(ui, folded, actions);
+        ui.separator();
+        self.game_buttons(ui, icons, actions);
+        ui.separator();
+        self.play_button(ui, icons, actions);
+    }
+
+    /// "♞ Play": a game against Maia, a group of its own.
+    fn play_button(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
+        let label = if icons { "♞" } else { tr("♞ Play") };
+        if ui
+            .button(label)
+            .on_hover_text(shelf_hint(
+                icons,
+                tr("♞ Play"),
+                tr("A game against Maia, which plays like a human of the chosen rating (Ctrl+G)"),
+            ))
+            .clicked()
+        {
+            actions.push(LibraryAction::Play);
+        }
+    }
+
+    /// "♟ New game · 📋 Paste PGN": a game to enter.
     fn game_buttons(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
         let label = |full: &'static str, icon: &'static str| if icons { icon } else { full };
         let hint = |full: &str, hint: &str| shelf_hint(icons, full, hint);
@@ -711,16 +735,6 @@ impl Library {
             .clicked()
         {
             actions.push(LibraryAction::NewGame);
-        }
-        if ui
-            .button(label(tr("♞ Play"), "♞"))
-            .on_hover_text(hint(
-                tr("♞ Play"),
-                tr("A game against Maia, which plays like a human of the chosen rating (Ctrl+G)"),
-            ))
-            .clicked()
-        {
-            actions.push(LibraryAction::Play);
         }
         if ui
             .button(label(tr("📋 Paste PGN"), "📋"))
@@ -762,9 +776,7 @@ impl Library {
                 ui.heading(tr("Databases"));
                 ui.add_space(16.0 - ui.spacing().item_spacing.x);
             }
-            self.game_buttons(ui, icons, actions);
-            ui.add_space(GROUP_GAP - ui.spacing().item_spacing.x);
-            self.shelf_actions(ui, folded, actions);
+            self.groups(ui, folded, icons, actions);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.app_buttons(ui, icons, actions);
             });
