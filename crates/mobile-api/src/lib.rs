@@ -3,7 +3,8 @@
 //! ChessBase folder), list its games a page at a time, give a game as a tree of moves
 //! with the positions, ready for the board and the notation. Bindings: UniFFI.
 //!
-//! Databases are read only; nothing here writes a file.
+//! Databases are read only, except the user's own ones in the app's folder
+//! (`session.rs`): a game is changed in a [`GameSession`] and saved there.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -14,6 +15,7 @@ use shakmaty::Position;
 mod engine;
 mod online;
 mod review;
+mod session;
 mod update;
 
 pub use engine::{Analysis, Analyzer, EngineFailure, EngineLine, LineStep};
@@ -22,6 +24,7 @@ pub use online::{
     OnlineProblem, OnlineTarget, Site,
 };
 pub use review::{GameReview, MoveJudgement, ReviewMove, ReviewPoint, ReviewState, SideReview};
+pub use session::{Edited, GameSession, own_create, own_remove, own_save};
 pub use update::{ApkFile, AppRelease, ReleaseCheck};
 
 uniffi::setup_scaffolding!();
@@ -45,6 +48,12 @@ pub enum ApiError {
     /// No game with this number.
     #[error("no game {index}")]
     NoGame { index: u32 },
+    /// No move at this place of the game's list.
+    #[error("no move {place}")]
+    NoNode { place: u32 },
+    /// A change of the game that cannot be made (an illegal move, …).
+    #[error("{detail}")]
+    Edit { detail: String },
 }
 
 impl From<chess_import::ImportError> for ApiError {
@@ -371,6 +380,17 @@ impl Database {
             .load_game(index as usize)
             .ok_or(ApiError::NoGame { index })?;
         Ok(game_data(&parsed.game, &parsed.diagnostics))
+    }
+
+    /// The game `index`, to change (moves, variations, its data) and save.
+    pub fn session(&self, index: u32) -> Result<Arc<GameSession>, ApiError> {
+        let parsed = self
+            .db
+            .load_game(index as usize)
+            .ok_or(ApiError::NoGame { index })?;
+        let mut game = parsed.game;
+        game.mark_saved();
+        Ok(GameSession::wrap(game))
     }
 
     /// The analysis of the game `index` (its report), with earlier results from the
