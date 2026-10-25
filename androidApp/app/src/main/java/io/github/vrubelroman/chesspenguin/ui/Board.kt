@@ -10,6 +10,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,6 +31,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -40,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.caverock.androidsvg.SVG
 import io.github.vrubelroman.chesspenguin.data.BoardTheme
@@ -119,6 +124,32 @@ fun boardCorner(context: Context, file: String, size: Int): ImageBitmap? = runCa
     }
 }.getOrNull()
 
+/// "e4" of the square with index `i` of [placement] (a8 = 0).
+fun squareName(i: Int): String = "${'a' + i % 8}${'8' - i / 8}"
+
+/// Moves on the board (android-play.md §29): the legal moves of the position in UCI and
+/// what to do with the one made. A pawn on the last rank becomes a queen (owner's
+/// decision §29.4); `promotion` may name another piece for a from–to pair (the trainer
+/// takes the line's own piece).
+class BoardInput(
+    val legal: List<String>,
+    val onMove: (String) -> Unit,
+    val promotion: (String) -> Char? = { null },
+) {
+    /// The squares a piece on `from` can go to.
+    fun targets(from: String): Set<String> = legal.filter { it.startsWith(from) }.map { it.substring(2, 4) }.toSet()
+
+    /// The move from `from` to `to`, or null when there is none.
+    fun move(from: String, to: String): String? {
+        val pair = from + to
+        val all = legal.filter { it.startsWith(pair) }
+        if (all.isEmpty()) return null
+        if (all.size == 1) return all[0]
+        val piece = promotion(pair) ?: 'q'
+        return all.firstOrNull { it == pair + piece } ?: all.firstOrNull { it == pair + 'q' } ?: all[0]
+    }
+}
+
 /// An arrow on the board: a comment's `[%cal]` or the engine's best move.
 data class BoardArrow(val from: String, val to: String, val color: Color, val weight: Float = 1f)
 
@@ -138,8 +169,9 @@ fun markColor(letter: String): Color = when (letter) {
 val EngineArrow = Color(0, 48, 136, 160)
 
 /// The board: full width, the chosen board and pieces, the last move lit, the
-/// coordinates inside the edge squares (as on Lichess). It takes no touches in the first
-/// version (docs/design/android-ui.md §7.2). A move slides into place (250 ms).
+/// coordinates inside the edge squares (as on Lichess). With `input` a move is made by
+/// tapping a piece and then a square, or by dragging it (android-play.md §29.2–29.3);
+/// without it the board takes no touches. A move slides into place (250 ms).
 @Composable
 fun Board(
     fen: String,
@@ -155,6 +187,7 @@ fun Board(
     marks: List<BoardMark> = emptyList(),
     check: Boolean = false,
     animated: Boolean = true,
+    input: BoardInput? = null,
 ) {
     val colors = LocalChessColors.current
     val context = LocalContext.current
@@ -185,10 +218,71 @@ fun Board(
     }
     val coordStyle = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Medium)
     val density = LocalDensity.current
+    // A move being made: the piece chosen, and while dragged, where the finger is.
+    var selected by remember(fen) { mutableStateOf<Int?>(null) }
+    var dragAt by remember(fen) { mutableStateOf<Offset?>(null) }
+    val slop = LocalViewConfiguration.current.touchSlop
+    val currentInput = androidx.compose.runtime.rememberUpdatedState(input)
+    val lift = with(density) { 22.dp.toPx() }
+    fun indexAt(p: Offset, sq: Float): Int? {
+        val col = (p.x / sq).toInt()
+        val row = (p.y / sq).toInt()
+        if (p.x < 0 || p.y < 0 || col !in 0..7 || row !in 0..7) return null
+        return if (flipped) (7 - row) * 8 + (7 - col) else row * 8 + col
+    }
+    val touch = if (input == null) Modifier else Modifier.pointerInput(fen, flipped) {
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            val inp = currentInput.value ?: return@awaitEachGesture
+            val sq = size.width / 8f
+            val start = indexAt(down.position, sq) ?: return@awaitEachGesture
+            val startName = squareName(start)
+            val movable = inp.targets(startName).isNotEmpty()
+            val was = selected
+            // A tap on a target of the piece chosen makes the move.
+            if (was != null && start != was) {
+                inp.move(squareName(was), startName)?.let { m ->
+                    selected = null
+                    inp.onMove(m)
+                    return@awaitEachGesture
+                }
+            }
+            if (movable) selected = start
+            var dragging = false
+            while (true) {
+                val e = awaitPointerEvent()
+                val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                if (!c.pressed) {
+                    if (dragging) {
+                        val end = indexAt(c.position, sq)
+                        dragAt = null
+                        val m = end?.let { inp.move(startName, squareName(it)) }
+                        if (m != null) {
+                            selected = null
+                            inp.onMove(m)
+                        }
+                        // A drop elsewhere: the piece goes back, still chosen.
+                    } else if (!movable || start == was) {
+                        // A tap on the same piece, an empty square or the other side's
+                        // piece: nothing chosen any more.
+                        selected = null
+                    }
+                    c.consume()
+                    break
+                }
+                if (movable && !dragging && (c.position - down.position).getDistance() > slop) dragging = true
+                if (dragging) {
+                    dragAt = c.position
+                    c.consume()
+                }
+            }
+        }
+    }
     Canvas(
         modifier
             .aspectRatio(1f)
             .onSizeChanged { side = it.width }
+            .then(touch)
             .semantics { contentDescription = description },
     ) {
         val sq = size.width / 8f
@@ -209,6 +303,8 @@ fun Board(
             if (image == null) drawRect(if (light) theme.light else theme.dark, cell(i), Size(sq, sq))
             if (i == from || i == to) drawRect(colors.lastMove, cell(i), Size(sq, sq))
         }
+        val chosen = selected
+        if (chosen != null) drawRect(colors.lastMove.copy(alpha = 0.5f), cell(chosen), Size(sq, sq))
         for (m in marks) {
             val i = squareIndex(m.square) ?: continue
             val c = cell(i)
@@ -239,11 +335,29 @@ fun Board(
             if (p == ' ') continue
             val bmp = pieces.bitmap(set, p, px) ?: continue
             var at = cell(i)
+            // The piece being dragged: faint on its square, drawn under the finger below.
+            if (i == chosen && dragAt != null) {
+                drawImage(bmp, dstOffset = IntOffset(at.x.toInt(), at.y.toInt()), dstSize = IntSize(px, px), alpha = 0.3f)
+                continue
+            }
             if (animate && i == to && from != null && slide.value < 1f) {
                 val start = cell(from)
                 at = Offset(start.x + (at.x - start.x) * slide.value, start.y + (at.y - start.y) * slide.value)
             }
             drawImage(bmp, dstOffset = IntOffset(at.x.toInt(), at.y.toInt()), dstSize = IntSize(px, px))
+        }
+        // Where the piece chosen can go: a dot, a ring round a capture (as on Lichess).
+        if (chosen != null && input != null) {
+            val shade = Color(0, 0, 0, 64)
+            for (t in input.targets(squareName(chosen))) {
+                val i = squareIndex(t) ?: continue
+                val c = cell(i) + Offset(sq / 2, sq / 2)
+                if (squares[i] != ' ') {
+                    drawCircle(shade, radius = sq / 2 - sq * 0.045f, center = c, style = Stroke(width = sq * 0.09f))
+                } else {
+                    drawCircle(shade, radius = sq * 0.155f, center = c)
+                }
+            }
         }
         // Over the pieces, so that b, c, f, g stay readable (as on Lichess).
         // Coordinates: files along the bottom edge, ranks along the left edge.
@@ -261,6 +375,17 @@ fun Board(
             val f = squareIndex(a.from) ?: continue
             val t = squareIndex(a.to) ?: continue
             drawArrow(cell(f) + Offset(sq / 2, sq / 2), cell(t) + Offset(sq / 2, sq / 2), sq, a)
+        }
+        // The dragged piece: bigger and lifted above the finger, a shade on the square
+        // under it so that one sees where it goes.
+        val held = dragAt
+        if (held != null && chosen != null) {
+            val under = indexAt(held, sq)
+            if (under != null) drawCircle(Color(0, 0, 0, 31), radius = sq, center = cell(under) + Offset(sq / 2, sq / 2))
+            val big = (px * 1.5f).toInt()
+            pieces.bitmap(set, squares[chosen], big)?.let {
+                drawImage(it, dstOffset = IntOffset((held.x - big / 2f).toInt(), (held.y - lift - big / 2f).toInt()), dstSize = IntSize(big, big))
+            }
         }
     }
 }

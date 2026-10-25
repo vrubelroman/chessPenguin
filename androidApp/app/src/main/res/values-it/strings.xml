@@ -39,7 +39,6 @@
     <string name="move_forward">Mossa avanti</string>
     <string name="to_end">Alla fine della linea</string>
     <string name="next_moves">Seguito:</string>
-    <string name="board_hint">Questo è un visualizzatore di partite. Scorri le mosse con ◀ ▶ in basso.</string>
     <string name="board_description">Scacchiera, posizione dopo %1$s</string>
     <string name="board_start">Scacchiera, posizione iniziale</string>
     <string name="white_won">Hanno vinto i bianchi</string>
@@ -395,4 +394,9 @@
     <string name="s_about_ready">La versione %1$s è scaricata</string>
     <string name="upd_card_downloading">Aggiornamento a %1$s, %2$d di %3$d megabyte scaricati</string>
     <string name="upd_short_release">File non verificabile</string>
+    <string name="undo_action">Annulla</string>
+    <string name="moves_deleted">Mosse eliminate</string>
+    <string name="make_main">Rendi linea principale</string>
+    <string name="delete_move">Elimina la mossa e il seguito</string>
+    <string name="move_actions">Azioni sulla mossa</string>
 </resources>

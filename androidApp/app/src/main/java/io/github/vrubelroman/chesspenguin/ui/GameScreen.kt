@@ -37,6 +37,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.VerticalAlignTop
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FirstPage
@@ -58,7 +60,9 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -113,7 +117,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.mobile_api.EngineLine
+import uniffi.mobile_api.Edited
 import uniffi.mobile_api.GameData
+import uniffi.mobile_api.GameSession
 import uniffi.mobile_api.MoveJudgement
 import uniffi.mobile_api.MoveNode
 
@@ -134,6 +140,11 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var games by remember { mutableStateOf(app.shown[db]) }
     var place by rememberSaveable { mutableIntStateOf(startPlace) }
     var game by remember { mutableStateOf<GameData?>(null) }
+    // The game as changed on the board (android-play.md §29): moves for analysis; a game
+    // of someone else's file is not saved (owner's decision), its file never changes.
+    var edit by remember { mutableStateOf<GameSession?>(null) }
+    // What reading the game noticed: kept when the game is changed.
+    var notes by remember { mutableStateOf<List<String>>(emptyList()) }
     var failed by remember { mutableStateOf(false) }
     var current by rememberSaveable(place) { mutableIntStateOf(0) }
     var flipped by rememberSaveable { mutableStateOf(false) }
@@ -154,9 +165,12 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         }
         val index = list.getOrNull(place) ?: return@LaunchedEffect
         game = null
-        val loaded = withContext(Dispatchers.Default) { runCatching { database.game(index) } }
+        edit = null
+        val loaded = withContext(Dispatchers.Default) { runCatching { database.game(index) to database.session(index) } }
         failed = loaded.isFailure
-        game = loaded.getOrNull()
+        game = loaded.getOrNull()?.first
+        edit = loaded.getOrNull()?.second
+        notes = game?.notes ?: emptyList()
         if (game != null) review.open(db, database, index)
     }
     val pieces = remember { Pieces(context) }
@@ -164,7 +178,6 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     UpdateMessages(snackbar)
     val scope = rememberCoroutineScope()
     val view = LocalView.current
-    val hint = stringResource(R.string.board_hint)
     val readyText = stringResource(R.string.engine_ready)
     val cancelledText = stringResource(R.string.download_cancelled)
     val total = games?.size ?: 0
@@ -209,6 +222,8 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     val pgnCopied = stringResource(R.string.pgn_copied)
     val fenCopied = stringResource(R.string.fen_copied)
     suspend fun pgnText(): String? {
+        // Moves added on the board go along (the file is as it was).
+        edit?.takeIf { it.isModified() }?.let { e -> return withContext(Dispatchers.Default) { e.pgn() } }
         val index = games?.getOrNull(place) ?: return null
         val database = app.library.database(db).getOrNull() ?: return null
         return withContext(Dispatchers.Default) { database.pgn(index) }
@@ -341,6 +356,19 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     fun buzz(edge: Boolean) {
         if (prefs.vibration) view.performHapticFeedback(if (edge) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.CLOCK_TICK)
     }
+    // A change of the game: shown at once, the cursor where the change says.
+    fun apply(e: Edited) {
+        preview = null
+        game = e.data.copy(notes = notes)
+        current = e.cursor.toInt()
+    }
+    // The move sheet of a long press on a move (§29.6): which move.
+    var moveSheet by remember { mutableStateOf<Int?>(null) }
+    val deletedText = stringResource(R.string.moves_deleted)
+    val undoText = stringResource(R.string.undo_action)
+    fun undo() {
+        edit?.undo()?.let { apply(it) }
+    }
     fun go(to: Int) {
         preview = null
         if (nodes == null || to == current || to !in nodes.indices) return
@@ -471,10 +499,13 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             marks = marks,
             check = check,
             animated = prefs.animation,
-            modifier = boardModifier.pointerInput(Unit) {
-                detectTapGestures {
-                    if (firstBoardTouch(context)) scope.launch { snackbar.showSnackbar(hint) }
-                }
+            // A touch during a preview of an engine line closes it; no move is made (§29.5).
+            modifier = if (p != null) boardModifier.pointerInput(Unit) { detectTapGestures { preview = null } } else boardModifier,
+            input = edit?.takeIf { p == null && g != null }?.let { e ->
+                val legal = remember(g, current) { e.legalMoves(current.toUInt()) }
+                BoardInput(legal, onMove = { uci ->
+                    runCatching { e.play(current.toUInt(), uci) }.getOrNull()?.let { apply(it) }
+                })
             },
         )
     }
@@ -534,6 +565,13 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     g != null -> Notation(
                         g, items, where, current, notation, san, onMove = ::go, modifier = Modifier.fillMaxSize(),
                         marks = if (reviewShown) reviewMarks else emptyMap(),
+                        onLongMove = edit?.let {
+                            { id ->
+                                go(id)
+                                buzz(true)
+                                moveSheet = id
+                            }
+                        },
                     )
                     failed -> Text(
                         stringResource(R.string.game_failed),
@@ -597,6 +635,13 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, stringResource(R.string.menu)) }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            // First, and only when there is something to take back (§29.6).
+                            if (g != null && edit?.canUndo() == true) {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.undo)) }, onClick = {
+                                    menu = false
+                                    undo()
+                                })
+                            }
                             DropdownMenuItem(
                                 text = { Text(stringResource(if (rs?.hasData == true) R.string.review_report_menu else R.string.review_menu)) },
                                 // During the first analysis the panel already shows its progress (§21.1).
@@ -708,6 +753,32 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             },
             confirmButton = { TextButton(onClick = { info = false }) { Text(stringResource(R.string.close)) } },
         )
+    }
+    val sheetMove = moveSheet
+    if (sheetMove != null && g != null && edit != null) {
+        val n = g.nodes.getOrNull(sheetMove)
+        if (n == null || n.parent == null) {
+            moveSheet = null
+        } else {
+            MoveSheet(
+                label = AnnotatedString(if (n.white) "${n.moveNumber}." else "${n.moveNumber}…") + san(n.san),
+                inVariation = g.nodes[n.parent!!.toInt()].children.firstOrNull()?.toInt() != sheetMove,
+                onMakeMain = {
+                    moveSheet = null
+                    runCatching { edit?.makeMain(sheetMove.toUInt()) }.getOrNull()?.let { apply(it) }
+                },
+                onDelete = {
+                    moveSheet = null
+                    runCatching { edit?.deleteFrom(sheetMove.toUInt()) }.getOrNull()?.let { e ->
+                        apply(e)
+                        scope.launch {
+                            if (snackbar.showSnackbar(deletedText, undoText, duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) undo()
+                        }
+                    }
+                },
+                onDismiss = { moveSheet = null },
+            )
+        }
     }
     if (sheet) {
         EngineSheet(
@@ -959,13 +1030,31 @@ private fun resultLine(context: Context, result: String): String = when (result)
 }
 
 /// True only the very first time the board is touched (then the hint is shown).
-private fun firstBoardTouch(context: Context): Boolean {
-    val prefs = context.getSharedPreferences("hints", Context.MODE_PRIVATE)
-    if (prefs.getBoolean("board", false)) return false
-    prefs.edit().putBoolean("board", true).apply()
-    return true
-}
-
 /// A scope of its own: what is read in it is drawn again without its surroundings.
 @Composable
 private fun Live(content: @Composable () -> Unit) = content()
+
+/// What a long press on a move offers (android-play.md §29.6): make its line the main
+/// one (in a variation), remove it with what follows.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MoveSheet(label: AnnotatedString, inVariation: Boolean, onMakeMain: () -> Unit, onDelete: () -> Unit, onDismiss: () -> Unit) {
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            Text(label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+            if (inVariation) SheetAction(Icons.Rounded.VerticalAlignTop, stringResource(R.string.make_main), onMakeMain)
+            SheetAction(Icons.Rounded.Close, stringResource(R.string.delete_move), onDelete)
+        }
+    }
+}
+
+@Composable
+private fun SheetAction(icon: ImageVector, text: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(56.dp).clickable(onClick = onClick).padding(horizontal = 24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text, Modifier.padding(start = 16.dp), style = MaterialTheme.typography.bodyLarge)
+    }
+}

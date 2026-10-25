@@ -38,7 +38,6 @@
     <string name="move_forward">Бір жүріс алға</string>
     <string name="to_end">Варианттың соңына</string>
     <string name="next_moves">Келесі:</string>
-    <string name="board_hint">Бұл партияларды қарау құралы. Жүрістерді төмендегі ◀ ▶ арқылы ауыстырыңыз.</string>
     <string name="board_description">Тақта, %1$s кейінгі позиция</string>
     <string name="board_start">Тақта, бастапқы позиция</string>
     <string name="white_won">Ақтар жеңді</string>
@@ -390,4 +389,9 @@
     <string name="upd_card_downloading">%1$s нұсқасына жаңарту, %3$d мегабайттың %2$d жүктелді</string>
     <!-- Shown only when the interface is not in English. -->
     <string name="upd_short_release">Файлды тексеру мүмкін емес</string>
+    <string name="undo_action">Қайтару</string>
+    <string name="moves_deleted">Жүрістер жойылды</string>
+    <string name="make_main">Негізгі ету</string>
+    <string name="delete_move">Жүрісті және жалғасын жою</string>
+    <string name="move_actions">Жүріспен әрекеттер</string>
 </resources>

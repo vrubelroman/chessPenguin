@@ -39,7 +39,6 @@
     <string name="move_forward">Jugada adelante</string>
     <string name="to_end">Al final de la línea</string>
     <string name="next_moves">Siguiente:</string>
-    <string name="board_hint">Es un visor de partidas. Recorre las jugadas con ◀ ▶ abajo.</string>
     <string name="board_description">Tablero, posición tras %1$s</string>
     <string name="board_start">Tablero, posición inicial</string>
     <string name="white_won">Ganaron las blancas</string>
@@ -395,4 +394,9 @@
     <string name="s_about_ready">La versión %1$s está descargada</string>
     <string name="upd_card_downloading">Actualización a %1$s, %2$d de %3$d megabytes descargados</string>
     <string name="upd_short_release">No se puede comprobar el archivo</string>
+    <string name="undo_action">Deshacer</string>
+    <string name="moves_deleted">Jugadas eliminadas</string>
+    <string name="make_main">Convertir en línea principal</string>
+    <string name="delete_move">Eliminar la jugada y lo que sigue</string>
+    <string name="move_actions">Acciones de la jugada</string>
 </resources>

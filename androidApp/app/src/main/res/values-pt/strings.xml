@@ -39,7 +39,6 @@
     <string name="move_forward">Avançar um lance</string>
     <string name="to_end">Ao fim da linha</string>
     <string name="next_moves">Próximo:</string>
-    <string name="board_hint">Este é um visualizador de partidas. Percorra os lances com ◀ ▶ abaixo.</string>
     <string name="board_description">Tabuleiro, posição após %1$s</string>
     <string name="board_start">Tabuleiro, posição inicial</string>
     <string name="white_won">Brancas venceram</string>
@@ -396,4 +395,9 @@
     <string name="upd_card_downloading">Atualização para %1$s, %2$d de %3$d megabytes baixados</string>
     <!-- Shown only when the interface is not in English. -->
     <string name="upd_short_release">O arquivo não pode ser verificado</string>
+    <string name="undo_action">Desfazer</string>
+    <string name="moves_deleted">Lances excluídos</string>
+    <string name="make_main">Tornar linha principal</string>
+    <string name="delete_move">Excluir o lance e a continuação</string>
+    <string name="move_actions">Ações do lance</string>
 </resources>

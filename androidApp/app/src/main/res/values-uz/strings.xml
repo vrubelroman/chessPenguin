@@ -39,7 +39,6 @@
     <string name="move_forward">Bir yurish oldinga</string>
     <string name="to_end">Liniya oxiriga</string>
     <string name="next_moves">Keyin:</string>
-    <string name="board_hint">Bu partiyalarni koʻrish vositasi. Yurishlarni pastdagi ◀ ▶ bilan oʻtkazing.</string>
     <string name="board_description">Taxta, %1$sdan keyingi pozitsiya</string>
     <string name="board_start">Taxta, boshlangʻich pozitsiya</string>
     <string name="white_won">Oqlar yutdi</string>
@@ -388,4 +387,9 @@
     <string name="s_about_ready">%1$s versiyasi yuklab olindi</string>
     <string name="upd_card_downloading">%1$sga yangilash, %3$d megabaytdan %2$d tasi yuklab olindi</string>
     <string name="upd_short_release">Faylni tekshirib boʻlmaydi</string>
+    <string name="undo_action">Qaytarish</string>
+    <string name="moves_deleted">Yurishlar o‘chirildi</string>
+    <string name="make_main">Asosiy qilish</string>
+    <string name="delete_move">Yurish va davomini o‘chirish</string>
+    <string name="move_actions">Yurish amallari</string>
 </resources>

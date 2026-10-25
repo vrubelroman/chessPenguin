@@ -38,7 +38,6 @@
     <string name="move_forward">Zug vor</string>
     <string name="to_end">Zum Ende der Variante</string>
     <string name="next_moves">Weiter:</string>
-    <string name="board_hint">Dies ist ein Partiebetrachter. Blättern Sie mit ◀ ▶ unten durch die Züge.</string>
     <string name="board_description">Brett, Stellung nach %1$s</string>
     <string name="board_start">Brett, Ausgangsstellung</string>
     <string name="white_won">Weiß hat gewonnen</string>
@@ -389,4 +388,9 @@
     <string name="s_about_ready">Version %1$s ist heruntergeladen</string>
     <string name="upd_card_downloading">Update auf %1$s, %2$d von %3$d Megabyte heruntergeladen</string>
     <string name="upd_short_release">Datei lässt sich nicht prüfen</string>
+    <string name="undo_action">Rückgängig</string>
+    <string name="moves_deleted">Züge gelöscht</string>
+    <string name="make_main">Zur Hauptvariante machen</string>
+    <string name="delete_move">Zug und Fortsetzung löschen</string>
+    <string name="move_actions">Aktionen zum Zug</string>
 </resources>

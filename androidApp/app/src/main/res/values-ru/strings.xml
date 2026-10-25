@@ -40,7 +40,6 @@
     <string name="move_forward">Ход вперёд</string>
     <string name="to_end">В конец линии</string>
     <string name="next_moves">Дальше:</string>
-    <string name="board_hint">Это просмотр партии. Ходы листаются кнопками ◀ ▶ внизу.</string>
     <string name="board_description">Доска, позиция после %1$s</string>
     <string name="board_start">Доска, начальная позиция</string>
     <string name="white_won">Победили белые</string>
@@ -401,4 +400,9 @@
     <string name="s_about_ready">Версия %1$s скачана</string>
     <string name="upd_card_downloading">Обновление до %1$s, скачано %2$d из %3$d мегабайт</string>
     <string name="upd_short_release">Файл нельзя проверить</string>
+    <string name="undo_action">Вернуть</string>
+    <string name="moves_deleted">Ходы удалены</string>
+    <string name="make_main">Сделать основным</string>
+    <string name="delete_move">Удалить ход и продолжение</string>
+    <string name="move_actions">Действия с ходом</string>
 </resources>

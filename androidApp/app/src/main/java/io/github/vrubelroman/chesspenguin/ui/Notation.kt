@@ -1,7 +1,13 @@
 package io.github.vrubelroman.chesspenguin.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,7 +25,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -38,6 +48,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
@@ -215,6 +227,7 @@ fun Notation(
     onMove: (Int) -> Unit,
     modifier: Modifier = Modifier,
     marks: Map<Int, MoveJudgement> = emptyMap(),
+    onLongMove: ((Int) -> Unit)? = null,
 ) {
     val chess = LocalChessColors.current
     LaunchedEffect(current) {
@@ -241,7 +254,7 @@ fun Notation(
                         .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
-                is Item.Moves -> MovesRow(game, item, current, chess, san, onMove, marks)
+                is Item.Moves -> MovesRow(game, item, current, chess, san, onMove, marks, onLongMove)
                 is Item.Variation -> Box(
                     Modifier
                         .fillMaxWidth()
@@ -249,11 +262,45 @@ fun Notation(
                 ) {
                     Row(Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Min)) {
                         Box(Modifier.width(2.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+                        val text = variationText(game, item.start, current, chess, san, onMove)
+                        var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
                         Text(
-                            variationText(game, item.start, current, chess, san, onMove),
+                            text,
                             fontSize = 15.sp,
                             lineHeight = 28.sp,
-                            modifier = Modifier.padding(start = 12.dp, end = 4.dp),
+                            onTextLayout = { layout = it },
+                            modifier = Modifier
+                                .padding(start = 12.dp, end = 4.dp)
+                                .then(
+                                    if (onLongMove == null) Modifier else Modifier.pointerInput(text) {
+                                        // A long press on a move of the variation: the move it is
+                                        // on. Seen before the links (the first pass), and the rest
+                                        // of the press is taken, so that the link does not also
+                                        // take it as a tap; a short tap stays the link's.
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                            val released = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                                while (true) {
+                                                    val e = awaitPointerEvent(PointerEventPass.Initial)
+                                                    val c = e.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull true
+                                                    if (!c.pressed || (c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull true
+                                                }
+                                                @Suppress("UNREACHABLE_CODE") true
+                                            }
+                                            if (released != null) return@awaitEachGesture
+                                            val offset = layout?.getOffsetForPosition(down.position) ?: return@awaitEachGesture
+                                            val id = text.getLinkAnnotations(offset, offset + 1).firstOrNull()
+                                                ?.let { (it.item as? LinkAnnotation.Clickable)?.tag?.removePrefix("m")?.toIntOrNull() }
+                                                ?: return@awaitEachGesture
+                                            onLongMove(id)
+                                            while (true) {
+                                                val e = awaitPointerEvent(PointerEventPass.Initial)
+                                                e.changes.forEach { it.consume() }
+                                                if (e.changes.none { it.pressed }) break
+                                            }
+                                        }
+                                    },
+                                ),
                         )
                     }
                 }
@@ -281,6 +328,7 @@ private fun MovesRow(
     san: (String) -> AnnotatedString,
     onMove: (Int) -> Unit,
     marks: Map<Int, MoveJudgement>,
+    onLongMove: ((Int) -> Unit)?,
 ) {
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -290,8 +338,8 @@ private fun MovesRow(
             modifier = Modifier.width(40.dp).padding(end = 8.dp),
             textAlign = androidx.compose.ui.text.style.TextAlign.End,
         )
-        MoveCell(game, row.white, true, current, chess, san, onMove, Modifier.weight(1f), row.white?.let { marks[it] })
-        MoveCell(game, row.black, false, current, chess, san, onMove, Modifier.weight(1f), row.black?.let { marks[it] })
+        MoveCell(game, row.white, true, current, chess, san, onMove, Modifier.weight(1f), row.white?.let { marks[it] }, onLongMove)
+        MoveCell(game, row.black, false, current, chess, san, onMove, Modifier.weight(1f), row.black?.let { marks[it] }, onLongMove)
     }
 }
 
@@ -306,6 +354,7 @@ private fun MoveCell(
     onMove: (Int) -> Unit,
     modifier: Modifier,
     mark: MoveJudgement?,
+    onLongMove: ((Int) -> Unit)?,
 ) {
     val selected = id != null && id == current
     // The engine's mark is left out where the author already put the same sign ("Nf6? ?"
@@ -320,11 +369,18 @@ private fun MoveCell(
             (markName?.let { m -> ", $m" } ?: "")
     }
     val currentLabel = stringResource(R.string.current_move)
+    val actionsLabel = stringResource(R.string.move_actions)
     // The whole cell takes the tap; the fill only hugs the move.
     Box(
         modifier
             .fillMaxHeight()
-            .then(if (id != null) Modifier.clickable { onMove(id) } else Modifier)
+            .then(
+                when {
+                    id == null -> Modifier
+                    onLongMove != null -> Modifier.combinedClickable(onLongClick = { onLongMove(id) }) { onMove(id) }
+                    else -> Modifier.clickable { onMove(id) }
+                },
+            )
             .then(
                 if (spoken != null) {
                     Modifier.clearAndSetSemantics {
@@ -333,6 +389,7 @@ private fun MoveCell(
                         this.selected = selected
                         if (selected) stateDescription = currentLabel
                         onClick { onMove(id); true }
+                        if (onLongMove != null) onLongClick(actionsLabel) { onLongMove(id); true }
                     }
                 } else {
                     Modifier
