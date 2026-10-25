@@ -540,18 +540,8 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
                         None => san.clone(),
                     };
                     let label = crate::san::show(&label).into_owned();
-                    let text = RichText::new(label).size(14.5);
                     let current = shown == Some(i + 1);
-                    let button = if current {
-                        let sel = ui.visuals().selection;
-                        egui::Button::new(text.color(sel.stroke.color).strong())
-                            .fill(sel.bg_fill)
-                            .stroke(Stroke::new(1.0, sel.stroke.color))
-                    } else {
-                        egui::Button::new(text).frame_when_inactive(false)
-                    };
-                    let resp = ui
-                        .add(button)
+                    let resp = move_chip(ui, &label, None, current)
                         .on_hover_text(tr("Show this line on the board"));
                     if current && n.scroll_to_cursor {
                         resp.scroll_to_me(Some(egui::Align::Center));
