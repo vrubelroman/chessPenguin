@@ -152,11 +152,6 @@ impl Default for PlayPrefs {
 pub const STRENGTH_MIN: u32 = 600;
 pub const STRENGTH_MAX: u32 = 2600;
 
-/// «As me»: the user's rating rounded to 100, within Maia's range.
-pub fn strength_like(rating: u32) -> u32 {
-    (((rating + 50) / 100) * 100).clamp(STRENGTH_MIN, STRENGTH_MAX)
-}
-
 // ----- the clock -----------------------------------------------------------------------
 
 /// Both clocks. Time runs for the side to move from the moment its opponent moved; a
@@ -648,8 +643,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(strength_like(1350), 1400);
-        assert_eq!(strength_like(300), 600);
     }
 }
 
@@ -1001,31 +994,7 @@ impl Dialog {
                     .weak()
                     .size(11.5),
             );
-            // Relative to the user's rating; without one, a line saying so instead.
             let rating = self.rating();
-            match rating {
-                Some(r) => {
-                    ui.horizontal(|ui| {
-                        for (label, delta) in [(tr("Weaker"), -200), (tr("As me"), 0), (tr("Stronger"), 200)] {
-                            let target = strength_like((r as i32 + delta).max(0) as u32);
-                            if choice(ui, target == self.prefs.strength, label, [(W - 2.0 * GAP) / 3.0, TILE_H])
-                                .clicked()
-                            {
-                                self.prefs.strength = target;
-                            }
-                        }
-                    });
-                }
-                None => {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(W, TILE_H),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.label(RichText::new(tr("Enter your rating: Weaker · As me · Stronger will choose for you")).weak());
-                        },
-                    );
-                }
-            }
 
             // Colour.
             section(ui, tr("Your colour"));
