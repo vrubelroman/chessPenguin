@@ -2,6 +2,13 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- Offer Maia a draw (desktop and Android): she accepts when she is clearly worse, or
+  when the position is about level (at most +0.2 for her) and has kept its character for
+  her last three moves; after a refusal, again two of her moves later. She judges with
+  Stockfish, as for her resignation.
+
 ## [1.5.0] — 2026-10-26
 
 - Play against Maia: the large model (79M parameters, 316 MB, downloaded once from the

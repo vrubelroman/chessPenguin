@@ -528,4 +528,9 @@
     <string name="play_continue_it">Жалғастыру</string>
     <string name="play_start_new">Жаңасын бастау</string>
     <string name="play_adjourned_new_text">Жаңа ойын оның орнын басады.</string>
+    <string name="play_offer_draw">Тең</string>
+    <string name="end_agreement">келісім бойынша</string>
+    <string name="play_draw_declined">Maia тең ойыннан бас тартады</string>
+    <string name="play_draw_later">Maia бас тартты; оның екі жүрісінен кейін қайта ұсыныңыз</string>
+    <string name="play_draw_no_engine">Maia тең ойынға Stockfish арқылы жауап береді: оны «Қозғалтқыш» батырмасымен жүктеңіз</string>
 </resources>

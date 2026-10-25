@@ -535,4 +535,9 @@
     <string name="play_continue_it">Continuala</string>
     <string name="play_start_new">Iniziarne una nuova</string>
     <string name="play_adjourned_new_text">Una nuova partita la sostituisce.</string>
+    <string name="play_offer_draw">Patta</string>
+    <string name="end_agreement">per accordo</string>
+    <string name="play_draw_declined">Maia rifiuta la patta</string>
+    <string name="play_draw_later">Maia ha rifiutato; riproponi dopo due sue mosse</string>
+    <string name="play_draw_no_engine">Maia risponde alla patta con Stockfish: scaricalo con «Motore»</string>
 </resources>

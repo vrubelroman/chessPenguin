@@ -535,4 +535,9 @@
     <string name="play_continue_it">La continuer</string>
     <string name="play_start_new">En commencer une nouvelle</string>
     <string name="play_adjourned_new_text">Une nouvelle partie la remplace.</string>
+    <string name="play_offer_draw">Nulle</string>
+    <string name="end_agreement">par accord mutuel</string>
+    <string name="play_draw_declined">Maia refuse la nulle</string>
+    <string name="play_draw_later">Maia a refusé ; reproposez après deux de ses coups</string>
+    <string name="play_draw_no_engine">Maia répond à la nulle avec Stockfish : téléchargez-le avec « Moteur »</string>
 </resources>

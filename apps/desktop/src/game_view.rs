@@ -2691,6 +2691,7 @@ impl GameView {
         s.hopeless = 0;
         if let Some(j) = s.judge.as_mut() {
             j.forget();
+            j.forget_scores();
         }
         s.opponent.forget();
         let user = s.user;
@@ -3104,6 +3105,36 @@ impl GameView {
                 && let Some(s) = self.play.as_mut()
             {
                 s.resign_asked = true;
+            }
+            // A draw offered: Maia answers by the judge's scores of her last turns (no
+            // judge, no answer: the button says why).
+            if self.play_started() {
+                let judge = self.play.as_ref().and_then(|s| s.judge.as_ref());
+                let may = judge.is_some_and(|j| j.may_offer_draw());
+                let hint = match judge {
+                    None => {
+                        tr("Maia answers a draw offer with Stockfish's help: none is installed")
+                    }
+                    Some(_) if !may => tr("Maia declined; offer again after two of her moves"),
+                    Some(_) => tr("Maia accepts when her position is no better and has settled"),
+                };
+                if ui
+                    .add_enabled(may, word(tr("½ Offer a draw")))
+                    .on_hover_text(hint)
+                    .on_disabled_hover_text(hint)
+                    .clicked()
+                {
+                    let yes = self
+                        .play
+                        .as_mut()
+                        .and_then(|s| s.judge.as_mut())
+                        .is_some_and(|j| j.offer_draw());
+                    if yes {
+                        self.finish_play(crate::play::Ending::DrawAgreed, actions);
+                    } else {
+                        actions.push(GameAction::Toast(tr("Maia declines the draw").into()));
+                    }
+                }
             }
         });
         ui.add_space(4.0);

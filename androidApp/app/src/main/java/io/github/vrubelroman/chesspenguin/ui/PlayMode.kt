@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.Handshake
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material3.Button
@@ -109,6 +110,7 @@ fun PlayControls(
     canForward: Boolean,
     onTakeBack: () -> Unit,
     onResign: () -> Unit,
+    onDraw: () -> Unit,
     onAbort: () -> Unit,
     onFlip: () -> Unit,
     onBack: () -> Unit,
@@ -121,6 +123,7 @@ fun PlayControls(
                 LabeledButton(Icons.AutoMirrored.Rounded.Undo, stringResource(R.string.play_take_back).removePrefix("↶ "), canTakeBack, Modifier.weight(1f), onTakeBack)
                 if (started) {
                     LabeledButton(Icons.Rounded.Flag, stringResource(R.string.play_resign).removePrefix("⚑ "), true, Modifier.weight(1f), onResign)
+                    LabeledButton(Icons.Rounded.Handshake, stringResource(R.string.play_offer_draw), true, Modifier.weight(1f), onDraw)
                 } else {
                     LabeledButton(Icons.Rounded.Close, stringResource(R.string.play_abort), true, Modifier.weight(1f), onAbort)
                 }
@@ -137,10 +140,11 @@ fun PlayControls(
 
 @Composable
 private fun LabeledButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    androidx.compose.material3.TextButton(onClick = onClick, enabled = enabled, modifier = modifier.height(64.dp)) {
+    androidx.compose.material3.TextButton(onClick = onClick, enabled = enabled, modifier = modifier.height(64.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 2.dp)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, null)
-            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Six buttons in a row: a long word goes to a second line, not cut.
+            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }

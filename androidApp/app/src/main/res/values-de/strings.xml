@@ -527,4 +527,9 @@
     <string name="play_continue_it">Fortsetzen</string>
     <string name="play_start_new">Neue beginnen</string>
     <string name="play_adjourned_new_text">Eine neue Partie ersetzt sie.</string>
+    <string name="play_offer_draw">Remis</string>
+    <string name="end_agreement">durch Einigung</string>
+    <string name="play_draw_declined">Maia lehnt das Remis ab</string>
+    <string name="play_draw_later">Maia hat abgelehnt; nach zwei ihrer Züge wieder anbieten</string>
+    <string name="play_draw_no_engine">Maia beantwortet Remis mit Stockfish: über „Engine“ herunterladen</string>
 </resources>

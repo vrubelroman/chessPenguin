@@ -535,4 +535,9 @@
     <string name="play_continue_it">Continuarla</string>
     <string name="play_start_new">Empezar una nueva</string>
     <string name="play_adjourned_new_text">Una partida nueva la sustituye.</string>
+    <string name="play_offer_draw">Tablas</string>
+    <string name="end_agreement">por acuerdo</string>
+    <string name="play_draw_declined">Maia rechaza las tablas</string>
+    <string name="play_draw_later">Maia lo rechazó; ofrece de nuevo tras dos de sus jugadas</string>
+    <string name="play_draw_no_engine">Maia responde a las tablas con Stockfish: descárgalo con «Motor»</string>
 </resources>

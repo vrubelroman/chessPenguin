@@ -524,6 +524,21 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         }
     }
     var resigning by remember { mutableStateOf(false) }
+    val drawDeclined = stringResource(R.string.play_draw_declined)
+    val drawLater = stringResource(R.string.play_draw_later)
+    val drawNoEngine = stringResource(R.string.play_draw_no_engine)
+    // A draw offered (§31.3): Maia answers by her judge's scores of her last turns.
+    fun offerDraw() {
+        val r = run ?: return
+        val j = r.judge
+        val say = { text: String -> scope.launch { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar(text) } }
+        when {
+            j == null -> say(drawNoEngine)
+            !j.mayOfferDraw() -> say(drawLater)
+            j.offerDraw() -> finishGame(PlayOver("1/2-1/2", R.string.play_draw, R.string.end_agreement))
+            else -> say(drawDeclined)
+        }
+    }
     // The result card closed with ×: until the next game.
     var resultClosed by remember(run) { mutableStateOf(false) }
     // A change after the end (a variation, an undo): the card's result may not hold.
@@ -578,6 +593,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         r.thinking.value = false
         r.offer.value = false
         r.judge?.forget()
+        r.judge?.forgetScores()
         r.hopeless = 0u
         runCatching { e.deleteFrom(from.toUInt()) }.getOrNull()?.let {
             apply(it)
@@ -740,6 +756,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 canForward = canForward,
                 onTakeBack = ::takeBack,
                 onResign = { resigning = true },
+                onDraw = ::offerDraw,
                 onAbort = {
                     app.maiaGames.clear()
                     onBack()

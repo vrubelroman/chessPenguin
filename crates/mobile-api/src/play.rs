@@ -48,7 +48,9 @@ impl GameSession {
             ::play::Ending::Threefold => GameEnding::Threefold,
             ::play::Ending::FiftyMoves => GameEnding::FiftyMoves,
             // No clocks and no resignations here: the app knows those itself.
-            ::play::Ending::Time { .. } | ::play::Ending::Resigned { .. } => return None,
+            ::play::Ending::Time { .. }
+            | ::play::Ending::Resigned { .. }
+            | ::play::Ending::DrawAgreed => return None,
         })
     }
 }
@@ -142,6 +144,30 @@ impl ResignJudge {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .forget();
+    }
+
+    /// Moves were taken back: the scores of Maia's turns gone are forgotten.
+    pub fn forget_scores(&self) {
+        self.judge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .forget_scores();
+    }
+
+    /// A draw may be offered now (not right after a refusal).
+    pub fn may_offer_draw(&self) -> bool {
+        self.judge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .may_offer_draw()
+    }
+
+    /// The user offers a draw: whether Maia accepts (the shared rule, `play::accepts_draw`).
+    pub fn offer_draw(&self) -> bool {
+        self.judge
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .offer_draw()
     }
 }
 

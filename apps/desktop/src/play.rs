@@ -1165,6 +1165,7 @@ impl End {
             Ending::Time { .. } => tr("time is up"),
             Ending::Resigned { loser } if loser == self.user => "",
             Ending::Resigned { .. } => tr("Maia resigned"),
+            Ending::DrawAgreed => tr("by agreement"),
         }
     }
 }

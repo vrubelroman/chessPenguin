@@ -543,4 +543,9 @@
     <string name="play_continue_it">Продолжить её</string>
     <string name="play_start_new">Начать новую</string>
     <string name="play_adjourned_new_text">Новая партия заменит её.</string>
+    <string name="play_offer_draw">Ничья</string>
+    <string name="end_agreement">по соглашению</string>
+    <string name="play_draw_declined">Maia отказывается от ничьей</string>
+    <string name="play_draw_later">Maia отказалась; снова можно предложить через два её хода</string>
+    <string name="play_draw_no_engine">Maia отвечает на ничью с помощью Stockfish: скачайте его кнопкой «Движок»</string>
 </resources>

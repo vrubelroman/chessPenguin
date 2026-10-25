@@ -526,4 +526,9 @@
     <string name="play_continue_it">Davom ettirish</string>
     <string name="play_start_new">Yangisini boshlash</string>
     <string name="play_adjourned_new_text">Yangi o‘yin uning o‘rnini oladi.</string>
+    <string name="play_offer_draw">Durang</string>
+    <string name="end_agreement">kelishuv bo‘yicha</string>
+    <string name="play_draw_declined">Maia durangdan bosh tortadi</string>
+    <string name="play_draw_later">Maia rad etdi; uning ikki yurishidan keyin yana taklif qiling</string>
+    <string name="play_draw_no_engine">Maia durangga Stockfish bilan javob beradi: uni «Dvigatel» tugmasi bilan yuklab oling</string>
 </resources>

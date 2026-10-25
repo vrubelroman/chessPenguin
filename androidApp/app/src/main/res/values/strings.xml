@@ -531,4 +531,9 @@
     <string name="play_continue_it">Continue it</string>
     <string name="play_start_new">Start a new one</string>
     <string name="play_adjourned_new_text">A new game replaces it.</string>
+    <string name="play_offer_draw">Draw</string>
+    <string name="end_agreement">by agreement</string>
+    <string name="play_draw_declined">Maia declines the draw</string>
+    <string name="play_draw_later">Maia declined; offer again after two of her moves</string>
+    <string name="play_draw_no_engine">Maia answers a draw offer with Stockfish: download it in the game screen («Engine»)</string>
 </resources>

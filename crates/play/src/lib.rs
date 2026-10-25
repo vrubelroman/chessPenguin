@@ -27,6 +27,8 @@ pub enum Ending {
     Resigned {
         loser: Color,
     },
+    /// The user offered a draw and Maia accepted.
+    DrawAgreed,
 }
 
 impl Ending {
@@ -43,7 +45,8 @@ impl Ending {
             Ending::Stalemate
             | Ending::InsufficientMaterial
             | Ending::Threefold
-            | Ending::FiftyMoves => R::Draw,
+            | Ending::FiftyMoves
+            | Ending::DrawAgreed => R::Draw,
         }
     }
 
@@ -167,6 +170,49 @@ pub fn game_tags(
     tags
 }
 
+// ----- a draw offered -------------------------------------------------------------------
+
+/// Maia's turns whose scores must agree for a level position to be called settled.
+pub const DRAW_STABLE_TURNS: usize = 3;
+/// She accepts a draw when she is not better by more than this (centipawns)…
+const DRAW_MAX_CP: i32 = 20;
+/// …the position settled (her last scores no further apart than this)…
+const DRAW_SPREAD_CP: i32 = 30;
+/// …or at once when she is worse by this much.
+const DRAW_WORSE_CP: i32 = -50;
+/// After a refusal, her turns before the next offer counts.
+pub const DRAW_AGAIN_AFTER: usize = 2;
+
+/// Whether Maia accepts a draw, from the scores of her latest turns (oldest first, each
+/// for her as the side to move): when clearly worse or mated, at once; when about level
+/// (at most +0.2 for her), if the game has kept its character — her last three scores
+/// within 0.3 of each other. Never when she mates or is better by more.
+pub fn accepts_draw(scores: &[uci::Score]) -> bool {
+    let Some(&last) = scores.last() else {
+        return false;
+    };
+    match last {
+        uci::Score::Mate(n) => return n < 0,
+        uci::Score::Cp(cp) if cp <= DRAW_WORSE_CP => return true,
+        uci::Score::Cp(cp) if cp > DRAW_MAX_CP => return false,
+        uci::Score::Cp(_) => {}
+    }
+    if scores.len() < DRAW_STABLE_TURNS {
+        return false;
+    }
+    let recent: Option<Vec<i32>> = scores[scores.len() - DRAW_STABLE_TURNS..]
+        .iter()
+        .map(|s| match s {
+            uci::Score::Cp(cp) => Some(*cp),
+            uci::Score::Mate(_) => None,
+        })
+        .collect();
+    recent.is_some_and(|v| {
+        let (lo, hi) = (v.iter().min().unwrap(), v.iter().max().unwrap());
+        hi - lo <= DRAW_SPREAD_CP
+    })
+}
+
 // ----- Maia resigns --------------------------------------------------------------------
 
 /// Nodes the judge searches a position: a tenth of a second or two, enough to see that
@@ -194,6 +240,10 @@ pub struct Judge {
     tx: Sender<(u64, uci::EnginePosition)>,
     rx: Receiver<(u64, uci::Score)>,
     generation: u64,
+    /// The scores of Maia's turns so far (for a draw offered), oldest first.
+    scores: Vec<uci::Score>,
+    /// A draw refused when this many scores were in.
+    refused_at: Option<usize>,
 }
 
 impl Judge {
@@ -272,6 +322,8 @@ impl Judge {
             tx,
             rx,
             generation: 0,
+            scores: Vec::new(),
+            refused_at: None,
         }
     }
 
@@ -294,7 +346,31 @@ impl Judge {
                 out = Some(s);
             }
         }
+        if let Some(s) = out {
+            self.scores.push(s);
+        }
         out
+    }
+
+    /// Moves were taken back: the scores of positions gone are forgotten.
+    pub fn forget_scores(&mut self) {
+        self.scores.clear();
+        self.refused_at = None;
+    }
+
+    /// A draw may be offered (not right after a refusal: two of her turns later).
+    pub fn may_offer_draw(&self) -> bool {
+        self.refused_at
+            .is_none_or(|n| self.scores.len() >= n + DRAW_AGAIN_AFTER)
+    }
+
+    /// The user offers a draw: whether Maia accepts (by [`accepts_draw`]).
+    pub fn offer_draw(&mut self) -> bool {
+        let yes = accepts_draw(&self.scores);
+        if !yes {
+            self.refused_at = Some(self.scores.len());
+        }
+        yes
     }
 }
 
@@ -312,6 +388,22 @@ mod tests {
         // Mated by force: hopeless; mating: not.
         assert!(hopeless(Score::Mate(-3)));
         assert!(!hopeless(Score::Mate(2)));
+    }
+
+    #[test]
+    fn maia_accepts_a_draw_when_level_and_settled_or_worse() {
+        use uci::Score::{Cp, Mate};
+        // Level and settled: yes; level but just changed: no.
+        assert!(accepts_draw(&[Cp(10), Cp(-5), Cp(15)]));
+        assert!(!accepts_draw(&[Cp(-120), Cp(-5), Cp(15)]));
+        // Too few turns to call it settled.
+        assert!(!accepts_draw(&[Cp(0), Cp(0)]));
+        // Better by more than 0.2: no; clearly worse or mated: at once.
+        assert!(!accepts_draw(&[Cp(25), Cp(25), Cp(25)]));
+        assert!(accepts_draw(&[Cp(-60)]));
+        assert!(accepts_draw(&[Mate(-4)]));
+        assert!(!accepts_draw(&[Mate(3)]));
+        assert!(!accepts_draw(&[]));
     }
 
     #[test]

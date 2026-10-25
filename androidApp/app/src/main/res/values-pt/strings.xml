@@ -536,4 +536,9 @@
     <string name="play_continue_it">Continuá-la</string>
     <string name="play_start_new">Começar uma nova</string>
     <string name="play_adjourned_new_text">Uma nova partida a substitui.</string>
+    <string name="play_offer_draw">Empate</string>
+    <string name="end_agreement">por acordo</string>
+    <string name="play_draw_declined">A Maia recusa o empate</string>
+    <string name="play_draw_later">A Maia recusou; ofereça de novo após dois lances dela</string>
+    <string name="play_draw_no_engine">A Maia responde ao empate com o Stockfish: baixe-o com «Motor»</string>
 </resources>
