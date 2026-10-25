@@ -422,6 +422,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     // «Play on from here» asked for at this move.
     var playFrom by remember { mutableStateOf<Int?>(null) }
     val deletedText = stringResource(R.string.moves_deleted)
+    val mainText = stringResource(R.string.made_main)
     val undoText = stringResource(R.string.undo_action)
     fun undo() {
         edit?.undo()?.let { apply(it) }
@@ -551,11 +552,14 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var saves by remember { mutableIntStateOf(0) }
     @Suppress("UNUSED_EXPRESSION") saves
     val modified = g != null && edit?.isModified() == true
-    var saving by remember { mutableStateOf(false) }
+    // Kept when the phone turns (the activity is made again).
+    var saving by rememberSaveable { mutableStateOf(false) }
     // The game's data form; `firstSave`: a new game's first save asks for it first.
-    var editingData by remember { mutableStateOf(false) }
-    var firstSave by remember { mutableStateOf(false) }
-    var leaving by remember { mutableStateOf(false) }
+    var editingData by rememberSaveable { mutableStateOf(false) }
+    var firstSave by rememberSaveable { mutableStateOf(false) }
+    // Each opening of the form starts from the game (its fields are kept only while open).
+    var formOpening by rememberSaveable { mutableIntStateOf(0) }
+    var leaving by rememberSaveable { mutableStateOf(false) }
     var afterSave by remember { mutableStateOf<(() -> Unit)?>(null) }
     val ownEntries = libraryEntries.filter { it.source == Source.Own }
     val savedText = stringResource(R.string.saved_to)
@@ -589,6 +593,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             newGame && !playGame -> {
                 firstSave = true
                 editingData = true
+                        formOpening++
             }
             else -> saving = true
         }
@@ -597,7 +602,8 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     // new one); moves in someone else's game are for trying out (owner's decision).
     // A game against Maia: put aside while it goes on (no question); after its end like
     // a new game, and gone from hand once left.
-    val asksOnLeave = modified && (ownGame || newGame || (playGame && runOver != null))
+    // A copy saved into an own database is that database's game from then on.
+    val asksOnLeave = modified && (ownGame || newGame || held.savedTo != null || (playGame && runOver != null))
     val exit: () -> Unit = {
         if (playGame && held.play.value?.over?.value != null) app.maiaGames.clear()
         onBack()
@@ -916,7 +922,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     val placeLine = if (playGame && run != null) {
                         stringResource(R.string.play_adjourned_sub, stringResource(if (run.meta.userWhite) R.string.play_as_white else R.string.play_as_black), stringResource(R.string.play_untimed))
                     } else joinKnown(
-                        if (total > 0) stringResource(R.string.game_of, place + 1, total) else "",
+                        if (total > 0 && held.savedTo == null) stringResource(R.string.game_of, place + 1, total) else "",
                         round?.let { stringResource(R.string.tag_round).lowercase() + " " + it } ?: "",
                     )
                     Column(
@@ -951,7 +957,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                             else -> held.savedTo?.first?.let { app.library.entry(it) }?.let { stringResource(R.string.save_in, displayName(it)) }
                         } ?: stringResource(R.string.save_to_mine)
                         IconButton(onClick = { save() }) { Icon(Icons.Rounded.Save, where) }
-                    } else if (!newGame && !playGame) {
+                    } else if (!newGame && !playGame && held.savedTo == null) {
                         IconButton(onClick = { place -= 1 }, enabled = place > 0) {
                             Icon(Icons.Rounded.ChevronLeft, stringResource(R.string.previous_game))
                         }
@@ -964,7 +970,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             // First, and only when there is something to take back (§29.6).
                             if (g != null && edit?.canUndo() == true) {
-                                DropdownMenuItem(text = { Text(stringResource(R.string.undo)) }, onClick = {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.undo_menu)) }, onClick = {
                                     menu = false
                                     undo()
                                 })
@@ -1043,10 +1049,10 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         val thinkingText = stringResource(R.string.play_thinking)
         val maiaThinks = { white: Boolean -> if (gameOn && runThinking && run?.meta?.userWhite != white) thinkingText else null }
         val whiteBar: @Composable () -> Unit = {
-            PlayerBar(whiteName ?: whiteLabel, elo(tag("WhiteElo")), true, maiaThinks(true) ?: sideResult(result, true), known = whiteName != null, abbreviate = !study)
+            PlayerBar(whiteName ?: whiteLabel, elo(tag("WhiteElo")), true, sideResult(result, true), known = whiteName != null, abbreviate = !study, status = maiaThinks(true))
         }
         val blackBar: @Composable () -> Unit = {
-            PlayerBar(blackName ?: blackLabel, elo(tag("BlackElo")), false, maiaThinks(false) ?: sideResult(result, false), known = blackName != null)
+            PlayerBar(blackName ?: blackLabel, elo(tag("BlackElo")), false, sideResult(result, false), known = blackName != null, status = maiaThinks(false))
         }
         val topBar = if (flipped) whiteBar else blackBar
         val bottomBar = if (flipped) blackBar else whiteBar
@@ -1096,6 +1102,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     TextButton(onClick = {
                         info = false
                         editingData = true
+                        formOpening++
                     }) { Text(stringResource(R.string.edit)) }
                 }
             } else {
@@ -1103,7 +1110,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             },
         )
     }
-    if (editingData && g != null) {
+    if (editingData && g != null) androidx.compose.runtime.key(formOpening) {
         GameDataForm(
             g,
             doneLabel = stringResource(if (firstSave) R.string.next else R.string.done),
@@ -1233,7 +1240,12 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 },
                 onMakeMain = {
                     moveSheet = null
-                    runCatching { edit?.makeMain(sheetMove.toUInt()) }.getOrNull()?.let { apply(it) }
+                    runCatching { edit?.makeMain(sheetMove.toUInt()) }.getOrNull()?.let { e ->
+                        apply(e)
+                        scope.launch {
+                            if (snackbar.showSnackbar(mainText, undoText, duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) undo()
+                        }
+                    }
                 },
                 onDelete = {
                     moveSheet = null
@@ -1475,7 +1487,7 @@ private fun pgnDate(date: String): String {
 /// A player above or below the board (§7.11): the side's disc, the name (full while it
 /// fits), the rating, the share of the result. A missing name shows the side, greyed.
 @Composable
-private fun PlayerBar(name: String, elo: String, white: Boolean, result: String?, known: Boolean, abbreviate: Boolean = true) {
+private fun PlayerBar(name: String, elo: String, white: Boolean, result: String?, known: Boolean, abbreviate: Boolean = true, status: String? = null) {
     PlayerLine(
         name = name,
         elo = elo,
@@ -1486,6 +1498,7 @@ private fun PlayerBar(name: String, elo: String, white: Boolean, result: String?
         disc = white,
         nameColor = if (known) androidx.compose.ui.graphics.Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
         abbreviate = abbreviate,
+        status = status,
     )
 }
 

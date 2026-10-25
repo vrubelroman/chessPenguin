@@ -530,4 +530,7 @@
     <string name="play_from_maia">Играть отсюда с Maia…</string>
     <string name="play_from_label">После %1$s</string>
     <string name="sound">Звук</string>
+    <string name="undo_menu">Отменить</string>
+    <string name="made_main">Теперь основной вариант</string>
+    <string name="elo">Эло</string>
 </resources>

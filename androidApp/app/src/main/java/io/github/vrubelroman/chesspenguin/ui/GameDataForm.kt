@@ -48,11 +48,11 @@ fun pgnDateOf(text: String): String? {
     if (t.isEmpty()) return ""
     Regex("""(\d{4})(?:[.\-/](\d{1,2}|\?\?))?(?:[.\-/](\d{1,2}|\?\?))?""").matchEntire(t)?.let { m ->
         val (y, mo, d) = m.destructured
-        return listOf(y, part(mo, 12) ?: return null, part(d, 31) ?: return null).joinToString(".")
+        return listOf(y, part(mo, 12) ?: return null, part(d, 31) ?: return null).joinToString(".").takeIf(::realDay)
     }
     Regex("""(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})""").matchEntire(t)?.let { m ->
         val (d, mo, y) = m.destructured
-        return listOf(y, part(mo, 12) ?: return null, part(d, 31) ?: return null).joinToString(".")
+        return listOf(y, part(mo, 12) ?: return null, part(d, 31) ?: return null).joinToString(".").takeIf(::realDay)
     }
     return null
 }
@@ -61,6 +61,13 @@ private fun part(p: String, max: Int): String? = when {
     p.isEmpty() || p == "??" -> "??"
     p.toInt() in 1..max -> p.padStart(2, '0')
     else -> null
+}
+
+/// A day that the month has (31.02 is not one).
+private fun realDay(date: String): Boolean {
+    val (y, m, d) = date.split('.').map { it.toIntOrNull() } + listOf(null, null, null)
+    if (y == null || m == null || d == null) return true
+    return runCatching { java.time.LocalDate.of(y, m, d) }.isSuccess
 }
 
 private val RESULTS = listOf("1-0", "1/2-1/2", "0-1", "*")
@@ -115,11 +122,11 @@ fun GameDataForm(game: GameData, doneLabel: String, onDone: (List<Tag>, String) 
                 val digits = KeyboardOptions(keyboardType = KeyboardType.Number)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(white, { white = it }, Modifier.weight(1f), label = { Text(stringResource(R.string.tag_white)) }, singleLine = true)
-                    OutlinedTextField(whiteElo, { v -> whiteElo = v.filter(Char::isDigit).take(4) }, Modifier.width(88.dp), label = { Text("Elo") }, singleLine = true, keyboardOptions = digits)
+                    OutlinedTextField(whiteElo, { v -> whiteElo = v.filter(Char::isDigit).take(4) }, Modifier.width(88.dp), label = { Text(stringResource(R.string.elo)) }, singleLine = true, keyboardOptions = digits)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(black, { black = it }, Modifier.weight(1f), label = { Text(stringResource(R.string.tag_black)) }, singleLine = true)
-                    OutlinedTextField(blackElo, { v -> blackElo = v.filter(Char::isDigit).take(4) }, Modifier.width(88.dp), label = { Text("Elo") }, singleLine = true, keyboardOptions = digits)
+                    OutlinedTextField(blackElo, { v -> blackElo = v.filter(Char::isDigit).take(4) }, Modifier.width(88.dp), label = { Text(stringResource(R.string.elo)) }, singleLine = true, keyboardOptions = digits)
                 }
                 OutlinedTextField(event, { event = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.tag_event)) }, singleLine = true)
                 OutlinedTextField(site, { site = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.tag_site)) }, singleLine = true)

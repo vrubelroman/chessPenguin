@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Color
@@ -151,6 +152,8 @@ fun PlayerLine(
     nameColor: Color = Color.Unspecified,
     maxLines: Int = 1,
     abbreviate: Boolean = true,
+    /// What the player is doing now («thinking…» of Maia, android-play.md §31.3).
+    status: String? = null,
 ) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         if (disc != null) {
@@ -163,6 +166,10 @@ fun PlayerLine(
                 Spacer(Modifier.width(8.dp))
                 Text(elo, style = MaterialTheme.typography.bodyMedium.merge(Tabular), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
+        }
+        if (status != null) {
+            androidx.compose.material3.CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+            Text(status, Modifier.padding(start = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
         Text(
             result ?: "",

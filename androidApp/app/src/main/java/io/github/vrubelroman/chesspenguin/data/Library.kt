@@ -167,6 +167,9 @@ class Library(private val context: Context) {
             listOf("$stem.pgn", "$stem.online.json", "$stem.online.lock")
         }.toSet()
         onlineDir.listFiles()?.filter { it.name !in online }?.forEach { it.delete() }
+        // An own database deleted while its "Undo" was offered, the app closed meanwhile.
+        val own = _entries.value.filter { it.source == Source.Own }.map { it.location }.toSet()
+        ownDir.listFiles()?.filter { it.name !in own }?.forEach { it.delete() }
         val used = _entries.value.mapNotNull { it.tree ?: it.location.takeIf { _ -> it.source == Source.File || it.source == Source.ChessBase } }.toSet()
         for (p in context.contentResolver.persistedUriPermissions) {
             if (p.uri.toString() !in used) {

@@ -77,7 +77,7 @@ fun SaveSheet(own: List<DbEntry>, last: String?, onSave: (DbEntry) -> Unit, onCr
     var chosen by remember { mutableStateOf(own.firstOrNull { it.id == last }?.id ?: own.firstOrNull()?.id) }
     var creating by remember { mutableStateOf(own.isEmpty()) }
     val defaultName = stringResource(R.string.own_default_name)
-    var name by remember { mutableStateOf(defaultName) }
+    var name by remember { mutableStateOf(freeName(defaultName, own.map { it.name })) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
             Text(stringResource(R.string.save_to_db), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))

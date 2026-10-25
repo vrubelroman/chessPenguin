@@ -480,7 +480,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
 }
 
 /// "My games", or "My games 2" when that one is taken.
-private fun freeName(base: String, taken: List<String>): String {
+fun freeName(base: String, taken: List<String>): String {
     if (base !in taken) return base
     var i = 2
     while ("$base $i" in taken) i++

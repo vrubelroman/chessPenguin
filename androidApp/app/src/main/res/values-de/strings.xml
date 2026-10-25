@@ -514,4 +514,7 @@
     <string name="play_from_maia">Von hier gegen Maia weiterspielen…</string>
     <string name="play_from_label">Nach %1$s</string>
     <string name="sound">Ton</string>
+    <string name="undo_menu">Rückgängig</string>
+    <string name="made_main">Jetzt die Hauptvariante</string>
+    <string name="elo">Elo</string>
 </resources>

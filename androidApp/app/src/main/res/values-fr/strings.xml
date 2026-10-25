@@ -522,4 +522,7 @@
     <string name="play_from_maia">Continuer d’ici contre Maia…</string>
     <string name="play_from_label">Après %1$s</string>
     <string name="sound">Son</string>
+    <string name="undo_menu">Annuler</string>
+    <string name="made_main">Ligne principale désormais</string>
+    <string name="elo">Elo</string>
 </resources>

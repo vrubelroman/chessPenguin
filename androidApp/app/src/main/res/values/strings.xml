@@ -518,4 +518,7 @@
     <string name="play_from_maia">Play on from here with Maia…</string>
     <string name="play_from_label">After %1$s</string>
     <string name="sound">Sound</string>
+    <string name="undo_menu">Undo</string>
+    <string name="made_main">Now the main line</string>
+    <string name="elo">Elo</string>
 </resources>
