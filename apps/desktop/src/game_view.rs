@@ -397,9 +397,12 @@ impl GameView {
         }
         let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
         let (done, paragraph, cancel, save, back, nag) = ui.input_mut(|i| {
-            let done =
-                i.consume_key(Modifiers::NONE, Key::Enter) || i.consume_shortcut(&ctrl(Key::Enter));
+            // Shift+Enter first: a plain Enter would match it too (an extra Shift is
+            // ignored by egui's key match).
             let paragraph = i.consume_key(Modifiers::SHIFT, Key::Enter);
+            let done = !paragraph
+                && (i.consume_key(Modifiers::NONE, Key::Enter)
+                    || i.consume_shortcut(&ctrl(Key::Enter)));
             let cancel = i.consume_key(Modifiers::NONE, Key::Escape);
             let save = i.consume_shortcut(&ctrl(Key::S));
             let back = i.consume_shortcut(&ctrl(Key::W));
@@ -1329,6 +1332,9 @@ impl GameView {
                     if let Some((id, nag)) = resp.nag {
                         self.toggle_nag_on(id, nag);
                     }
+                    if resp.best.is_some() {
+                        self.commit_editor();
+                    }
                     if let Some((id, shown)) = resp.best
                         && let Some(mark) = self.review.analysis.marks.get(&id)
                         && let Some(root) = self.game.position(mark.base)
@@ -1540,6 +1546,7 @@ impl GameView {
                                     if resp.clicked()
                                         && let Some(root) = &root
                                     {
+                                        self.commit_editor();
                                         self.preview = Some(Preview {
                                             base,
                                             root: root.clone(),
@@ -1701,6 +1708,15 @@ impl GameView {
                     actions.push(GameAction::EditGameData);
                     ui.close();
                 }
+                let comment = if self.cursor == NodeId::ROOT {
+                    tr("Comment at the start of the game… (Enter)")
+                } else {
+                    tr("Comment on the move… (Enter)")
+                };
+                if ui.button(comment).clicked() {
+                    self.open_editor(Slot::After(self.cursor));
+                    ui.close();
+                }
                 let writable_source = self.source.as_ref().is_some_and(|s| s.block.is_none());
                 if (writable_source || (self.source.is_none() && self.target.is_some()))
                     && ui.button(self.save_hint()).clicked()
@@ -1710,15 +1726,6 @@ impl GameView {
                 }
                 if ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked() {
                     actions.push(GameAction::AddToDatabase);
-                    ui.close();
-                }
-                let comment = if self.cursor == NodeId::ROOT {
-                    tr("Comment at the start of the game… (Enter)")
-                } else {
-                    tr("Comment on the move… (Enter)")
-                };
-                if ui.button(comment).clicked() {
-                    self.open_editor(Slot::After(self.cursor));
                     ui.close();
                 }
                 ui.separator();
@@ -1804,6 +1811,7 @@ impl GameView {
             .mainline()
             .into_iter()
             .find_map(|id| self.review.analysis.marks.get(&id).cloned());
+        self.commit_editor();
         if let Some(mark) = mark
             && let Some(root) = self.game.position(mark.base)
             && !mark.best.is_empty()
@@ -2056,7 +2064,7 @@ impl GameView {
                     }
                 }
                 // Taken: the Enter that closed a dialog this frame must not open the editor.
-                if i.key_pressed(Key::Enter) && !overlay {
+                if i.key_pressed(Key::Enter) && !overlay && i.modifiers.is_none() {
                     i.consume_key(Modifiers::NONE, Key::Enter);
                     cmds.push("comment");
                 }
@@ -2074,7 +2082,13 @@ impl GameView {
                 "nag1" | "nag2" | "nag3" | "nag4" | "nag5" | "nag6" => {
                     if self.preview.is_none() {
                         let k: u8 = cmd[3..].parse().unwrap_or(1);
-                        self.toggle_nag_on(self.cursor, Nag(k));
+                        // With the editor open the symbol is part of its draft.
+                        match self.editor.as_mut() {
+                            Some(ed) if ed.slot == Slot::After(self.cursor) => {
+                                ed.nags = toggle_nag(&ed.nags, Nag(k));
+                            }
+                            _ => self.toggle_nag_on(self.cursor, Nag(k)),
+                        }
                     }
                 }
                 "copy" => actions.push(self.copy_pgn()),

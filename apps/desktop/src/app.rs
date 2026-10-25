@@ -555,6 +555,10 @@ impl App {
     /// Ctrl+S: a game from a PGN that takes games is saved back into it; any other game
     /// is added to a database of the user's choice.
     fn save_current(&mut self, ctx: &egui::Context, then_close: Option<CloseIntent>) {
+        // A comment being written goes into the game first.
+        if let Some(g) = self.game.as_mut() {
+            g.commit_editor();
+        }
         let target = self.current_target();
         let Some(g) = &self.game else { return };
         self.own.then_close = then_close;
@@ -1992,6 +1996,14 @@ impl eframe::App for App {
             });
             self.applied_dark = Some(self.settings.dark_mode);
         }
+        // Quitting: a comment being written goes into the game first, so the question
+        // about unsaved changes counts it.
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.allow_quit
+            && let Some(g) = self.game.as_mut()
+        {
+            g.commit_editor();
+        }
         // Quitting with a modified game left for another (reference tab): show that one,
         // so the question "save?" is about the game that has the changes.
         if ctx.input(|i| i.viewport().close_requested())
@@ -2123,6 +2135,9 @@ impl eframe::App for App {
                     }
                     GameAction::Save => self.save_current(&ctx, None),
                     GameAction::AddToDatabase => {
+                        if let Some(g) = self.game.as_mut() {
+                            g.commit_editor();
+                        }
                         self.own.then_close = None;
                         self.open_chooser(&ctx, ChooserFor::CurrentGame);
                     }

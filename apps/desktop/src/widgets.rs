@@ -78,3 +78,47 @@ pub fn primary(ui: &mut egui::Ui, label: &str) -> egui::Response {
             .min_size(egui::vec2(0.0, 30.0)),
     )
 }
+
+/// A 30 × 30 button with a painted ✓ (`check`) or ✕: the font has no such glyphs. The
+/// main one (`primary`) is filled like `primary()`.
+pub fn icon_button(ui: &mut Ui, check: bool, primary: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
+    let visuals = ui.style().interact(&resp);
+    let sel = ui.visuals().selection;
+    let (fill, color) = if primary {
+        (
+            if resp.hovered() {
+                sel.bg_fill.gamma_multiply(1.15)
+            } else {
+                sel.bg_fill
+            },
+            sel.stroke.color,
+        )
+    } else {
+        (visuals.weak_bg_fill, visuals.text_color())
+    };
+    ui.painter().rect_filled(rect, 4.0, fill);
+    if !primary {
+        ui.painter()
+            .rect_stroke(rect, 4.0, visuals.bg_stroke, egui::StrokeKind::Inside);
+    }
+    let c = rect.center();
+    let stroke = Stroke::new(2.0, color);
+    if check {
+        ui.painter().add(egui::Shape::line(
+            vec![
+                c + vec2(-5.0, 0.0),
+                c + vec2(-1.5, 4.0),
+                c + vec2(5.5, -4.5),
+            ],
+            stroke,
+        ));
+    } else {
+        let d = 4.5;
+        ui.painter()
+            .line_segment([c + vec2(-d, -d), c + vec2(d, d)], stroke);
+        ui.painter()
+            .line_segment([c + vec2(-d, d), c + vec2(d, -d)], stroke);
+    }
+    resp
+}

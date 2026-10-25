@@ -182,7 +182,7 @@ impl Notation<'_> {
                 .unwrap_or(&[]),
         );
         if editing == Some(Slot::After(NodeId::ROOT)) {
-            editor_block(ui, &mut editor, &mut out);
+            editor_block(ui, &mut editor, false, &mut out);
         } else if !root_comments.is_empty() {
             comment_block(
                 ui,
@@ -200,7 +200,7 @@ impl Notation<'_> {
             let before = comment_text(n.comments_before());
             if editing == Some(Slot::Before(child)) {
                 row.flush(ui, &self, &mut out);
-                editor_block(ui, &mut editor, &mut out);
+                editor_block(ui, &mut editor, false, &mut out);
             } else if !before.is_empty() {
                 row.flush(ui, &self, &mut out);
                 comment_block(ui, &self, &before, Slot::Before(child), &mut out);
@@ -231,7 +231,7 @@ impl Notation<'_> {
                     mark_block(ui, &self, child, mark, &mut out);
                 }
                 if editing_after {
-                    editor_block(ui, &mut editor, &mut out);
+                    editor_block(ui, &mut editor, false, &mut out);
                 } else if !after.is_empty() {
                     comment_block(ui, &self, &after, Slot::After(child), &mut out);
                 }
@@ -385,19 +385,37 @@ fn symbol_row(
     moves: bool,
     on: &mut dyn FnMut(Nag),
 ) {
+    symbol_row_sized(ui, nags, set, moves, SYMBOL_W, on);
+}
+
+/// A symbol button's width; the gap between them.
+const SYMBOL_W: f32 = 24.0;
+const SYMBOL_GAP: f32 = 2.0;
+
+/// `symbol_row` with buttons `w` wide (narrower in a narrow panel). The pressed symbol
+/// is drawn in the selection's text colour, not its own: on the selection fill the
+/// assessment colours read badly.
+fn symbol_row_sized(
+    ui: &mut Ui,
+    nags: &[Nag],
+    set: &[(Nag, &str, &'static str)],
+    moves: bool,
+    w: f32,
+    on: &mut dyn FnMut(Nag),
+) {
     let current = group_current(nags, !moves);
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.spacing_mut().item_spacing.x = if w < SYMBOL_W { 1.0 } else { SYMBOL_GAP };
         for (nag, sym, name) in set {
-            let mut text = RichText::new(*sym).size(15.0);
-            if moves && let Some(c) = assessment_color(*nag) {
+            let pressed = current == Some(*nag);
+            let mut text = RichText::new(*sym).size(if w < SYMBOL_W { 14.0 } else { 15.0 });
+            if pressed {
+                text = text.strong().color(ui.visuals().selection.stroke.color);
+            } else if moves && let Some(c) = assessment_color(*nag) {
                 text = text.color(c);
             }
             let r = ui
-                .add_sized(
-                    [28.0, 24.0],
-                    egui::Button::selectable(current == Some(*nag), text),
-                )
+                .add_sized([w, 24.0], egui::Button::selectable(pressed, text))
                 .on_hover_text(symbol_hint(*nag, name));
             if r.clicked() {
                 on(*nag);
@@ -688,20 +706,21 @@ fn comment_block(ui: &mut Ui, n: &Notation, text: &str, slot: Slot, out: &mut No
             bottom: 6,
         });
     }
+    // The whole block, not only its text, takes the double click and the right button,
+    // and lights up under the mouse (known from the last frame).
+    let id = ui.id().with((
+        "comment",
+        slot.node().index(),
+        matches!(slot, Slot::Before(_)),
+    ));
+    if ui.ctx().read_response(id).is_some_and(|r| r.hovered()) {
+        frame = frame.fill(ui.visuals().widgets.hovered.weak_bg_fill);
+    }
     let r = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.label(RichText::new(shown).color(comment_color(ui)).size(14.5));
     });
-    // The whole block, not only its text, takes the double click and the right button.
-    let resp = ui.interact(
-        r.response.rect,
-        ui.id().with((
-            "comment",
-            slot.node().index(),
-            matches!(slot, Slot::Before(_)),
-        )),
-        Sense::click(),
-    );
+    let resp = ui.interact(r.response.rect, id, Sense::click());
     comment_response(&resp, slot, out);
     if let Some(m) = mark {
         let at = r.response.rect.right_top() + vec2(-8.0, 7.0);
@@ -731,7 +750,13 @@ fn comment_response(resp: &egui::Response, slot: Slot, out: &mut NotationRespons
 }
 
 /// The comment editor on the spot of its comment (user-comments.md §3.4).
-fn editor_block(ui: &mut Ui, editor: &mut Option<&mut CommentEditor>, out: &mut NotationResponse) {
+/// `in_variation`: inside a variation's frame (tighter margins).
+fn editor_block(
+    ui: &mut Ui,
+    editor: &mut Option<&mut CommentEditor>,
+    in_variation: bool,
+    out: &mut NotationResponse,
+) {
     let Some(ed) = editor.as_deref_mut() else {
         return;
     };
@@ -746,67 +771,99 @@ fn editor_block(ui: &mut Ui, editor: &mut Option<&mut CommentEditor>, out: &mut 
     };
     let width = ui.available_width();
     let narrow = width < 360.0;
+    let margin = if narrow {
+        egui::Margin::symmetric(6, 6)
+    } else if in_variation {
+        egui::Margin::symmetric(8, 6)
+    } else {
+        egui::Margin::symmetric(10, 6)
+    };
+    // The notation's visible height: the field is capped so that the title, the buttons
+    // and a notation row above and below stay in view (user-comments.md §12).
+    let viewport_h = ui.clip_rect().height();
+    let frame_top = ui.cursor().top();
+    let has_symbols = ed.slot != Slot::After(NodeId::ROOT) && !matches!(ed.slot, Slot::Before(_));
     let r = egui::Frame::new()
         .fill(ui.visuals().extreme_bg_color)
-        .inner_margin(egui::Margin::symmetric(10, 6))
+        .inner_margin(margin)
         .stroke(stroke)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            // The title and the buttons.
-            ui.horizontal(|ui| {
-                let buttons = if narrow { 2.0 * 30.0 } else { 150.0 };
-                let room = ui.available_width() - buttons;
-                let title = if narrow
-                    || crate::game_view::text_width(ui, &ed.title, egui::TextStyle::Body) > room
-                {
-                    &ed.short_title
-                } else {
-                    &ed.title
-                };
-                ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if narrow {
-                        if ui
-                            .add(egui::Button::new("×").min_size(vec2(0.0, 30.0)))
-                            .on_hover_text(tr("Cancel (Esc)"))
-                            .clicked()
-                        {
-                            out.editor = Some(EditorOutcome::Cancel);
-                        }
-                        if crate::widgets::primary(ui, "✔")
-                            .on_hover_text(tr("Done (Enter)"))
-                            .clicked()
-                        {
-                            out.editor = Some(EditorOutcome::Done);
-                        }
+            // The title and the buttons: «Done» at the far right, as in every dialog.
+            let mut title_id = None;
+            // A row 30 high (the buttons' height), the title centred on it.
+            let row_w = ui.available_width();
+            ui.allocate_ui_with_layout(
+                vec2(row_w, 30.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    let buttons = if narrow {
+                        2.0 * 30.0 + 6.0
                     } else {
-                        if ui
-                            .add(egui::Button::new(tr("Cancel")).min_size(vec2(0.0, 30.0)))
-                            .on_hover_text("Esc")
-                            .clicked()
-                        {
-                            out.editor = Some(EditorOutcome::Cancel);
-                        }
-                        if crate::widgets::primary(ui, tr("Done"))
-                            .on_hover_text("Enter")
-                            .clicked()
-                        {
+                        crate::game_view::text_width(ui, tr("Done"), egui::TextStyle::Button)
+                            + crate::game_view::text_width(
+                                ui,
+                                tr("Cancel"),
+                                egui::TextStyle::Button,
+                            )
+                            + 4.0 * ui.spacing().button_padding.x
+                            + 3.0 * ui.spacing().item_spacing.x
+                    };
+                    let room = ui.available_width() - buttons;
+                    let title = if narrow
+                        || crate::game_view::text_width(ui, &ed.title, egui::TextStyle::Body) > room
+                    {
+                        &ed.short_title
+                    } else {
+                        &ed.title
+                    };
+                    title_id = Some(ui.add(egui::Label::new(title).truncate()).id);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let (done, cancel) = if narrow {
+                            (
+                                crate::widgets::icon_button(ui, true, true)
+                                    .on_hover_text(tr("Done (Enter)")),
+                                crate::widgets::icon_button(ui, false, false)
+                                    .on_hover_text(tr("Cancel (Esc)")),
+                            )
+                        } else {
+                            (
+                                crate::widgets::primary(ui, tr("Done")).on_hover_text("Enter"),
+                                ui.add(egui::Button::new(tr("Cancel")).min_size(vec2(0.0, 30.0)))
+                                    .on_hover_text("Esc"),
+                            )
+                        };
+                        if done.clicked() {
                             out.editor = Some(EditorOutcome::Done);
                         }
-                    }
-                });
-            });
+                        if cancel.clicked() {
+                            out.editor = Some(EditorOutcome::Cancel);
+                        }
+                    });
+                },
+            );
             // The symbols: the move's six, then the position's eight (a «±▾» menu when
             // they do not fit on the line). Not for the start of the game.
-            if ed.slot != Slot::After(NodeId::ROOT) && !matches!(ed.slot, Slot::Before(_)) {
-                let both = 14.0 * 30.0 + 24.0 <= ui.available_width();
+            if has_symbols {
+                let group = |n: f32| n * SYMBOL_W + (n - 1.0) * SYMBOL_GAP;
+                // The two groups, the separator and the gaps around it.
+                let both = group(6.0) + 4.0 + 12.0 + 4.0 + group(8.0) <= ui.available_width();
+                // In a narrow panel (240 wide, less inside a variation) the six buttons
+                // are 22 wide: the row must not widen the panel.
+                let w = if ui.available_width() < 300.0 {
+                    22.0
+                } else {
+                    SYMBOL_W
+                };
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
                     let mut toggled = None;
-                    symbol_row(ui, &ed.nags, &MOVE_NAGS, true, &mut |nag| {
+                    symbol_row_sized(ui, &ed.nags, &MOVE_NAGS, true, w, &mut |nag| {
                         toggled = Some(nag)
                     });
                     if both {
-                        ui.separator();
+                        ui.add(egui::Separator::default().spacing(12.0));
                         symbol_row(ui, &ed.nags, &POSITION_NAGS, false, &mut |nag| {
                             toggled = Some(nag)
                         });
@@ -830,58 +887,101 @@ fn editor_block(ui: &mut Ui, editor: &mut Option<&mut CommentEditor>, out: &mut 
                     }
                 });
             }
-            // The text: 2 to 12 lines, then it scrolls inside.
+            ui.add_space(4.0);
+            // The text in its own box: 2 to 12 lines, then it scrolls inside; in a low
+            // window fewer lines, so that a notation row stays above and below.
             let color = comment_color(ui);
-            let row_h = ui.fonts_mut(|f| f.row_height(&FontId::proportional(14.5)));
-            let resp = egui::ScrollArea::vertical()
-                .id_salt("comment_editor_scroll")
-                .max_height(12.0 * row_h + 8.0)
-                .auto_shrink([false, true])
+            let font = FontId::proportional(14.5);
+            let row_h = ui.fonts_mut(|f| f.row_height(&font));
+            let overhead = ui.cursor().top() - frame_top;
+            let below =
+                if narrow { 0.0 } else { 22.0 } + f32::from(margin.bottom) + 2.0 * ROW_H + 8.0;
+            let cap = (12.0 * row_h + 8.0)
+                .min(viewport_h - overhead - below)
+                .max(2.0 * row_h + 8.0);
+            let focus_now = std::mem::take(&mut ed.focus);
+            let field_fill = if ui.visuals().dark_mode {
+                ui.visuals().panel_fill
+            } else {
+                Color32::WHITE
+            };
+            let mut border = ui.visuals().widgets.inactive.bg_stroke;
+            if border.color.a() == 0 {
+                border = Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.35));
+            }
+            let resp = egui::Frame::new()
+                .fill(field_fill)
+                .stroke(border)
+                .corner_radius(4)
+                .inner_margin(egui::Margin::symmetric(6, 4))
                 .show(ui, |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut ed.text)
-                            .id_salt("comment_editor")
-                            .desired_rows(2)
-                            .desired_width(f32::INFINITY)
-                            .font(FontId::proportional(14.5))
-                            .text_color(color)
-                            .hint_text(tr("Your comment…")),
-                    )
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+                    egui::ScrollArea::vertical()
+                        .id_salt("comment_editor_scroll")
+                        .max_height(cap)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            let o = egui::TextEdit::multiline(&mut ed.text)
+                                .id_salt("comment_editor")
+                                .frame(egui::Frame::NONE)
+                                .desired_rows(2)
+                                .desired_width(f32::INFINITY)
+                                .font(font.clone())
+                                .text_color(color)
+                                .hint_text(tr("Your comment…"))
+                                .show(ui);
+                            if focus_now {
+                                // The cursor at the end, and the end in view: one adds to a
+                                // comment more often than replaces it.
+                                o.response.request_focus();
+                                let end = egui::text::CCursor::new(ed.text.chars().count());
+                                let mut state = o.state.clone();
+                                state
+                                    .cursor
+                                    .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                                state.store(ui.ctx(), o.response.id);
+                                let caret = o
+                                    .galley
+                                    .pos_from_cursor(end)
+                                    .translate(o.galley_pos.to_vec2());
+                                ui.scroll_to_rect(caret, Some(egui::Align::Max));
+                            }
+                            o.response.response
+                        })
+                        .inner
                 })
                 .inner;
             ed.field_id = Some(resp.id);
-            if std::mem::take(&mut ed.focus) {
-                resp.request_focus();
-                // The cursor at the end: one adds to a comment more often than replaces it.
-                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), resp.id) {
-                    let end = egui::text::CCursor::new(ed.text.chars().count());
-                    state
-                        .cursor
-                        .set_char_range(Some(egui::text::CCursorRange::one(end)));
-                    state.store(ui.ctx(), resp.id);
-                }
+            if let Some(t) = title_id {
+                resp.clone().labelled_by(t);
             }
             if !narrow {
+                ui.add_space(4.0);
                 ui.label(
                     RichText::new(tr(
                         "Enter — done · Esc — cancel · Shift+Enter — new paragraph",
                     ))
-                    .weak()
-                    .small(),
+                    .size(11.5)
+                    .color(ui.visuals().weak_text_color()),
                 );
             }
             if ed.translated {
+                ui.add_space(2.0);
                 ui.label(
                     RichText::new(tr(
                         "⇄ You are editing the original; its translation will be dropped",
                     ))
-                    .weak()
-                    .small(),
+                    .size(11.5)
+                    .color(ui.visuals().weak_text_color()),
                 );
             }
         });
     if std::mem::take(&mut ed.scroll) {
-        r.response.scroll_to_me(None);
+        // The move's own row above the frame stays in view too.
+        let rect = r.response.rect;
+        let with_row = egui::Rect::from_min_max(rect.min - vec2(0.0, ROW_H + 8.0), rect.max);
+        ui.scroll_to_rect(with_row, None);
     }
 }
 
@@ -910,6 +1010,8 @@ enum Token {
     Move {
         id: NodeId,
         label: String,
+        /// The label with the move number, for the move that starts a piece of the flow.
+        numbered: String,
         color: Option<Color32>,
     },
     Comment {
@@ -952,28 +1054,45 @@ fn variation_block(
     block_frame(ui).show(ui, |ui| {
         ui.set_width(ui.available_width());
         match cut {
-            None => flow(ui, n, &tokens, out),
+            None => flow(ui, n, &tokens, false, out),
             Some((at, replaces)) => {
-                flow(ui, n, &tokens[..at], out);
-                editor_block(ui, editor, out);
+                flow(ui, n, &tokens[..at], false, out);
+                editor_block(ui, editor, true, out);
                 let rest = if replaces { at + 1 } else { at };
-                flow(ui, n, &tokens[rest..], out);
+                flow(ui, n, &tokens[rest..], true, out);
             }
         }
     });
 }
 
 /// Lays out tokens as flowing text.
-fn flow(ui: &mut Ui, n: &Notation, tokens: &[Token], out: &mut NotationResponse) {
+fn flow(
+    ui: &mut Ui,
+    n: &Notation,
+    tokens: &[Token],
+    numbered_first: bool,
+    out: &mut NotationResponse,
+) {
     if tokens.is_empty() {
         return;
     }
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(3.0, 2.0);
-        for t in tokens {
+        for (k, t) in tokens.iter().enumerate() {
             match t {
-                Token::Move { id, label, color } => {
+                Token::Move {
+                    id,
+                    label,
+                    numbered,
+                    color,
+                } => {
                     let current = *id == n.cursor;
+                    // After the editor the flow starts anew: with the move number.
+                    let label = if k == 0 && numbered_first {
+                        numbered
+                    } else {
+                        label
+                    };
                     let mut text = RichText::new(label).size(15.0);
                     if let Some(c) = color
                         && !current
@@ -1047,9 +1166,14 @@ fn line_tokens(n: &Notation, first: NodeId, tokens: &mut Vec<Token>) {
             (Color::Black, false) => format!("{san}{sym}"),
         };
         need_number = false;
+        let numbered = match color {
+            Color::White => label.clone(),
+            Color::Black => format!("{num}…{san}{sym}"),
+        };
         tokens.push(Token::Move {
             id: node,
             label,
+            numbered,
             color: sym_color,
         });
         let after = comment_text(nd.comments_after());
