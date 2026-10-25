@@ -80,6 +80,8 @@ pub struct GameView {
     show_diagnostics: bool,
     engine_settings_open: bool,
     review: Review,
+    /// «Analyse» was pressed: started (or its dialog shown) where the settings are.
+    review_asked: bool,
     side_tab: SideTab,
     /// The game this one was opened from (reference tab): the title for "← back to".
     pub previous: Option<String>,
@@ -175,6 +177,7 @@ impl GameView {
             show_diagnostics: false,
             engine_settings_open: false,
             review,
+            review_asked: false,
             // Dev hook (screenshots): `CP_TAB=reference` opens that tab.
             side_tab: if std::env::var("CP_TAB").as_deref() == Ok("reference") {
                 SideTab::Reference
@@ -749,8 +752,19 @@ impl GameView {
         });
         self.sync_analysis(analysis);
 
+        // «Analyse»: at once with the options chosen before, else the dialog first.
+        if std::mem::take(&mut self.review_asked) {
+            if settings.review.chosen {
+                self.start_review(settings, true, ui.ctx(), &mut actions);
+            } else {
+                self.review.dialog_open = true;
+            }
+        }
         match self.review.dialog(ui.ctx(), settings) {
-            Some(DialogAction::Start) => self.start_review(settings, true, ui.ctx(), &mut actions),
+            Some(DialogAction::Start) => {
+                settings.review.chosen = true;
+                self.start_review(settings, true, ui.ctx(), &mut actions);
+            }
             Some(DialogAction::EngineSwitch) => actions.push(GameAction::EngineSwitch),
             Some(DialogAction::OpenEngines) => actions.push(GameAction::OpenEngineSettings),
             None => {}
@@ -859,7 +873,7 @@ impl GameView {
             ))
             .clicked()
         {
-            self.review.dialog_open = true;
+            self.review_asked = true;
         }
     }
 
@@ -1998,11 +2012,12 @@ impl GameView {
         }
     }
 
-    pub fn debug_review(&mut self, settings: &Settings, ctx: &egui::Context, start: bool) {
-        if start {
-            self.start_review(settings, false, ctx, &mut Vec::new());
-        } else {
-            self.review.dialog_open = true;
+    /// `how`: "dialog" opens the dialog, "ask" presses «Analyse», else the analysis starts.
+    pub fn debug_review(&mut self, settings: &Settings, ctx: &egui::Context, how: &str) {
+        match how {
+            "dialog" => self.review.dialog_open = true,
+            "ask" => self.review_asked = true,
+            _ => self.start_review(settings, false, ctx, &mut Vec::new()),
         }
     }
 
@@ -3213,7 +3228,7 @@ impl GameView {
                     button(ui, 3, full);
                 }
                 if clicked[0] {
-                    self.review.dialog_open = true;
+                    self.review_asked = true;
                 }
                 if clicked[1] {
                     actions.push(GameAction::Rematch);
@@ -4306,7 +4321,7 @@ impl GameView {
                     if self.review.has_data() || self.review.running() {
                         self.review.visible = !self.review.visible;
                     } else {
-                        self.review.dialog_open = true;
+                        self.review_asked = true;
                     }
                 }
                 // Escape cancels what is going on first (a preview of an engine line, a

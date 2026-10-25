@@ -148,13 +148,16 @@ pub struct Settings {
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReviewSettings {
     /// Index into [`REVIEW_QUALITY`].
     pub quality: usize,
     pub threads: u32,
     pub hash_mb: u32,
+    /// An analysis was started from the dialog once: «Analyse» starts the next one with
+    /// these options at once (the dialog stays for «Analyse again…»).
+    pub chosen: bool,
 }
 
 impl Default for ReviewSettings {
@@ -163,6 +166,7 @@ impl Default for ReviewSettings {
             quality: 1,
             threads: default_threads(),
             hash_mb: default_hash(),
+            chosen: false,
         }
     }
 }

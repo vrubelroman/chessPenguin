@@ -234,7 +234,8 @@ pub struct App {
 /// Dev-only startup automation for screenshots/manual QA (see docs/dev/desktop.md):
 /// `CP_OPEN=<game index>` opens a game from the first database, `CP_PLY=<n>` steps
 /// along the main line, `CP_ANALYZE=1` starts the engine, `CP_SETTINGS=1` opens settings (`=board`, `=about`: that tab),
-/// `CP_REVIEW=1` starts the whole-game analysis (`=dialog` only opens its dialog),
+/// `CP_REVIEW=1` starts the whole-game analysis (`=dialog` only opens its dialog, `=ask`
+/// presses «Analyse»: the dialog or, the options chosen before, the analysis),
 /// `CP_KEYS="ArrowDown Shift+ArrowUp Ctrl+Z Escape"` presses these keys, one every half second
 /// from the second second.
 #[derive(Default)]
@@ -619,9 +620,10 @@ impl App {
             if let Some(k) = std::env::var("CP_BEST").ok().and_then(|v| v.parse().ok()) {
                 g.debug_best_line(k);
             }
-            // CP_REVIEW=dialog opens the game-analysis dialog, any other value starts the analysis.
+            // CP_REVIEW=dialog opens the game-analysis dialog, =ask presses «Analyse», any
+            // other value starts the analysis.
             if let Ok(v) = std::env::var("CP_REVIEW") {
-                g.debug_review(&self.settings, ctx, v != "dialog");
+                g.debug_review(&self.settings, ctx, &v);
             }
         }
         if let Some(start) = self.debug.play_from.take() {
@@ -2305,6 +2307,7 @@ impl eframe::App for App {
                     bytes: self.library.file_size(p),
                 })
                 .collect();
+            let review = self.settings.review.clone();
             let actions = game.show(
                 ui,
                 &mut self.settings,
@@ -2313,6 +2316,8 @@ impl eframe::App for App {
                 &mut self.translation,
                 input_enabled,
             );
+            // The analysis options (its dialog) are kept.
+            self.settings_dirty |= self.settings.review != review;
             self.reference_tab = game.reference_tab();
             for a in actions {
                 match a {
