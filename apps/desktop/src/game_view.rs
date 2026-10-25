@@ -2291,6 +2291,7 @@ impl GameView {
                 s.opponent.forget();
                 s.resign_offer = Some(std::time::Instant::now());
                 self.scroll_to_cursor = true;
+                actions.push(GameAction::Sound(Sound::Defeat));
                 return;
             }
         }

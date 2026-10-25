@@ -556,6 +556,8 @@ pub enum Sound {
     Capture,
     Check,
     Checkmate,
+    /// A game lost — here: Maia offers to resign.
+    Defeat,
 }
 
 pub fn sound_bytes(set: SoundSet, sound: Sound) -> &'static [u8] {
@@ -590,6 +592,13 @@ pub fn sound_bytes(set: SoundSet, sound: Sound) -> &'static [u8] {
         (SoundSet::Clicks, Sound::Capture) => s!("clicks", "Capture"),
         (SoundSet::Clicks, Sound::Check) => s!("clicks", "Check"),
         (SoundSet::Clicks, Sound::Checkmate) => s!("clicks", "Checkmate"),
+        (SoundSet::Sfx, Sound::Defeat) => s!("sfx", "Defeat"),
+        (SoundSet::Piano, Sound::Defeat) => s!("piano", "Defeat"),
+        (SoundSet::Futuristic, Sound::Defeat) => s!("futuristic", "Defeat"),
+        (SoundSet::Nes, Sound::Defeat) => s!("nes", "Defeat"),
+        (SoundSet::Wood, Sound::Defeat) => s!("wood", "Defeat"),
+        (SoundSet::Glass, Sound::Defeat) => s!("glass", "Defeat"),
+        (SoundSet::Clicks, Sound::Defeat) => s!("clicks", "Defeat"),
     }
 }
 
@@ -601,7 +610,13 @@ mod tests {
     fn every_sound_is_a_real_ogg_file() {
         // Lichess keeps some sounds as git symlinks; a copied link is a few bytes of text.
         for set in SoundSet::ALL {
-            for s in [Sound::Move, Sound::Capture, Sound::Check, Sound::Checkmate] {
+            for s in [
+                Sound::Move,
+                Sound::Capture,
+                Sound::Check,
+                Sound::Checkmate,
+                Sound::Defeat,
+            ] {
                 let b = sound_bytes(set, s);
                 assert!(b.starts_with(b"OggS") && b.len() > 1000, "{set:?} {s:?}");
             }
