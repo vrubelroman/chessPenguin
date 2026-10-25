@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.3.0" date="2026-10-25">
+      <description>
+        <p>Play against the computer: Maia, a neural network trained on human games, plays like a human of the rating you choose, from 600 to 2600, mistakes included. Lichess time controls from 3+0 to 30+20, your own or unlimited; clocks, premoves, take-backs. No engine hints during the game; when her position is hopeless Maia offers to resign. Afterwards the game can be analysed or saved. Maia (21 MB) is downloaded on request. New board setting: always promote to a queen.</p>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-10-25">
       <description>
         <p>Your own comments in a game: press Enter on a move and write right in the notation, after any move of the main line or a variation, or at the start of the game. Put symbols on moves and positions (! ? !! ?? !? ?! and = ∞ ± ∓ …) with the mouse or Ctrl+1…6, draw arrows and circles on the board with the right mouse button. Book comments can be edited; their paragraphs and embedded commands are kept.</p>

@@ -47,6 +47,10 @@
   Undo. Any PGN file on the shelf takes games; writes happen only when you ask, by appending
   to the file or rewriting it atomically. Online and ChessBase databases stay read-only; a
   file in a legacy encoding gets a UTF-8 copy.
+- **Play against the computer** — Maia, a neural network trained on human games, plays like a
+  human of the rating you choose (600–2600), mistakes included. Lichess time controls (3+0 to
+  30+20, your own, unlimited), clocks, premoves, take-backs; Maia offers to resign when lost.
+  Its weights (21 MB) are downloaded on request.
 - **Looks** — 17 piece sets, 37 boards (flat colours and textures), 7 sound sets,
   dark and light themes.
 - **Online games** — download anyone's games from Lichess and Chess.com by nickname (yours, a pupil's, an opponent's; no login) into a database, both sites merged or one per site, and fetch the new ones with one click.

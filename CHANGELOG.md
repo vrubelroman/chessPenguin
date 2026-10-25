@@ -2,9 +2,9 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.3.0] — 2026-10-25
 
-- Play against the computer (desktop): «⚔ Play» in the library (Ctrl+G) starts a game
+- Play against the computer (desktop): «♞ Play» in the library (Ctrl+G) starts a game
   against Maia — a neural network (Maia-3, CSSLab, University of Toronto) that plays like
   a human of the chosen rating, 600–2600, mistakes included. Your name and rating
   (optional; «Weaker · As me · Stronger» choose the strength relative to it), colour,

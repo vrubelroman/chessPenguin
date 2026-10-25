@@ -67,6 +67,19 @@ Notes:
 - Piece sets and boards under CC BY-NC-SA (e.g. california, staunty, maestro, horsey) are not bundled: non-commercial terms are incompatible with the GPL.
 - AGPLv3+ sound, piece and board files are combined with this GPLv3+ program under GPLv3 §13.
 
+## Maia-3 (play against the computer)
+
+`crates/maia` computes the Maia-3 network (CSSLab, University of Toronto: Reid McIlroy-Young,
+Ashton Anderson and co-authors) in Rust. Its architecture and input encoding follow the
+reference implementation https://github.com/CSSLab/maia3 (AGPL-3.0), translated to Rust and
+checked against it (`scripts/maia-reference.py`, `crates/maia/tests/reference.json`); as with the
+AGPL sounds above, it is combined with this GPLv3+ program under GPLv3 §13.
+
+The network weights are **not** part of ChessPenguin. On the user's request the program
+downloads the authors' own file `maia3-5m.pt` from https://huggingface.co/UofTCSSLab/Maia3-5M
+(revision and SHA-256 pinned in `apps/desktop/src/maia_download.rs`) into the user's data
+directory. The weights' licence is not stated by the authors.
+
 ## Stockfish (engine)
 
 **Stockfish 19** (tag `sf_19`) is the unmodified official "universal" build from
