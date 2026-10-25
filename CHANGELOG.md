@@ -12,6 +12,15 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   it takes longer than her pause.
 - Game analysis: «Analyse» starts at once with the options chosen the last time; the
   options dialog comes the first time and with «Analyse again…».
+- Android: moves on the board (tap a piece and a square, or drag; a pawn becomes a
+  queen), variations, «Make it the main line» and «Delete» on a long press, «Undo».
+  A new game from the start; your own databases on the phone (create, rename, export
+  the file, delete) and saving games into them, with the game's data.
+- Android: play against Maia (the small model, 21 MB, downloaded once; no clocks),
+  from the start or «Play on from here» after a move; take back, resign, Maia offers
+  to resign when lost; the game is put aside with «back» and goes on later. Learn an
+  opening up to a move, as on the desktop. Sounds, with a setting.
+- The opening trainer and the rules of a game against Maia are shared by both apps.
 
 ## [1.4.0] — 2026-10-25
 
