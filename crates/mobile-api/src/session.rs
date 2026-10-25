@@ -37,6 +37,11 @@ impl GameSession {
         let mut g = self.game.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut g)
     }
+
+    pub(crate) fn read<R>(&self, f: impl FnOnce(&Game) -> R) -> R {
+        let g = self.game.lock().unwrap_or_else(|e| e.into_inner());
+        f(&g)
+    }
 }
 
 /// The node at place `at` of the game's list.

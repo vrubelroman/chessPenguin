@@ -16,6 +16,7 @@ mod engine;
 mod online;
 mod review;
 mod session;
+mod train;
 mod update;
 
 pub use engine::{Analysis, Analyzer, EngineFailure, EngineLine, LineStep};
@@ -25,6 +26,7 @@ pub use online::{
 };
 pub use review::{GameReview, MoveJudgement, ReviewMove, ReviewPoint, ReviewState, SideReview};
 pub use session::{Edited, GameSession, own_create, own_remove, own_save};
+pub use train::{TrainState, TrainStats, TrainVerdict, Trainer, trainer_set_file};
 pub use update::{ApkFile, AppRelease, ReleaseCheck};
 
 uniffi::setup_scaffolding!();

@@ -29,5 +29,6 @@ online-games.workspace = true
 releases.workspace = true
 shakmaty.workspace = true
 thiserror.workspace = true
+trainer.workspace = true
 uci.workspace = true
 uniffi = "0.32.2"

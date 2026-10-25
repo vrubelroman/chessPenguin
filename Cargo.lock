@@ -2470,6 +2470,7 @@ dependencies = [
  "releases",
  "shakmaty",
  "thiserror 2.0.21",
+ "trainer",
  "uci",
  "uniffi",
 ]
