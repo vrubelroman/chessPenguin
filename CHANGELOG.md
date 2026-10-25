@@ -8,7 +8,7 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   against Maia — a neural network (Maia-3, CSSLab, University of Toronto) that plays like
   a human of the chosen rating, 600–2600, mistakes included. Your name and rating
   (optional; «Weaker · As me · Stronger» choose the strength relative to it), colour,
-  Lichess time controls (bullet to classical, custom, no clock). During the game: the
+  Lichess time controls from 3+0 to 30+20 (10+5 by default), custom, or no time limit. During the game: the
   board, the notation, both clocks (time runs after each side's first move, increment
   after the move, low time in red), take back, resign; no engine or analysis. Maia
   thinks like a human — a pause that depends on her clock — and never loses on time. The

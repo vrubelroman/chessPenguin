@@ -21,16 +21,9 @@ pub struct TimeControl {
     pub increment: u32,
 }
 
-/// The pools of Lichess (lila `PoolList.scala`).
-pub const PRESETS: [TimeControl; 11] = [
-    TimeControl {
-        base: 60,
-        increment: 0,
-    },
-    TimeControl {
-        base: 120,
-        increment: 1,
-    },
+/// The pools of Lichess (lila `PoolList.scala`) from 3+0: no bullet (the owner's choice:
+/// against Maia the fastest is 3+0).
+pub const PRESETS: [TimeControl; 9] = [
     TimeControl {
         base: 180,
         increment: 0,
@@ -71,8 +64,6 @@ pub const PRESETS: [TimeControl; 11] = [
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Speed {
-    UltraBullet,
-    Bullet,
     Blitz,
     Rapid,
     Classical,
@@ -81,8 +72,6 @@ pub enum Speed {
 impl Speed {
     pub fn name(self) -> &'static str {
         match self {
-            Speed::UltraBullet => tr("UltraBullet"),
-            Speed::Bullet => tr("Bullet"),
             Speed::Blitz => tr("Blitz"),
             Speed::Rapid => tr("Rapid"),
             Speed::Classical => tr("Classical"),
@@ -92,27 +81,23 @@ impl Speed {
 
 impl TimeControl {
     /// The category by the estimated length, base + 40 × increment (scalachess
-    /// `Speed.scala`).
+    /// `Speed.scala`; nothing here is faster than 3+0, a blitz).
     pub fn speed(self) -> Speed {
         match self.base + 40 * self.increment {
-            0..30 => Speed::UltraBullet,
-            30..180 => Speed::Bullet,
-            180..480 => Speed::Blitz,
+            0..480 => Speed::Blitz,
             480..1500 => Speed::Rapid,
             _ => Speed::Classical,
         }
     }
 
-    /// «5+3», «½+0» as Lichess writes it (minutes + seconds).
+    /// «5+3» as Lichess writes it (minutes + seconds).
     pub fn label(self) -> String {
-        let min = match self.base {
-            15 => "¼".to_owned(),
-            30 => "½".to_owned(),
-            45 => "¾".to_owned(),
-            90 => "1½".to_owned(),
-            b => (b / 60).to_string(),
-        };
-        format!("{min}+{}", self.increment)
+        format!("{}+{}", self.base / 60, self.increment)
+    }
+
+    /// The fastest control offered: 3+0.
+    pub fn allowed(self) -> bool {
+        self.base >= 180
     }
 
     /// The PGN tag `TimeControl`: seconds + increment.
@@ -121,11 +106,10 @@ impl TimeControl {
     }
 }
 
-/// The minutes the custom control offers (Lichess `timeControl.ts`), in seconds.
+/// The minutes the custom control offers (Lichess `timeControl.ts` from 3), in seconds.
 pub const CUSTOM_BASES: &[u32] = &[
-    0, 15, 30, 45, 60, 90, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900,
-    960, 1020, 1080, 1140, 1200, 1500, 1800, 2100, 2400, 2700, 3600, 4500, 5400, 6300, 7200, 8100,
-    9000, 9900, 10800,
+    180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900, 960, 1020, 1080, 1140, 1200,
+    1500, 1800, 2100, 2400, 2700, 3600, 4500, 5400, 6300, 7200, 8100, 9000, 9900, 10800,
 ];
 pub const CUSTOM_INCREMENTS: &[u32] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25, 30, 35, 40, 45,
@@ -157,8 +141,8 @@ impl Default for PlayPrefs {
         PlayPrefs {
             color: ColorChoice::Random,
             clock: Some(TimeControl {
-                base: 300,
-                increment: 3,
+                base: 600,
+                increment: 5,
             }),
             strength: 1500,
         }
@@ -524,15 +508,12 @@ mod tests {
     #[test]
     fn speeds_as_lichess() {
         let s = |base, increment| TimeControl { base, increment }.speed();
-        assert_eq!(s(60, 0), Speed::Bullet);
-        assert_eq!(s(120, 1), Speed::Bullet);
         assert_eq!(s(180, 0), Speed::Blitz);
         assert_eq!(s(300, 3), Speed::Blitz);
         assert_eq!(s(420, 0), Speed::Blitz);
         assert_eq!(s(480, 0), Speed::Rapid);
         assert_eq!(s(900, 10), Speed::Rapid);
         assert_eq!(s(1500, 0), Speed::Classical);
-        assert_eq!(s(15, 0), Speed::UltraBullet);
         assert_eq!(
             TimeControl {
                 base: 300,
@@ -541,13 +522,25 @@ mod tests {
             .label(),
             "5+3"
         );
-        assert_eq!(
-            TimeControl {
-                base: 30,
-                increment: 0
+        // Nothing faster than 3+0; every preset and custom minute allowed.
+        assert!(
+            !TimeControl {
+                base: 120,
+                increment: 1
             }
-            .label(),
-            "½+0"
+            .allowed()
+        );
+        assert!(PRESETS.iter().all(|t| t.allowed()));
+        assert!(CUSTOM_BASES.iter().all(|&b| {
+            TimeControl {
+                base: b,
+                increment: 0,
+            }
+            .allowed()
+        }));
+        assert_eq!(
+            PlayPrefs::default().clock.map(|t| t.label()).as_deref(),
+            Some("10+5")
         );
         assert_eq!(
             TimeControl {
@@ -692,7 +685,11 @@ pub enum DialogOutcome {
 
 impl Dialog {
     pub fn new(settings: &crate::settings::Settings) -> Dialog {
-        let prefs = settings.play.clone();
+        let mut prefs = settings.play.clone();
+        // A bullet control remembered from before: the default instead.
+        if prefs.clock.is_some_and(|c| !c.allowed()) {
+            prefs.clock = PlayPrefs::default().clock;
+        }
         let custom = prefs.clock.is_some_and(|c| !PRESETS.contains(&c));
         Dialog {
             name: settings.your_name.clone(),
@@ -787,7 +784,7 @@ impl Dialog {
                         let on = !self.custom && self.prefs.clock == Some(*tc);
                         let text = format!("{}\n{}", tc.label(), tc.speed().name());
                         if ui
-                            .add_sized([96.0, 40.0], egui::Button::selectable(on, text))
+                            .add_sized([110.0, 40.0], tile(ui, on, &text))
                             .clicked()
                         {
                             self.prefs.clock = Some(*tc);
@@ -798,7 +795,7 @@ impl Dialog {
                         }
                     }
                     if ui
-                        .add_sized([96.0, 40.0], egui::Button::selectable(self.custom, tr("Custom")))
+                        .add_sized([110.0, 40.0], tile(ui, self.custom, tr("Custom")))
                         .clicked()
                     {
                         self.custom = true;
@@ -806,19 +803,23 @@ impl Dialog {
                             self.prefs.clock = Some(TimeControl { base: 600, increment: 0 });
                         }
                     }
+                    // No clock at all: think as long as you like (Maia answers in a
+                    // second or two).
+                    let none = self.prefs.clock.is_none();
+                    if ui
+                        .add_sized([110.0, 40.0], tile(ui, none, tr("∞\nNo time limit")))
+                        .on_hover_text(tr("No clocks: think as long as you like"))
+                        .clicked()
+                    {
+                        self.prefs.clock = None;
+                        self.custom = false;
+                    }
                     ui.end_row();
                 });
-            ui.horizontal(|ui| {
-                let none = self.prefs.clock.is_none();
-                if ui.selectable_label(none, tr("No clock")).clicked() {
-                    self.prefs.clock = None;
-                    self.custom = false;
-                }
-            });
             if self.custom
                 && let Some(tc) = self.prefs.clock.as_mut()
             {
-                let mut b = CUSTOM_BASES.iter().position(|&x| x >= tc.base).unwrap_or(14);
+                let mut b = CUSTOM_BASES.iter().position(|&x| x >= tc.base).unwrap_or(7);
                 let mut i = CUSTOM_INCREMENTS
                     .iter()
                     .position(|&x| x >= tc.increment)
@@ -837,9 +838,6 @@ impl Dialog {
                 });
                 tc.base = CUSTOM_BASES[b];
                 tc.increment = CUSTOM_INCREMENTS[i];
-                if tc.base == 0 && tc.increment == 0 {
-                    tc.increment = 1;
-                }
                 ui.label(
                     RichText::new(format!("{} · {}", tc.label(), tc.speed().name())).weak(),
                 );
@@ -872,7 +870,7 @@ impl Dialog {
             .response
             .on_disabled_hover_text(tr("Enter your rating to choose relative to it"));
             ui.label(
-                RichText::new(tr("Maia's ratings are Lichess ratings: club and federation ratings are usually lower."))
+                RichText::new(tr("Maia's rating is on the Lichess scale, which runs higher than FIDE and club ratings: Maia 1500 is weaker than a club player rated 1500."))
                     .weak()
                     .size(11.5),
             );
@@ -958,6 +956,22 @@ impl Dialog {
         }
         out
     }
+}
+
+/// A time tile: its lines centred under each other (egui puts them flush left).
+fn tile(ui: &egui::Ui, on: bool, text: &str) -> egui::Button<'static> {
+    let mut job = egui::text::LayoutJob::simple(
+        text.to_owned(),
+        egui::TextStyle::Button.resolve(ui.style()),
+        if on {
+            ui.visuals().strong_text_color()
+        } else {
+            ui.visuals().text_color()
+        },
+        f32::INFINITY,
+    );
+    job.halign = egui::Align::Center;
+    egui::Button::selectable(on, job)
 }
 
 fn trf_size() -> String {
