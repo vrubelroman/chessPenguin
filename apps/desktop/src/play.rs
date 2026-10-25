@@ -11,6 +11,7 @@ use chess_core::shakmaty::{Chess, Color, EnPassantMode, Move, Position};
 use serde::{Deserialize, Serialize};
 
 use crate::i18n::tr;
+use crate::maia_download::Model;
 
 // ----- time controls --------------------------------------------------------------------
 
@@ -132,7 +133,9 @@ pub struct PlayPrefs {
     pub color: ColorChoice,
     /// `None`: no clock.
     pub clock: Option<TimeControl>,
-    /// Maia's rating, 600–2600.
+    /// Maia's strength: a rating on the Lichess blitz scale (`level`: before 1.5 the
+    /// field `strength` held her rating input, a different scale, and is dropped).
+    #[serde(rename = "level")]
     pub strength: u32,
 }
 
@@ -149,8 +152,63 @@ impl Default for PlayPrefs {
     }
 }
 
-pub const STRENGTH_MIN: u32 = 600;
-pub const STRENGTH_MAX: u32 = 2600;
+pub const STRENGTH_MIN: u32 = 1100;
+pub const STRENGTH_MAX: u32 = 2000;
+
+// ----- Maia's strength ----------------------------------------------------------------
+
+/// The strongest the small model plays (with the large one missing).
+pub const SMALL_MAX: u32 = 1800;
+
+/// Measured (docs/research/maia-strength.md): Maia's rating input → her strength on
+/// the Lichess blitz scale, as she plays here (temperature 1, rare moves dropped).
+const SMALL: &[(u32, u32)] = &[
+    (1100, 1314),
+    (1300, 1426),
+    (1500, 1485),
+    (1700, 1563),
+    (1900, 1632),
+    (2100, 1683),
+    (2300, 1737),
+    (2600, 1800),
+];
+const LARGE: &[(u32, u32)] = &[(1500, 1615), (1900, 1794), (2300, 1964), (2600, 2000)];
+
+/// The rating to give `model` for it to play at `strength` (between the measured
+/// points, in proportion; outside them, the nearest).
+pub fn rating_input(model: Model, strength: u32) -> u32 {
+    let table = match model {
+        Model::Small => SMALL,
+        Model::Large => LARGE,
+    };
+    let (first, last) = (table[0], table[table.len() - 1]);
+    if strength <= first.1 {
+        return first.0;
+    }
+    if strength >= last.1 {
+        return last.0;
+    }
+    let i = table
+        .iter()
+        .position(|p| p.1 >= strength)
+        .unwrap_or(table.len() - 1);
+    let ((a_in, a_out), (b_in, b_out)) = (table[i - 1], table[i]);
+    let t = f64::from(strength - a_out) / f64::from(b_out - a_out);
+    (f64::from(a_in) + t * f64::from(b_in - a_in)).round() as u32
+}
+
+/// The model to play at `strength`, with its file: the large one when it is there,
+/// else the small one up to its ceiling. `Err`: the model to download.
+pub fn model_for(strength: u32) -> Result<(Model, std::path::PathBuf), Model> {
+    use crate::maia_download::installed;
+    if let Some(p) = installed(Model::Large) {
+        return Ok((Model::Large, p));
+    }
+    match installed(Model::Small) {
+        Some(p) if strength <= SMALL_MAX => Ok((Model::Small, p)),
+        _ => Err(Model::Large),
+    }
+}
 
 // ----- the clock -----------------------------------------------------------------------
 
@@ -406,7 +464,10 @@ impl Opponent {
                     let m = maia::pick(&p, 1.0, random_unit());
                     let rest = r.pause.saturating_sub(started.elapsed());
                     std::thread::sleep(rest);
-                    if ans_tx.send((r.generation, m, r.pause)).is_err() {
+                    // Her clock: the pause, or the computing when it took longer (a slow
+                    // computer, the large model).
+                    let spent = r.pause.max(started.elapsed());
+                    if ans_tx.send((r.generation, m, spent)).is_err() {
                         return;
                     }
                     ctx.request_repaint();
@@ -440,7 +501,8 @@ impl Opponent {
         self.thinking = false;
     }
 
-    /// The move asked for last, when it has come, with the pause it was given.
+    /// The move asked for last, when it has come, with the time it took (its pause, or
+    /// the computing when longer).
     pub fn answer(&mut self) -> Option<(Move, Duration)> {
         let mut out = None;
         while let Ok((g, m, pause)) = self.rx.try_recv() {
@@ -497,6 +559,28 @@ pub fn pause(clock: Option<(Duration, u32)>, ply: usize, only_move: bool) -> Dur
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn strength_to_rating_input() {
+        use crate::maia_download::Model;
+        // The measured points themselves, in proportion between them, the ends held.
+        assert_eq!(rating_input(Model::Large, 1615), 1500);
+        assert_eq!(rating_input(Model::Large, 2000), 2600);
+        assert_eq!(rating_input(Model::Large, STRENGTH_MIN), 1500);
+        assert_eq!(rating_input(Model::Small, 1485), 1500);
+        assert_eq!(rating_input(Model::Small, SMALL_MAX), 2600);
+        let mid = rating_input(Model::Large, (1615 + 1794) / 2);
+        assert!((1690..=1710).contains(&mid), "{mid}");
+        // Stronger always means a higher input.
+        for model in [Model::Small, Model::Large] {
+            let mut last = 0;
+            for level in (STRENGTH_MIN..=STRENGTH_MAX).step_by(50) {
+                let v = rating_input(model, level);
+                assert!(v >= last, "{model:?} {level}");
+                last = v;
+            }
+        }
+    }
+
     #[test]
     fn maia_resigns_only_when_hopeless() {
         use uci::Score;
@@ -651,7 +735,9 @@ mod tests {
 /// A game against Maia in progress (lives in the game screen while it is played).
 pub struct Session {
     pub user: Color,
+    /// Maia's strength (Lichess blitz scale) and the model playing it.
     pub strength: u32,
+    pub model: Model,
     pub user_elo: Option<u32>,
     pub clock: Option<Clock>,
     pub opponent: Opponent,
@@ -841,6 +927,9 @@ pub struct Dialog {
     play_after: bool,
     /// The game goes on from a position of another game.
     from: Option<StartFrom>,
+    /// The colour chosen is this game's, not a habit to remember (from a position, a
+    /// rematch).
+    keep_color: bool,
     focus: bool,
 }
 
@@ -866,6 +955,7 @@ impl Dialog {
             play_after: false,
             focus: true,
             from: None,
+            keep_color: false,
         }
     }
 
@@ -877,6 +967,25 @@ impl Dialog {
             Color::Black => ColorChoice::Black,
         };
         d.from = Some(from);
+        d.keep_color = true;
+        d
+    }
+
+    /// The dialog again for a game that could not start (its Maia missing): the same
+    /// position, strength, colour and time.
+    pub fn for_start(settings: &crate::settings::Settings, start: &Start) -> Dialog {
+        let mut d = match &start.from {
+            Some(from) => Dialog::new_from(settings, (**from).clone()),
+            None => Dialog::new(settings),
+        };
+        d.prefs.strength = start.strength;
+        d.prefs.clock = start.clock;
+        d.custom = start.clock.is_some_and(|c| !PRESETS.contains(&c));
+        d.prefs.color = match start.user {
+            Color::White => ColorChoice::White,
+            Color::Black => ColorChoice::Black,
+        };
+        d.keep_color = true;
         d
     }
 
@@ -896,7 +1005,7 @@ impl Dialog {
     ) -> Option<DialogOutcome> {
         use egui::RichText;
         let mut out = None;
-        let installed = crate::maia_download::installed();
+        let model = model_for(self.prefs.strength);
         let body_h = (ctx.content_rect().height() - 140.0).max(160.0);
         egui::Modal::new(egui::Id::new("play_dialog")).show(ctx, |ui| {
             ui.set_width(460.0);
@@ -984,13 +1093,13 @@ impl Dialog {
                 ui.spacing_mut().slider_width = W - 2.0 * 34.0 - 2.0 * GAP;
                 ui.add(
                     egui::Slider::new(&mut self.prefs.strength, STRENGTH_MIN..=STRENGTH_MAX)
-                        .step_by(100.0)
+                        .step_by(50.0)
                         .show_value(false),
                 );
                 end(ui, STRENGTH_MAX);
             });
             ui.label(
-                RichText::new(tr("The Lichess scale: Maia 1500 is weaker than a club player rated 1500."))
+                RichText::new(tr("Her measured strength, on the Lichess blitz scale."))
                     .weak()
                     .size(11.5),
             );
@@ -1086,22 +1195,25 @@ impl Dialog {
 
             // Maia itself, downloaded once: under the body, by the buttons, always seen.
             let stage = self.download.as_ref().map(|d| d.stage());
-            let mut ready = installed.is_some();
-            let busy = !ready
-                && matches!(
+            let mut ready = model.is_ok();
+            // A download going on: no game meanwhile (closing the dialog would cancel it).
+            let busy = matches!(
                     stage,
                     Some(crate::maia_download::Stage::Downloading { .. } | crate::maia_download::Stage::Checking)
                 );
-            if !ready {
+            // While the large model is missing the line stays (also when the small one
+            // plays the strength chosen), so that the dialog does not jump with the slider.
+            let large = crate::maia_download::installed(Model::Large).is_some();
+            if !ready || !large {
                 ui.add_space(6.0);
                 match stage {
                     None => {
-                        ui.label(RichText::new(trf_size()).weak());
+                        ui.label(RichText::new(download_note(model.as_ref().err().copied())).weak());
                     }
                     Some(crate::maia_download::Stage::Downloading { done }) => {
+                        let size = self.download.as_ref().map_or(1, |d| d.model.size());
                         ui.add(
-                            egui::ProgressBar::new(done as f32 / crate::maia_download::SIZE as f32)
-                                .show_percentage(),
+                            egui::ProgressBar::new(done as f32 / size as f32).show_percentage(),
                         );
                     }
                     Some(crate::maia_download::Stage::Checking) => {
@@ -1111,7 +1223,7 @@ impl Dialog {
                         });
                     }
                     Some(crate::maia_download::Stage::Done(_)) => ready = true,
-                    Some(crate::maia_download::Stage::Failed(e)) => {
+                    Some(crate::maia_download::Stage::Failed(ref e)) => {
                         ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
                     }
                 }
@@ -1119,16 +1231,26 @@ impl Dialog {
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let label = if ready { tr("Play") } else { tr("Download and play") };
+                // As wide as the longer label: «Cancel» stays in its place.
+                let width = [tr("Play"), tr("Download and play")]
+                    .iter()
+                    .map(|t| crate::game_view::text_width(ui, t, egui::TextStyle::Button))
+                    .fold(0.0, f32::max)
+                    + 2.0 * ui.spacing().button_padding.x
+                    + 4.0;
                 let main = ui
-                    .add_enabled_ui(!busy, |ui| crate::widgets::primary(ui, label))
+                    .add_enabled_ui(!busy, |ui| crate::widgets::primary_wide(ui, label, width))
                     .inner;
                 let pressed = !busy
                     && (main.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                if pressed && !ready {
-                    self.download = Some(crate::maia_download::Download::start(ctx));
+                if pressed && !ready && let Err(m) = model {
+                    self.download = Some(crate::maia_download::Download::start(ctx, m));
                     self.play_after = true;
                 }
-                if ready && (pressed || self.play_after) {
+                // After a download: the game starts when it is done (not when the slider
+                // moves down to what another model plays).
+                let downloaded = matches!(stage, Some(crate::maia_download::Stage::Done(_)));
+                if ready && (pressed || (self.play_after && downloaded)) {
                     self.play_after = false;
                     let user = match self.prefs.color {
                         ColorChoice::White => Color::White,
@@ -1146,7 +1268,7 @@ impl Dialog {
                     // From a position the colour is the side to move's, not a habit.
                     let color = settings.play.color;
                     settings.play = self.prefs.clone();
-                    if self.from.is_some() {
+                    if self.keep_color {
                         settings.play.color = color;
                     }
                     out = Some(DialogOutcome::Play(Start {
@@ -1267,11 +1389,22 @@ fn position_block(
         });
 }
 
-fn trf_size() -> String {
-    crate::i18n::trf(
-        "Maia is downloaded once ({mb} MB, from huggingface.co, the authors' own file).",
-        &[("mb", &crate::maia_download::SIZE.div_ceil(1_000_000))],
-    )
+/// What the download button brings: Maia herself, or (the small one being there) the
+/// large one for the strength chosen.
+fn download_note(model: Option<Model>) -> String {
+    let model = model.unwrap_or(Model::Large);
+    let mb = model.size().div_ceil(1_000_000);
+    if crate::maia_download::installed(Model::Small).is_some() {
+        crate::i18n::trf(
+            "Stronger than {elo} plays the large Maia: {mb} MB, downloaded once.",
+            &[("elo", &SMALL_MAX), ("mb", &mb)],
+        )
+    } else {
+        crate::i18n::trf(
+            "Maia is downloaded once ({mb} MB, from huggingface.co, the authors' own file).",
+            &[("mb", &mb)],
+        )
+    }
 }
 
 /// A game just played: what the result strip says.

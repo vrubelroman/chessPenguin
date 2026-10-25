@@ -1399,10 +1399,11 @@ impl App {
         }
     }
 
-    /// A new game against Maia (the weights are there: the dialog saw to it).
+    /// A new game against Maia. Her model missing (a rematch, a game from a position):
+    /// the dialog with the same choices, to download it.
     fn start_play(&mut self, ctx: &egui::Context, start: crate::play::Start) {
-        let Some(weights) = crate::maia_download::installed() else {
-            self.play_dialog = Some(crate::play::Dialog::new(&self.settings));
+        let Ok(maia) = crate::play::model_for(start.strength) else {
+            self.play_dialog = Some(crate::play::Dialog::for_start(&self.settings, &start));
             return;
         };
         // The engine judging Maia's resignation: ChessPenguin's Stockfish (its node count
@@ -1419,7 +1420,7 @@ impl App {
             None => self.new_game(),
         }
         if let Some(g) = self.game.as_mut() {
-            g.start_play(start, weights, judge, ctx);
+            g.start_play(start, maia, judge, ctx);
         }
     }
 

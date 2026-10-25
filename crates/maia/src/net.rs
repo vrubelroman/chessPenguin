@@ -86,16 +86,48 @@ impl Linear {
     /// `rows` vectors of `inp` → `rows` vectors of `out`.
     fn apply(&self, x: &[f32], rows: usize) -> Vec<f32> {
         let mut y = vec![0.0; rows * self.out];
-        for r in 0..rows {
+        par_rows(&mut y, self.out, rows * self.out * self.inp, |r, yr| {
             let xr = &x[r * self.inp..(r + 1) * self.inp];
-            let yr = &mut y[r * self.out..(r + 1) * self.out];
             for (o, slot) in yr.iter_mut().enumerate() {
                 let wo = &self.w[o * self.inp..(o + 1) * self.inp];
                 *slot = dot(xr, wo) + self.b.as_ref().map_or(0.0, |b| b[o]);
             }
-        }
+        });
         y
     }
+}
+
+/// Fills `y`, rows of `width`, calling `row(index, row)` for each: on several threads when
+/// the work (multiplications) is large enough to pay for them.
+fn par_rows(y: &mut [f32], width: usize, work: usize, row: impl Fn(usize, &mut [f32]) + Sync) {
+    let rows = y.len() / width;
+    let threads = threads().min(rows).min(work / PAR_WORK + 1);
+    if threads <= 1 {
+        for (r, yr) in y.chunks_mut(width).enumerate() {
+            row(r, yr);
+        }
+        return;
+    }
+    let per = rows.div_ceil(threads);
+    std::thread::scope(|s| {
+        for (c, part) in y.chunks_mut(per * width).enumerate() {
+            let row = &row;
+            s.spawn(move || {
+                for (k, yr) in part.chunks_mut(width).enumerate() {
+                    row(c * per + k, yr);
+                }
+            });
+        }
+    });
+}
+
+/// Work below this many multiplications per thread is not split further.
+const PAR_WORK: usize = 1 << 18;
+
+/// The threads a prediction uses: half the machine's, the rest stays for the rest.
+fn threads() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1)))
 }
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
@@ -442,51 +474,42 @@ impl Net {
         b.gab_ln2.apply(&mut g); // heads × gab_gen
         // bias[h][q][k] = g[h] · gab_weight[q*64 + k]
         let mut bias = vec![0.0f32; heads * 64 * 64];
-        for hh in 0..heads {
+        par_rows(&mut bias, 4096, heads * 4096 * gab_gen, |hh, bh| {
             let gh = &g[hh * gab_gen..(hh + 1) * gab_gen];
-            for o in 0..64 * 64 {
-                bias[hh * 4096 + o] = dot(gh, &self.gab_weight[o * gab_gen..(o + 1) * gab_gen]);
+            for (o, slot) in bh.iter_mut().enumerate() {
+                *slot = dot(gh, &self.gab_weight[o * gab_gen..(o + 1) * gab_gen]);
             }
-        }
+        });
 
-        let qkv = b.in_proj.apply(&x, 64); // 64 × 3d
+        let qkv = b.in_proj.apply(&x, 64); // 64 × 3d: queries, keys, values
         let mut att = vec![0.0f32; 64 * d];
         let scale = 1.0 / (hd as f32).sqrt();
-        let mut q = vec![0.0f32; hd];
-        let mut scores = vec![0.0f32; 64];
-        let mut kh = vec![0.0f32; 64 * hd];
-        let mut vh = vec![0.0f32; 64 * hd];
-        for hh in 0..heads {
-            for j in 0..64 {
-                kh[j * hd..(j + 1) * hd]
-                    .copy_from_slice(&qkv[j * 3 * d + d + hh * hd..j * 3 * d + d + (hh + 1) * hd]);
-                vh[j * hd..(j + 1) * hd].copy_from_slice(
-                    &qkv[j * 3 * d + 2 * d + hh * hd..j * 3 * d + 2 * d + (hh + 1) * hd],
-                );
-            }
-            for i in 0..64 {
-                q.copy_from_slice(&qkv[i * 3 * d + hh * hd..i * 3 * d + (hh + 1) * hd]);
+        // Square by square (the rows of `att`), every head.
+        par_rows(&mut att, d, 64 * 64 * 2 * d, |i, out| {
+            let mut scores = [0.0f32; 64];
+            for hh in 0..heads {
+                let q = &qkv[i * 3 * d + hh * hd..i * 3 * d + (hh + 1) * hd];
                 let mut max = f32::NEG_INFINITY;
-                for j in 0..64 {
-                    let s =
-                        dot(&q, &kh[j * hd..(j + 1) * hd]) * scale + bias[hh * 4096 + i * 64 + j];
-                    scores[j] = s;
-                    max = max.max(s);
+                for (j, slot) in scores.iter_mut().enumerate() {
+                    let k = &qkv[j * 3 * d + d + hh * hd..j * 3 * d + d + (hh + 1) * hd];
+                    *slot = dot(q, k) * scale + bias[hh * 4096 + i * 64 + j];
+                    max = max.max(*slot);
                 }
                 let mut sum = 0.0;
                 for s in scores.iter_mut() {
                     *s = (*s - max).exp();
                     sum += *s;
                 }
-                let out = &mut att[i * d + hh * hd..i * d + (hh + 1) * hd];
-                for j in 0..64 {
-                    let w = scores[j] / sum;
-                    for (o, v) in out.iter_mut().zip(&vh[j * hd..(j + 1) * hd]) {
+                let oh = &mut out[hh * hd..(hh + 1) * hd];
+                for (j, s) in scores.iter().enumerate() {
+                    let w = s / sum;
+                    let v = &qkv[j * 3 * d + 2 * d + hh * hd..j * 3 * d + 2 * d + (hh + 1) * hd];
+                    for (o, v) in oh.iter_mut().zip(v) {
                         *o += w * v;
                     }
                 }
             }
-        }
+        });
         let sa = b.out_proj.apply(&att, 64);
         let mut x: Vec<f32> = x.iter().zip(&sa).map(|(a, b)| a + b).collect();
         rms_norm(&mut x, &b.norm1);

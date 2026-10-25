@@ -2080,7 +2080,7 @@ impl GameView {
     pub fn start_play(
         &mut self,
         start: crate::play::Start,
-        weights: std::path::PathBuf,
+        (model, weights): (crate::maia_download::Model, std::path::PathBuf),
         judge: Option<std::path::PathBuf>,
         ctx: &egui::Context,
     ) {
@@ -2176,6 +2176,7 @@ impl GameView {
         self.play = Some(Session {
             user: start.user,
             strength: start.strength,
+            model,
             user_elo: start.user_elo,
             clock: start.clock.map(Clock::new),
             opponent: Opponent::start(weights, ctx),
@@ -2328,7 +2329,7 @@ impl GameView {
                 let elo = s.user_elo.unwrap_or(s.strength);
                 s.opponent.ask(
                     positions,
-                    elo,
+                    crate::play::rating_input(s.model, elo),
                     s.strength,
                     std::time::Duration::from_millis(30),
                 );
@@ -2346,8 +2347,10 @@ impl GameView {
         } else {
             crate::play::pause(clock, ply, only)
         };
+        // Her rating input is what makes her play at her strength; the user's is as is.
         let oppo = s.user_elo.unwrap_or(s.strength);
-        s.opponent.ask(positions, s.strength, oppo, pause);
+        let own = crate::play::rating_input(s.model, s.strength);
+        s.opponent.ask(positions, own, oppo, pause);
         // Is her position lost? (Unless the user wants to play to the end.)
         if !s.play_on
             && let (Some(j), Some(ep)) = (s.judge.as_mut(), engine_pos)
@@ -2455,7 +2458,7 @@ impl GameView {
             }
         }
         if let Some(err) = s.opponent.failed() {
-            crate::maia_download::forget_broken();
+            crate::maia_download::forget_broken(s.model);
             actions.push(GameAction::Toast(trf(
                 "Maia did not start: {e}",
                 &[("e", &err)],

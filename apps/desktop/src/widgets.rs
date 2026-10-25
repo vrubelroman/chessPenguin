@@ -72,10 +72,15 @@ pub fn update_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 
 /// The main button of a window: filled, a little taller.
 pub fn primary(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    primary_wide(ui, label, 0.0)
+}
+
+/// `primary()` at least `width` wide (a button whose label changes keeps its place).
+pub fn primary_wide(ui: &mut egui::Ui, label: &str, width: f32) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(label).strong())
             .fill(ui.visuals().selection.bg_fill)
-            .min_size(egui::vec2(0.0, 30.0)),
+            .min_size(egui::vec2(width, 30.0)),
     )
 }
 
