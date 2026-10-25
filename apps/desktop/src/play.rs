@@ -163,7 +163,9 @@ pub const SMALL_MAX: u32 = 1800;
 /// Measured (docs/research/maia-strength.md): Maia's rating input → her strength on
 /// the Lichess blitz scale, as she plays here (temperature 1, rare moves dropped).
 const SMALL: &[(u32, u32)] = &[
-    (1100, 1314),
+    (600, 1043),
+    (800, 1154),
+    (1100, 1333),
     (1300, 1426),
     (1500, 1485),
     (1700, 1563),
@@ -172,7 +174,14 @@ const SMALL: &[(u32, u32)] = &[
     (2300, 1737),
     (2600, 1800),
 ];
-const LARGE: &[(u32, u32)] = &[(1500, 1615), (1900, 1794), (2300, 1964), (2600, 2000)];
+const LARGE: &[(u32, u32)] = &[
+    (600, 1078),
+    (1100, 1375),
+    (1500, 1605),
+    (1900, 1794),
+    (2300, 1964),
+    (2600, 2000),
+];
 
 /// The rating to give `model` for it to play at `strength` (between the measured
 /// points, in proportion; outside them, the nearest).
@@ -563,13 +572,15 @@ mod tests {
     fn strength_to_rating_input() {
         use crate::maia_download::Model;
         // The measured points themselves, in proportion between them, the ends held.
-        assert_eq!(rating_input(Model::Large, 1615), 1500);
+        assert_eq!(rating_input(Model::Large, 1605), 1500);
         assert_eq!(rating_input(Model::Large, 2000), 2600);
-        assert_eq!(rating_input(Model::Large, STRENGTH_MIN), 1500);
         assert_eq!(rating_input(Model::Small, 1485), 1500);
         assert_eq!(rating_input(Model::Small, SMALL_MAX), 2600);
-        let mid = rating_input(Model::Large, (1615 + 1794) / 2);
+        let mid = rating_input(Model::Large, (1605 + 1794) / 2);
         assert!((1690..=1710).contains(&mid), "{mid}");
+        // The bottom of the slider is within what both models measured.
+        assert!(rating_input(Model::Large, STRENGTH_MIN) > 600);
+        assert!(rating_input(Model::Small, STRENGTH_MIN) > 600);
         // Stronger always means a higher input.
         for model in [Model::Small, Model::Large] {
             let mut last = 0;
