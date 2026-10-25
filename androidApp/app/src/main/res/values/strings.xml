@@ -523,6 +523,12 @@
     <string name="elo">Elo</string>
     <string name="play_analyse_short">Analyse</string>
     <string name="play_on_short">Play on</string>
-    <string name="play_viewing">Viewing %1$s · back to the game ›</string>
+    <string name="play_viewing">Viewing: %1$s · back to the game ›</string>
     <string name="start_position">the starting position</string>
+    <string name="play_maia_stopped">Maia did not start.</string>
+    <string name="play_maia_reload">Download Maia again</string>
+    <string name="play_adjourned_q">There is a game put aside against Maia %1$s</string>
+    <string name="play_continue_it">Continue it</string>
+    <string name="play_start_new">Start a new one</string>
+    <string name="play_adjourned_new_text">A new game replaces it.</string>
 </resources>

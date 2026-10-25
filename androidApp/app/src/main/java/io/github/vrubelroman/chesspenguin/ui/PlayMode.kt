@@ -218,3 +218,28 @@ fun beginMaiaGame(
     session.markSaved()
     app.maiaGames.begin(session.pgn(), PlayMeta(strength, userWhite, name, floor))
 }
+
+/// Maia did not start (§31.3): her file again, or leave the game.
+@Composable
+fun FailureCard(onRetry: () -> Unit, onAbort: () -> Unit) {
+    Card {
+        Text(stringResource(R.string.play_maia_stopped), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onRetry, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_maia_reload), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            OutlinedButton(onClick = onAbort, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_abort), maxLines = 1) }
+        }
+    }
+}
+
+/// A new game while one is put aside (§31.7): go on with that one, or begin anew (it is
+/// replaced).
+@Composable
+fun AdjournedQuestion(meta: PlayMeta, onContinue: () -> Unit, onNew: () -> Unit, onDismiss: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.play_adjourned_q, meta.strength.toString())) },
+        text = { Text(stringResource(R.string.play_adjourned_new_text)) },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = onContinue) { Text(stringResource(R.string.play_continue_it)) } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onNew) { Text(stringResource(R.string.play_start_new)) } },
+    )
+}

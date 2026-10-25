@@ -177,6 +177,17 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     val adjourned by theApp.maiaGames.current.collectAsState()
     val playRemovedText = stringResource(R.string.play_removed)
     var playing by remember { mutableStateOf(false) }
+    // A game put aside: asked about before a new one replaces it.
+    var askingAdjourned by remember { mutableStateOf(false) }
+    adjourned?.takeIf { askingAdjourned && !it.over }?.let { m ->
+        AdjournedQuestion(m, onContinue = {
+            askingAdjourned = false
+            onPlay()
+        }, onNew = {
+            askingAdjourned = false
+            playing = true
+        }, onDismiss = { askingAdjourned = false })
+    }
     val eventText = stringResource(R.string.play_event)
     if (playing) {
         PlaySheet(null, onPlay = { strength, white, name ->
@@ -189,6 +200,10 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     }
     val files = entries.filter { it.source != Source.Own }
     val list = rememberLazyListState()
+    // The card of a game just put aside is brought into sight.
+    LaunchedEffect(adjourned) {
+        if (adjourned?.over == false) list.animateScrollToItem(0)
+    }
     // The card comes when GitHub answers, after the list is drawn: a list at its top then
     // keeps its first database in place and the card lands above the screen. It is
     // brought into sight; a list scrolled down by the user stays where it is.
@@ -275,7 +290,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                 }
                 item(key = "actions") {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = { playing = true }, modifier = Modifier.height(48.dp)) {
+                        FilledTonalButton(onClick = { if (adjourned?.over == false) askingAdjourned = true else playing = true }, modifier = Modifier.height(48.dp)) {
                             Icon(Icons.Rounded.SmartToy, null)
                             Spacer(Modifier.size(8.dp))
                             Text(stringResource(R.string.play_with_maia))

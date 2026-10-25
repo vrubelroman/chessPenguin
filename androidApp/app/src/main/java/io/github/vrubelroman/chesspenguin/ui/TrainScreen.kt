@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -147,7 +148,8 @@ fun TrainScreen(trainer: Trainer, ply0: Int, startFlipped: Boolean, onPly: (Int)
             }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val task: @Composable () -> Unit = {
             if (!st.done) {
                 // The task: which move, whose turn, how far.
                 val whiteToMove = st.fen.substringAfter(' ').startsWith("w")
@@ -159,6 +161,8 @@ fun TrainScreen(trainer: Trainer, ply0: Int, startFlipped: Boolean, onPly: (Int)
                     LinearProgressIndicator(progress = { ply.toFloat() / st.length.toInt().coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                 }
             }
+        }
+        val boardBox: @Composable (Modifier) -> Unit = { m ->
             val w = wrong
             Board(
                 fen = w?.fen ?: st.fen,
@@ -171,7 +175,7 @@ fun TrainScreen(trainer: Trainer, ply0: Int, startFlipped: Boolean, onPly: (Int)
                 description = stringResource(R.string.train_title),
                 arrows = st.hint?.let { listOf(BoardArrow(it[0], it[1], EngineArrow)) } ?: emptyList(),
                 animated = prefs.animation,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = m,
                 input = if (st.done || w != null) null else BoardInput(
                     remember(ply, changes) { trainer.legalMoves(ply.toUInt()) },
                     onMove = ::move,
@@ -180,6 +184,8 @@ fun TrainScreen(trainer: Trainer, ply0: Int, startFlipped: Boolean, onPly: (Int)
                 ),
                 alert = w?.let { it.from to it.to },
             )
+        }
+        val you: @Composable () -> Unit = {
             if (!st.done) {
                 // You: the mistakes of this run, or before the first move what was before.
                 Row(Modifier.fillMaxWidth().height(48.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -213,6 +219,8 @@ fun TrainScreen(trainer: Trainer, ply0: Int, startFlipped: Boolean, onPly: (Int)
                     }
                 }
             }
+        }
+        val notes: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
                 if (st.done) Result(st, onAgain = {
                     trainer.again()
@@ -229,6 +237,24 @@ fun TrainScreen(trainer: Trainer, ply0: Int, startFlipped: Boolean, onPly: (Int)
                         Text(pair.getOrNull(1)?.let { san(it) } ?: androidx.compose.ui.text.AnnotatedString(""), Modifier.weight(1f), fontWeight = FontWeight.Medium)
                     }
                 }
+            }
+        }
+        // A phone on its side: the board at full height, the rest beside it.
+        if (landscape) {
+            Row(Modifier.fillMaxSize().padding(padding)) {
+                boardBox(Modifier.fillMaxHeight())
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    task()
+                    you()
+                    notes()
+                }
+            }
+        } else {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                task()
+                boardBox(Modifier.fillMaxWidth())
+                you()
+                notes()
             }
         }
     }

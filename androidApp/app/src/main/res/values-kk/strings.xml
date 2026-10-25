@@ -522,4 +522,10 @@
     <string name="play_on_short">Жалғастыру</string>
     <string name="play_viewing">Қарау %1$s · ойынға оралу ›</string>
     <string name="start_position">бастапқы позиция</string>
+    <string name="play_maia_stopped">Maia іске қосылмады.</string>
+    <string name="play_maia_reload">Maia-ны қайта жүктеу</string>
+    <string name="play_adjourned_q">Maia %1$s-мен кейінге қалдырылған ойын бар</string>
+    <string name="play_continue_it">Жалғастыру</string>
+    <string name="play_start_new">Жаңасын бастау</string>
+    <string name="play_adjourned_new_text">Жаңа ойын оның орнын басады.</string>
 </resources>

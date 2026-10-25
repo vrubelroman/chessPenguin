@@ -467,7 +467,7 @@
     <string name="train_streak">без ошибок подряд: %1$s</string>
     <string name="train_recent">Последние: %1$s</string>
     <string name="train_arrow">Сделайте ход со стрелки</string>
-    <string name="train_again">↻ Повторить</string>
+    <string name="train_again">↻ Ещё раз</string>
     <string name="train_back">⬅ К партии</string>
     <string name="train_restart">Сначала</string>
     <plurals name="train_runs">
@@ -535,6 +535,12 @@
     <string name="elo">Эло</string>
     <string name="play_analyse_short">Анализ</string>
     <string name="play_on_short">Доиграть</string>
-    <string name="play_viewing">Просмотр %1$s · к игре ›</string>
+    <string name="play_viewing">Просмотр: %1$s · к игре ›</string>
     <string name="start_position">начальная позиция</string>
+    <string name="play_maia_stopped">Maia не запустилась.</string>
+    <string name="play_maia_reload">Скачать Maia заново</string>
+    <string name="play_adjourned_q">Есть отложенная партия с Maia %1$s</string>
+    <string name="play_continue_it">Продолжить её</string>
+    <string name="play_start_new">Начать новую</string>
+    <string name="play_adjourned_new_text">Новая партия заменит её.</string>
 </resources>

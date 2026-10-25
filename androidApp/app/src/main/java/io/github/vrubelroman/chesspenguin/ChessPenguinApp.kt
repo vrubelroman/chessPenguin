@@ -48,6 +48,8 @@ class ChessPenguinApp : Application() {
         super.onCreate()
         // The opening trainer's runs (android-play.md §32.3).
         uniffi.mobile_api.trainerSetFile(java.io.File(filesDir, "training.json").path)
+        // Loaded now: the first move's sound is ready when it is played.
+        sounds
     }
 
     /// The games shown on the list of each database (after a search), for paging

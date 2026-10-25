@@ -164,6 +164,11 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     }
     var failed by remember { mutableStateOf(false) }
     var current by rememberSaveable(place) { mutableIntStateOf(0) }
+    // Back from the trainer: the move it was opened from, the board as it was.
+    LaunchedEffect(Unit) {
+        held.trainReturn?.let { current = it }
+        held.trainReturn = null
+    }
     var flipped by rememberSaveable { mutableStateOf(false) }
     var preview by remember { mutableStateOf<Preview?>(null) }
     // The game report (§21): its own engine job; the live engine rests while it runs.
@@ -421,6 +426,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var moveSheet by remember { mutableStateOf<Int?>(null) }
     // «Play on from here» asked for at this move.
     var playFrom by remember { mutableStateOf<Int?>(null) }
+    var askFrom by remember { mutableStateOf<Int?>(null) }
     val deletedText = stringResource(R.string.moves_deleted)
     val mainText = stringResource(R.string.made_main)
     val undoText = stringResource(R.string.undo_action)
@@ -490,7 +496,19 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             val wait = uniffi.mobile_api.maiaPauseMs(depth(gg, end).toUInt(), only).toLong() - (System.currentTimeMillis() - started)
             if (wait > 0) delay(wait)
             if (gen != r.generation) return@LaunchedEffect
-            r.judge?.hopeless()?.let { if (it) r.hopeless++ else r.hopeless = 0u }
+            // The judge's answer, given up to two seconds more (a slow phone, an engine
+            // just started): an offer comes when it is due, not turns later.
+            r.judge?.let { j ->
+                var verdict = j.hopeless()
+                var waited = 0
+                while (verdict == null && waited < 2000) {
+                    delay(100)
+                    waited += 100
+                    verdict = j.hopeless()
+                }
+                if (gen != r.generation) return@LaunchedEffect
+                verdict?.let { if (it) r.hopeless++ else r.hopeless = 0u }
+            }
             if (!r.playOn && r.hopeless >= uniffi.mobile_api.hopelessTurns()) {
                 r.offer.value = true
                 app.sounds.play(io.github.vrubelroman.chesspenguin.data.Sound.Defeat)
@@ -508,6 +526,21 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var resigning by remember { mutableStateOf(false) }
     // The result card closed with ×: until the next game.
     var resultClosed by remember(run) { mutableStateOf(false) }
+    // A change after the end (a variation, an undo): the card's result may not hold.
+    val atEnd = remember(runOver) { g?.let { lineEnd(it) } }
+    LaunchedEffect(g) {
+        if (runOver != null && atEnd != null && g != null && lineEnd(g) != atEnd) resultClosed = true
+    }
+    var maiaRetry by remember { mutableStateOf(false) }
+    val maiaState by app.maiaFiles.download.state.collectAsState()
+    LaunchedEffect(maiaState, maiaRetry) {
+        if (maiaRetry && maiaState == NetState.Ready) {
+            maiaRetry = false
+            run?.player?.close()
+            run?.player = null
+            run?.failure?.value = null
+        }
+    }
     val eventText = stringResource(R.string.play_event)
     val noteText = stringResource(R.string.play_note_from, (run?.meta?.strength ?: 0).toString())
     // The same strength again, colours swapped; from a position: the same one and colour.
@@ -525,6 +558,9 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         }
         beginMaiaGame(app, base, m.strength, if (m.floor > 0) m.userWhite else !m.userWhite, m.name, m.floor, eventText, noteText)
         base.close()
+        // The report of the game before is not this one's.
+        review.close()
+        reviewHidden = true
         held.key = null
         held.reloads.intValue++
     }
@@ -533,11 +569,14 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         val gg = g ?: return
         val e = edit ?: return
         val end = lineEnd(gg)
-        // While Maia thinks the last move is the user's; else hers, and the user's before.
-        val from = if (r.thinking.value) end else gg.nodes[end].parent?.toInt() ?: return
+        // While Maia thinks or offers to resign, the last move is the user's; else hers, and
+        // the user's before.
+        val userLast = r.thinking.value || r.offer.value
+        val from = if (userLast) end else gg.nodes[end].parent?.toInt() ?: return
         if (depth(gg, from) <= r.meta.floor) return
         r.generation++
         r.thinking.value = false
+        r.offer.value = false
         r.judge?.forget()
         r.hopeless = 0u
         runCatching { e.deleteFrom(from.toUInt()) }.getOrNull()?.let {
@@ -605,7 +644,11 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     // A copy saved into an own database is that database's game from then on.
     val asksOnLeave = modified && (ownGame || newGame || held.savedTo != null || (playGame && runOver != null))
     val exit: () -> Unit = {
-        if (playGame && held.play.value?.over?.value != null) app.maiaGames.clear()
+        val r = held.play.value
+        val gg = game
+        // Over, or no move made yet: nothing to put aside.
+        val empty = r != null && gg != null && depth(gg, lineEnd(gg)) <= r.meta.floor
+        if (playGame && (r?.over?.value != null || empty)) app.maiaGames.clear()
         onBack()
     }
     // What leaving's question leads to (back, or a rematch).
@@ -691,7 +734,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             }
             PlayControls(
                 // While Maia thinks the last move is the user's; else hers and the user's before.
-                canTakeBack = if (runThinking) endDepth > floor else endDepth - 1 > floor,
+                canTakeBack = if (runThinking || runOffer) endDepth > floor else endDepth - 1 > floor,
                 started = endDepth - floor >= 2,
                 canBack = canBack,
                 canForward = canForward,
@@ -859,16 +902,25 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                             run.offer.value = false
                         },
                     )
-                    runFailure != null -> Text(
-                        stringResource(R.string.play_maia_failed, runFailure),
-                        Modifier.padding(16.dp),
-                        color = MaterialTheme.colorScheme.error,
+                    runFailure != null -> FailureCard(
+                        onRetry = {
+                            // A missing or damaged file is fetched again, then she starts.
+                            app.maiaFiles.download.delete()
+                            app.maiaFiles.download.download()
+                            maiaRetry = true
+                        },
+                        onAbort = {
+                            app.maiaGames.clear()
+                            onBack()
+                        },
                     )
                     runOver != null && !resultClosed -> ResultCard(
                         runOver,
                         saved = held.savedTo != null && !modified,
                         onAnalyse = {
                             val e = edit
+                            // The report takes the place: the card would be squeezed.
+                            resultClosed = true
                             if (e != null) scope.launch {
                                 review.openSession("${held.key}/${System.nanoTime()}", e)
                                 reviewHidden = false
@@ -1222,6 +1274,17 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             )
         }
     }
+    val askAt = askFrom
+    val adjournedMeta = app.maiaGames.current.collectAsState().value
+    if (askAt != null && adjournedMeta != null) {
+        AdjournedQuestion(adjournedMeta, onContinue = {
+            askFrom = null
+            onPlayGame()
+        }, onNew = {
+            askFrom = null
+            playFrom = askAt
+        }, onDismiss = { askFrom = null })
+    }
     if (resigning) {
         AlertDialog(
             onDismissRequest = { resigning = false },
@@ -1250,7 +1313,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 canPlay = !n.nullMove && n.end.isEmpty() && !gameOn,
                 onPlay = {
                     moveSheet = null
-                    playFrom = sheetMove
+                    if (app.maiaGames.current.value?.over == false) askFrom = sheetMove else playFrom = sheetMove
                 },
                 onTrain = {
                     moveSheet = null
@@ -1258,6 +1321,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                         preview = null
                         held.trainPly = 0
                         held.trainFlipped = flipped
+                        held.trainReturn = sheetMove
                         held.trainer.value = t
                     }
                 },

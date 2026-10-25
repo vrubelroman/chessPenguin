@@ -58,6 +58,8 @@ class GameEdit : ViewModel() {
     val reloads = androidx.compose.runtime.mutableIntStateOf(0)
     var trainPly = 0
     var trainFlipped = false
+    /// The move the trainer was opened from: the game shows it again after.
+    var trainReturn: Int? = null
 
     override fun onCleared() {
         trainer.value?.close()

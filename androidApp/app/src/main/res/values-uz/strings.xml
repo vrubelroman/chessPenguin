@@ -520,4 +520,10 @@
     <string name="play_on_short">Davom etish</string>
     <string name="play_viewing">Ko‘rish %1$s · o‘yinga qaytish ›</string>
     <string name="start_position">boshlang‘ich pozitsiya</string>
+    <string name="play_maia_stopped">Maia ishga tushmadi.</string>
+    <string name="play_maia_reload">Maia’ni qayta yuklab olish</string>
+    <string name="play_adjourned_q">Maia %1$s bilan to‘xtatilgan o‘yin bor</string>
+    <string name="play_continue_it">Davom ettirish</string>
+    <string name="play_start_new">Yangisini boshlash</string>
+    <string name="play_adjourned_new_text">Yangi o‘yin uning o‘rnini oladi.</string>
 </resources>

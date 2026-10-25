@@ -530,4 +530,10 @@
     <string name="play_on_short">Continuar</string>
     <string name="play_viewing">Vendo %1$s · voltar à partida ›</string>
     <string name="start_position">a posição inicial</string>
+    <string name="play_maia_stopped">A Maia não iniciou.</string>
+    <string name="play_maia_reload">Baixar a Maia de novo</string>
+    <string name="play_adjourned_q">Há uma partida adiada contra a Maia %1$s</string>
+    <string name="play_continue_it">Continuá-la</string>
+    <string name="play_start_new">Começar uma nova</string>
+    <string name="play_adjourned_new_text">Uma nova partida a substitui.</string>
 </resources>

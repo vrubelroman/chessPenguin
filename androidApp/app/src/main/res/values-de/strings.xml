@@ -521,4 +521,10 @@
     <string name="play_on_short">Weiterspielen</string>
     <string name="play_viewing">Ansicht %1$s · zurück zur Partie ›</string>
     <string name="start_position">die Ausgangsstellung</string>
+    <string name="play_maia_stopped">Maia ist nicht gestartet.</string>
+    <string name="play_maia_reload">Maia neu herunterladen</string>
+    <string name="play_adjourned_q">Eine Partie gegen Maia %1$s ist zurückgestellt</string>
+    <string name="play_continue_it">Fortsetzen</string>
+    <string name="play_start_new">Neue beginnen</string>
+    <string name="play_adjourned_new_text">Eine neue Partie ersetzt sie.</string>
 </resources>
