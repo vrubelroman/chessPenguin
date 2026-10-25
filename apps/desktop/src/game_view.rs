@@ -1229,6 +1229,8 @@ impl GameView {
                     theme: settings.board_theme.theme(),
                     pieces: settings.piece_set,
                     animation: settings.animation.seconds(),
+                    premove: self.premove_side(),
+                    auto_queen: settings.auto_queen,
                 };
                 if let Some(m) = view.show(ui, &mut self.board) {
                     self.play_move(m, actions);
@@ -1961,6 +1963,12 @@ impl GameView {
         ctx: &egui::Context,
     ) {
         use crate::play::{Clock, Opponent, Session};
+        // Dev hook `CP_PREMOVE=e7e5`: a premove set at the start (to see it without a mouse).
+        if let Some(pm) = std::env::var("CP_PREMOVE").ok().filter(|p| p.len() == 4)
+            && let (Ok(from), Ok(to)) = (pm[..2].parse(), pm[2..].parse())
+        {
+            self.board.set_premove(from, to);
+        }
         let maia = format!("Maia {}", start.strength);
         let you = if start.user_name.is_empty() {
             "?".to_owned()
@@ -2043,6 +2051,17 @@ impl GameView {
             .map_or(Color::White, |p| p.turn())
     }
 
+    /// The side that may set a premove now: the user, while Maia is to move, at the
+    /// current position of the game.
+    fn premove_side(&self) -> Option<Color> {
+        let s = self.play.as_ref()?;
+        (self.preview.is_none()
+            && self.play_leave.is_none()
+            && self.play_turn() != s.user
+            && self.cursor == self.play_end_node())
+        .then_some(s.user)
+    }
+
     /// The user may move: their turn, at the current position, Maia not thinking.
     fn user_may_move(&self) -> bool {
         match &self.play {
@@ -2115,7 +2134,20 @@ impl GameView {
                     .annotate(id, Vec::new(), vec![crate::play::clk_command(left)]);
             }
         }
-        self.goto(id);
+        // Maia's move: what the user holds in hand stays there (Lichess); any other
+        // move goes to its position as usual.
+        let user = self.play.as_ref().map(|s| s.user);
+        if user.is_some_and(|u| u != mover) && self.cursor == end {
+            self.commit_editor();
+            self.cursor = id;
+            self.scroll_to_cursor = true;
+            self.preview = None;
+            if let (Some(u), Some(pos)) = (user, self.game.position(id)) {
+                self.board.opponent_moved(pos.board(), u);
+            }
+        } else {
+            self.goto(id);
+        }
         if let Some(snd) = self.sound_for(id) {
             actions.push(GameAction::Sound(snd));
         }
@@ -2156,6 +2188,15 @@ impl GameView {
         if let Some((m, pause)) = s.opponent.answer() {
             // Maia's clock takes her pause, not the program's computing.
             self.play_add(m, Some(pause), actions);
+            // The user's premove, at once when it is legal now (else it is dropped).
+            if let Some((from, to)) = self.board.take_premove()
+                && self.play.is_some()
+                && self.user_may_move()
+                && let Some(pos) = self.game.position(self.play_end_node())
+                && let Some(m) = crate::board::premove_move(pos, from, to)
+            {
+                self.play_add(m, None, actions);
+            }
         }
         let now = std::time::Instant::now();
         let end_pos = self.game.position(self.play_end_node()).cloned();
@@ -2181,6 +2222,7 @@ impl GameView {
             return;
         };
         s.opponent.forget();
+        self.board.clear_premove();
         let now = std::time::Instant::now();
         let left = s.clock.as_mut().map(|c| {
             c.stop(now);
@@ -2225,6 +2267,7 @@ impl GameView {
 
     /// Takes back the user's last move and Maia's answer to it (no variation is left).
     fn take_back(&mut self) {
+        self.board.clear_premove();
         let Some(s) = self.play.as_mut() else { return };
         s.opponent.forget();
         let user = s.user;
@@ -2346,6 +2389,7 @@ impl GameView {
     /// Leaving a game in progress (any way: back, the window closed, …) asks first;
     /// the clocks wait while the question is open.
     pub fn ask_leave(&mut self, intent: crate::app::CloseIntent) {
+        self.board.clear_premove();
         if self.play_leave.is_none() {
             self.play_leave = Some((intent, std::time::Instant::now()));
         }

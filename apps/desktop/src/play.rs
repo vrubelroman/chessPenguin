@@ -724,98 +724,168 @@ impl Dialog {
             ui.set_width(460.0);
             ui.heading(tr("Play against the computer"));
             // The body scrolls in a low window; the buttons below it stay in view.
+            // A solid bar, seen without hovering: in a low window the time is below it.
+            ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
             let rating = egui::ScrollArea::vertical()
                 .max_height(body_h)
                 .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
                 .show(ui, |ui| {
-            ui.label(
-                RichText::new(tr(
-                    "Maia plays like a human of the chosen rating: it makes the moves people of that level make, mistakes included.",
-                ))
-                .weak(),
-            );
-            ui.add_space(10.0);
+            // In a low window the choices matter more than the introduction.
+            if body_h >= 420.0 {
+                ui.label(
+                    RichText::new(tr(
+                        "Maia plays like a human of the chosen rating: it makes the moves people of that level make, mistakes included.",
+                    ))
+                    .weak(),
+                );
+            }
+
+            // The blocks in the order of the choice: who plays, against whom, which
+            // colour, how long. Every choice is a framed tile; the tiles of a row share
+            // its width.
+            const W: f32 = 460.0;
+            const GAP: f32 = 6.0;
+            const TILE_H: f32 = 32.0;
+            let section = |ui: &mut egui::Ui, text: &str| {
+                ui.add_space(12.0);
+                ui.label(RichText::new(text).strong().size(15.0));
+                ui.add_space(2.0);
+            };
+            let choice = |ui: &mut egui::Ui, on: bool, text: &str, size: [f32; 2]| {
+                ui.add_sized(
+                    size,
+                    egui::Button::selectable(on, RichText::new(text).size(14.0))
+                        .frame_when_inactive(true),
+                )
+            };
+            ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
 
             // You.
-            ui.label(RichText::new(tr("You")).strong());
+            section(ui, tr("You"));
+            egui::Grid::new("play_you")
+                .num_columns(2)
+                .spacing(egui::vec2(8.0, GAP))
+                .show(ui, |ui| {
+                    ui.label(tr("Name:"));
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.name).desired_width(f32::INFINITY),
+                    );
+                    if std::mem::take(&mut self.focus) && self.name.is_empty() {
+                        r.request_focus();
+                    }
+                    ui.end_row();
+                    ui.label(tr("Rating:"));
+                    ui.horizontal(|ui| {
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut self.rating)
+                                .desired_width(70.0),
+                        );
+                        if r.changed() {
+                            self.rating.retain(|c| c.is_ascii_digit());
+                            self.rating.truncate(4);
+                        }
+                        ui.label(RichText::new(tr("not required")).weak());
+                    });
+                    ui.end_row();
+                });
+
+            // The opponent: Maia's rating, or relative to the user's.
+            section(
+                ui,
+                &crate::i18n::trf("Opponent — Maia {elo}", &[("elo", &self.prefs.strength)]),
+            );
             ui.horizontal(|ui| {
-                ui.label(tr("Name:"));
-                let r = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(200.0));
-                if std::mem::take(&mut self.focus) && self.name.is_empty() {
-                    r.request_focus();
-                }
-                ui.label(tr("Rating:"));
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut self.rating)
-                        .desired_width(60.0)
-                        .hint_text("1500"),
+                let end = |ui: &mut egui::Ui, v: u32| {
+                    ui.add_sized([34.0, 18.0], egui::Label::new(RichText::new(v.to_string()).weak()))
+                };
+                end(ui, STRENGTH_MIN);
+                ui.spacing_mut().slider_width = W - 2.0 * 34.0 - 2.0 * GAP;
+                ui.add(
+                    egui::Slider::new(&mut self.prefs.strength, STRENGTH_MIN..=STRENGTH_MAX)
+                        .step_by(100.0)
+                        .show_value(false),
                 );
-                if r.changed() {
-                    self.rating.retain(|c| c.is_ascii_digit());
-                    self.rating.truncate(4);
-                }
+                end(ui, STRENGTH_MAX);
             });
             ui.label(
-                RichText::new(tr("Not required; the opponent's strength is chosen relative to it."))
+                RichText::new(tr("The Lichess scale: Maia 1500 is weaker than a club player rated 1500."))
                     .weak()
                     .size(11.5),
             );
-            ui.add_space(10.0);
+            // Relative to the user's rating; without one, a line saying so instead.
+            let rating = self.rating();
+            match rating {
+                Some(r) => {
+                    ui.horizontal(|ui| {
+                        for (label, delta) in [(tr("Weaker"), -200), (tr("As me"), 0), (tr("Stronger"), 200)] {
+                            let target = strength_like((r as i32 + delta).max(0) as u32);
+                            if choice(ui, target == self.prefs.strength, label, [(W - 2.0 * GAP) / 3.0, TILE_H])
+                                .clicked()
+                            {
+                                self.prefs.strength = target;
+                            }
+                        }
+                    });
+                }
+                None => {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(W, TILE_H),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label(RichText::new(tr("Enter your rating: Weaker · As me · Stronger will choose for you")).weak());
+                        },
+                    );
+                }
+            }
 
             // Colour.
-            ui.label(RichText::new(tr("Your colour")).strong());
+            section(ui, tr("Your colour"));
             ui.horizontal(|ui| {
                 for (c, label) in [
                     (ColorChoice::White, tr("♔ White")),
                     (ColorChoice::Random, tr("Random")),
                     (ColorChoice::Black, tr("♚ Black")),
                 ] {
-                    ui.selectable_value(&mut self.prefs.color, c, label);
+                    if choice(ui, self.prefs.color == c, label, [(W - 2.0 * GAP) / 3.0, TILE_H]).clicked() {
+                        self.prefs.color = c;
+                    }
                 }
             });
-            ui.add_space(10.0);
 
-            // Time.
-            ui.label(RichText::new(tr("Time")).strong());
-            egui::Grid::new("play_presets")
-                .spacing(egui::vec2(6.0, 6.0))
-                .show(ui, |ui| {
-                    for (k, tc) in PRESETS.iter().enumerate() {
+            // Time: the presets four in a row, then «Custom» and «Unlimited».
+            section(ui, tr("Time"));
+            let w = (W - 3.0 * GAP) / 4.0;
+            let (rows, last) = PRESETS.split_at(8);
+            for row in rows.chunks(4).chain([last]) {
+                ui.horizontal(|ui| {
+                    for tc in row {
                         let on = !self.custom && self.prefs.clock == Some(*tc);
-                        let text = format!("{}\n{}", tc.label(), tc.speed().name());
-                        if ui
-                            .add_sized([110.0, 40.0], tile(ui, on, &text))
-                            .clicked()
-                        {
+                        if choice(ui, on, &tc.label(), [w, TILE_H]).clicked() {
                             self.prefs.clock = Some(*tc);
                             self.custom = false;
                         }
-                        if k % 4 == 3 {
-                            ui.end_row();
+                    }
+                    if row.len() < 4 {
+                        if choice(ui, self.custom, tr("Custom"), [w, TILE_H]).clicked() {
+                            self.custom = true;
+                            if self.prefs.clock.is_none() {
+                                self.prefs.clock = Some(TimeControl { base: 600, increment: 0 });
+                            }
+                        }
+                        // No clock at all: as long as you like (Maia answers in a second
+                        // or two).
+                        let none = self.prefs.clock.is_none();
+                        if choice(ui, none, tr("Unlimited"), [2.0 * w + GAP, TILE_H])
+                            .on_hover_text(tr("No clocks: think as long as you like"))
+                            .clicked()
+                        {
+                            self.prefs.clock = None;
+                            self.custom = false;
                         }
                     }
-                    if ui
-                        .add_sized([110.0, 40.0], tile(ui, self.custom, tr("Custom")))
-                        .clicked()
-                    {
-                        self.custom = true;
-                        if self.prefs.clock.is_none() {
-                            self.prefs.clock = Some(TimeControl { base: 600, increment: 0 });
-                        }
-                    }
-                    // No clock at all: think as long as you like (Maia answers in a
-                    // second or two).
-                    let none = self.prefs.clock.is_none();
-                    if ui
-                        .add_sized([110.0, 40.0], tile(ui, none, tr("∞\nNo time limit")))
-                        .on_hover_text(tr("No clocks: think as long as you like"))
-                        .clicked()
-                    {
-                        self.prefs.clock = None;
-                        self.custom = false;
-                    }
-                    ui.end_row();
                 });
+            }
             if self.custom
                 && let Some(tc) = self.prefs.clock.as_mut()
             {
@@ -824,56 +894,24 @@ impl Dialog {
                     .iter()
                     .position(|&x| x >= tc.increment)
                     .unwrap_or(0);
-                ui.horizontal(|ui| {
-                    ui.label(tr("Minutes:"));
-                    ui.add(egui::Slider::new(&mut b, 0..=CUSTOM_BASES.len() - 1).show_value(false));
-                    ui.label(TimeControl { base: CUSTOM_BASES[b], increment: 0 }.label().trim_end_matches("+0"));
-                });
-                ui.horizontal(|ui| {
-                    ui.label(tr("Increment, s:"));
-                    ui.add(
-                        egui::Slider::new(&mut i, 0..=CUSTOM_INCREMENTS.len() - 1).show_value(false),
-                    );
-                    ui.label(CUSTOM_INCREMENTS[i].to_string());
-                });
+                ui.add_space(4.0);
+                egui::Grid::new("play_custom")
+                    .num_columns(3)
+                    .spacing(egui::vec2(10.0, GAP))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().slider_width = W - 120.0 - 28.0 - 20.0;
+                        ui.add_sized([120.0, 18.0], egui::Label::new(tr("Minutes:")));
+                        ui.add(egui::Slider::new(&mut b, 0..=CUSTOM_BASES.len() - 1).show_value(false));
+                        ui.add_sized([28.0, 18.0], egui::Label::new(RichText::new((CUSTOM_BASES[b] / 60).to_string()).strong()));
+                        ui.end_row();
+                        ui.label(tr("Increment, s:"));
+                        ui.add(egui::Slider::new(&mut i, 0..=CUSTOM_INCREMENTS.len() - 1).show_value(false));
+                        ui.add_sized([28.0, 18.0], egui::Label::new(RichText::new(CUSTOM_INCREMENTS[i].to_string()).strong()));
+                        ui.end_row();
+                    });
                 tc.base = CUSTOM_BASES[b];
                 tc.increment = CUSTOM_INCREMENTS[i];
-                ui.label(
-                    RichText::new(format!("{} · {}", tc.label(), tc.speed().name())).weak(),
-                );
             }
-            ui.add_space(10.0);
-
-            // Strength.
-            ui.label(RichText::new(tr("Opponent")).strong());
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::Slider::new(&mut self.prefs.strength, STRENGTH_MIN..=STRENGTH_MAX)
-                        .step_by(100.0)
-                        .show_value(false),
-                );
-                ui.label(RichText::new(format!("Maia {}", self.prefs.strength)).strong());
-            });
-            let rating = self.rating();
-            ui.add_enabled_ui(rating.is_some(), |ui| {
-                ui.horizontal(|ui| {
-                    for (label, delta) in [(tr("Weaker"), -200), (tr("As me"), 0), (tr("Stronger"), 200)] {
-                        if ui.button(label).clicked()
-                            && let Some(r) = rating
-                        {
-                            self.prefs.strength =
-                                strength_like((r as i32 + delta).max(0) as u32);
-                        }
-                    }
-                });
-            })
-            .response
-            .on_disabled_hover_text(tr("Enter your rating to choose relative to it"));
-            ui.label(
-                RichText::new(tr("Maia's rating is on the Lichess scale, which runs higher than FIDE and club ratings: Maia 1500 is weaker than a club player rated 1500."))
-                    .weak()
-                    .size(11.5),
-            );
             rating
                 })
                 .inner;
@@ -946,7 +984,7 @@ impl Dialog {
                         clock: self.prefs.clock,
                     }));
                 }
-                if ui.button(tr("Cancel")).clicked() {
+                if ui.add(egui::Button::new(tr("Cancel")).min_size(egui::vec2(0.0, 30.0))).clicked() {
                     out = Some(DialogOutcome::Cancel);
                 }
             });
@@ -956,22 +994,6 @@ impl Dialog {
         }
         out
     }
-}
-
-/// A time tile: its lines centred under each other (egui puts them flush left).
-fn tile(ui: &egui::Ui, on: bool, text: &str) -> egui::Button<'static> {
-    let mut job = egui::text::LayoutJob::simple(
-        text.to_owned(),
-        egui::TextStyle::Button.resolve(ui.style()),
-        if on {
-            ui.visuals().strong_text_color()
-        } else {
-            ui.visuals().text_color()
-        },
-        f32::INFINITY,
-    );
-    job.halign = egui::Align::Center;
-    egui::Button::selectable(on, job)
 }
 
 fn trf_size() -> String {

@@ -102,6 +102,8 @@ pub struct Settings {
     pub show_coords: bool,
     /// How fast moves slide on the board.
     pub animation: Animation,
+    /// A pawn reaching the last rank becomes a queen without the choice of a piece.
+    pub auto_queen: bool,
     /// How moves are shown: Latin letters, figurines or the interface language's letters.
     pub move_notation: crate::san::MoveNotation,
     /// Translating game comments (docs/design/translation.md).
@@ -185,6 +187,7 @@ impl Default for Settings {
             board_theme: BoardThemeId::default(),
             show_coords: true,
             animation: Animation::default(),
+            auto_queen: false,
             move_notation: Default::default(),
             translation: Default::default(),
             sound_enabled: true,

@@ -523,6 +523,8 @@ impl SearchBoard {
             theme: settings.board_theme.theme(),
             pieces: settings.piece_set,
             animation: settings.animation.seconds(),
+            premove: None,
+            auto_queen: settings.auto_queen,
         };
         let played = ui
             .allocate_ui(vec2(side, side), |ui| view.show(ui, &mut self.board))

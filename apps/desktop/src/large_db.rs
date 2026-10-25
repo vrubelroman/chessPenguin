@@ -2431,6 +2431,8 @@ fn chip(ui: &mut Ui, c: &Condition) -> (bool, bool) {
                         theme: theme.theme(),
                         pieces: *pieces,
                         animation: 0.0,
+                        premove: None,
+                        auto_queen: false,
                     };
                     ui.allocate_ui(vec2(160.0, 160.0), |ui| {
                         view.show(ui, &mut crate::board::BoardState::default())

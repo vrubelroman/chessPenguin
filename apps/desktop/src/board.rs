@@ -47,6 +47,9 @@ pub struct BoardState {
     /// A move was dropped by dragging the piece from this square: that piece is
     /// already in place (a castling rook or a captured pawn still move).
     dropped: Option<Square>,
+    /// A premove set while the opponent thinks (from, to): played at once after their
+    /// move if it is legal then (Lichess).
+    premove: Option<(Square, Square)>,
 }
 
 impl BoardState {
@@ -55,6 +58,30 @@ impl BoardState {
         self.selected = None;
         self.drag = None;
         self.promotion = None;
+    }
+
+    /// The opponent has moved: a piece of `own` in the hand (selected or dragged) stays
+    /// there, as on Lichess; one that was captured, and a promotion choice, are dropped.
+    pub fn opponent_moved(&mut self, board: &Board, own: Color) {
+        let mine = |sq: Square| board.piece_at(sq).is_some_and(|p| p.color == own);
+        self.selected = self.selected.filter(|&s| mine(s));
+        self.drag = self.drag.filter(|&s| mine(s));
+        self.promotion = None;
+    }
+
+    /// The premove set, taken (it is played or dropped after the opponent's move).
+    pub fn take_premove(&mut self) -> Option<(Square, Square)> {
+        self.premove.take()
+    }
+
+    /// Sets a premove (dev hook `CP_PREMOVE`).
+    pub fn set_premove(&mut self, from: Square, to: Square) {
+        self.premove = Some((from, to));
+    }
+
+    /// Drops the premove (a take-back, the end of the game).
+    pub fn clear_premove(&mut self) {
+        self.premove = None;
     }
 
     /// The shape the user has just drawn, once.
@@ -145,6 +172,10 @@ pub struct BoardView<'a> {
     pub pieces: PieceSet,
     /// Seconds a move takes to slide (0: no animation).
     pub animation: f32,
+    /// Not this side's turn, but it may set a premove (a game against the computer).
+    pub premove: Option<Color>,
+    /// A pawn reaching the last rank becomes a queen without asking.
+    pub auto_queen: bool,
 }
 
 impl BoardView<'_> {
@@ -162,9 +193,15 @@ impl BoardView<'_> {
         let painter = ui.painter_at(rect);
         let legal = self.pos.legal_moves();
         let mut result = None;
+        // A premove is set instead of a move: the board takes input for that side.
+        let premoving = !self.interactive && self.premove.is_some();
+        if !self.interactive && !premoving {
+            state.selected = None;
+            state.drag = None;
+        }
 
         // --- input -----------------------------------------------------------------------
-        if self.interactive && state.promotion.is_none() {
+        if (self.interactive || premoving) && state.promotion.is_none() {
             let pointer = response.interact_pointer_pos();
             if response.drag_started() {
                 let origin = ui.input(|i| i.pointer.press_origin()).or(pointer);
@@ -197,7 +234,13 @@ impl BoardView<'_> {
                         result = self.try_move(state, &legal, from, sq);
                     }
                     Some(from) if from == sq => state.selected = None,
-                    _ => state.selected = self.own_piece(sq).then_some(sq),
+                    _ => {
+                        state.selected = self.own_piece(sq).then_some(sq);
+                        // A click beside the own pieces cancels a premove.
+                        if premoving && state.selected.is_none() {
+                            state.premove = None;
+                        }
+                    }
                 }
             }
             // The right button draws: a drag — an arrow, a click — a circle on the square.
@@ -222,6 +265,7 @@ impl BoardView<'_> {
             }
             if response.secondary_clicked() {
                 state.clear();
+                state.premove = None;
                 if let Some(sq) = pointer.and_then(|p| geo.square_at(p)) {
                     let color = shape_color_for(ui.input(|i| i.modifiers));
                     state.shape = Some(Drawn::Circle(color, sq));
@@ -276,6 +320,10 @@ impl BoardView<'_> {
             hl(&painter, from, self.theme.last_move);
             hl(&painter, to, self.theme.last_move);
         }
+        if let Some((from, to)) = state.premove.filter(|_| premoving) {
+            hl(&painter, from, PREMOVE);
+            hl(&painter, to, PREMOVE);
+        }
         if let Some(sel) = state.selected {
             hl(&painter, sel, self.theme.selected);
         }
@@ -323,8 +371,17 @@ impl BoardView<'_> {
             }
         }
 
+        // where the selected piece may premove to
+        if let Some(sel) = state.selected.filter(|_| premoving)
+            && let Some(piece) = self.pos.board().piece_at(sel)
+        {
+            for to in premove_targets(self.pos.board(), sel, piece) {
+                let r = geo.square_rect(to);
+                painter.circle_filled(r.center(), sq_size * 0.15, PREMOVE_DOT);
+            }
+        }
         // legal targets of the selected piece
-        if let Some(sel) = state.selected {
+        if let Some(sel) = state.selected.filter(|_| !premoving) {
             for m in legal.iter().filter(|m| m.from() == Some(sel)) {
                 let to = ui_target(m);
                 let r = geo.square_rect(to);
@@ -459,11 +516,19 @@ impl BoardView<'_> {
         result
     }
 
+    /// The side that moves on this board now: the side to move, or the premoving one.
+    fn mover(&self) -> Color {
+        match self.premove {
+            Some(c) if !self.interactive => c,
+            _ => self.pos.turn(),
+        }
+    }
+
     fn own_piece(&self, sq: Square) -> bool {
         self.pos
             .board()
             .piece_at(sq)
-            .is_some_and(|p| p.color == self.pos.turn())
+            .is_some_and(|p| p.color == self.mover())
     }
 
     fn try_move(
@@ -473,6 +538,19 @@ impl BoardView<'_> {
         from: Square,
         to: Square,
     ) -> Option<Move> {
+        if !self.interactive && self.premove.is_some() {
+            let piece = self.pos.board().piece_at(from)?;
+            if premove_targets(self.pos.board(), from, piece).contains(to) {
+                state.premove = Some((from, to));
+                state.selected = None;
+            } else {
+                state.selected = self.own_piece(to).then_some(to);
+                if state.selected.is_none() {
+                    state.premove = None;
+                }
+            }
+            return None;
+        }
         let candidates: Vec<&Move> = legal
             .iter()
             .filter(|m| m.from() == Some(from) && (ui_target(m) == to || m.to() == to))
@@ -483,6 +561,10 @@ impl BoardView<'_> {
                 None
             }
             [m] => Some(*(*m)),
+            _ if self.auto_queen && candidates.iter().all(|m| m.is_promotion()) => candidates
+                .iter()
+                .find(|m| m.promotion() == Some(Role::Queen))
+                .map(|m| *(*m)),
             _ if candidates.iter().all(|m| m.is_promotion()) => {
                 state.promotion = Some((from, to));
                 state.selected = None;
@@ -531,6 +613,73 @@ impl BoardView<'_> {
             );
         }
     }
+}
+
+/// The premove highlight (Lichess's dark blue) and its target dots.
+const PREMOVE: Color32 = Color32::from_rgba_premultiplied(10, 15, 43, 128);
+const PREMOVE_DOT: Color32 = Color32::from_rgba_premultiplied(10, 15, 43, 140);
+
+/// Where a piece may premove: how it moves on an empty board (the position will have
+/// changed), a pawn forward and diagonally, the king at home also to castle with an own
+/// rook of `board` on the a- or h-file — on the king's square or the rook's (chessground
+/// `premove.ts`).
+pub fn premove_targets(board: &Board, from: Square, piece: Piece) -> shakmaty::Bitboard {
+    use shakmaty::{Bitboard, attacks};
+    match piece.role {
+        Role::Pawn => {
+            let mut b = attacks::pawn_attacks(piece.color, from);
+            let step: i32 = if piece.color == Color::White { 8 } else { -8 };
+            let home = if piece.color == Color::White {
+                Rank::Second
+            } else {
+                Rank::Seventh
+            };
+            if let Some(one) = from.offset(step) {
+                b.add(one);
+                if from.rank() == home
+                    && let Some(two) = from.offset(2 * step)
+                {
+                    b.add(two);
+                }
+            }
+            b
+        }
+        Role::King => {
+            let mut b = attacks::king_attacks(from);
+            let back = piece.color.backrank();
+            let rook = Piece {
+                color: piece.color,
+                role: Role::Rook,
+            };
+            if from == Square::from_coords(File::E, back) {
+                for (rook_file, king_file) in [(File::H, File::G), (File::A, File::C)] {
+                    let r = Square::from_coords(rook_file, back);
+                    if board.piece_at(r) == Some(rook) {
+                        b.add(Square::from_coords(king_file, back));
+                        b.add(r);
+                    }
+                }
+            }
+            b
+        }
+        _ => attacks::attacks(from, piece, Bitboard::EMPTY),
+    }
+}
+
+/// The move a premove means in `pos`, if it is legal there (a pawn promotes to a queen).
+pub fn premove_move(pos: &Chess, from: Square, to: Square) -> Option<Move> {
+    let legal = pos.legal_moves();
+    let mut found = legal
+        .iter()
+        .filter(|m| m.from() == Some(from) && (ui_target(m) == to || m.to() == to));
+    let first = *found.next()?;
+    if first.is_promotion() {
+        return legal
+            .iter()
+            .find(|m| m.from() == Some(from) && m.to() == to && m.promotion() == Some(Role::Queen))
+            .copied();
+    }
+    Some(first)
 }
 
 /// Square the user clicks to make a move: for castling, the king's destination.
@@ -625,6 +774,52 @@ fn draw_arrow(painter: &egui::Painter, geo: &Geometry, a: &Arrow) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn premoves_as_on_lichess() {
+        use shakmaty::fen::Fen;
+        let sq = |s: &str| s.parse::<Square>().unwrap();
+        let wp = Piece {
+            color: Color::White,
+            role: Role::Pawn,
+        };
+        // A pawn: forward one or two from home, both diagonals.
+        let start = Board::default();
+        let t = premove_targets(&start, sq("e2"), wp);
+        for s in ["e3", "e4", "d3", "f3"] {
+            assert!(t.contains(sq(s)), "{s}");
+        }
+        assert_eq!(t.count(), 4);
+        // A rook through pieces: the position will change.
+        let wr = Piece {
+            color: Color::White,
+            role: Role::Rook,
+        };
+        assert_eq!(premove_targets(&start, sq("a1"), wr).count(), 14);
+        // The king at home: also its castling squares.
+        let wk = Piece {
+            color: Color::White,
+            role: Role::King,
+        };
+        // The king at home: castling by its square or the rook's, only with the rook.
+        let k = premove_targets(&start, sq("e1"), wk);
+        assert!(k.contains(sq("g1")) && k.contains(sq("h1")) && k.contains(sq("c1")));
+        let no_h_rook: Board = "4k3/8/8/8/8/8/8/R3K3".parse().unwrap();
+        let k = premove_targets(&no_h_rook, sq("e1"), wk);
+        assert!(!k.contains(sq("g1")) && k.contains(sq("c1")) && k.contains(sq("a1")));
+        // Played when legal; a promotion becomes a queen; castling by the king's square.
+        let pos: Chess = "4k3/1P6/8/8/8/8/8/4K2R w K - 0 1"
+            .parse::<Fen>()
+            .unwrap()
+            .into_position(shakmaty::CastlingMode::Standard)
+            .unwrap();
+        let m = premove_move(&pos, sq("b7"), sq("b8")).unwrap();
+        assert_eq!(m.promotion(), Some(Role::Queen));
+        assert!(premove_move(&pos, sq("e1"), sq("g1")).unwrap().is_castle());
+        assert!(premove_move(&pos, sq("e1"), sq("h1")).unwrap().is_castle());
+        assert!(premove_move(&pos, sq("h1"), sq("h8")).is_some());
+        assert!(premove_move(&pos, sq("b7"), sq("c8")).is_none());
+    }
+
     use super::*;
     use shakmaty::fen::Fen;
     use shakmaty::san::San;

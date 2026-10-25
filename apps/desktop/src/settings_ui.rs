@@ -566,6 +566,12 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
         .checkbox(&mut s.show_coords, tr("Show coordinates"))
         .changed();
     *changed |= ui
+        .checkbox(&mut s.auto_queen, tr("Always promote to a queen"))
+        .on_hover_text(tr(
+            "Off: a pawn on the last rank asks which piece it becomes",
+        ))
+        .changed();
+    *changed |= ui
         .checkbox(&mut s.show_best_arrow, tr("Show engine best-move arrows"))
         .changed();
 }
