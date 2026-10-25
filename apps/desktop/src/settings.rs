@@ -179,6 +179,17 @@ pub const REVIEW_QUALITY: [(&str, u64); 3] = [
 ];
 
 impl ReviewSettings {
+    /// Options other than the defaults were chosen in the dialog (before `chosen` was
+    /// kept, 1.5): they count as chosen.
+    pub fn note_earlier_choice(&mut self) {
+        let default = ReviewSettings::default();
+        if (self.quality, self.threads, self.hash_mb)
+            != (default.quality, default.threads, default.hash_mb)
+        {
+            self.chosen = true;
+        }
+    }
+
     pub fn nodes(&self) -> u64 {
         REVIEW_QUALITY[self.quality.min(REVIEW_QUALITY.len() - 1)].1
     }
@@ -242,13 +253,17 @@ impl Settings {
         };
         migrate_legacy_config(&path);
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
-                eprintln!(
-                    "settings: cannot parse {}: {e}; using defaults",
-                    path.display()
-                );
-                Self::default()
-            }),
+            Ok(bytes) => {
+                let mut s: Settings = serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+                    eprintln!(
+                        "settings: cannot parse {}: {e}; using defaults",
+                        path.display()
+                    );
+                    Self::default()
+                });
+                s.review.note_earlier_choice();
+                s
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::first_start(),
             Err(_) => Self::default(),
         }
@@ -305,4 +320,19 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn options_chosen_before_count_as_chosen() {
+        let mut r = ReviewSettings::default();
+        r.note_earlier_choice();
+        assert!(!r.chosen, "the defaults: never chosen");
+        r.quality = 2;
+        r.note_earlier_choice();
+        assert!(r.chosen);
+    }
 }
