@@ -197,6 +197,19 @@ impl GameSession {
         })
     }
 
+    /// Adds `text` to the comments after the move at place `at` (its symbols kept).
+    pub fn add_comment(&self, at: u32, text: String) -> Result<Edited, ApiError> {
+        self.with(|g| {
+            let id = node(g, at)?;
+            let n = g.node(id).ok_or(ApiError::NoNode { place: at })?;
+            let nags = n.nags().to_vec();
+            let mut comments = n.comments_after().to_vec();
+            comments.push(text);
+            g.annotate(id, nags, comments)?;
+            Ok(edited(g, id))
+        })
+    }
+
     /// Changed since it was opened or last saved.
     pub fn is_modified(&self) -> bool {
         self.with(|g| g.is_modified())

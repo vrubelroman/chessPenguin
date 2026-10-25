@@ -40,6 +40,7 @@ import io.github.vrubelroman.chesspenguin.ui.DatabasesScreen
 import io.github.vrubelroman.chesspenguin.ui.SettingsScreen
 import io.github.vrubelroman.chesspenguin.ui.GameScreen
 import io.github.vrubelroman.chesspenguin.ui.NEW_GAME
+import io.github.vrubelroman.chesspenguin.ui.PLAY_GAME
 import io.github.vrubelroman.chesspenguin.ui.GamesScreen
 import io.github.vrubelroman.chesspenguin.ui.OnlineScreen
 import kotlinx.serialization.Serializable
@@ -54,6 +55,9 @@ import kotlinx.serialization.Serializable
 
 /// A new game from the start position (android-play.md §30.4).
 @Serializable data object NewGameKey : NavKey
+
+/// The game against Maia in hand (android-play.md §31).
+@Serializable data object PlayKey : NavKey
 
 @Serializable data object SettingsKey : NavKey
 
@@ -119,16 +123,23 @@ fun MainNavigation() {
                     onSettings = { backStack.add(SettingsKey) },
                     onOnline = { backStack.add(OnlineKey) },
                     onNewGame = { backStack.add(NewGameKey) },
+                    onPlay = { backStack.add(PlayKey) },
                 )
             }
             entry<NewGameKey> {
-                GameScreen(NEW_GAME, 0, "", onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) })
+                GameScreen(NEW_GAME, 0, "", onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) }, onPlayGame = { backStack.add(PlayKey) })
+            }
+            entry<PlayKey> {
+                GameScreen(PLAY_GAME, 0, "", onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) }, onPlayGame = {
+                    backStack.removeLastOrNull()
+                    backStack.add(PlayKey)
+                })
             }
             entry<Games> { key ->
                 GamesScreen(key.db, onBack = { backStack.removeLastOrNull() }, onGame = { place, query -> backStack.add(GameAt(key.db, place, query)) })
             }
             entry<GameAt> { key ->
-                GameScreen(key.db, key.place, key.query, onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) })
+                GameScreen(key.db, key.place, key.query, onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) }, onPlayGame = { backStack.add(PlayKey) })
             }
             entry<SettingsKey> {
                 SettingsScreen(

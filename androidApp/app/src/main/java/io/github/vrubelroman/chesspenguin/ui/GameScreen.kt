@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.School
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.VerticalAlignTop
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Download
@@ -136,7 +137,7 @@ private data class Preview(val line: EngineLine, val step: Int, val best: Boolea
 /// under the thumb; ‹ › page the games of the list (android-ui.md §7).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, onSettings: () -> Unit) {
+fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, onSettings: () -> Unit, onPlayGame: () -> Unit = {}) {
     val app = app()
     val context = LocalContext.current
     val prefs by app.settings.prefs.collectAsState()
@@ -150,6 +151,9 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var game by held.data
     var edit by held.session
     val newGame = db == NEW_GAME
+    // The game against Maia in hand (android-play.md §31).
+    val playGame = db == PLAY_GAME
+    val run = held.play.value
     // Learning the opening of this game: its own screen over the game (§32).
     held.trainer.value?.let { t ->
         TrainScreen(t, held.trainPly, held.trainFlipped, onPly = { held.trainPly = it }, onExit = {
@@ -164,8 +168,32 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     var preview by remember { mutableStateOf<Preview?>(null) }
     // The game report (§21): its own engine job; the live engine rests while it runs.
     val review = remember { ReviewSession(java.io.File(context.cacheDir, "analysis").path, app.scope) }
-    LaunchedEffect(db, place) {
+    LaunchedEffect(db, place, held.reloads.intValue) {
         preview = null
+        if (playGame) {
+            if (held.key != PLAY_GAME) {
+                val meta = app.maiaGames.current.value
+                val pgn = app.maiaGames.pgn()
+                if (meta == null || pgn == null) {
+                    failed = true
+                    return@LaunchedEffect
+                }
+                held.key = PLAY_GAME
+                held.savedTo = null
+                val s = GameSession.fromPgn(pgn)
+                edit = s
+                val d = s.data()
+                game = d
+                held.play.value?.close()
+                held.play.value = PlayRun(meta).also { r ->
+                    // A game that ended before the app was closed: its end as it was.
+                    if (meta.over) r.over.value = PlayOver(d.result, if (d.result == "1/2-1/2") R.string.play_draw else if ((d.result == "1-0") == meta.userWhite) R.string.play_won else R.string.play_lost, null)
+                }
+                flipped = !meta.userWhite
+                current = lineEnd(d)
+            }
+            return@LaunchedEffect
+        }
         if (newGame) {
             if (held.key != NEW_GAME) {
                 held.key = NEW_GAME
@@ -391,10 +419,121 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     }
     // The move sheet of a long press on a move (§29.6): which move.
     var moveSheet by remember { mutableStateOf<Int?>(null) }
+    // «Play on from here» asked for at this move.
+    var playFrom by remember { mutableStateOf<Int?>(null) }
     val deletedText = stringResource(R.string.moves_deleted)
     val undoText = stringResource(R.string.undo_action)
     fun undo() {
         edit?.undo()?.let { apply(it) }
+    }
+
+    // ----- a game against Maia (§31) -----
+    val runOver = run?.over?.value
+    val runOffer = run?.offer?.value == true
+    val runThinking = run?.thinking?.value == true
+    val runFailure = run?.failure?.value
+    val gameOn = run != null && runOver == null
+    fun persist() {
+        if (run != null) edit?.let { app.maiaGames.save(it.pgn()) }
+    }
+    fun finishGame(over: PlayOver) {
+        val r = run ?: return
+        val e = edit ?: return
+        r.generation++
+        r.thinking.value = false
+        r.offer.value = false
+        e.setData(listOf(uniffi.mobile_api.Tag("Termination", "Normal")), over.result)
+        game = e.data().copy(notes = held.notes)
+        r.over.value = over
+        app.maiaGames.finish(e.pgn())
+    }
+    // After a move of either side: kept, and the end of the game if it came.
+    fun afterMove(e: Edited) {
+        val r = run ?: return
+        persist()
+        edit?.ending(e.cursor)?.let { finishGame(overBy(it, r.meta.userWhite)) }
+    }
+    // Maia's move when it is her turn: computed in the background, shown after her pause.
+    LaunchedEffect(run, g, runOver, runOffer, runFailure) {
+        val r = run ?: return@LaunchedEffect
+        val gg = g ?: return@LaunchedEffect
+        val e = edit ?: return@LaunchedEffect
+        if (runOver != null || runOffer || runFailure != null) return@LaunchedEffect
+        val end = lineEnd(gg)
+        if (whiteToMove(gg.nodes[end].fen) == r.meta.userWhite) return@LaunchedEffect
+        val gen = ++r.generation
+        r.thinking.value = true
+        try {
+            val player = r.player ?: withContext(Dispatchers.IO) { runCatching { uniffi.mobile_api.MaiaPlayer.load(app.maiaFiles.download.file.path) } }
+                .getOrElse { ex ->
+                    r.failure.value = ex.message ?: ""
+                    return@LaunchedEffect
+                }.also { r.player = it }
+            // Her resignation is judged by Stockfish, when it is there.
+            if (r.judge == null && files.state.value == NetState.Ready) {
+                r.judge = runCatching { uniffi.mobile_api.ResignJudge.start(files.executable, files.net.path) }.getOrNull()
+            }
+            r.judge?.ask(e, end.toUInt())
+            val started = System.currentTimeMillis()
+            val only = e.legalMoves(end.toUInt()).size == 1
+            val uci = withContext(Dispatchers.Default) {
+                player.choose(e, end.toUInt(), r.meta.strength.toUInt(), null, kotlin.random.Random.nextFloat())
+            } ?: return@LaunchedEffect
+            val wait = uniffi.mobile_api.maiaPauseMs(depth(gg, end).toUInt(), only).toLong() - (System.currentTimeMillis() - started)
+            if (wait > 0) delay(wait)
+            if (gen != r.generation) return@LaunchedEffect
+            r.judge?.hopeless()?.let { if (it) r.hopeless++ else r.hopeless = 0u }
+            if (!r.playOn && r.hopeless >= uniffi.mobile_api.hopelessTurns()) {
+                r.offer.value = true
+                return@LaunchedEffect
+            }
+            runCatching { e.play(end.toUInt(), uci) }.getOrNull()?.let { ed ->
+                apply(ed)
+                afterMove(ed)
+            }
+        } finally {
+            if (gen == r.generation) r.thinking.value = false
+        }
+    }
+    var resigning by remember { mutableStateOf(false) }
+    // The result card closed with ×: until the next game.
+    var resultClosed by remember(run) { mutableStateOf(false) }
+    val eventText = stringResource(R.string.play_event)
+    val noteText = stringResource(R.string.play_note_from, (run?.meta?.strength ?: 0).toString())
+    // The same strength again, colours swapped; from a position: the same one and colour.
+    fun rematch() {
+        val r = run ?: return
+        val e = edit ?: return
+        val gg = g ?: return
+        val m = r.meta
+        val base = if (m.floor > 0) {
+            var n = 0
+            repeat(m.floor) { n = gg.nodes[n].children.firstOrNull()?.toInt() ?: n }
+            runCatching { e.playFrom(n.toUInt()) }.getOrNull() ?: return
+        } else {
+            GameSession.newGame("")
+        }
+        beginMaiaGame(app, base, m.strength, if (m.floor > 0) m.userWhite else !m.userWhite, m.name, m.floor, eventText, noteText)
+        base.close()
+        held.key = null
+        held.reloads.intValue++
+    }
+    fun takeBack() {
+        val r = run ?: return
+        val gg = g ?: return
+        val e = edit ?: return
+        val end = lineEnd(gg)
+        // While Maia thinks the last move is the user's; else hers, and the user's before.
+        val from = if (r.thinking.value) end else gg.nodes[end].parent?.toInt() ?: return
+        if (depth(gg, from) <= r.meta.floor) return
+        r.generation++
+        r.thinking.value = false
+        r.judge?.forget()
+        r.hopeless = 0u
+        runCatching { e.deleteFrom(from.toUInt()) }.getOrNull()?.let {
+            apply(it)
+            persist()
+        }
     }
 
     // Saving (android-play.md §30.4): an own database's game in its place; a new game or
@@ -438,7 +577,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             ownGame -> games?.getOrNull(place)?.let { saveInto(db, it) }
             to != null -> saveInto(to.first, to.second)
             // A new game's names and result first, as the desktop asks when adding.
-            newGame -> {
+            newGame && !playGame -> {
                 firstSave = true
                 editingData = true
             }
@@ -447,9 +586,22 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     }
     // Leaving with changes asks only where they are the user's to keep (an own game, a
     // new one); moves in someone else's game are for trying out (owner's decision).
-    val asksOnLeave = modified && (ownGame || newGame)
+    // A game against Maia: put aside while it goes on (no question); after its end like
+    // a new game, and gone from hand once left.
+    val asksOnLeave = modified && (ownGame || newGame || (playGame && runOver != null))
+    val exit: () -> Unit = {
+        if (playGame && held.play.value?.over?.value != null) app.maiaGames.clear()
+        onBack()
+    }
+    // What leaving's question leads to (back, or a rematch).
+    var leaveTo by remember { mutableStateOf<(() -> Unit)?>(null) }
     fun leave() {
-        if (asksOnLeave) leaving = true else onBack()
+        if (asksOnLeave) {
+            leaveTo = exit
+            leaving = true
+        } else {
+            exit()
+        }
     }
     fun go(to: Int) {
         preview = null
@@ -506,7 +658,27 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
 
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val controls: @Composable (Modifier) -> Unit = { modifier ->
-        Column(modifier) {
+        if (gameOn && run != null && g != null) {
+            val end = lineEnd(g)
+            val endDepth = depth(g, end)
+            val floor = run.meta.floor
+            PlayControls(
+                // While Maia thinks the last move is the user's; else hers and the user's before.
+                canTakeBack = if (runThinking) endDepth > floor else endDepth - 1 > floor,
+                started = endDepth - floor >= 2,
+                canBack = canBack,
+                canForward = canForward,
+                onTakeBack = ::takeBack,
+                onResign = { resigning = true },
+                onAbort = {
+                    app.maiaGames.clear()
+                    onBack()
+                },
+                onFlip = { flipped = !flipped },
+                onBack = ::back,
+                onForward = ::forward,
+            )
+        } else Column(modifier) {
             val p = preview
             if (p == null && node != null && nodes != null && node.children.size > 1) {
                 Forks(node.children.map { nodes[it.toInt()] }, san, onMove = ::go)
@@ -584,10 +756,16 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             animated = prefs.animation,
             // A touch during a preview of an engine line closes it; no move is made (§29.5).
             modifier = if (p != null) boardModifier.pointerInput(Unit) { detectTapGestures { preview = null } } else boardModifier,
-            input = edit?.takeIf { p == null && g != null }?.let { e ->
+            input = edit?.takeIf {
+                // In a game: only the user's side, in their turn, at the game's last move.
+                p == null && g != null && (!gameOn || (current == lineEnd(g) && !runThinking && !runOffer && whiteToMove(g.nodes[current].fen) == run!!.meta.userWhite))
+            }?.let { e ->
                 val legal = remember(g, current) { e.legalMoves(current.toUInt()) }
                 BoardInput(legal, onMove = { uci ->
-                    runCatching { e.play(current.toUInt(), uci) }.getOrNull()?.let { apply(it) }
+                    runCatching { e.play(current.toUInt(), uci) }.getOrNull()?.let {
+                        apply(it)
+                        if (gameOn) afterMove(it)
+                    }
                 })
             },
         )
@@ -643,6 +821,45 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 )
             }
             if (p != null) PreviewBar(p.step + 1, p.line.steps.size, onClose = { preview = null }, best = p.best)
+            if (run != null) {
+                when {
+                    runOffer -> OfferCard(
+                        onAccept = { finishGame(PlayOver(if (run.meta.userWhite) "1-0" else "0-1", R.string.play_won, R.string.end_maia_resigned)) },
+                        onPlayOn = {
+                            run.playOn = true
+                            run.offer.value = false
+                        },
+                    )
+                    runFailure != null -> Text(
+                        stringResource(R.string.play_maia_failed, runFailure),
+                        Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    runOver != null && !resultClosed -> ResultCard(
+                        runOver,
+                        saved = held.savedTo != null && !modified,
+                        onAnalyse = {
+                            val e = edit
+                            if (e != null) scope.launch {
+                                review.openSession("${held.key}/${System.nanoTime()}", e)
+                                reviewHidden = false
+                                reviewStart = true
+                            }
+                        },
+                        onRematch = {
+                            val go = { rematch() }
+                            if (modified) {
+                                leaveTo = go
+                                leaving = true
+                            } else {
+                                go()
+                            }
+                        },
+                        onSave = { save() },
+                        onClose = { resultClosed = true },
+                    )
+                }
+            }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
                     g != null -> Notation(
@@ -677,14 +894,18 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     // The event and year (else the site); the game's place and round. A tap
                     // shows the game's details.
                     // No event and no site: the database's name.
-                    val event = if (newGame && held.savedTo == null) {
+                    val event = if (playGame && run != null) {
+                        stringResource(R.string.play_with_maia) + " " + run.meta.strength
+                    } else if (newGame && held.savedTo == null) {
                         stringResource(R.string.new_game)
                     } else {
                         joinKnown(tag("Event"), year(tag("Date"))).ifEmpty { joinKnown(tag("Site")) }
                             .ifEmpty { dbEntry?.let { displayName(it) } ?: "" }
                     }
                     val round = tag("Round").trim().takeIf { it.isNotEmpty() && it != "?" && it != "-" }
-                    val placeLine = joinKnown(
+                    val placeLine = if (playGame && run != null) {
+                        stringResource(R.string.play_adjourned_sub, stringResource(if (run.meta.userWhite) R.string.play_as_white else R.string.play_as_black), stringResource(R.string.play_untimed))
+                    } else joinKnown(
                         if (total > 0) stringResource(R.string.game_of, place + 1, total) else "",
                         round?.let { stringResource(R.string.tag_round).lowercase() + " " + it } ?: "",
                     )
@@ -714,13 +935,13 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 },
                 actions = {
                     // Changes not saved: "Save" in place of ‹ › (they would need a decision).
-                    if (modified) {
+                    if (modified && !gameOn) {
                         val where = when {
                             ownGame -> dbEntry?.let { stringResource(R.string.save_in, displayName(it)) }
                             else -> held.savedTo?.first?.let { app.library.entry(it) }?.let { stringResource(R.string.save_in, displayName(it)) }
                         } ?: stringResource(R.string.save_to_mine)
                         IconButton(onClick = { save() }) { Icon(Icons.Rounded.Save, where) }
-                    } else if (!newGame) {
+                    } else if (!newGame && !playGame) {
                         IconButton(onClick = { place -= 1 }, enabled = place > 0) {
                             Icon(Icons.Rounded.ChevronLeft, stringResource(R.string.previous_game))
                         }
@@ -741,10 +962,18 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                             DropdownMenuItem(
                                 text = { Text(stringResource(if (rs?.hasData == true) R.string.review_report_menu else R.string.review_menu)) },
                                 // During the first analysis the panel already shows its progress (§21.1).
-                                enabled = hasMoves && rs != null && (rs.hasData || !rs.running),
+                                enabled = hasMoves && !gameOn && ((newGame || playGame) || (rs != null && (rs.hasData || !rs.running))),
                                 onClick = {
                                     menu = false
                                     reviewHidden = false
+                                    val e = edit
+                                    if ((newGame || playGame) && e != null && rs == null) {
+                                        scope.launch {
+                                            review.openSession("${held.key}/${System.nanoTime()}", e)
+                                            reviewStart = true
+                                        }
+                                        return@DropdownMenuItem
+                                    }
                                     when {
                                         rs?.hasData == true -> reviewReport = true
                                         rs?.running == true -> {}
@@ -800,11 +1029,14 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         // a title for White and no Black keeps both bars, so the board does not jump.
         val study = whiteName != null && blackName == null
         val result = g?.result ?: ""
+        // In a game: «thinking…» on Maia's bar while she computes (§31.3).
+        val thinkingText = stringResource(R.string.play_thinking)
+        val maiaThinks = { white: Boolean -> if (gameOn && runThinking && run?.meta?.userWhite != white) thinkingText else null }
         val whiteBar: @Composable () -> Unit = {
-            PlayerBar(whiteName ?: whiteLabel, elo(tag("WhiteElo")), true, sideResult(result, true), known = whiteName != null, abbreviate = !study)
+            PlayerBar(whiteName ?: whiteLabel, elo(tag("WhiteElo")), true, maiaThinks(true) ?: sideResult(result, true), known = whiteName != null, abbreviate = !study)
         }
         val blackBar: @Composable () -> Unit = {
-            PlayerBar(blackName ?: blackLabel, elo(tag("BlackElo")), false, sideResult(result, false), known = blackName != null)
+            PlayerBar(blackName ?: blackLabel, elo(tag("BlackElo")), false, maiaThinks(false) ?: sideResult(result, false), known = blackName != null)
         }
         val topBar = if (flipped) whiteBar else blackBar
         val bottomBar = if (flipped) blackBar else whiteBar
@@ -914,18 +1146,53 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
             confirmButton = {
                 TextButton(onClick = {
                     leaving = false
-                    save(then = onBack)
+                    save(then = leaveTo ?: exit)
                 }) { Text(stringResource(if (ownGame || held.savedTo != null) R.string.save else R.string.save_to_db_ellipsis)) }
             },
             dismissButton = {
                 Row {
                     TextButton(onClick = {
                         leaving = false
-                        onBack()
+                        (leaveTo ?: exit)()
                     }) { Text(stringResource(R.string.dont_save)) }
                     TextButton(onClick = { leaving = false }) { Text(stringResource(R.string.cancel)) }
                 }
             },
+        )
+    }
+    // «Play on from here» (§31.6): the moves up to the move, then a game against Maia.
+    val fromMove = playFrom
+    if (fromMove != null && g != null && edit != null) {
+        val n = g.nodes.getOrNull(fromMove)
+        if (n == null) {
+            playFrom = null
+        } else {
+            val moveLabel = (if (n.white) "${n.moveNumber}." else "${n.moveNumber}…") + san(n.san).text
+            val origin = listOfNotNull(whiteName, blackName).joinToString(" — ").takeIf { it.isNotEmpty() }
+            PlaySheet(
+                PlayFrom(n.fen, listOfNotNull(stringResource(R.string.play_from_label, moveLabel), origin).joinToString("\n"), whiteToMove(n.fen)),
+                onPlay = { strength, white, name ->
+                    playFrom = null
+                    val s = runCatching { edit?.playFrom(fromMove.toUInt()) }.getOrNull() ?: return@PlaySheet
+                    beginMaiaGame(app, s, strength, white, name, depth(g, fromMove), eventText, context.getString(R.string.play_note_from, strength.toString()))
+                    s.close()
+                    onPlayGame()
+                },
+                onDismiss = { playFrom = null },
+            )
+        }
+    }
+    if (resigning) {
+        AlertDialog(
+            onDismissRequest = { resigning = false },
+            title = { Text(stringResource(R.string.play_resign_q)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    resigning = false
+                    run?.let { finishGame(PlayOver(if (it.meta.userWhite) "0-1" else "1-0", R.string.play_you_resigned, null)) }
+                }) { Text(stringResource(R.string.play_resign).removePrefix("⚑ "), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { resigning = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
     val sheetMove = moveSheet
@@ -939,6 +1206,12 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 inVariation = g.nodes[n.parent!!.toInt()].children.firstOrNull()?.toInt() != sheetMove,
                 runs = remember(sheetMove) { edit?.trainingRuns(sheetMove.toUInt())?.toInt() },
                 canTrain = !n.nullMove,
+                // Not at mate or stalemate, nor after a null move; not inside a game being played.
+                canPlay = !n.nullMove && n.end.isEmpty() && !gameOn,
+                onPlay = {
+                    moveSheet = null
+                    playFrom = sheetMove
+                },
                 onTrain = {
                     moveSheet = null
                     edit?.trainer(sheetMove.toUInt())?.let { t ->
@@ -1231,6 +1504,8 @@ private fun MoveSheet(
     onMakeMain: () -> Unit,
     onDelete: () -> Unit,
     onTrain: () -> Unit,
+    canPlay: Boolean,
+    onPlay: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -1239,6 +1514,7 @@ private fun MoveSheet(
             if (inVariation) SheetAction(Icons.Rounded.VerticalAlignTop, stringResource(R.string.make_main), onClick = onMakeMain)
             SheetAction(Icons.Rounded.Close, stringResource(R.string.delete_move), onClick = onDelete)
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            SheetAction(Icons.Rounded.SmartToy, stringResource(R.string.play_from_maia), enabled = canPlay, onClick = onPlay)
             SheetAction(
                 Icons.Rounded.School,
                 stringResource(R.string.train_learn),

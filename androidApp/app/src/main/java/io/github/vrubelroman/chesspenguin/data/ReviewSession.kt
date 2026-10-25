@@ -39,19 +39,25 @@ class ReviewSession(private val cacheDir: String, private val scope: CoroutineSc
 
     /// Shows the analysis of game `index` of database `db` (from the cache or its
     /// `[%eval]` comments); the analysis of the game before is stopped and kept.
-    suspend fun open(db: String, database: Database, index: UInt) {
-        if (game == db to index) return
+    suspend fun open(db: String, database: Database, index: UInt) = openWith(db to index) { database.review(index, cacheDir) }
+
+    /// The analysis of a game being changed or played (no file of its own), as it is
+    /// now; `stamp` names this state of it (a new stamp: the game changed).
+    suspend fun openSession(stamp: String, session: uniffi.mobile_api.GameSession) = openWith("session" to stamp.hashCode().toUInt()) { session.review(cacheDir) }
+
+    private suspend fun openWith(key: Pair<String, UInt>, make: () -> GameReview) {
+        if (game == key) return
         val gen = ++generation
         _state.value = null
         lock.withLock {
             closeLocked()
-            val r = withContext(Dispatchers.IO) { runCatching { database.review(index, cacheDir) }.getOrNull() } ?: return
+            val r = withContext(Dispatchers.IO) { runCatching { make() }.getOrNull() } ?: return
             if (gen != generation) {
                 withContext(Dispatchers.IO) { r.close() }
                 return
             }
             review = r
-            game = db to index
+            game = key
             _state.value = withContext(Dispatchers.IO) { r.state() }
         }
     }

@@ -30,6 +30,8 @@ import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
@@ -89,7 +91,7 @@ import kotlinx.coroutines.launch
 /// The first screen: the databases on the list (android-ui.md §3).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSettings: () -> Unit, onOnline: () -> Unit, onNewGame: () -> Unit) {
+fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSettings: () -> Unit, onOnline: () -> Unit, onNewGame: () -> Unit, onPlay: () -> Unit) {
     val library = app().library
     val downloads = app().downloads
     val views by downloads.views.collectAsState()
@@ -171,6 +173,20 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
         }
     }
     val own = entries.filter { it.source == Source.Own }
+    val theApp = app()
+    val adjourned by theApp.maiaGames.current.collectAsState()
+    val playRemovedText = stringResource(R.string.play_removed)
+    var playing by remember { mutableStateOf(false) }
+    val eventText = stringResource(R.string.play_event)
+    if (playing) {
+        PlaySheet(null, onPlay = { strength, white, name ->
+            playing = false
+            val s = uniffi.mobile_api.GameSession.newGame("")
+            beginMaiaGame(theApp, s, strength, white, name, 0, eventText, null)
+            s.close()
+            onPlay()
+        }, onDismiss = { playing = false })
+    }
     val files = entries.filter { it.source != Source.Own }
     val list = rememberLazyListState()
     // The card comes when GitHub answers, after the list is drawn: a list at its top then
@@ -229,8 +245,41 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
             ) {
                 // A newer version of the app (android-ui.md §25.2): the first item of the list.
                 update?.let { u -> item(key = "update") { UpdateCard(u, onDismissed = onUpdateDismissed, modifier = Modifier.animateItem()) } }
+                // A game against Maia put aside (§31.7): go on with it, or let it go.
+                adjourned?.takeIf { !it.over }?.let { m ->
+                    item(key = "adjourned") {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                                .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp))
+                                .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                stringResource(R.string.play_adjourned, m.strength.toString(), stringResource(if (m.userWhite) R.string.play_as_white else R.string.play_as_black)),
+                                Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            TextButton(onClick = onPlay) { Text(stringResource(R.string.play_continue)) }
+                            IconButton(onClick = {
+                                val pgn = theApp.maiaGames.pgn()
+                                theApp.maiaGames.clear()
+                                scope.launch {
+                                    snackbar.currentSnackbarData?.dismiss()
+                                    if (snackbar.showSnackbar(playRemovedText, undoText, duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed && pgn != null) {
+                                        theApp.maiaGames.begin(pgn, m)
+                                    }
+                                }
+                            }) { Icon(Icons.Rounded.Close, stringResource(R.string.close)) }
+                        }
+                    }
+                }
                 item(key = "actions") {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(onClick = { playing = true }, modifier = Modifier.height(48.dp)) {
+                            Icon(Icons.Rounded.SmartToy, null)
+                            Spacer(Modifier.size(8.dp))
+                            Text(stringResource(R.string.play_with_maia))
+                        }
                         FilledTonalButton(onClick = onNewGame, modifier = Modifier.height(48.dp)) {
                             Icon(Icons.Rounded.Add, null)
                             Spacer(Modifier.size(8.dp))

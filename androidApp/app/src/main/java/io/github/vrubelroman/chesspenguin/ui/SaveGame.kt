@@ -52,11 +52,16 @@ class GameEdit : ViewModel() {
     var savedTo: Pair<String, UInt>? = null
     /// An opening being learned over the game (android-play.md §32), how far, the board's side.
     val trainer = mutableStateOf<uniffi.mobile_api.Trainer?>(null)
+    /// The game against Maia, when this screen plays one (§31).
+    val play = mutableStateOf<PlayRun?>(null)
+    /// Bumped to read the game in hand again (a rematch).
+    val reloads = androidx.compose.runtime.mutableIntStateOf(0)
     var trainPly = 0
     var trainFlipped = false
 
     override fun onCleared() {
         trainer.value?.close()
+        play.value?.close()
         session.value?.close()
     }
 }

@@ -54,6 +54,7 @@ data class FileSpec(
 class CheckedDownload(private val context: Context, private val scope: CoroutineScope, private val spec: FileSpec) {
     private val dir = File(context.filesDir, spec.dir)
     val file = File(dir, spec.name)
+    val size: Long get() = spec.size
     private val part = File(dir, spec.name + ".part")
     private val prefs = context.getSharedPreferences(spec.prefs, Context.MODE_PRIVATE)
     private val downloads get() = context.getSystemService(DownloadManager::class.java)

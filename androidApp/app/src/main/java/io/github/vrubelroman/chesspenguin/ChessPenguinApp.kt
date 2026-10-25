@@ -10,6 +10,7 @@ import io.github.vrubelroman.chesspenguin.data.AppUpdates
 import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.EngineFiles
 import io.github.vrubelroman.chesspenguin.data.MaiaFiles
+import io.github.vrubelroman.chesspenguin.data.MaiaGames
 import io.github.vrubelroman.chesspenguin.data.Library
 import io.github.vrubelroman.chesspenguin.data.OnlineDownloads
 import io.github.vrubelroman.chesspenguin.data.Settings
@@ -33,6 +34,8 @@ class ChessPenguinApp : Application() {
     val engineFiles by lazy { EngineFiles(this, scope) }
     /// Maia's weights, downloaded on request (android-play.md §31).
     val maiaFiles by lazy { MaiaFiles(this, scope) }
+    /// The game against Maia in hand (android-play.md §31.7).
+    val maiaGames by lazy { MaiaGames(this) }
     /// Games from Lichess and Chess.com being downloaded (android-ui.md §23).
     val downloads by lazy { OnlineDownloads(library, scope) }
     /// The app's own updates (android-ui.md §25).

@@ -29,6 +29,13 @@ data class Prefs(
     /// The engine's speed per thread measured by the last game analysis (0 = not yet),
     /// for the time estimate.
     val reviewNps: Long = 0,
+    /// The last choices of a game against Maia (android-play.md §31.1): her strength,
+    /// the user's colour (-1 Black, 0 at random, 1 White), the user's name.
+    val maiaStrength: Int = 1500,
+    val maiaColor: Int = 0,
+    val yourName: String = "",
+    /// Sounds of moves and of the end of a game (§33).
+    val sound: Boolean = true,
 )
 
 /// Half the cores, at most 2: the engine leaves the phone's interface room (§9).
@@ -65,6 +72,10 @@ class Settings(context: Context) {
             engineHashMb = store.getInt("engineHashMb", d.engineHashMb),
             reviewQuality = store.getInt("reviewQuality", d.reviewQuality).coerceIn(0, REVIEW_NODES.size - 1),
             reviewNps = store.getLong("reviewNps", d.reviewNps),
+            maiaStrength = store.getInt("maiaStrength", d.maiaStrength),
+            maiaColor = store.getInt("maiaColor", d.maiaColor).coerceIn(-1, 1),
+            yourName = store.getString("yourName", d.yourName) ?: d.yourName,
+            sound = store.getBoolean("sound", d.sound),
         )
     }
 
@@ -85,6 +96,10 @@ class Settings(context: Context) {
             .putInt("engineHashMb", p.engineHashMb)
             .putInt("reviewQuality", p.reviewQuality)
             .putLong("reviewNps", p.reviewNps)
+            .putInt("maiaStrength", p.maiaStrength)
+            .putInt("maiaColor", p.maiaColor)
+            .putString("yourName", p.yourName)
+            .putBoolean("sound", p.sound)
             .apply()
     }
 }
