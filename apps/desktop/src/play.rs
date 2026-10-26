@@ -622,7 +622,7 @@ pub const STYLES: &[Style] = &[
 fn style_label(st: &Style) -> String {
     let title = tr(st.title());
     // The default one is Rodent himself, the players' are named by their title, and so
-    // are Rodent IV's characters (their names are their titles).
+    // are Rodent IV's characters (their titles are their names, translated).
     if st.player || st.id == "rodent" || st.title == st.name {
         title.to_owned()
     } else {
