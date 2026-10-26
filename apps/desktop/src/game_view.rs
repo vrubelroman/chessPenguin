@@ -2216,15 +2216,9 @@ impl GameView {
             clock: start.clock.map(Clock::new),
             opponent: match engine {
                 crate::play::Engine::Maia(_) => Opponent::start(file, ctx),
-                crate::play::Engine::Rodent => Opponent::start_rodent(
-                    file,
-                    start.style.clone(),
-                    Some(crate::play::rodent_elo(
-                        crate::play::style(&start.style),
-                        start.strength,
-                    )),
-                    ctx,
-                ),
+                crate::play::Engine::Rodent => {
+                    Opponent::start_rodent(file, start.style.clone(), Some(start.strength), ctx)
+                }
             },
             resign_asked: false,
             judge: judge.map(|p| {

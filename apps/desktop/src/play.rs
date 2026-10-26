@@ -134,8 +134,8 @@ pub struct PlayPrefs {
     pub color: ColorChoice,
     /// `None`: no clock.
     pub clock: Option<TimeControl>,
-    /// Maia's strength: a rating on the Lichess blitz scale (`level`: before 1.5 the
-    /// field `strength` held her rating input, a different scale, and is dropped).
+    /// The opponent's strength on its own scale: Maia's rating, Rodent's UCI_Elo
+    /// (decisions «Сила соперника — по шкале самого движка»). Kept as `level`.
     #[serde(rename = "level")]
     pub strength: u32,
     /// The opponent: Maia or Rodent, and Rodent's style (a personality file's name).
@@ -162,9 +162,6 @@ pub struct Style {
     title: &'static str,
     pub about: &'static str,
     pub player: bool,
-    /// Measured: how much weaker (Elo) the style plays than the balanced one at the same
-    /// UCI_Elo, at some UCI_Elo values (in proportion between them, the nearest beyond).
-    weaker: &'static [(u32, u32)],
 }
 
 impl Style {
@@ -181,7 +178,6 @@ pub const STYLES: &[Style] = &[
         title: "Balanced",
         about: "Even, all-round play with no bias.",
         player: false,
-        weaker: &[],
     },
     Style {
         id: "ampere",
@@ -189,7 +185,6 @@ pub const STYLES: &[Style] = &[
         title: "Attacking",
         about: "Active pieces and attack, sound pawn structure.",
         player: false,
-        weaker: &[(800, 288), (1600, 295), (2400, 308), (3000, 301)],
     },
     Style {
         id: "chaotic",
@@ -197,7 +192,6 @@ pub const STYLES: &[Style] = &[
         title: "Chaotic",
         about: "Aggressive, tricky openings, careless with pawns.",
         player: false,
-        weaker: &[(800, 338), (1600, 252), (2400, 363), (3000, 354)],
     },
     Style {
         id: "nimzoid",
@@ -205,7 +199,6 @@ pub const STYLES: &[Style] = &[
         title: "Restricting",
         about: "Closed positions, cramping the opponent, old openings.",
         player: false,
-        weaker: &[(800, 173), (1600, 200), (2400, 147), (3000, 263)],
     },
     Style {
         id: "hector",
@@ -213,7 +206,6 @@ pub const STYLES: &[Style] = &[
         title: "Classical",
         about: "Hand-written evaluation, no neural network.",
         player: false,
-        weaker: &[(800, 392), (1600, 402), (2400, 512), (3000, 372)],
     },
     Style {
         id: "tal_hybrid",
@@ -221,7 +213,6 @@ pub const STYLES: &[Style] = &[
         title: "Tal",
         about: "Attacking style tuned on Tal's games.",
         player: true,
-        weaker: &[(800, 463), (1600, 392), (2400, 676), (3000, 676)],
     },
     Style {
         id: "tal_nnue",
@@ -229,7 +220,6 @@ pub const STYLES: &[Style] = &[
         title: "Tal (network)",
         about: "A neural network trained on Tal's games.",
         player: true,
-        weaker: &[(800, 78), (1600, 115), (2400, 131), (3000, 131)],
     },
 ];
 
@@ -264,24 +254,37 @@ impl Default for PlayPrefs {
     }
 }
 
-pub const STRENGTH_MIN: u32 = 1100;
-pub const STRENGTH_MAX: u32 = 2100;
+// ----- the opponent's strength ---------------------------------------------------------
 
-// ----- Maia's strength ----------------------------------------------------------------
+// Each engine on its own scale, as its authors give it (the owner's decision, after the
+// measurements of docs/research/maia-strength.md and rodent.md): these are not a
+// person's Elo, and the dialog says so.
 
-pub use maia::strength::{SMALL_MAX, rating_input, temperature};
+/// Maia's ratings: what her network was trained on.
+pub const MAIA_MIN: u32 = 600;
+pub const MAIA_MAX: u32 = 2600;
+/// Rodent's UCI_Elo.
+pub const RODENT_MIN: u32 = 800;
+pub const RODENT_MAX: u32 = 3000;
 
-/// The model to play at `strength`, with its file: the large one when it is there,
-/// else the small one up to its ceiling. `Err`: the model to download.
-pub fn model_for(strength: u32) -> Result<(Model, std::path::PathBuf), Model> {
+/// The strengths `rival` plays.
+pub fn range(rival: Rival) -> (u32, u32) {
+    match rival {
+        Rival::Maia => (MAIA_MIN, MAIA_MAX),
+        Rival::Rodent => (RODENT_MIN, RODENT_MAX),
+    }
+}
+
+/// The Maia that plays, with its file: the large one when it is there, else the small
+/// one. `Err`: the model to download.
+pub fn model_for() -> Result<(Model, std::path::PathBuf), Model> {
     use crate::maia_download::installed;
     if let Some(p) = installed(Model::Large) {
         return Ok((Model::Large, p));
     }
-    match installed(Model::Small) {
-        Some(p) if strength <= SMALL_MAX => Ok((Model::Small, p)),
-        _ => Err(Model::Large),
-    }
+    installed(Model::Small)
+        .map(|p| (Model::Small, p))
+        .ok_or(Model::Large)
 }
 
 // ----- the clock -----------------------------------------------------------------------
@@ -628,59 +631,6 @@ impl Opponent {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn rodent_strength_to_uci_elo() {
-        use super::{STYLES, rodent_elo, rodent_range, style};
-        let balanced = style("rodent");
-        assert_eq!(rodent_range(balanced), (2250, 3000));
-        assert_eq!(rodent_elo(balanced, 2254), 800);
-        assert_eq!(rodent_elo(balanced, 2715), 2000);
-        let mid = rodent_elo(balanced, 2778);
-        assert!((2090..=2110).contains(&mid), "{mid}");
-        for st in STYLES {
-            let (min, max) = rodent_range(st);
-            assert!(min < max, "{}", st.id);
-            // A stronger choice always means a higher setting, within his settings.
-            let mut last = 0;
-            for s in (min..=max).step_by(50) {
-                let e = rodent_elo(st, s);
-                assert!(e >= last && (800..=3000).contains(&e), "{} {s}", st.id);
-                last = e;
-            }
-        }
-        // A weaker style needs a higher setting for the same strength.
-        assert!(rodent_elo(style("tal_hybrid"), 2400) > rodent_elo(balanced, 2400));
-    }
-
-    #[test]
-    fn strength_to_rating_input() {
-        use maia::strength::Model;
-        // The measured points themselves, in proportion between them, the ends held.
-        assert_eq!(rating_input(Model::Large, 1605), 1500);
-        assert_eq!(rating_input(Model::Large, 2000), 2600);
-        // Above the top input: surer choices, down to the most likely move.
-        assert_eq!(temperature(Model::Large, 1900), 1.0);
-        assert!((temperature(Model::Large, 2053) - 0.5).abs() < 1e-6);
-        assert!(temperature(Model::Large, STRENGTH_MAX) < 0.5);
-        assert!(temperature(Model::Small, SMALL_MAX) < 1.0);
-        assert_eq!(rating_input(Model::Small, 1485), 1500);
-        assert_eq!(rating_input(Model::Small, SMALL_MAX), 2600);
-        let mid = rating_input(Model::Large, (1605 + 1794) / 2);
-        assert!((1690..=1710).contains(&mid), "{mid}");
-        // The bottom of the slider is within what both models measured.
-        assert!(rating_input(Model::Large, STRENGTH_MIN) > 600);
-        assert!(rating_input(Model::Small, STRENGTH_MIN) > 600);
-        // Stronger always means a higher input.
-        for model in [Model::Small, Model::Large] {
-            let mut last = 0;
-            for level in (STRENGTH_MIN..=STRENGTH_MAX).step_by(50) {
-                let v = rating_input(model, level);
-                assert!(v >= last, "{model:?} {level}");
-                last = v;
-            }
-        }
-    }
-
     use super::*;
     use chess_core::shakmaty::uci::UciMove;
 
@@ -886,11 +836,11 @@ pub enum Engine {
 }
 
 impl Engine {
-    /// Maia's rating input and temperature for `strength` (Rodent takes its strength as
-    /// UCI_Elo when it starts: nothing per move).
+    /// Maia's rating and temperature for `strength`: the rating itself, her moves drawn
+    /// as she predicts them (Rodent takes its strength as UCI_Elo when it starts).
     pub fn input(self, strength: u32) -> (u32, f32) {
         match self {
-            Engine::Maia(m) => (rating_input(m, strength), temperature(m, strength)),
+            Engine::Maia(_) => (strength, 1.0),
             Engine::Rodent => (0, 0.0),
         }
     }
@@ -900,88 +850,9 @@ impl Engine {
 /// downloaded first (the dialog offers it).
 pub fn engine_for(start: &Start) -> Option<(Engine, std::path::PathBuf)> {
     match start.rival {
-        Rival::Maia => model_for(start.strength)
-            .ok()
-            .map(|(m, p)| (Engine::Maia(m), p)),
+        Rival::Maia => model_for().ok().map(|(m, p)| (Engine::Maia(m), p)),
         Rival::Rodent => crate::rodent_download::installed().map(|p| (Engine::Rodent, p)),
     }
-}
-
-/// Measured (docs/research/rodent.md, «Замер»): Rodent's UCI_Elo → its strength on the
-/// Lichess blitz scale (default personality, its book off; 3900 games with random
-/// openings against Maia and the Maia-1 bots, and level against level).
-const RODENT: &[(u32, u32)] = &[
-    (800, 2254),
-    (1000, 2344),
-    (1200, 2401),
-    (1400, 2458),
-    (1600, 2506),
-    (1800, 2606),
-    (2000, 2715),
-    (2200, 2842),
-    (2400, 2948),
-    (2600, 3079),
-    (2800, 3226),
-    (3000, 3338),
-];
-
-/// The strongest Rodent offered: a strong grandmaster's blitz; beyond, the scale is not
-/// measured against people.
-const RODENT_TOP: u32 = 3000;
-
-/// In proportion between measured points `(x, y)` (sorted by x), the nearest beyond.
-fn between(points: &[(u32, u32)], x: u32) -> f64 {
-    let Some(&(x0, y0)) = points.first() else {
-        return 0.0;
-    };
-    if x <= x0 {
-        return f64::from(y0);
-    }
-    for w in points.windows(2) {
-        let ((a, ya), (b, yb)) = (w[0], w[1]);
-        if x <= b {
-            let t = f64::from(x - a) / f64::from(b - a);
-            return f64::from(ya) + t * (f64::from(yb) - f64::from(ya));
-        }
-    }
-    f64::from(points[points.len() - 1].1)
-}
-
-/// The strength Rodent plays at with `style` at each measured UCI_Elo: (UCI_Elo, strength).
-fn rodent_curve(style: &Style) -> Vec<(u32, f64)> {
-    RODENT
-        .iter()
-        .map(|&(elo, base)| (elo, f64::from(base) - between(style.weaker, elo)))
-        .collect()
-}
-
-/// The strengths Rodent plays with `style` (from his lowest setting up to `RODENT_TOP`, or
-/// his top with the style), on the slider's steps of 50 (the nearest one at the bottom:
-/// well within the measurement's error).
-pub fn rodent_range(style: &Style) -> (u32, u32) {
-    let curve = rodent_curve(style);
-    let (low, high) = (curve[0].1, curve[curve.len() - 1].1);
-    let min = ((low / 50.0).round() * 50.0) as u32;
-    let max = (((high / 50.0).floor() * 50.0) as u32).min(RODENT_TOP);
-    (min, max)
-}
-
-/// The UCI_Elo for Rodent to play at `strength` with `style` (in proportion between the
-/// measured points; his lowest or highest setting beyond them).
-pub fn rodent_elo(style: &Style, strength: u32) -> u32 {
-    let curve = rodent_curve(style);
-    let s = f64::from(strength);
-    if s <= curve[0].1 {
-        return curve[0].0;
-    }
-    for w in curve.windows(2) {
-        let ((a, sa), (b, sb)) = (w[0], w[1]);
-        if s <= sb {
-            let t = (s - sa) / (sb - sa);
-            return (f64::from(a) + t * f64::from(b - a)).round() as u32;
-        }
-    }
-    curve[curve.len() - 1].0
 }
 
 /// Dev hook `CP_RIVAL=rodent[:style]`: the opponent of a game started by a hook.
@@ -1062,11 +933,6 @@ pub struct Dialog {
     download: Option<crate::maia_download::Download>,
     /// Rodent's download (docs/design/rodent-opponent.md §6).
     rodent_download: Option<crate::engine_download::Download>,
-    /// What the dialog just did with the opponent or the strength, said under the slider
-    /// (§4): an automatic switch, a strength raised or lowered.
-    event: Option<String>,
-    /// Rodent was chosen by the slider going past Maia (not by the user's click).
-    auto_switched: bool,
     /// «Download and play» was pressed: the game starts once Maia is there.
     play_after: bool,
     /// The game goes on from a position of another game.
@@ -1099,15 +965,8 @@ impl Dialog {
         if prefs.rival == Rival::Rodent && !rodent_ok {
             prefs.rival = Rival::Maia;
         }
-        let (rodent_min, rodent_max) = rodent_range(style(&prefs.style));
-        match prefs.rival {
-            Rival::Maia if prefs.strength > STRENGTH_MAX && rodent_ok => {
-                prefs.rival = Rival::Rodent;
-                prefs.strength = prefs.strength.clamp(rodent_min, rodent_max);
-            }
-            Rival::Maia => prefs.strength = prefs.strength.clamp(STRENGTH_MIN, STRENGTH_MAX),
-            Rival::Rodent => prefs.strength = prefs.strength.clamp(rodent_min, rodent_max),
-        }
+        let (min, max) = range(prefs.rival);
+        prefs.strength = prefs.strength.clamp(min, max);
         let custom = prefs.clock.is_some_and(|c| !PRESETS.contains(&c));
         Dialog {
             name: settings.your_name.clone(),
@@ -1116,8 +975,6 @@ impl Dialog {
             custom,
             download: None,
             rodent_download: None,
-            event: None,
-            auto_switched: false,
             play_after: false,
             focus: true,
             from: None,
@@ -1219,7 +1076,7 @@ impl Dialog {
         use egui::RichText;
         let mut out = None;
         let rival_before = self.prefs.rival;
-        let model = model_for(self.prefs.strength);
+        let model = model_for();
         let body_h = (ctx.content_rect().height() - 140.0).max(160.0);
         egui::Modal::new(egui::Id::new("play_dialog")).show(ctx, |ui| {
             ui.set_width(460.0);
@@ -1401,15 +1258,7 @@ impl Dialog {
                 };
                 if tile(ui, !rodent, true, "Maia", tr("plays like a human")).clicked() && rodent {
                     self.prefs.rival = Rival::Maia;
-                    self.auto_switched = false;
-                    self.event = None;
-                    if self.prefs.strength > STRENGTH_MAX {
-                        self.prefs.strength = STRENGTH_MAX;
-                        self.event = Some(crate::i18n::trf(
-                            "Maia plays up to {elo}: the strength is lowered to {elo}.",
-                            &[("elo", &STRENGTH_MAX)],
-                        ));
-                    }
+                    self.prefs.strength = self.prefs.strength.clamp(MAIA_MIN, MAIA_MAX);
                 }
                 let about = if rodent_ok {
                     tr("strong, with a style")
@@ -1423,108 +1272,33 @@ impl Dialog {
                 ) });
                 if r.clicked() && !rodent {
                     self.prefs.rival = Rival::Rodent;
-                    self.auto_switched = false;
-                    self.event = None;
-                    let (min, _) = rodent_range(style(&self.prefs.style));
-                    if self.prefs.strength < min {
-                        self.prefs.strength = min;
-                        self.event = Some(crate::i18n::trf(
-                            "Rodent V plays from {elo}: the strength is raised to {elo}.",
-                            &[("elo", &min)],
-                        ));
-                    }
+                    self.prefs.strength = self.prefs.strength.clamp(RODENT_MIN, RODENT_MAX);
                 }
             });
-            // One scale for both: a point of the slider is always the same strength, whatever
-            // is chosen; the thumb stops at the top of Rodent's style.
-            let (rodent_min, rodent_max) = rodent_range(style(&self.prefs.style));
-            let top = if rodent_ok { RODENT_TOP } else { STRENGTH_MAX };
-            let before = self.prefs.strength;
+            // Each engine on its own scale (its authors'): not a person's Elo, said under it.
+            let (min, max) = range(self.prefs.rival);
             ui.horizontal(|ui| {
                 let end = |ui: &mut egui::Ui, v: u32| {
                     ui.add_sized([34.0, 18.0], egui::Label::new(RichText::new(v.to_string()).weak()))
                 };
-                end(ui, STRENGTH_MIN);
+                end(ui, min);
                 ui.spacing_mut().slider_width = W - 2.0 * 34.0 - 2.0 * GAP;
-                let resp = ui.add(
-                    egui::Slider::new(&mut self.prefs.strength, STRENGTH_MIN..=top)
+                ui.add(
+                    egui::Slider::new(&mut self.prefs.strength, min..=max)
                         .step_by(50.0)
                         .show_value(false),
                 );
-                // Where each plays, under the track: Maia's zone, then Rodent's with the
-                // style chosen; the chosen one's lit.
-                if rodent_ok {
-                    let rect = resp.rect;
-                    let pad = rect.height() / 2.0;
-                    let x = |v: u32| {
-                        rect.left() + pad + (v - STRENGTH_MIN) as f32 / (top - STRENGTH_MIN) as f32 * (rect.width() - 2.0 * pad)
-                    };
-                    let lit = ui.visuals().selection.bg_fill.gamma_multiply(0.6);
-                    let dim = ui.visuals().weak_text_color().gamma_multiply(0.4);
-                    let maia = self.prefs.rival == Rival::Maia;
-                    for (from, to, y, on) in
-                        [(STRENGTH_MIN, STRENGTH_MAX, 1.0, maia), (rodent_min, rodent_max, 5.0, !maia)]
-                    {
-                        let band = egui::Rect::from_min_max(
-                            egui::pos2(x(from), rect.bottom() + y),
-                            egui::pos2(x(to), rect.bottom() + y + 3.0),
-                        );
-                        ui.painter().rect_filled(band, 1.0, if on { lit } else { dim });
-                    }
-                }
-                end(ui, top);
+                end(ui, max);
             });
-            ui.add_space(8.0);
-            if self.prefs.strength != before {
-                // A word stays only while it is about the strength shown.
-                self.event = None;
-                // Past Maia's top: Rodent at once (the owner's rule); below Rodent's
-                // bottom: Maia. Moving back keeps the choice, with a word about it.
-                if self.prefs.rival == Rival::Maia && self.prefs.strength > STRENGTH_MAX {
-                    self.prefs.rival = Rival::Rodent;
-                    self.prefs.strength = self.prefs.strength.clamp(rodent_min, rodent_max);
-                    self.auto_switched = true;
-                    self.event = Some(if rodent_min > STRENGTH_MAX {
-                        crate::i18n::trf(
-                            "Stronger than {elo} plays Rodent V, from {min} on: Maia does not play that strong.",
-                            &[("elo", &STRENGTH_MAX), ("min", &rodent_min)],
-                        )
-                    } else {
-                        crate::i18n::trf(
-                            "Stronger than {elo} plays Rodent V: Maia does not play that strong.",
-                            &[("elo", &STRENGTH_MAX)],
-                        )
-                    });
-                } else if self.prefs.rival == Rival::Rodent
-                    && self.prefs.strength < rodent_min
-                    && self.prefs.strength > STRENGTH_MAX
-                {
-                    // In the gap nobody plays: Rodent stays, at his lowest (a drag through
-                    // it does not flip between the two every frame).
-                    self.prefs.strength = rodent_min;
-                } else if self.prefs.rival == Rival::Rodent && self.prefs.strength > rodent_max {
-                    self.prefs.strength = rodent_max;
-                } else if self.prefs.rival == Rival::Rodent && self.prefs.strength < rodent_min {
-                    self.prefs.rival = Rival::Maia;
-                    self.auto_switched = false;
-                    self.event = Some(crate::i18n::trf("Weaker than {elo} plays Maia.", &[("elo", &rodent_min)]));
-                } else if self.auto_switched && self.prefs.strength <= STRENGTH_MAX {
-                    self.event = Some(tr("Maia can play here too: choose her if you want human mistakes.").to_owned());
-                }
-            }
-            let rodent = self.prefs.rival == Rival::Rodent;
-            let note = self.event.clone().unwrap_or_else(|| match (rodent, rodent_ok) {
-                (true, _) => tr("Measured strength, on the Lichess blitz scale.").to_owned(),
-                (false, true) => crate::i18n::trf(
-                    "Her measured strength, on the Lichess blitz scale. Stronger than {elo}: Rodent V.",
-                    &[("elo", &STRENGTH_MAX)],
-                ),
-                (false, false) => tr("Her measured strength, on the Lichess blitz scale.").to_owned(),
-            });
-            ui.add(egui::Label::new(RichText::new(note).weak().size(11.5)).truncate());
+            ui.add_space(4.0);
+            let note = if self.prefs.rival == Rival::Rodent {
+                tr("Rodent V's own rating (UCI_Elo): it does not match a person's Elo.")
+            } else {
+                tr("Maia's own rating: it does not match a person's Elo.")
+            };
+            ui.add(egui::Label::new(RichText::new(note).weak().size(11.5)).wrap());
             // Rodent's style: always in its place (greyed for Maia), so nothing jumps.
             ui.add_space(4.0);
-            let style_before = self.prefs.style.clone();
             ui.add_enabled_ui(rodent, |ui| {
                 // As tall as the buttons around it.
                 ui.spacing_mut().interact_size.y = 32.0;
@@ -1542,18 +1316,7 @@ impl Dialog {
                         for (head, player) in [(tr("Style"), false), (tr("As a player"), true)] {
                             ui.label(RichText::new(head).weak().size(11.5));
                             for st in STYLES.iter().filter(|st| st.player == player) {
-                                // Each style's strengths at the right: who plays weaker or stronger.
-                                let (min, max) = rodent_range(st);
-                                let mut job = egui::text::LayoutJob::default();
-                                let font = egui::TextStyle::Button.resolve(ui.style());
-                                let text_color = ui.visuals().text_color();
-                                job.append(&style_label(st), 0.0, egui::TextFormat::simple(font.clone(), text_color));
-                                job.append(
-                                    &format!("{min}–{max}"),
-                                    12.0,
-                                    egui::TextFormat::simple(font, ui.visuals().weak_text_color()),
-                                );
-                                ui.selectable_value(&mut self.prefs.style, st.id.to_owned(), job)
+                                ui.selectable_value(&mut self.prefs.style, st.id.to_owned(), style_label(st))
                                     .on_hover_text(tr(st.about));
                             }
                             if !player {
@@ -1564,25 +1327,8 @@ impl Dialog {
                     .response
                     .on_disabled_hover_text(tr("The style is chosen for Rodent V"));
             });
-            // Another style plays at other strengths: the strength is kept inside them.
-            if self.prefs.style != style_before {
-                self.event = None;
-            }
-            if rodent {
-                let (min, max) = rodent_range(style(&self.prefs.style));
-                let kept = self.prefs.strength.clamp(min, max);
-                if kept != self.prefs.strength {
-                    self.prefs.strength = kept;
-                    self.event = Some(crate::i18n::trf(
-                        "In this style Rodent V plays from {min} to {max}: the strength is set to {elo}.",
-                        &[("min", &min), ("max", &max), ("elo", &kept)],
-                    ));
-                }
-            }
             let about = if rodent {
-                let st = style(&self.prefs.style);
-                let (min, max) = rodent_range(st);
-                format!("{} · {min}–{max}", tr(st.about))
+                tr(style(&self.prefs.style).about).to_owned()
             } else {
                 tr("Maia does not pick a style: she plays like people of her rating.").to_owned()
             };
@@ -1956,19 +1702,11 @@ fn start_failure(detail: &str) -> String {
 /// What the download button brings: Maia herself, or (the small one being there) the
 /// large one for the strength chosen.
 fn download_note(model: Option<Model>) -> String {
-    let model = model.unwrap_or(Model::Large);
-    let mb = model.size().div_ceil(1_000_000);
-    if crate::maia_download::installed(Model::Small).is_some() {
-        crate::i18n::trf(
-            "Stronger than {elo} plays the large Maia: {mb} MB, downloaded once.",
-            &[("elo", &SMALL_MAX), ("mb", &mb)],
-        )
-    } else {
-        crate::i18n::trf(
-            "Maia is downloaded once ({mb} MB, from huggingface.co, the authors' own file).",
-            &[("mb", &mb)],
-        )
-    }
+    let mb = model.unwrap_or(Model::Large).size().div_ceil(1_000_000);
+    crate::i18n::trf(
+        "Maia is downloaded once ({mb} MB, from huggingface.co, the authors' own file).",
+        &[("mb", &mb)],
+    )
 }
 
 /// A game just played: what the result strip says.

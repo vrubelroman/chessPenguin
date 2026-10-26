@@ -371,6 +371,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Recovery until only the journals of games being played are left. Another test
+    /// starting a process holds a copy of a lock for a moment (the child gets the parent's
+    /// files until it runs its program); recovery then leaves that journal for later.
+    fn recover_until(dir: &Path, live: usize) -> Vec<Recovered> {
+        let locks = || {
+            std::fs::read_dir(dir)
+                .map(|r| {
+                    r.flatten()
+                        .filter(|e| e.path().extension().is_some_and(|x| x == "lock"))
+                        .count()
+                })
+                .unwrap_or(0)
+        };
+        let mut out = Vec::new();
+        for _ in 0..200 {
+            out.extend(recover_in(dir));
+            if locks() <= live {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        out
+    }
+
     #[test]
     fn a_game_left_by_a_crash_is_written_once() {
         let dir = std::env::temp_dir().join(format!("cp-journal-{}", std::process::id()));
@@ -387,7 +411,7 @@ mod tests {
         // A game being played now (its lock held) is left alone.
         let live = Journal::in_dir(Some(journals.clone()), dir.join("live.pgn"), "");
         live.save(game);
-        let got = recover_in(&journals);
+        let got = recover_until(&journals, 1);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].player, "Роман");
         assert_eq!(got[0].written.as_ref().map(|w| w.index), Ok(0));
@@ -400,7 +424,7 @@ mod tests {
         let mut j = j;
         drop(j.lock.take());
         drop(j);
-        assert!(recover_in(&journals).is_empty());
+        assert!(recover_until(&journals, 1).is_empty());
         let n = chess_core::PgnDatabase::open(&db, &mut |_| {}, &AtomicBool::new(false))
             .unwrap()
             .len();
