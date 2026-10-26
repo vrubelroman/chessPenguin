@@ -138,6 +138,9 @@ pub enum Stage {
     Cancelled,
 }
 
+/// What a download thread does: reports its stages, stops when told; the file in the end.
+pub type Job = fn(&dyn Fn(Stage), &AtomicBool) -> Result<PathBuf, Failure>;
+
 /// A download running in a background thread.
 pub struct Download {
     stage: Arc<Mutex<Stage>>,
@@ -155,7 +158,7 @@ impl Download {
     pub fn spawn(
         ctx: &egui::Context,
         total: u64,
-        job: fn(&dyn Fn(Stage), &AtomicBool) -> Result<PathBuf, Failure>,
+        job: Job,
     ) -> Download {
         let stage = Arc::new(Mutex::new(Stage::Downloading { done: 0, total }));
         let cancel = Arc::new(AtomicBool::new(false));
