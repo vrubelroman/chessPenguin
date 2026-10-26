@@ -4,6 +4,11 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Play against Rodent V (desktop, Linux and Windows): a strong engine with a style —
+  balanced, attacking, chaotic, restricting, classical, or Tal — at a strength measured
+  on the Lichess blitz scale, 1900 to 3000. It is downloaded once on request (48 MB, the
+  authors' release). One strength slider serves both opponents: past Maia's 2100 Rodent
+  takes over.
 - Offer Maia a draw (desktop and Android): she accepts when she is clearly worse, or
   when the position is about level (at most +0.2 for her) and has kept its character for
   her last three moves; after a refusal, again two of her moves later. She judges with
