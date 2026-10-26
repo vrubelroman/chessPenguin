@@ -84,6 +84,19 @@ downloads the authors' own file `maia3-5m.pt` from https://huggingface.co/UofTCS
 (revision and SHA-256 pinned in `apps/desktop/src/maia_download.rs`) into the user's data
 directory. The weights' licence is not stated by the authors.
 
+## Rodent V (an opponent with a style)
+
+**Rodent V 1.2** (Naman Thanki and Paweł Koziol, based on Sungorus by Pablo Vázquez) is not
+part of ChessPenguin. On the user's request the program downloads the authors' unmodified
+release archive `release-1-2.zip` from https://github.com/nescitus/Rodent-V/releases/tag/Rodent_v_1.2
+(SHA-256 pinned in `apps/desktop/src/rodent_download.rs`) into the user's data directory and
+takes from it the engine for the platform and its `personalities/`, `nets/` and `books/`. It
+runs as a separate program through UCI.
+
+- License: GNU General Public License version 3 (https://github.com/nescitus/Rodent-V/blob/main/LICENSE);
+  source: https://github.com/nescitus/Rodent-V.
+- The opening books of the release come with it as the authors publish them.
+
 ## Stockfish (engine)
 
 **Stockfish 19** (tag `sf_19`) is the unmodified official "universal" build from
