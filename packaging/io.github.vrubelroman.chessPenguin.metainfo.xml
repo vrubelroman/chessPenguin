@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.7.0" date="2026-10-26">
+      <description>
+        <p>Rodent gets Rodent IV's characters and 22 famous players, from Morphy to Kasparov, each with its opening books; on macOS too. On Android the lists are richer: dividers, results at a glance, the opening code, colours by kind of database; search finds by the opening code.</p>
+      </description>
+    </release>
     <release version="1.6.0" date="2026-10-26">
       <description>
         <p>Play against Rodent V, a strong engine with a style of play (Linux and Windows, downloaded once). Each engine's strength is on its own scale: Maia 600–2600, Rodent V 800–3000. Offer the engine a draw. Games against the computer are written by themselves into the player's database. On Android too: Maia 600–2600, draw offers and the player's database.</p>

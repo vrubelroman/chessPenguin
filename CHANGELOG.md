@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-10-26
+
 - Rodent's list of styles gets Rodent IV's: 13 characters (Amanda, Defender, Strangler…)
   and 22 famous players (Alekhine, Botvinnik, Fischer, Karpov, Kasparov, Petrosian, Tal…),
   each with its opening books. The opponent is just «Rodent»; which engine plays follows

@@ -53,11 +53,12 @@
   move; mistakes are counted, the runs of each line remembered. Or play on from any move
   against Maia.
 - **Play against the computer** — Maia, a neural network trained on human games, plays like a
-  human of the level you choose, mistakes included (600–2600 on her own scale); Rodent V, a
-  strong engine with a style of play, Tal's among them (800–3000, Linux and Windows). Lichess
+  human of the level you choose, mistakes included (600–2600 on her own scale); Rodent, a
+  strong engine with a character: styles, characters and 22 famous players from Morphy to
+  Kasparov (Rodent V and Rodent IV, 800–3000). Lichess
   time controls (3+0 to 30+20, your own, unlimited), clocks, premoves, take-backs, draw
   offers; the opponent offers to resign when lost. Played games go by themselves into the
-  player's database. Maia's weights (316 MB) and Rodent V (48 MB) are downloaded on request.
+  player's database. Maia (316 MB) and Rodent (48 and 70 MB) are downloaded on request.
 - **Looks** — 17 piece sets, 37 boards (flat colours and textures), 7 sound sets,
   dark and light themes.
 - **Online games** — download anyone's games from Lichess and Chess.com by nickname (yours, a pupil's, an opponent's; no login) into a database, both sites merged or one per site, and fetch the new ones with one click.

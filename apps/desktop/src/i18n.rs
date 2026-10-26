@@ -12394,15 +12394,7 @@ const ROWS: &[[&str; 9]] = &[
         "Аманда",
     ],
     [
-        "Cloe",
-        "Клои",
-        "Cloé",
-        "Cloe",
-        "Cloe",
-        "Cloe",
-        "Cloe",
-        "Kloe",
-        "Клои",
+        "Cloe", "Клои", "Cloé", "Cloe", "Cloe", "Cloe", "Cloe", "Kloe", "Клои",
     ],
     [
         "Deborah",
