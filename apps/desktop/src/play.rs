@@ -1353,6 +1353,9 @@ pub struct Dialog {
     focus: bool,
     /// The number of games of the players' databases read so far (the app fills it).
     pub counts: std::collections::HashMap<std::path::PathBuf, usize>,
+    /// Whether the database the games go to is there (the app tells, from the files as
+    /// last found: no disk in the frame).
+    pub target_there: bool,
     /// Where the games of the name typed go: for that name (found once per name).
     target: Option<(String, std::path::PathBuf)>,
 }
@@ -1393,6 +1396,7 @@ impl Dialog {
             from: None,
             keep_color: false,
             counts: Default::default(),
+            target_there: false,
             target: None,
         }
     }
@@ -1452,7 +1456,7 @@ impl Dialog {
                 &[("db", &db)],
             );
         }
-        if !path.exists() {
+        if !self.target_there {
             return trf(
                 "Games will be written to a new database «{db}».",
                 &[("db", &db)],

@@ -348,7 +348,9 @@ impl App {
         }
         let (tx, rx) = channel();
         let mut library = Library::new();
-        if let Some(first) = settings.databases.first().filter(|p| p.exists()) {
+        // Read in the background: a missing file says so there (a lost network drive
+        // does not hold the start).
+        if let Some(first) = settings.databases.first() {
             library.select_db(first, ctx);
         }
         let mut app = Self {
@@ -788,7 +790,7 @@ impl App {
         let preselect = target.or(self.settings.last_target.clone()).or(source);
         // Databases not read yet are read now, for their counts and encodings.
         for p in self.settings.databases.clone() {
-            if self.library.database(&p).is_none() && p.exists() {
+            if self.library.database(&p).is_none() && self.library.files.exists(&p) {
                 self.library.load(&p, ctx);
             }
         }
@@ -2372,7 +2374,7 @@ impl eframe::App for App {
                 .settings
                 .databases
                 .iter()
-                .filter(|p| p.exists())
+                .filter(|p| self.library.files.exists(p))
                 .map(|p| crate::reference::RefDb {
                     path: p.clone(),
                     name: p
@@ -2738,10 +2740,16 @@ impl eframe::App for App {
 
         self.confirm_dialog(&ctx);
         self.own_dialogs(&ctx);
+        // Whether the database the dialog names is there, as last found.
+        if let Some(d) = self.play_dialog.as_mut() {
+            d.target_there = d
+                .record_target()
+                .is_some_and(|p| self.library.files.get(p).is_some_and(|s| s.exists));
+        }
         // The number of games of the database the dialog names (read once, if needed).
         if let Some(d) = self.play_dialog.as_mut()
             && let Some(path) = d.record_target().map(std::path::Path::to_path_buf)
-            && path.exists()
+            && self.library.files.exists(&path)
             && !d.counts.contains_key(&path)
         {
             match self.library.database(&path) {

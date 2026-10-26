@@ -11,6 +11,7 @@ mod engine_download;
 mod engine_offer;
 mod engines;
 mod examples;
+mod file_state;
 mod game_view;
 mod graphics;
 mod i18n;

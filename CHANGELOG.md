@@ -4,6 +4,11 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- The window no longer freezes when a database on a network drive (NFS) becomes
+  unreachable, for example when the network drops during a game: whether the shelf's
+  files are there, their sizes and permissions are looked at by a thread of their own,
+  not in the frame.
+
 ## [1.7.0] — 2026-10-26
 
 - Rodent's list of styles gets Rodent IV's: 13 characters (Amanda, Defender, Strangler…)

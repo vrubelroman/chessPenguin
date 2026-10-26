@@ -175,6 +175,9 @@ const SEARCH_BOARD_MIN: f32 = 340.0;
 
 pub struct Library {
     slots: HashMap<PathBuf, Slot>,
+    /// The files as last found, away from the frame (a lost network drive must not hold
+    /// the window).
+    pub files: crate::file_state::FileStates,
     /// The players' databases (player_games.rs) and whose: a knight on their cards.
     player_dbs: Vec<(PathBuf, String)>,
     /// Games the user has opened (by content).
@@ -195,14 +198,13 @@ pub struct Library {
     pub online_running: Option<usize>,
     /// A newer version to offer (its number), next to Settings.
     pub update: Option<String>,
-    /// File sizes of databases (`file_size`).
-    sizes: HashMap<PathBuf, u64>,
 }
 
 impl Library {
     pub fn new() -> Self {
         Self {
             slots: HashMap::new(),
+            files: crate::file_state::FileStates::new(),
             player_dbs: Vec::new(),
             viewed: Viewed::load(),
             large: HashMap::new(),
@@ -213,7 +215,6 @@ impl Library {
             online: false,
             online_busy: Vec::new(),
             online_running: None,
-            sizes: HashMap::new(),
             update: None,
         }
     }
@@ -314,7 +315,7 @@ impl Library {
         if crate::examples::is_example(path) {
             return Some(Block::Example);
         }
-        if !path.exists() {
+        if !self.files.exists(path) {
             return Some(Block::Missing);
         }
         match self.info.get(path).map(|i| i.format) {
@@ -340,7 +341,7 @@ impl Library {
                 None => return Some(Block::ReadOnly),
             }
         }
-        if std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly()) {
+        if self.files.get(path).is_some_and(|s| s.readonly) {
             return Some(Block::NoPermission);
         }
         None
@@ -364,12 +365,9 @@ impl Library {
         }
     }
 
-    /// Size of a database's file (cached: asked every frame by the reference tab).
-    pub fn file_size(&mut self, path: &Path) -> u64 {
-        *self
-            .sizes
-            .entry(path.to_owned())
-            .or_insert_with(|| std::fs::metadata(path).map_or(0, |m| m.len()))
+    /// Size of a database's file (as last found; asked every frame by the reference tab).
+    pub fn file_size(&self, path: &Path) -> u64 {
+        self.files.get(path).map_or(0, |s| s.size)
     }
 
     /// The database is being read now.
@@ -992,7 +990,7 @@ impl Library {
                 trf("loading… {n}", &[("n", &p.games)])
             }
             Some(Slot::Failed(_)) => tr("error").into(),
-            None if !path.exists() => tr("file not found").into(),
+            None if !self.files.exists(path) => tr("file not found").into(),
             None => tr("not loaded").into(),
         };
         let (rect, resp) = ui.allocate_exact_size(vec2(190.0, 64.0), Sense::click());
