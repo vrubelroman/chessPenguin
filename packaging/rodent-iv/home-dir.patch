@@ -1,0 +1,16 @@
+diff --git a/sources/src/rodenthome.cpp b/sources/src/rodenthome.cpp
+index 058cdaa..e8018b7 100755
+--- a/sources/src/rodenthome.cpp
++++ b/sources/src/rodenthome.cpp
+@@ -199,7 +199,10 @@ void SetRodentHomeDir() {
+     } else  {
+         char exe_path[1024];
+         // getting the current executable location ...
+-        readlink("/proc/self/exe", exe_path, sizeof(exe_path));
++        // The link's target is not null-terminated: terminate it, or stray bytes
++        // after it make a wrong home directory now and then.
++        ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
++        exe_path[len > 0 ? len : 0] = '\0';
+         *(strrchr(exe_path, '/') + 1) = '\0';
+ 
+         RodentHomeDirWStr = CStr2WStr(exe_path);

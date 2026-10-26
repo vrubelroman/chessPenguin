@@ -726,7 +726,7 @@ impl Library {
             .on_hover_text(shelf_hint(
                 icons,
                 tr("♞ Play"),
-                tr("A game against the computer: Maia, who plays like a human, or Rodent V, strong and with a style (Ctrl+G)"),
+                tr("A game against the computer: Maia, who plays like a human, or Rodent, strong and with a style (Ctrl+G)"),
             ))
             .clicked()
         {

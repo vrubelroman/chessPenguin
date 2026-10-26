@@ -162,6 +162,71 @@ pub struct Style {
     title: &'static str,
     pub about: &'static str,
     pub player: bool,
+    /// Which Rodent plays it: V (a personality file of its own) or IV (a personality of
+    /// its list, `personality`; docs/decisions.md «Rodent IV»).
+    pub rodent: Gen,
+    pub personality: &'static str,
+}
+
+/// Rodent V or Rodent IV: each downloaded on its own, each on its own scale of strength.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gen {
+    V,
+    IV,
+}
+
+impl Gen {
+    /// «Rodent V», «Rodent IV»: in the game's record and on the bar.
+    pub fn name(self) -> &'static str {
+        match self {
+            Gen::V => "Rodent V",
+            Gen::IV => "Rodent IV",
+        }
+    }
+
+    /// Its UCI_Elo.
+    pub fn range(self) -> (u32, u32) {
+        match self {
+            Gen::V => (RODENT_MIN, RODENT_MAX),
+            Gen::IV => (RODENT_MIN, RODENT_IV_MAX),
+        }
+    }
+
+    pub fn available(self) -> bool {
+        match self {
+            Gen::V => crate::rodent_download::available(),
+            Gen::IV => crate::rodent4_download::available(),
+        }
+    }
+
+    pub fn installed(self) -> Option<std::path::PathBuf> {
+        match self {
+            Gen::V => crate::rodent_download::installed(),
+            Gen::IV => crate::rodent4_download::installed(),
+        }
+    }
+
+    pub fn size_mb(self) -> u64 {
+        match self {
+            Gen::V => crate::rodent_download::size_mb(),
+            Gen::IV => crate::rodent4_download::size_mb(),
+        }
+    }
+
+    pub fn start(self, ctx: &egui::Context) -> crate::engine_download::Download {
+        match self {
+            Gen::V => crate::rodent_download::start(ctx),
+            Gen::IV => crate::rodent4_download::start(ctx),
+        }
+    }
+
+    /// A file that does not start goes: the dialog offers the download again.
+    pub fn remove(self) {
+        let _ = match self {
+            Gen::V => crate::rodent_download::remove(),
+            Gen::IV => crate::rodent4_download::remove(),
+        };
+    }
 }
 
 impl Style {
@@ -178,6 +243,8 @@ pub const STYLES: &[Style] = &[
         title: "Balanced",
         about: "Even, all-round play with no bias.",
         player: false,
+        rodent: Gen::V,
+        personality: "",
     },
     Style {
         id: "ampere",
@@ -185,6 +252,8 @@ pub const STYLES: &[Style] = &[
         title: "Attacking",
         about: "Active pieces and attack, sound pawn structure.",
         player: false,
+        rodent: Gen::V,
+        personality: "",
     },
     Style {
         id: "chaotic",
@@ -192,6 +261,8 @@ pub const STYLES: &[Style] = &[
         title: "Chaotic",
         about: "Aggressive, tricky openings, careless with pawns.",
         player: false,
+        rodent: Gen::V,
+        personality: "",
     },
     Style {
         id: "nimzoid",
@@ -199,6 +270,8 @@ pub const STYLES: &[Style] = &[
         title: "Restricting",
         about: "Closed positions, cramping the opponent, old openings.",
         player: false,
+        rodent: Gen::V,
+        personality: "",
     },
     Style {
         id: "hector",
@@ -206,6 +279,8 @@ pub const STYLES: &[Style] = &[
         title: "Classical",
         about: "Hand-written evaluation, no neural network.",
         player: false,
+        rodent: Gen::V,
+        personality: "",
     },
     Style {
         id: "tal_hybrid",
@@ -213,6 +288,8 @@ pub const STYLES: &[Style] = &[
         title: "Tal",
         about: "Attacking style tuned on Tal's games.",
         player: true,
+        rodent: Gen::V,
+        personality: "",
     },
     Style {
         id: "tal_nnue",
@@ -220,14 +297,333 @@ pub const STYLES: &[Style] = &[
         title: "Tal (network)",
         about: "A neural network trained on Tal's games.",
         player: true,
+        rodent: Gen::V,
+        personality: "",
+    },
+    // Rodent IV's characters, then the players it imitates (its personality list).
+    Style {
+        id: "iv_amanda",
+        name: "Amanda",
+        title: "Amanda",
+        about: "Attacks first, then plays for active pieces.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Amanda",
+    },
+    Style {
+        id: "iv_cloe",
+        name: "Cloe",
+        title: "Cloe",
+        about: "Likes closed positions.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Cloe",
+    },
+    Style {
+        id: "iv_deborah",
+        name: "Deborah",
+        title: "Deborah",
+        about: "Defends well and likes her bishops.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Deborah",
+    },
+    Style {
+        id: "iv_defender",
+        name: "Defender",
+        title: "Defender",
+        about: "Solid and careful; content with a draw.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Defender",
+    },
+    Style {
+        id: "iv_dynamic",
+        name: "Dynamic",
+        title: "Dynamic",
+        about: "Attacks, likes bishops, sacrifices now and then.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Dynamic",
+    },
+    Style {
+        id: "iv_grumpy",
+        name: "Grumpy",
+        title: "Grumpy",
+        about: "Attack and restraint; likes blocked positions, avoids draws.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Grumpy",
+    },
+    Style {
+        id: "iv_partisan",
+        name: "Partisan",
+        title: "Partisan",
+        about: "Attacks after quiet, stealthy openings.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Partisan",
+    },
+    Style {
+        id: "iv_pawnsacker",
+        name: "Pawnsacker",
+        title: "Pawnsacker",
+        about: "Balanced, but gives up pawns more readily.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Pawnsacker",
+    },
+    Style {
+        id: "iv_pedrita",
+        name: "Pedrita",
+        title: "Pedrita",
+        about: "Pawns, defence and restraint.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Pedrita",
+    },
+    Style {
+        id: "iv_preston",
+        name: "Preston",
+        title: "Preston",
+        about: "A materialistic, moderate attacker.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Preston",
+    },
+    Style {
+        id: "iv_simple",
+        name: "Simple",
+        title: "Simple",
+        about: "The most computer-like: plain, sound chess.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Simple",
+    },
+    Style {
+        id: "iv_spitfire",
+        name: "Spitfire",
+        title: "Spitfire",
+        about: "Sharp and aggressive.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Spitfire",
+    },
+    Style {
+        id: "iv_strangler",
+        name: "Strangler",
+        title: "Strangler",
+        about: "A boa constrictor: squeezes slowly, very human-like.",
+        player: false,
+        rodent: Gen::IV,
+        personality: "Strangler",
+    },
+    Style {
+        id: "iv_alekhine",
+        name: "Alekhine",
+        title: "Alekhine",
+        about: "Dynamic attacks and deep combinations.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Alekhine",
+    },
+    Style {
+        id: "iv_anand",
+        name: "Anand",
+        title: "Anand",
+        about: "Quick, universal play with sharp openings.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Anand",
+    },
+    Style {
+        id: "iv_anderssen",
+        name: "Anderssen",
+        title: "Anderssen",
+        about: "A romantic attacker of the 19th century: sacrifices.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Anderssen",
+    },
+    Style {
+        id: "iv_bosboom",
+        name: "Bosboom",
+        title: "Bosboom",
+        about: "Offbeat openings and creative blitz play.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Bosboom.txt",
+    },
+    Style {
+        id: "iv_botvinnik",
+        name: "Botvinnik",
+        title: "Botvinnik",
+        about: "Scientific, strategic play from deep preparation.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Botvinnik",
+    },
+    Style {
+        id: "iv_fischer",
+        name: "Fischer",
+        title: "Fischer",
+        about: "Clear, classical and precise.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Fischer",
+    },
+    Style {
+        id: "iv_karpov",
+        name: "Karpov",
+        title: "Karpov",
+        about: "Positional squeeze, prophylaxis and technique.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Karpov",
+    },
+    Style {
+        id: "iv_kasparov",
+        name: "Kasparov",
+        title: "Kasparov",
+        about: "Initiative and powerful attack.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Kasparov",
+    },
+    Style {
+        id: "iv_kortchnoi",
+        name: "Kortchnoi",
+        title: "Kortchnoi",
+        about: "A tenacious defender and counter-attacker.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Kortchnoi",
+    },
+    Style {
+        id: "iv_larsen",
+        name: "Larsen",
+        title: "Larsen",
+        about: "Original and risky, with offbeat openings.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Larsen",
+    },
+    Style {
+        id: "iv_lasker",
+        name: "Lasker",
+        title: "Lasker",
+        about: "A practical, psychological fighter.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Lasker",
+    },
+    Style {
+        id: "iv_marshall",
+        name: "Marshall",
+        title: "Marshall",
+        about: "A swashbuckling attacker with gambits.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Marshall",
+    },
+    Style {
+        id: "iv_morphy",
+        name: "Morphy",
+        title: "Morphy",
+        about: "Quick development and open lines.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Morphy",
+    },
+    Style {
+        id: "iv_nimzowitsch",
+        name: "Nimzowitsch",
+        title: "Nimzowitsch",
+        about: "Restraint, blockade and overprotection.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Nimzowitsch",
+    },
+    Style {
+        id: "iv_petrosian",
+        name: "Petrosian",
+        title: "Petrosian",
+        about: "Prophylaxis and safety first.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Petrosian",
+    },
+    Style {
+        id: "iv_reti",
+        name: "Reti",
+        title: "Reti",
+        about: "Hypermodern: controls the centre from afar.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Reti",
+    },
+    Style {
+        id: "iv_rubinstein",
+        name: "Rubinstein",
+        title: "Rubinstein",
+        about: "Classical positional play, great in endgames.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Rubinstein",
+    },
+    Style {
+        id: "iv_spassky",
+        name: "Spassky",
+        title: "Spassky",
+        about: "A universal player, at home in any position.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Spassky",
+    },
+    Style {
+        id: "iv_steinitz",
+        name: "Steinitz",
+        title: "Steinitz",
+        about: "The founder of positional play, a stubborn defender.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Steinitz",
+    },
+    Style {
+        id: "iv_tal",
+        name: "Tal",
+        title: "Tal (classic)",
+        about: "The magician from Riga: sacrifices and attack.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Tal",
+    },
+    Style {
+        id: "iv_tarrasch",
+        name: "Tarrasch",
+        title: "Tarrasch",
+        about: "Classical rules: space, development, active pieces.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Tarrasch",
+    },
+    Style {
+        id: "iv_topalov",
+        name: "Topalov",
+        title: "Topalov",
+        about: "Aggressive and dynamic, sacrifices the exchange.",
+        player: true,
+        rodent: Gen::IV,
+        personality: "Topalov",
     },
 ];
 
 /// «Attacking — Ampere»; «Balanced», «Tal»: no name twice.
 fn style_label(st: &Style) -> String {
     let title = tr(st.title());
-    // The default one is Rodent himself, the players' are named by their title.
-    if st.player || st.id == "rodent" {
+    // The default one is Rodent himself, the players' are named by their title, and so
+    // are Rodent IV's characters (their names are their titles).
+    if st.player || st.id == "rodent" || st.title == st.name {
         title.to_owned()
     } else {
         format!("{title} — {}", st.name)
@@ -266,12 +662,14 @@ pub const MAIA_MAX: u32 = 2600;
 /// Rodent's UCI_Elo.
 pub const RODENT_MIN: u32 = 800;
 pub const RODENT_MAX: u32 = 3000;
+/// Rodent IV's UCI_Elo goes to 2800 (and plays at full strength there).
+pub const RODENT_IV_MAX: u32 = 2800;
 
-/// The strengths `rival` plays.
-pub fn range(rival: Rival) -> (u32, u32) {
+/// The strengths `rival` plays (Rodent's by the engine of the style chosen).
+pub fn range(rival: Rival, style_id: &str) -> (u32, u32) {
     match rival {
         Rival::Maia => (MAIA_MIN, MAIA_MAX),
-        Rival::Rodent => (RODENT_MIN, RODENT_MAX),
+        Rival::Rodent => style(style_id).rodent.range(),
     }
 }
 
@@ -531,11 +929,18 @@ impl Opponent {
                     Ok(e) => e,
                     Err(e) => return fail(start_failure(&e.to_string())),
                 };
-                let personality = format!("personalities/{style}.txt");
-                let mut setup = vec![
-                    ("PersonalityFile", personality.clone()),
-                    ("OwnBook", "true".to_owned()),
-                ];
+                // V reads a personality file; IV picks one of its list (with its books).
+                let st = self::style(&style);
+                let mut setup = match st.rodent {
+                    Gen::V => vec![
+                        ("PersonalityFile", format!("personalities/{style}.txt")),
+                        ("OwnBook", "true".to_owned()),
+                    ],
+                    Gen::IV => vec![
+                        ("Personality", st.personality.to_owned()),
+                        ("UseBook", "true".to_owned()),
+                    ],
+                };
                 if let Some(elo) = uci_elo {
                     setup.push(("UCI_LimitStrength", "true".to_owned()));
                     setup.push(("UCI_Elo", elo.to_string()));
@@ -832,7 +1237,7 @@ pub fn said(rival: Rival, maia: &'static str, rodent: &'static str) -> &'static 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Engine {
     Maia(Model),
-    Rodent,
+    Rodent(Gen),
 }
 
 impl Engine {
@@ -841,7 +1246,7 @@ impl Engine {
     pub fn input(self, strength: u32) -> (u32, f32) {
         match self {
             Engine::Maia(_) => (strength, 1.0),
-            Engine::Rodent => (0, 0.0),
+            Engine::Rodent(_) => (0, 0.0),
         }
     }
 }
@@ -851,7 +1256,10 @@ impl Engine {
 pub fn engine_for(start: &Start) -> Option<(Engine, std::path::PathBuf)> {
     match start.rival {
         Rival::Maia => model_for().ok().map(|(m, p)| (Engine::Maia(m), p)),
-        Rival::Rodent => crate::rodent_download::installed().map(|p| (Engine::Rodent, p)),
+        Rival::Rodent => {
+            let g = style(&start.style).rodent;
+            g.installed().map(|p| (Engine::Rodent(g), p))
+        }
     }
 }
 
@@ -867,12 +1275,14 @@ pub fn debug_rival() -> (Rival, String) {
     }
 }
 
-/// «Maia 1500», «Rodent V 2400», «Rodent V 2400 (Tal)» (the default style unnamed).
+/// «Maia 1500», «Rodent V 2400», «Rodent V 2400 (Tal)», «Rodent IV 2000 (Petrosian)»
+/// (the default style unnamed).
 pub fn rival_name(rival: Rival, strength: u32, style_id: &str) -> String {
+    let st = style(style_id);
     match rival {
         Rival::Maia => format!("Maia {strength}"),
-        Rival::Rodent if style_id == STYLES[0].id => format!("Rodent V {strength}"),
-        Rival::Rodent => format!("Rodent V {strength} ({})", style(style_id).name),
+        Rival::Rodent if style_id == STYLES[0].id => format!("{} {strength}", st.rodent.name()),
+        Rival::Rodent => format!("{} {strength} ({})", st.rodent.name(), st.name),
     }
 }
 
@@ -880,7 +1290,7 @@ impl Session {
     pub fn rival(&self) -> Rival {
         match self.engine {
             Engine::Maia(_) => Rival::Maia,
-            Engine::Rodent => Rival::Rodent,
+            Engine::Rodent(_) => Rival::Rodent,
         }
     }
 
@@ -888,13 +1298,13 @@ impl Session {
     pub fn rival_label(&self) -> String {
         match self.engine {
             Engine::Maia(_) => format!("Maia {}", self.strength),
-            Engine::Rodent => format!("Rodent V {}", self.strength),
+            Engine::Rodent(g) => format!("{} {}", g.name(), self.strength),
         }
     }
 
     /// Rodent's style, under his name on the bar (none for Maia and the default style).
     pub fn rival_style(&self) -> Option<&'static str> {
-        (self.engine == Engine::Rodent && self.style != STYLES[0].id)
+        (self.rival() == Rival::Rodent && self.style != STYLES[0].id)
             .then(|| tr(style(&self.style).title()))
     }
 }
@@ -931,8 +1341,8 @@ pub struct Dialog {
     prefs: PlayPrefs,
     custom: bool,
     download: Option<crate::maia_download::Download>,
-    /// Rodent's download (docs/design/rodent-opponent.md §6).
-    rodent_download: Option<crate::engine_download::Download>,
+    /// Rodent's download (docs/design/rodent-opponent.md §6): which one, and how it goes.
+    rodent_download: Option<(Gen, crate::engine_download::Download)>,
     /// «Download and play» was pressed: the game starts once Maia is there.
     play_after: bool,
     /// The game goes on from a position of another game.
@@ -961,11 +1371,14 @@ impl Dialog {
         }
         // A remembered strength the opponent does not play (another build's range, an
         // edited file): to the nearest one that is played.
-        let rodent_ok = crate::rodent_download::available();
-        if prefs.rival == Rival::Rodent && !rodent_ok {
-            prefs.rival = Rival::Maia;
+        // A style whose Rodent is not for this system: one that is, else Maia.
+        if prefs.rival == Rival::Rodent && !style(&prefs.style).rodent.available() {
+            match STYLES.iter().find(|s| s.rodent.available()) {
+                Some(s) => prefs.style = s.id.to_owned(),
+                None => prefs.rival = Rival::Maia,
+            }
         }
-        let (min, max) = range(prefs.rival);
+        let (min, max) = range(prefs.rival, &prefs.style);
         prefs.strength = prefs.strength.clamp(min, max);
         let custom = prefs.clock.is_some_and(|c| !PRESETS.contains(&c));
         Dialog {
@@ -1213,12 +1626,12 @@ impl Dialog {
 
             // The opponent (docs/design/rodent-opponent.md): Maia or Rodent V, one strength
             // slider for both, Rodent's style.
-            let rodent_ok = crate::rodent_download::available();
+            let rodent_ok = Gen::V.available() || Gen::IV.available();
             let rodent = self.prefs.rival == Rival::Rodent;
             section(
                 ui,
                 &if rodent {
-                    crate::i18n::trf("Opponent — Rodent V {elo}", &[("elo", &self.prefs.strength)])
+                    crate::i18n::trf("Opponent — Rodent {elo}", &[("elo", &self.prefs.strength)])
                 } else {
                     crate::i18n::trf("Opponent — Maia {elo}", &[("elo", &self.prefs.strength)])
                 },
@@ -1267,16 +1680,22 @@ impl Dialog {
                 } else {
                     tr("not yet for this system")
                 };
-                let r = tile(ui, rodent, rodent_ok, "Rodent V", about).on_hover_text(if rodent_ok { "" } else { tr(
-                    "The authors of Rodent V have no build for this system yet. When there is one, it will be here.",
+                let r = tile(ui, rodent, rodent_ok, "Rodent", about).on_hover_text(if rodent_ok { "" } else { tr(
+                    "Rodent is not available for this system yet. When it is, it will be here.",
                 ) });
                 if r.clicked() && !rodent {
                     self.prefs.rival = Rival::Rodent;
-                    self.prefs.strength = self.prefs.strength.clamp(RODENT_MIN, RODENT_MAX);
+                    if !style(&self.prefs.style).rodent.available()
+                        && let Some(st) = STYLES.iter().find(|s| s.rodent.available())
+                    {
+                        self.prefs.style = st.id.to_owned();
+                    }
+                    let (min, max) = range(Rival::Rodent, &self.prefs.style);
+                    self.prefs.strength = self.prefs.strength.clamp(min, max);
                 }
             });
             // Each engine on its own scale (its authors'): not a person's Elo, said under it.
-            let (min, max) = range(self.prefs.rival);
+            let (min, max) = range(self.prefs.rival, &self.prefs.style);
             ui.horizontal(|ui| {
                 let end = |ui: &mut egui::Ui, v: u32| {
                     ui.add_sized([34.0, 18.0], egui::Label::new(RichText::new(v.to_string()).weak()))
@@ -1292,7 +1711,7 @@ impl Dialog {
             });
             ui.add_space(4.0);
             let note = if self.prefs.rival == Rival::Rodent {
-                tr("Rodent V's own rating (UCI_Elo): it does not match a person's Elo.")
+                tr("Rodent's own rating (UCI_Elo): it does not match a person's Elo.")
             } else {
                 tr("Maia's own rating: it does not match a person's Elo.")
             };
@@ -1313,20 +1732,44 @@ impl Dialog {
                     .height(400.0)
                     .selected_text(shown)
                     .show_ui(ui, |ui| {
-                        for (head, player) in [(tr("Style"), false), (tr("As a player"), true)] {
+                        // Rodent V's styles, Rodent IV's characters, then the players both
+                        // imitate; a style whose Rodent is not for this system is greyed.
+                        let groups = [
+                            (tr("Style"), false, Some(Gen::V)),
+                            (tr("Character"), false, Some(Gen::IV)),
+                            (tr("As a player"), true, None),
+                        ];
+                        for (k, (head, player, only)) in groups.into_iter().enumerate() {
+                            // Only what this system plays, in the order of the names as shown
+                            // (the Tals side by side).
+                            let mut group: Vec<&Style> = STYLES
+                                .iter()
+                                .filter(|st| st.player == player && only.is_none_or(|g| st.rodent == g) && st.rodent.available())
+                                .collect();
+                            if group.is_empty() {
+                                continue;
+                            }
+                            if player {
+                                group.sort_by_key(|st| style_label(st).to_lowercase());
+                            }
+                            if k > 0 {
+                                ui.separator();
+                            }
                             ui.label(RichText::new(head).weak().size(11.5));
-                            for st in STYLES.iter().filter(|st| st.player == player) {
+                            for st in group {
                                 ui.selectable_value(&mut self.prefs.style, st.id.to_owned(), style_label(st))
                                     .on_hover_text(tr(st.about));
-                            }
-                            if !player {
-                                ui.separator();
                             }
                         }
                     })
                     .response
-                    .on_disabled_hover_text(tr("The style is chosen for Rodent V"));
+                    .on_disabled_hover_text(tr("The style is chosen for Rodent"));
             });
+            // Another Rodent may play another range.
+            if rodent {
+                let (min, max) = range(self.prefs.rival, &self.prefs.style);
+                self.prefs.strength = self.prefs.strength.clamp(min, max);
+            }
             let about = if rodent {
                 tr(style(&self.prefs.style).about).to_owned()
             } else {
@@ -1434,8 +1877,18 @@ impl Dialog {
             }
             let rodent = self.prefs.rival == Rival::Rodent;
             let stage = self.download.as_ref().map(|d| d.stage());
-            let rstage = self.rodent_download.as_ref().map(|d| d.stage());
-            let rodent_there = crate::rodent_download::installed().is_some();
+            // The Rodent of the style chosen: its download, if that one is going on.
+            let which = style(&self.prefs.style).rodent;
+            let rstage = self
+                .rodent_download
+                .as_ref()
+                .filter(|(g, _)| *g == which)
+                .map(|(_, d)| d.stage());
+            let other_busy = self.rodent_download.as_ref().is_some_and(|(g, d)| {
+                *g != which
+                    && matches!(d.stage(), crate::engine_download::Stage::Downloading { .. } | crate::engine_download::Stage::Unpacking)
+            });
+            let rodent_there = which.installed().is_some();
             let mut ready = if rodent { rodent_there } else { model.is_ok() };
             // A download going on: no game meanwhile (closing the dialog would cancel it).
             let busy = matches!(
@@ -1444,18 +1897,25 @@ impl Dialog {
             ) || matches!(
                 rstage,
                 Some(crate::engine_download::Stage::Downloading { .. } | crate::engine_download::Stage::Unpacking)
-            );
+            ) || other_busy;
             let large = crate::maia_download::installed(Model::Large).is_some();
-            let rodent_missing = crate::rodent_download::available() && !rodent_there;
+            let rodent_missing = which.available() && !rodent_there;
             if !ready || !large || rodent_missing {
                 ui.add_space(6.0);
                 if rodent {
                     match &rstage {
                         None | Some(crate::engine_download::Stage::Cancelled) if !ready => {
-                            ui.label(RichText::new(crate::i18n::trf(
-                                "Rodent V is downloaded once ({mb} MB, from github.com, the authors' own file).",
-                                &[("mb", &crate::rodent_download::size_mb())],
-                            )).weak());
+                            let note = match which {
+                                Gen::V => crate::i18n::trf(
+                                    "Rodent V is downloaded once ({mb} MB, from github.com, the authors' own file).",
+                                    &[("mb", &which.size_mb())],
+                                ),
+                                Gen::IV => crate::i18n::trf(
+                                    "Rodent IV is downloaded once ({mb} MB): the engine built from its authors' sources, its characters and books from their repository.",
+                                    &[("mb", &which.size_mb())],
+                                ),
+                            };
+                            ui.label(RichText::new(note).weak());
                         }
                         Some(crate::engine_download::Stage::Downloading { done, total }) => {
                             ui.add(egui::ProgressBar::new(*done as f32 / (*total).max(1) as f32).show_percentage());
@@ -1469,7 +1929,7 @@ impl Dialog {
                         Some(crate::engine_download::Stage::Done(_)) => ready = true,
                         Some(crate::engine_download::Stage::Failed(f)) => {
                             ui.label(RichText::new(crate::i18n::trf(
-                                "Could not download Rodent V: {error}",
+                                "Could not download Rodent: {error}",
                                 &[("error", &download_failure(f))],
                             )).color(ui.visuals().error_fg_color));
                         }
@@ -1523,7 +1983,7 @@ impl Dialog {
                     && (main.clicked() || (free && ui.input(|i| i.key_pressed(egui::Key::Enter))));
                 if pressed && !ready {
                     if rodent {
-                        self.rodent_download = Some(crate::rodent_download::start(ctx));
+                        self.rodent_download = Some((which, which.start(ctx)));
                         self.play_after = true;
                     } else if let Err(m) = model {
                         self.download = Some(crate::maia_download::Download::start(ctx, m));
@@ -1743,16 +2203,16 @@ impl End {
             Ending::Time { draw: true, loser } if loser == self.user => said(
                 self.start.rival,
                 "time is up, but Maia cannot checkmate",
-                "time is up, but Rodent V cannot checkmate",
+                "time is up, but Rodent cannot checkmate",
             ),
             Ending::Time { draw: true, .. } => said(
                 self.start.rival,
                 "Maia's time is up, but you cannot checkmate",
-                "Rodent V's time is up, but you cannot checkmate",
+                "Rodent's time is up, but you cannot checkmate",
             ),
             Ending::Time { .. } => tr("time is up"),
             Ending::Resigned { loser } if loser == self.user => "",
-            Ending::Resigned { .. } => said(self.start.rival, "Maia resigned", "Rodent V resigned"),
+            Ending::Resigned { .. } => said(self.start.rival, "Maia resigned", "Rodent resigned"),
             Ending::DrawAgreed => tr("by agreement"),
         }
     }

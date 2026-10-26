@@ -152,7 +152,7 @@ fn unpack(archive: &Path, dir: &Path, bin: &str) -> Result<PathBuf, Failure> {
 
 /// Starts the engine once from its folder and waits for its name: it runs here (the
 /// release needs AVX2: an older processor fails this).
-fn check_runs(exe: &Path) -> Result<(), Failure> {
+pub(crate) fn check_runs(exe: &Path) -> Result<(), Failure> {
     use std::io::Write;
     let mut cmd = std::process::Command::new(exe);
     if let Some(d) = exe.parent() {

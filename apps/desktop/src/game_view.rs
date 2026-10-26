@@ -2215,7 +2215,7 @@ impl GameView {
             clock: start.clock.map(Clock::new),
             opponent: match engine {
                 crate::play::Engine::Maia(_) => Opponent::start(file, ctx),
-                crate::play::Engine::Rodent => {
+                crate::play::Engine::Rodent(_) => {
                     Opponent::start_rodent(file, start.style.clone(), Some(start.strength), ctx)
                 }
             },
@@ -2290,7 +2290,7 @@ impl GameView {
                     .as_ref()
                     .map_or(crate::play::Rival::Maia, |s| s.rival());
                 ui.label(
-                    RichText::new(crate::play::said(rival, "Maia resigns", "Rodent V resigns"))
+                    RichText::new(crate::play::said(rival, "Maia resigns", "Rodent resigns"))
                         .strong()
                         .size(16.0),
                 );
@@ -2323,7 +2323,7 @@ impl GameView {
                     .on_hover_text(crate::play::said(
                         rival,
                         "Maia plays on and will not offer again in this game",
-                        "Rodent V plays on and will not offer again in this game",
+                        "Rodent plays on and will not offer again in this game",
                     ))
                     .clicked()
                 {
@@ -2527,9 +2527,9 @@ impl GameView {
                     crate::maia_download::forget_broken(m);
                     "Maia did not start: {e}"
                 }
-                crate::play::Engine::Rodent => {
-                    let _ = crate::rodent_download::remove();
-                    "Rodent V did not start: {e}"
+                crate::play::Engine::Rodent(g) => {
+                    g.remove();
+                    "Rodent did not start: {e}"
                 }
             };
             actions.push(GameAction::Toast(trf(text, &[("e", &err)])));
@@ -3283,15 +3283,15 @@ impl GameView {
                 let hint = match judge {
                     None => said(
                         "Maia answers a draw offer with Stockfish's help: none is installed",
-                        "Rodent V answers a draw offer with Stockfish's help: none is installed",
+                        "Rodent answers a draw offer with Stockfish's help: none is installed",
                     ),
                     Some(_) if !may => said(
                         "Maia declined; offer again after two of her moves",
-                        "Rodent V declined; offer again after two of its moves",
+                        "Rodent declined; offer again after two of its moves",
                     ),
                     Some(_) => said(
                         "Maia accepts when her position is no better and has settled",
-                        "Rodent V accepts when its position is no better and has settled",
+                        "Rodent accepts when its position is no better and has settled",
                     ),
                 };
                 if ui
@@ -3309,7 +3309,7 @@ impl GameView {
                         self.finish_play(crate::play::Ending::DrawAgreed, actions);
                     } else {
                         actions.push(GameAction::Toast(
-                            said("Maia declines the draw", "Rodent V declines the draw").into(),
+                            said("Maia declines the draw", "Rodent declines the draw").into(),
                         ));
                     }
                 }
@@ -3361,7 +3361,7 @@ impl GameView {
                             crate::play::said(
                                 end.start.rival,
                                 "Left: you {you} · Maia {maia}",
-                                "Left: you {you} · Rodent V {maia}",
+                                "Left: you {you} · Rodent {maia}",
                             ),
                             &[
                                 ("you", &crate::play::clock_text(you)),

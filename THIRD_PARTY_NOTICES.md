@@ -97,6 +97,27 @@ runs as a separate program through UCI.
   source: https://github.com/nescitus/Rodent-V.
 - The opening books of the release come with it as the authors publish them.
 
+## Rodent IV (characters and famous players)
+
+**Rodent IV 0.33** (Paweł Koziol and Bernhard C. Maerz, based on Sungorus by Pablo Vázquez) is
+not part of ChessPenguin. Its authors publish no builds for Linux and Windows, so the engine
+is built from their sources at commit `e8d84c8c8c189a1cf4eb27c578fc573af3b916d2` of
+https://github.com/nescitus/rodent-iv with one fix of ours, `packaging/rodent-iv/home-dir.patch`
+(on Linux the engine now and then took a wrong home folder and played without its
+personality), by `.github/workflows/rodent-iv.yml`, and published as the release
+`rodent-iv-0.33` of this repository. On the user's request the program downloads
+that build (SHA-256 pinned in `apps/desktop/src/rodent4_download.rs`) and the engine's
+personalities and opening books from the authors' repository at the same commit (each file's
+SHA-256 pinned in `apps/desktop/src/rodent4_files.rs`) into the user's data directory. It runs
+as a separate program through UCI.
+
+- License: GNU General Public License version 3 (https://github.com/nescitus/rodent-iv/blob/master/LICENSE);
+  source: the commit above.
+- The opening books come as the authors publish them, with their own credits (`#readme.txt`
+  in each folder of `books/`).
+- Three personalities (Strangler, Spassky, Deborah) name their book by a path not in the
+  authors' files; the program puts a copy of the book under that name.
+
 ## Stockfish (engine)
 
 **Stockfish 19** (tag `sf_19`) is the unmodified official "universal" build from

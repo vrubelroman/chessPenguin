@@ -1,0 +1,102 @@
+# Builds Rodent IV (github.com/nescitus/rodent-iv, GPL-3.0) from the authors' sources at a
+# pinned commit for Linux, Windows and macOS: its authors publish no builds for them
+# (docs/decisions.md «Rodent IV»). ChessPenguin downloads the engine from this release on
+# request, checked against the SHA-256 pinned in apps/desktop/src/rodent4_download.rs; the
+# personalities and books come from the authors' repository at the same commit.
+#
+# Tag rodent-iv-<version> to publish. The release is a pre-release that is never "latest":
+# the app's update check and the website look for the latest release of ChessPenguin.
+name: Rodent IV
+
+on:
+  push:
+    tags: ["rodent-iv-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # The authors' last commit (2021-04-29, Rodent IV 0.33).
+  COMMIT: e8d84c8c8c189a1cf4eb27c578fc573af3b916d2
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # An older glibc, so that the engine runs on the distributions ChessPenguin runs on.
+          - os: ubuntu-22.04
+            name: rodent-iv-linux-x86_64
+          - os: windows-latest
+            name: rodent-iv-windows-x86_64.exe
+          - os: macos-14
+            name: rodent-iv-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: cp
+      - name: Sources at the pinned commit, with our one fix
+        shell: bash
+        # packaging/rodent-iv/home-dir.patch: on Linux the engine now and then took a
+        # wrong home folder and played without its personality and books.
+        run: |
+          git clone https://github.com/nescitus/rodent-iv.git src
+          git -C src checkout "$COMMIT"
+          git -C src apply ../cp/packaging/rodent-iv/home-dir.patch
+      - name: Windows compiler (MinGW-w64, linked statically)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Build (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd src/sources
+          extra=""
+          if [ "$RUNNER_OS" = "Linux" ]; then extra="-static-libstdc++ -static-libgcc"; fi
+          c++ -O3 -w -pipe -DNDEBUG -fno-rtti -finline-functions -std=c++14 $extra src/*.cpp -o "../../${{ matrix.name }}" -lm
+          strip "../../${{ matrix.name }}" || true
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          cd src/sources
+          g++ -O3 -w -pipe -DNDEBUG -fno-rtti -finline-functions -std=c++14 -static src/*.cpp -o "../../${{ matrix.name }}" -lm
+          strip "../../${{ matrix.name }}"
+      - name: It answers UCI
+        shell: bash
+        run: printf 'uci\nquit\n' | "./${{ matrix.name }}" | grep -q "Rodent IV"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  publish:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and the source offer
+        run: |
+          cd dist && sha256sum * > SHA256SUMS.txt
+          cat > "${RUNNER_TEMP}/notes.md" <<EOF
+          Rodent IV 0.33 by Paweł Koziol and Bernhard C. Maerz (GPL-3.0), built from the
+          authors' sources at https://github.com/nescitus/rodent-iv/tree/${COMMIT}
+          with one fix (packaging/rodent-iv/home-dir.patch in ChessPenguin's repository:
+          the engine's home folder on Linux) for ChessPenguin, which downloads it on
+          request. Not a ChessPenguin release.
+          EOF
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          body_path: ${{ runner.temp }}/notes.md
+          prerelease: true
+          make_latest: false

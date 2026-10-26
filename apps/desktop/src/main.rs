@@ -25,6 +25,8 @@ mod play;
 mod player_games;
 mod reference;
 mod review;
+mod rodent4_download;
+mod rodent4_files;
 mod rodent_download;
 mod san;
 mod settings;

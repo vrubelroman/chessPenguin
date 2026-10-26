@@ -4,6 +4,13 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Rodent's list of styles gets Rodent IV's: 13 characters (Amanda, Defender, Strangler…)
+  and 22 famous players (Alekhine, Botvinnik, Fischer, Karpov, Kasparov, Petrosian, Tal…),
+  each with its opening books. The opponent is just «Rodent»; which engine plays follows
+  the style chosen (Rodent IV's strength: 800–2800). Rodent IV is downloaded once on
+  request: built by us from its authors' sources, with its characters and books from their
+  repository — on macOS too, where Rodent was not available before.
+
 - Android: the lists look richer. Games are divided by thin lines, each side has its
   colour disc, the winner's «1» stands on a tile, the opening code (ECO) on a tag of its
   own, and the game you came back from is marked. Search also finds by the ECO. On
