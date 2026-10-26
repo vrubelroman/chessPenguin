@@ -17,12 +17,23 @@ const TAG: &str = "rodent-iv-0.33";
 /// This platform's build in the release, if there is one (checked against its SHA-256).
 fn binary() -> Option<Asset> {
     let (file, sha256, size) = match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => ("rodent-iv-linux-x86_64", "", 0),
-        ("windows", "x86_64") => ("rodent-iv-windows-x86_64.exe", "", 0),
-        ("macos", "aarch64") => ("rodent-iv-macos-arm64", "", 0),
+        ("linux", "x86_64") => (
+            "rodent-iv-linux-x86_64",
+            "bb2cd533d89d6431e50a101242a74806d5c022f4d5893fe0d16dbd24b2f62efd",
+            1_291_352,
+        ),
+        ("windows", "x86_64") => (
+            "rodent-iv-windows-x86_64.exe",
+            "aa0f58ee10a2366cf86064d152a29ab344faf02e1d199934232eb98f813aac4b",
+            1_288_192,
+        ),
+        ("macos", "aarch64") => (
+            "rodent-iv-macos-arm64",
+            "c1abd5cc7970427f34632d8d3b7337e2c17499d182ab3f9be8e625fb3535c135",
+            248_920,
+        ),
         _ => return None,
     };
-    // Not offered until the build is published and its sum written here.
     (!sha256.is_empty()).then_some(Asset {
         file,
         sha256,
