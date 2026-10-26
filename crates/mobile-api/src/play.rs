@@ -76,10 +76,18 @@ pub fn maia_game_tags(
     } else {
         shakmaty::Color::Black
     };
-    ::play::game_tags(&event, user, &user_name, None, strength, "-")
-        .into_iter()
-        .map(|(name, value)| crate::Tag { name, value })
-        .collect()
+    ::play::game_tags(
+        &event,
+        user,
+        &user_name,
+        None,
+        &format!("Maia {strength}"),
+        strength,
+        "-",
+    )
+    .into_iter()
+    .map(|(name, value)| crate::Tag { name, value })
+    .collect()
 }
 
 /// Maia's turns in a row with her position hopeless before she offers to resign.

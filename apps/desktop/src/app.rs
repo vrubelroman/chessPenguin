@@ -484,6 +484,8 @@ impl App {
                     crate::play::Start {
                         user,
                         strength,
+                        rival: crate::play::debug_rival().0,
+                        style: crate::play::debug_rival().1,
                         user_elo: self.settings.rating,
                         user_name: self.settings.your_name.clone(),
                         clock,
@@ -597,6 +599,8 @@ impl App {
                 match user {
                     Some(user) => {
                         self.debug.play_from = Some(crate::play::Start {
+                            rival: crate::play::debug_rival().0,
+                            style: crate::play::debug_rival().1,
                             user,
                             strength,
                             user_elo: self.settings.rating,
@@ -1404,7 +1408,7 @@ impl App {
     /// A new game against Maia. Her model missing (a rematch, a game from a position):
     /// the dialog with the same choices, to download it.
     fn start_play(&mut self, ctx: &egui::Context, start: crate::play::Start) {
-        let Ok(maia) = crate::play::model_for(start.strength) else {
+        let Some(maia) = crate::play::engine_for(&start) else {
             self.play_dialog = Some(crate::play::Dialog::for_start(&self.settings, &start));
             return;
         };

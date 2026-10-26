@@ -14,12 +14,12 @@ use sha2::{Digest, Sha256};
 const TAG: &str = "sf_19";
 
 /// An archive of the release for this platform.
-struct Asset {
-    file: &'static str,
-    sha256: &'static str,
+pub struct Asset {
+    pub file: &'static str,
+    pub sha256: &'static str,
     /// Bytes, for the size shown before the download.
-    size: u64,
-    zip: bool,
+    pub size: u64,
+    pub zip: bool,
 }
 
 fn asset() -> Option<Asset> {
@@ -147,6 +147,16 @@ pub struct Download {
 impl Download {
     pub fn start(ctx: &egui::Context) -> Download {
         let total = asset().map_or(0, |a| a.size);
+        Download::spawn(ctx, total, run)
+    }
+
+    /// Runs `job` (a download and what follows it) in a thread of its own; `total`: the
+    /// bytes expected, shown until the server says.
+    pub fn spawn(
+        ctx: &egui::Context,
+        total: u64,
+        job: fn(&dyn Fn(Stage), &AtomicBool) -> Result<PathBuf, Failure>,
+    ) -> Download {
         let stage = Arc::new(Mutex::new(Stage::Downloading { done: 0, total }));
         let cancel = Arc::new(AtomicBool::new(false));
         let (s, c, ctx) = (stage.clone(), cancel.clone(), ctx.clone());
@@ -159,7 +169,7 @@ impl Download {
                     }
                     ctx.request_repaint();
                 };
-                let end = match run(&report, &c) {
+                let end = match job(&report, &c) {
                     Ok(path) => Stage::Done(path),
                     Err(_) if c.load(Ordering::Relaxed) => Stage::Cancelled,
                     Err(f) => Stage::Failed(f),
@@ -220,7 +230,7 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
 }
 
 /// Downloads `url` into `to`, checking the size and the SHA-256 on the way.
-fn fetch(
+pub fn fetch(
     url: &str,
     to: &Path,
     asset: &Asset,
@@ -350,7 +360,7 @@ fn check_runs(exe: &Path) -> Result<(), Failure> {
     }
 }
 
-fn disk(e: std::io::Error) -> Failure {
+pub fn disk(e: std::io::Error) -> Failure {
     Failure::Disk(e.to_string())
 }
 

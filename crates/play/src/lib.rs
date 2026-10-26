@@ -131,18 +131,20 @@ pub fn pause(clock: Option<(Duration, u32)>, ply: usize, only_move: bool) -> Dur
 
 // ----- the game's tags -----------------------------------------------------------------
 
-/// The tags of a game against Maia (as Lichess writes a game against a program):
-/// `event` in the app's language, the user's name ("?" unknown) and rating, Maia's
-/// strength, the time control in PGN ("-": none). The rest (date, result) is the game's.
+/// The tags of a game against a program (as Lichess writes one): `event` in the app's
+/// language, the user's name ("?" unknown) and rating, the program's name («Maia 1500»,
+/// «Rodent V 2400 (Tal)») and strength, the time control in PGN ("-": none). The rest
+/// (date, result) is the game's.
 pub fn game_tags(
     event: &str,
     user: Color,
     user_name: &str,
     user_elo: Option<u32>,
+    program: &str,
     strength: u32,
     time_control: &str,
 ) -> Vec<(String, String)> {
-    let maia = format!("Maia {strength}");
+    let maia = program.to_owned();
     let you = if user_name.trim().is_empty() {
         "?".to_owned()
     } else {

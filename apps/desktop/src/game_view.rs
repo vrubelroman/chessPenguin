@@ -2098,7 +2098,7 @@ impl GameView {
     pub fn start_play(
         &mut self,
         start: crate::play::Start,
-        (model, weights): (crate::maia_download::Model, std::path::PathBuf),
+        (engine, file): (crate::play::Engine, std::path::PathBuf),
         judge: Option<std::path::PathBuf>,
         ctx: &egui::Context,
     ) {
@@ -2122,6 +2122,7 @@ impl GameView {
             start.user,
             &start.user_name,
             start.user_elo,
+            &start.rival_name(),
             start.strength,
             &start.clock.map_or_else(|| "-".to_owned(), |tc| tc.pgn()),
         ) {
@@ -2133,21 +2134,44 @@ impl GameView {
             Some(from) => {
                 let floor = g.line_end(NodeId::ROOT);
                 let elo = start.strength.to_string();
-                let note = match (&from.game, &from.after) {
-                    (Some(game), Some(m)) => trf(
-                        "Continued from {game}, after {move}. From here on, a game against Maia {elo}.",
-                        &[("game", game), ("move", m), ("elo", &elo)],
-                    ),
-                    (None, Some(m)) => trf(
-                        "Continued after {move}. From here on, a game against Maia {elo}.",
-                        &[("move", m), ("elo", &elo)],
-                    ),
-                    (Some(game), None) => trf(
-                        "Continued from {game}. From here on, a game against Maia {elo}.",
-                        &[("game", game), ("elo", &elo)],
-                    ),
-                    (None, None) => {
-                        trf("From here on, a game against Maia {elo}.", &[("elo", &elo)])
+                // Rodent's notes name him whole («Rodent V 2400 (Tal)»).
+                let rodent = start.rival == crate::play::Rival::Rodent;
+                let name = start.rival_name();
+                let note = if rodent {
+                    match (&from.game, &from.after) {
+                        (Some(game), Some(m)) => trf(
+                            "Continued from {game}, after {move}. From here on, a game against {name}.",
+                            &[("game", game), ("move", m), ("name", &name)],
+                        ),
+                        (None, Some(m)) => trf(
+                            "Continued after {move}. From here on, a game against {name}.",
+                            &[("move", m), ("name", &name)],
+                        ),
+                        (Some(game), None) => trf(
+                            "Continued from {game}. From here on, a game against {name}.",
+                            &[("game", game), ("name", &name)],
+                        ),
+                        (None, None) => {
+                            trf("From here on, a game against {name}.", &[("name", &name)])
+                        }
+                    }
+                } else {
+                    match (&from.game, &from.after) {
+                        (Some(game), Some(m)) => trf(
+                            "Continued from {game}, after {move}. From here on, a game against Maia {elo}.",
+                            &[("game", game), ("move", m), ("elo", &elo)],
+                        ),
+                        (None, Some(m)) => trf(
+                            "Continued after {move}. From here on, a game against Maia {elo}.",
+                            &[("move", m), ("elo", &elo)],
+                        ),
+                        (Some(game), None) => trf(
+                            "Continued from {game}. From here on, a game against Maia {elo}.",
+                            &[("game", game), ("elo", &elo)],
+                        ),
+                        (None, None) => {
+                            trf("From here on, a game against Maia {elo}.", &[("elo", &elo)])
+                        }
                     }
                 };
                 let (nags, mut comments) = g
@@ -2170,10 +2194,19 @@ impl GameView {
         self.play = Some(Session {
             user: start.user,
             strength: start.strength,
-            model,
+            engine,
+            style: start.style.clone(),
             user_elo: start.user_elo,
             clock: start.clock.map(Clock::new),
-            opponent: Opponent::start(weights, ctx),
+            opponent: match engine {
+                crate::play::Engine::Maia(_) => Opponent::start(file, ctx),
+                crate::play::Engine::Rodent => Opponent::start_rodent(
+                    file,
+                    start.style.clone(),
+                    crate::play::rodent_elo(start.strength),
+                    ctx,
+                ),
+            },
             resign_asked: false,
             judge: judge.map(|p| {
                 let ctx = ctx.clone();
@@ -2240,10 +2273,20 @@ impl GameView {
             .stroke(egui::Stroke::new(1.0, ui.visuals().selection.bg_fill))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new(tr("Maia resigns")).strong().size(16.0));
+                let rival = self
+                    .play
+                    .as_ref()
+                    .map_or(crate::play::Rival::Maia, |s| s.rival());
                 ui.label(
-                    RichText::new(tr(
+                    RichText::new(crate::play::said(rival, "Maia resigns", "Rodent V resigns"))
+                        .strong()
+                        .size(16.0),
+                );
+                ui.label(
+                    RichText::new(crate::play::said(
+                        rival,
                         "Her position is lost. Accept the win, or play to the end?",
+                        "Its position is lost. Accept the win, or play to the end?",
                     ))
                     .weak(),
                 );
@@ -2265,7 +2308,11 @@ impl GameView {
                         [w, 30.0],
                         egui::Button::new(RichText::new(tr("Play to the end")).size(14.0)),
                     )
-                    .on_hover_text(tr("Maia plays on and will not offer again in this game"))
+                    .on_hover_text(crate::play::said(
+                        rival,
+                        "Maia plays on and will not offer again in this game",
+                        "Rodent V plays on and will not offer again in this game",
+                    ))
                     .clicked()
                 {
                     choice = Some(false);
@@ -2330,10 +2377,8 @@ impl GameView {
                 let elo = s.user_elo.unwrap_or(s.strength);
                 s.opponent.ask(
                     positions,
-                    (
-                        crate::play::rating_input(s.model, elo),
-                        crate::play::temperature(s.model, elo),
-                    ),
+                    engine_pos.clone(),
+                    s.engine.input(elo),
                     s.strength,
                     std::time::Duration::from_millis(30),
                 );
@@ -2353,11 +2398,9 @@ impl GameView {
         };
         // Her rating input is what makes her play at her strength; the user's is as is.
         let oppo = s.user_elo.unwrap_or(s.strength);
-        let own = (
-            crate::play::rating_input(s.model, s.strength),
-            crate::play::temperature(s.model, s.strength),
-        );
-        s.opponent.ask(positions, own, oppo, pause);
+        let own = s.engine.input(s.strength);
+        s.opponent
+            .ask(positions, engine_pos.clone(), own, oppo, pause);
         // Is her position lost? (Unless the user wants to play to the end.)
         if !s.play_on
             && let (Some(j), Some(ep)) = (s.judge.as_mut(), engine_pos)
@@ -2465,11 +2508,18 @@ impl GameView {
             }
         }
         if let Some(err) = s.opponent.failed() {
-            crate::maia_download::forget_broken(s.model);
-            actions.push(GameAction::Toast(trf(
-                "Maia did not start: {e}",
-                &[("e", &err)],
-            )));
+            // A file that does not start is removed: the dialog offers it again.
+            let text = match s.engine {
+                crate::play::Engine::Maia(m) => {
+                    crate::maia_download::forget_broken(m);
+                    "Maia did not start: {e}"
+                }
+                crate::play::Engine::Rodent => {
+                    let _ = crate::rodent_download::remove();
+                    "Rodent V did not start: {e}"
+                }
+            };
+            actions.push(GameAction::Toast(trf(text, &[("e", &err)])));
             self.play = None;
             self.game.mark_saved();
             actions.push(GameAction::Back);
@@ -2998,7 +3048,7 @@ impl GameView {
                             None => format!("{king} {}", tr("You")),
                         }
                     } else {
-                        format!("{king} Maia {}", s.strength)
+                        format!("{king} {}", s.rival_label())
                     };
                     ui.label(RichText::new(name).size(15.0));
                     let state = if side != user && s.resign_offer.is_some() {
@@ -3110,13 +3160,25 @@ impl GameView {
             // judge, no answer: the button says why).
             if self.play_started() {
                 let judge = self.play.as_ref().and_then(|s| s.judge.as_ref());
+                let rival = self
+                    .play
+                    .as_ref()
+                    .map_or(crate::play::Rival::Maia, |s| s.rival());
                 let may = judge.is_some_and(|j| j.may_offer_draw());
+                let said = |m, r| crate::play::said(rival, m, r);
                 let hint = match judge {
-                    None => {
-                        tr("Maia answers a draw offer with Stockfish's help: none is installed")
-                    }
-                    Some(_) if !may => tr("Maia declined; offer again after two of her moves"),
-                    Some(_) => tr("Maia accepts when her position is no better and has settled"),
+                    None => said(
+                        "Maia answers a draw offer with Stockfish's help: none is installed",
+                        "Rodent V answers a draw offer with Stockfish's help: none is installed",
+                    ),
+                    Some(_) if !may => said(
+                        "Maia declined; offer again after two of her moves",
+                        "Rodent V declined; offer again after two of its moves",
+                    ),
+                    Some(_) => said(
+                        "Maia accepts when her position is no better and has settled",
+                        "Rodent V accepts when its position is no better and has settled",
+                    ),
                 };
                 if ui
                     .add_enabled(may, word(tr("½ Offer a draw")))
@@ -3132,7 +3194,9 @@ impl GameView {
                     if yes {
                         self.finish_play(crate::play::Ending::DrawAgreed, actions);
                     } else {
-                        actions.push(GameAction::Toast(tr("Maia declines the draw").into()));
+                        actions.push(GameAction::Toast(
+                            said("Maia declines the draw", "Rodent V declines the draw").into(),
+                        ));
                     }
                 }
             }

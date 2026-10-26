@@ -138,6 +138,104 @@ pub struct PlayPrefs {
     /// field `strength` held her rating input, a different scale, and is dropped).
     #[serde(rename = "level")]
     pub strength: u32,
+    /// The opponent: Maia or Rodent, and Rodent's style (a personality file's name).
+    pub rival: Rival,
+    pub style: String,
+}
+
+/// Who plays against the user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Rival {
+    /// Maia: human moves of a strength, human mistakes (docs/research/maia-strength.md).
+    #[default]
+    Maia,
+    /// Rodent V: a strong engine with a style (docs/research/rodent.md).
+    Rodent,
+}
+
+/// Rodent's styles: its personality files, the personality's name (for PGN), what the
+/// style is called and does (in the app's language). The players' imitations come last
+/// (`player`).
+pub struct Style {
+    pub id: &'static str,
+    pub name: &'static str,
+    title: &'static str,
+    pub about: &'static str,
+    pub player: bool,
+}
+
+impl Style {
+    /// The style's name to translate («Attacking»).
+    pub fn title(&self) -> &'static str {
+        self.title
+    }
+}
+
+pub const STYLES: &[Style] = &[
+    Style {
+        id: "rodent",
+        name: "Rodent",
+        title: "Balanced",
+        about: "Even, all-round play with no bias.",
+        player: false,
+    },
+    Style {
+        id: "ampere",
+        name: "Ampere",
+        title: "Attacking",
+        about: "Active pieces and attack, sound pawn structure.",
+        player: false,
+    },
+    Style {
+        id: "chaotic",
+        name: "Chaotic",
+        title: "Chaotic",
+        about: "Aggressive, tricky openings, careless with pawns.",
+        player: false,
+    },
+    Style {
+        id: "nimzoid",
+        name: "Nimzoid",
+        title: "Restricting",
+        about: "Closed positions, cramping the opponent, old openings.",
+        player: false,
+    },
+    Style {
+        id: "hector",
+        name: "Hector",
+        title: "Classical",
+        about: "Hand-written evaluation, no neural network.",
+        player: false,
+    },
+    Style {
+        id: "tal_hybrid",
+        name: "Tal",
+        title: "Tal",
+        about: "Attacking style tuned on Tal's games.",
+        player: true,
+    },
+    Style {
+        id: "tal_nnue",
+        name: "Tal NNUE",
+        title: "Tal (network)",
+        about: "A neural network trained on Tal's games.",
+        player: true,
+    },
+];
+
+/// «Attacking — Ampere»; a style named as its personality just once («Tal»).
+fn style_label(st: &Style) -> String {
+    let title = tr(st.title());
+    if title == st.name || st.title() == st.name {
+        title.to_owned()
+    } else {
+        format!("{title} — {}", st.name)
+    }
+}
+
+/// The style of this id (the default one for an unknown id).
+pub fn style(id: &str) -> &'static Style {
+    STYLES.iter().find(|s| s.id == id).unwrap_or(&STYLES[0])
 }
 
 impl Default for PlayPrefs {
@@ -149,6 +247,8 @@ impl Default for PlayPrefs {
                 increment: 5,
             }),
             strength: 1500,
+            rival: Rival::Maia,
+            style: STYLES[0].id.to_owned(),
         }
     }
 }
@@ -300,6 +400,8 @@ struct Request {
     oppo_elo: u32,
     temperature: f32,
     pause: Duration,
+    /// The game for a UCI engine (Rodent): its start and moves.
+    engine_pos: Option<uci::EnginePosition>,
 }
 
 /// The engine in a thread of its own: loads Maia once, answers requests after a pause.
@@ -361,10 +463,12 @@ impl Opponent {
         }
     }
 
-    /// Asks for a move in the last of `positions`.
+    /// Asks for a move in the last of `positions` (`engine_pos`: the same for a UCI
+    /// engine).
     pub fn ask(
         &mut self,
         positions: Vec<Chess>,
+        engine_pos: Option<uci::EnginePosition>,
         (self_elo, temperature): (u32, f32),
         oppo_elo: u32,
         pause: Duration,
@@ -378,7 +482,111 @@ impl Opponent {
             oppo_elo,
             temperature,
             pause,
+            engine_pos,
         });
+    }
+
+    /// Rodent V (`exe` in its folder) playing in `style` at `uci_elo` (none: full
+    /// strength), with its opening book. It thinks during the pause (a game's own clock
+    /// is not its business: Maia's pause rule paces it), and answers after it.
+    pub fn start_rodent(
+        exe: std::path::PathBuf,
+        style: String,
+        uci_elo: Option<u32>,
+        ctx: &egui::Context,
+    ) -> Opponent {
+        let (tx, req_rx) = channel::<Request>();
+        let (ans_tx, rx) = channel();
+        let error = Arc::new(Mutex::new(None));
+        let err = error.clone();
+        let ctx = ctx.clone();
+        let _ = std::thread::Builder::new()
+            .name("rodent".into())
+            .spawn(move || {
+                let fail = |e: String| {
+                    if let Ok(mut g) = err.lock() {
+                        *g = Some(e);
+                    }
+                    ctx.request_repaint();
+                };
+                let config = uci::EngineConfig {
+                    working_dir: exe.parent().map(|d| d.to_path_buf()),
+                    ..uci::EngineConfig::new(&exe)
+                };
+                let engine = match uci::Engine::spawn_with(config, Box::new(|| {})) {
+                    Ok(e) => e,
+                    Err(e) => return fail(e.to_string()),
+                };
+                let personality = format!("personalities/{style}.txt");
+                let mut setup = vec![
+                    ("PersonalityFile", personality.clone()),
+                    ("OwnBook", "true".to_owned()),
+                ];
+                if let Some(elo) = uci_elo {
+                    setup.push(("UCI_LimitStrength", "true".to_owned()));
+                    setup.push(("UCI_Elo", elo.to_string()));
+                }
+                let ready = engine.set_threads(1).and_then(|()| engine.set_hash_mb(64));
+                if let Err(e) = ready {
+                    return fail(e.to_string());
+                }
+                for (name, value) in &setup {
+                    if let Err(e) = engine.set_option(name, Some(value)) {
+                        return fail(e.to_string());
+                    }
+                }
+                let _ = engine.new_game();
+                while let Ok(mut r) = req_rx.recv() {
+                    while let Ok(newer) = req_rx.try_recv() {
+                        r = newer;
+                    }
+                    let (Some(pos), Some(now)) =
+                        (r.engine_pos.clone(), r.positions.last().cloned())
+                    else {
+                        continue;
+                    };
+                    let started = Instant::now();
+                    let id = uci::SearchId(r.generation);
+                    // Its own limit (from UCI_Elo) ends the search early; at full strength
+                    // it thinks for the pause.
+                    let think = r.pause.max(Duration::from_millis(300));
+                    if let Err(e) = engine.search(pos, id, uci::SearchLimits::MoveTime(think)) {
+                        return fail(e.to_string());
+                    }
+                    let best = loop {
+                        match engine.recv_timeout(Duration::from_millis(200)) {
+                            Some(uci::EngineEvent::BestMove {
+                                search_id, best: b, ..
+                            }) if search_id == id => {
+                                break b;
+                            }
+                            Some(uci::EngineEvent::Terminated(e)) => return fail(format!("{e:?}")),
+                            _ if started.elapsed() > think + Duration::from_secs(20) => {
+                                let _ = engine.stop();
+                            }
+                            _ => {}
+                        }
+                    };
+                    let m = best
+                        .and_then(|b| b.parse::<shakmaty::uci::UciMove>().ok())
+                        .and_then(|u| u.to_move(&now).ok());
+                    std::thread::sleep(r.pause.saturating_sub(started.elapsed()));
+                    let spent = r.pause.max(started.elapsed());
+                    if ans_tx.send((r.generation, m, spent)).is_err() {
+                        engine.quit();
+                        return;
+                    }
+                    ctx.request_repaint();
+                }
+                engine.quit();
+            });
+        Opponent {
+            tx,
+            rx,
+            generation: 0,
+            error,
+            thinking: false,
+        }
     }
 
     /// Forgets what was asked (its answer will be dropped).
@@ -578,9 +786,10 @@ mod tests {
 /// A game against Maia in progress (lives in the game screen while it is played).
 pub struct Session {
     pub user: Color,
-    /// Maia's strength (Lichess blitz scale) and the model playing it.
+    /// The opponent's strength (Lichess blitz scale), what plays it and in which style.
     pub strength: u32,
-    pub model: Model,
+    pub engine: Engine,
+    pub style: String,
     pub user_elo: Option<u32>,
     pub clock: Option<Clock>,
     pub opponent: Opponent,
@@ -604,11 +813,132 @@ pub struct Session {
 pub struct Start {
     pub user: Color,
     pub strength: u32,
+    pub rival: Rival,
+    /// Rodent's style (ignored for Maia).
+    pub style: String,
     pub user_elo: Option<u32>,
     pub user_name: String,
     pub clock: Option<TimeControl>,
     /// A game from a position of another game (docs/design/play-from-position.md).
     pub from: Option<Box<StartFrom>>,
+}
+
+impl Start {
+    /// The opponent as the game names it: «Maia 1500», «Rodent V 2400 (Tal)».
+    pub fn rival_name(&self) -> String {
+        rival_name(self.rival, self.strength, &self.style)
+    }
+}
+
+/// A text about the opponent in the app's language: Maia's, or Rodent's (their own
+/// sentences: in Russian and other languages the words agree with her or him).
+pub fn said(rival: Rival, maia: &'static str, rodent: &'static str) -> &'static str {
+    tr(match rival {
+        Rival::Maia => maia,
+        Rival::Rodent => rodent,
+    })
+}
+
+/// What plays a game: a Maia model, or Rodent V.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    Maia(Model),
+    Rodent,
+}
+
+impl Engine {
+    /// Maia's rating input and temperature for `strength` (Rodent takes its strength as
+    /// UCI_Elo when it starts: nothing per move).
+    pub fn input(self, strength: u32) -> (u32, f32) {
+        match self {
+            Engine::Maia(m) => (rating_input(m, strength), temperature(m, strength)),
+            Engine::Rodent => (0, 0.0),
+        }
+    }
+}
+
+/// The opponent of `start`, ready to play: its engine and file; `None`: it has to be
+/// downloaded first (the dialog offers it).
+pub fn engine_for(start: &Start) -> Option<(Engine, std::path::PathBuf)> {
+    match start.rival {
+        Rival::Maia => model_for(start.strength)
+            .ok()
+            .map(|(m, p)| (Engine::Maia(m), p)),
+        Rival::Rodent => crate::rodent_download::installed().map(|p| (Engine::Rodent, p)),
+    }
+}
+
+/// Measured (docs/research/rodent.md, «Замер»): Rodent's UCI_Elo → its strength on the
+/// Lichess blitz scale (default personality, its book off).
+const RODENT: &[(u32, u32)] = &[(800, 1500), (3000, 2700)];
+
+/// The weakest and strongest Rodent plays (its top: full strength).
+pub const RODENT_MIN: u32 = 1500;
+pub const RODENT_MAX: u32 = 2700;
+
+/// The UCI_Elo for Rodent to play at `strength` (in proportion between the measured
+/// points; `None` at the top: full strength).
+pub fn rodent_elo(strength: u32) -> Option<u32> {
+    if strength >= RODENT_MAX {
+        return None;
+    }
+    let (first, last) = (RODENT[0], RODENT[RODENT.len() - 1]);
+    if strength <= first.1 {
+        return Some(first.0);
+    }
+    if strength >= last.1 {
+        return Some(last.0);
+    }
+    let i = RODENT
+        .iter()
+        .position(|p| p.1 >= strength)
+        .unwrap_or(RODENT.len() - 1);
+    let ((a_in, a_out), (b_in, b_out)) = (RODENT[i - 1], RODENT[i]);
+    let t = f64::from(strength - a_out) / f64::from(b_out - a_out);
+    Some((f64::from(a_in) + t * f64::from(b_in - a_in)).round() as u32)
+}
+
+/// Dev hook `CP_RIVAL=rodent[:style]`: the opponent of a game started by a hook.
+pub fn debug_rival() -> (Rival, String) {
+    match std::env::var("CP_RIVAL")
+        .ok()
+        .as_deref()
+        .map(|v| v.split_once(':').unwrap_or((v, STYLES[0].id)))
+    {
+        Some(("rodent", style)) => (Rival::Rodent, style.to_owned()),
+        _ => (Rival::Maia, STYLES[0].id.to_owned()),
+    }
+}
+
+/// «Maia 1500», «Rodent V 2400», «Rodent V 2400 (Tal)» (the default style unnamed).
+pub fn rival_name(rival: Rival, strength: u32, style_id: &str) -> String {
+    match rival {
+        Rival::Maia => format!("Maia {strength}"),
+        Rival::Rodent if style_id == STYLES[0].id => format!("Rodent V {strength}"),
+        Rival::Rodent => format!("Rodent V {strength} ({})", style(style_id).name),
+    }
+}
+
+impl Session {
+    pub fn rival(&self) -> Rival {
+        match self.engine {
+            Engine::Maia(_) => Rival::Maia,
+            Engine::Rodent => Rival::Rodent,
+        }
+    }
+
+    /// The opponent on its bar: «Maia 1500», «Rodent V 2400 · Tal».
+    pub fn rival_label(&self) -> String {
+        match self.engine {
+            Engine::Maia(_) => format!("Maia {}", self.strength),
+            Engine::Rodent if self.style == STYLES[0].id => format!("Rodent V {}", self.strength),
+            Engine::Rodent => format!(
+                "Rodent V {} · {}",
+                self.strength,
+                tr(style(&self.style).title())
+            ),
+        }
+    }
 }
 
 /// Where a game against Maia starts when it goes on from a game: its start and the
@@ -643,6 +973,13 @@ pub struct Dialog {
     prefs: PlayPrefs,
     custom: bool,
     download: Option<crate::maia_download::Download>,
+    /// Rodent's download (docs/design/rodent-opponent.md §6).
+    rodent_download: Option<crate::engine_download::Download>,
+    /// What the dialog just did with the opponent or the strength, said under the slider
+    /// (§4): an automatic switch, a strength raised or lowered.
+    event: Option<String>,
+    /// Rodent was chosen by the slider going past Maia (not by the user's click).
+    auto_switched: bool,
     /// «Download and play» was pressed: the game starts once Maia is there.
     play_after: bool,
     /// The game goes on from a position of another game.
@@ -672,6 +1009,9 @@ impl Dialog {
             prefs,
             custom,
             download: None,
+            rodent_download: None,
+            event: None,
+            auto_switched: false,
             play_after: false,
             focus: true,
             from: None,
@@ -699,6 +1039,8 @@ impl Dialog {
             None => Dialog::new(settings),
         };
         d.prefs.strength = start.strength;
+        d.prefs.rival = start.rival;
+        d.prefs.style = start.style.clone();
         d.prefs.clock = start.clock;
         d.custom = start.clock.is_some_and(|c| !PRESETS.contains(&c));
         d.prefs.color = match start.user {
@@ -741,14 +1083,6 @@ impl Dialog {
             // A game from a position: that position, instead of the introduction.
             if let Some(from) = &self.from {
                 position_block(ui, settings, from, self.prefs.color, body_h >= 420.0);
-            } else if body_h >= 420.0 {
-                // In a low window the choices matter more than the introduction.
-                ui.label(
-                    RichText::new(tr(
-                        "Maia plays like a human of the chosen rating: it makes the moves people of that level make, mistakes included.",
-                    ))
-                    .weak(),
-                );
             }
 
             // The blocks in the order of the choice: who plays, against whom, which
@@ -800,29 +1134,178 @@ impl Dialog {
                     ui.end_row();
                 });
 
-            // The opponent: Maia's rating, or relative to the user's.
+            // The opponent (docs/design/rodent-opponent.md): Maia or Rodent V, one strength
+            // slider for both, Rodent's style.
+            let rodent_ok = crate::rodent_download::available();
+            let rodent = self.prefs.rival == Rival::Rodent;
             section(
                 ui,
-                &crate::i18n::trf("Opponent — Maia {elo}", &[("elo", &self.prefs.strength)]),
+                &if rodent {
+                    crate::i18n::trf("Opponent — Rodent V {elo}", &[("elo", &self.prefs.strength)])
+                } else {
+                    crate::i18n::trf("Opponent — Maia {elo}", &[("elo", &self.prefs.strength)])
+                },
             );
+            ui.horizontal(|ui| {
+                let tile_w = (W - GAP) / 2.0;
+                // A selectable tile of two centred lines: the name and what it is.
+                let tile = |ui: &mut egui::Ui, on: bool, enabled: bool, name: &str, about: &str| {
+                    let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(tile_w, 48.0), sense);
+                    let v = ui.style().interact_selectable(&resp, on);
+                    let fill = if on { ui.visuals().selection.bg_fill } else { v.weak_bg_fill };
+                    ui.painter().rect(rect, v.corner_radius, fill, v.bg_stroke, egui::StrokeKind::Inside);
+                    let (text, weak) = if enabled {
+                        (if on { ui.visuals().selection.stroke.color } else { v.text_color() }, ui.visuals().weak_text_color())
+                    } else {
+                        let c = ui.visuals().weak_text_color();
+                        (c, c)
+                    };
+                    let width = tile_w - 12.0;
+                    let line = |t: &str, size: f32, color| {
+                        ui.painter().layout(t.to_owned(), egui::FontId::proportional(size), color, width)
+                    };
+                    let (top, bottom) = (line(name, 14.0, text), line(about, 11.5, weak));
+                    let h = top.size().y + bottom.size().y;
+                    let y = rect.center().y - h / 2.0;
+                    ui.painter().galley(egui::pos2(rect.center().x - top.size().x / 2.0, y), top, text);
+                    let y2 = y + h - bottom.size().y;
+                    ui.painter().galley(egui::pos2(rect.center().x - bottom.size().x / 2.0, y2), bottom, weak);
+                    resp
+                };
+                if tile(ui, !rodent, true, "Maia", tr("plays like a human")).clicked() && rodent {
+                    self.prefs.rival = Rival::Maia;
+                    self.auto_switched = false;
+                    self.event = None;
+                    if self.prefs.strength > STRENGTH_MAX {
+                        self.prefs.strength = STRENGTH_MAX;
+                        self.event = Some(crate::i18n::trf(
+                            "Maia plays up to {elo}: the strength is lowered to {elo}.",
+                            &[("elo", &STRENGTH_MAX)],
+                        ));
+                    }
+                }
+                let about = if rodent_ok {
+                    tr("strong, with a style")
+                } else if cfg!(target_os = "macos") {
+                    tr("not yet for macOS")
+                } else {
+                    tr("not yet for this system")
+                };
+                let r = tile(ui, rodent, rodent_ok, "Rodent V", about).on_hover_text(if rodent_ok { "" } else { tr(
+                    "The authors of Rodent V have no build for this system yet. When there is one, it will be here.",
+                ) });
+                if r.clicked() && !rodent {
+                    self.prefs.rival = Rival::Rodent;
+                    self.auto_switched = false;
+                    self.event = None;
+                    if self.prefs.strength < RODENT_MIN {
+                        self.prefs.strength = RODENT_MIN;
+                        self.event = Some(crate::i18n::trf(
+                            "Rodent V plays from {elo}: the strength is raised to {elo}.",
+                            &[("elo", &RODENT_MIN)],
+                        ));
+                    }
+                }
+            });
+            // One scale for both: a point of the slider is always the same strength.
+            let top = if rodent_ok { RODENT_MAX } else { STRENGTH_MAX };
+            let before = self.prefs.strength;
             ui.horizontal(|ui| {
                 let end = |ui: &mut egui::Ui, v: u32| {
                     ui.add_sized([34.0, 18.0], egui::Label::new(RichText::new(v.to_string()).weak()))
                 };
                 end(ui, STRENGTH_MIN);
                 ui.spacing_mut().slider_width = W - 2.0 * 34.0 - 2.0 * GAP;
-                ui.add(
-                    egui::Slider::new(&mut self.prefs.strength, STRENGTH_MIN..=STRENGTH_MAX)
+                let resp = ui.add(
+                    egui::Slider::new(&mut self.prefs.strength, STRENGTH_MIN..=top)
                         .step_by(50.0)
                         .show_value(false),
                 );
-                end(ui, STRENGTH_MAX);
+                // Maia's zone under the track (§4): lit while she is chosen.
+                if rodent_ok {
+                    let rect = resp.rect;
+                    let pad = rect.height() / 2.0;
+                    let x = |v: u32| {
+                        rect.left() + pad + (v - STRENGTH_MIN) as f32 / (top - STRENGTH_MIN) as f32 * (rect.width() - 2.0 * pad)
+                    };
+                    let band = egui::Rect::from_min_max(
+                        egui::pos2(x(STRENGTH_MIN), rect.bottom() + 1.0),
+                        egui::pos2(x(STRENGTH_MAX), rect.bottom() + 4.0),
+                    );
+                    let color = if self.prefs.rival == Rival::Maia {
+                        ui.visuals().selection.bg_fill.gamma_multiply(0.6)
+                    } else {
+                        ui.visuals().widgets.inactive.bg_stroke.color
+                    };
+                    ui.painter().rect_filled(band, 1.0, color);
+                }
+                end(ui, top);
             });
-            ui.label(
-                RichText::new(tr("Her measured strength, on the Lichess blitz scale."))
-                    .weak()
-                    .size(11.5),
-            );
+            ui.add_space(4.0);
+            if self.prefs.strength != before {
+                // Past Maia's top: Rodent at once (the owner's rule); below Rodent's
+                // bottom: Maia. Moving back keeps the choice, with a word about it.
+                if self.prefs.rival == Rival::Maia && self.prefs.strength > STRENGTH_MAX {
+                    self.prefs.rival = Rival::Rodent;
+                    self.auto_switched = true;
+                    self.event = Some(crate::i18n::trf(
+                        "Stronger than {elo} plays Rodent V: Maia does not play that strong.",
+                        &[("elo", &STRENGTH_MAX)],
+                    ));
+                } else if self.prefs.rival == Rival::Rodent && self.prefs.strength < RODENT_MIN {
+                    self.prefs.rival = Rival::Maia;
+                    self.auto_switched = false;
+                    self.event = Some(crate::i18n::trf("Weaker than {elo} plays Maia.", &[("elo", &RODENT_MIN)]));
+                } else if self.auto_switched && self.prefs.strength <= STRENGTH_MAX {
+                    self.event = Some(tr("Maia can play here too: choose her if you want human mistakes.").to_owned());
+                }
+            }
+            let rodent = self.prefs.rival == Rival::Rodent;
+            let note = self.event.clone().unwrap_or_else(|| match (rodent, rodent_ok) {
+                (true, _) => tr("Measured strength, on the Lichess blitz scale.").to_owned(),
+                (false, true) => crate::i18n::trf(
+                    "Her measured strength, on the Lichess blitz scale. Stronger than {elo}: Rodent V.",
+                    &[("elo", &STRENGTH_MAX)],
+                ),
+                (false, false) => tr("Her measured strength, on the Lichess blitz scale.").to_owned(),
+            });
+            ui.add(egui::Label::new(RichText::new(note).weak().size(11.5)).truncate());
+            // Rodent's style: always in its place (greyed for Maia), so nothing jumps.
+            ui.add_space(4.0);
+            ui.add_enabled_ui(rodent, |ui| {
+                let current = style(&self.prefs.style);
+                let shown = if rodent {
+                    style_label(current)
+                } else {
+                    tr("Like a human").to_owned()
+                };
+                egui::ComboBox::from_id_salt("rodent_style")
+                    .width(W)
+                    .height(400.0)
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        for (head, player) in [(tr("Style"), false), (tr("As a player"), true)] {
+                            ui.label(RichText::new(head).weak().size(11.5));
+                            for st in STYLES.iter().filter(|st| st.player == player) {
+                                let text = style_label(st);
+                                ui.selectable_value(&mut self.prefs.style, st.id.to_owned(), text)
+                                    .on_hover_text(tr(st.about));
+                            }
+                            if !player {
+                                ui.separator();
+                            }
+                        }
+                    })
+                    .response
+                    .on_disabled_hover_text(tr("The style is chosen for Rodent V"));
+            });
+            let about = if rodent {
+                tr(style(&self.prefs.style).about)
+            } else {
+                tr("Maia does not pick a style: she plays like people of her rating.")
+            };
+            ui.add(egui::Label::new(RichText::new(about).weak().size(11.5)).truncate());
             let rating = self.rating();
 
             // Colour.
@@ -913,38 +1396,79 @@ impl Dialog {
                 })
                 .inner;
 
-            // Maia itself, downloaded once: under the body, by the buttons, always seen.
+            // The opponent's file, downloaded once: under the body, by the buttons, always
+            // seen. The line stays while either Maia's large model or Rodent is missing,
+            // so that switching the opponent does not change the dialog's height; it is
+            // about the opponent chosen.
+            let rodent = self.prefs.rival == Rival::Rodent;
             let stage = self.download.as_ref().map(|d| d.stage());
-            let mut ready = model.is_ok();
+            let rstage = self.rodent_download.as_ref().map(|d| d.stage());
+            let rodent_there = crate::rodent_download::installed().is_some();
+            let mut ready = if rodent { rodent_there } else { model.is_ok() };
             // A download going on: no game meanwhile (closing the dialog would cancel it).
             let busy = matches!(
-                    stage,
-                    Some(crate::maia_download::Stage::Downloading { .. } | crate::maia_download::Stage::Checking)
-                );
-            // While the large model is missing the line stays (also when the small one
-            // plays the strength chosen), so that the dialog does not jump with the slider.
+                stage,
+                Some(crate::maia_download::Stage::Downloading { .. } | crate::maia_download::Stage::Checking)
+            ) || matches!(
+                rstage,
+                Some(crate::engine_download::Stage::Downloading { .. } | crate::engine_download::Stage::Unpacking)
+            );
             let large = crate::maia_download::installed(Model::Large).is_some();
-            if !ready || !large {
+            let rodent_missing = crate::rodent_download::available() && !rodent_there;
+            if !ready || !large || rodent_missing {
                 ui.add_space(6.0);
-                match stage {
-                    None => {
-                        ui.label(RichText::new(download_note(model.as_ref().err().copied())).weak());
+                if rodent {
+                    match &rstage {
+                        None | Some(crate::engine_download::Stage::Cancelled) if !ready => {
+                            ui.label(RichText::new(crate::i18n::trf(
+                                "Rodent V is downloaded once ({mb} MB, from github.com, the authors' own file).",
+                                &[("mb", &crate::rodent_download::size_mb())],
+                            )).weak());
+                        }
+                        Some(crate::engine_download::Stage::Downloading { done, total }) => {
+                            ui.add(egui::ProgressBar::new(*done as f32 / (*total).max(1) as f32).show_percentage());
+                        }
+                        Some(crate::engine_download::Stage::Unpacking) => {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Spinner::new());
+                                ui.label(tr("Unpacking…"));
+                            });
+                        }
+                        Some(crate::engine_download::Stage::Done(_)) => ready = true,
+                        Some(crate::engine_download::Stage::Failed(f)) => {
+                            ui.label(RichText::new(crate::i18n::trf(
+                                "Could not download Rodent V: {error}",
+                                &[("error", &download_failure(f))],
+                            )).color(ui.visuals().error_fg_color));
+                        }
+                        // Ready, but Maia's file is missing: the line keeps its place.
+                        _ => {
+                            ui.label(" ");
+                        }
                     }
-                    Some(crate::maia_download::Stage::Downloading { done }) => {
-                        let size = self.download.as_ref().map_or(1, |d| d.model.size());
-                        ui.add(
-                            egui::ProgressBar::new(done as f32 / size as f32).show_percentage(),
-                        );
-                    }
-                    Some(crate::maia_download::Stage::Checking) => {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::Spinner::new());
-                            ui.label(tr("Checking…"));
-                        });
-                    }
-                    Some(crate::maia_download::Stage::Done(_)) => ready = true,
-                    Some(crate::maia_download::Stage::Failed(ref e)) => {
-                        ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
+                } else if ready && large {
+                    ui.label(" ");
+                } else {
+                    match stage {
+                        None => {
+                            ui.label(RichText::new(download_note(model.as_ref().err().copied())).weak());
+                        }
+                        Some(crate::maia_download::Stage::Downloading { done }) => {
+                            let size = self.download.as_ref().map_or(1, |d| d.model.size());
+                            ui.add(
+                                egui::ProgressBar::new(done as f32 / size as f32).show_percentage(),
+                            );
+                        }
+                        Some(crate::maia_download::Stage::Checking) => {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Spinner::new());
+                                ui.label(tr("Checking…"));
+                            });
+                        }
+                        Some(crate::maia_download::Stage::Done(_)) => ready = true,
+                        Some(crate::maia_download::Stage::Failed(ref e)) => {
+                            ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
+                        }
                     }
                 }
             }
@@ -963,13 +1487,22 @@ impl Dialog {
                     .inner;
                 let pressed = !busy
                     && (main.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                if pressed && !ready && let Err(m) = model {
-                    self.download = Some(crate::maia_download::Download::start(ctx, m));
-                    self.play_after = true;
+                if pressed && !ready {
+                    if rodent {
+                        self.rodent_download = Some(crate::rodent_download::start(ctx));
+                        self.play_after = true;
+                    } else if let Err(m) = model {
+                        self.download = Some(crate::maia_download::Download::start(ctx, m));
+                        self.play_after = true;
+                    }
                 }
-                // After a download: the game starts when it is done (not when the slider
-                // moves down to what another model plays).
-                let downloaded = matches!(stage, Some(crate::maia_download::Stage::Done(_)));
+                // After a download: the game starts when it is done, only if that opponent
+                // is still the one chosen (not when the choice moved meanwhile).
+                let downloaded = if rodent {
+                    matches!(rstage, Some(crate::engine_download::Stage::Done(_)))
+                } else {
+                    matches!(stage, Some(crate::maia_download::Stage::Done(_)))
+                };
                 if ready && (pressed || (self.play_after && downloaded)) {
                     self.play_after = false;
                     let user = match self.prefs.color {
@@ -992,6 +1525,8 @@ impl Dialog {
                         settings.play.color = color;
                     }
                     out = Some(DialogOutcome::Play(Start {
+                        rival: self.prefs.rival,
+                        style: self.prefs.style.clone(),
                         user,
                         strength: self.prefs.strength,
                         user_elo: rating,
@@ -1109,6 +1644,18 @@ fn position_block(
         });
 }
 
+/// Why Rodent's download failed, in words.
+fn download_failure(f: &crate::engine_download::Failure) -> String {
+    use crate::engine_download::Failure as F;
+    match f {
+        F::Network(e) | F::Disk(e) => e.clone(),
+        F::Server(code) => format!("HTTP {code}"),
+        F::Broken => tr("it does not start on this computer").to_owned(),
+        F::Checksum => tr("The file is not the published one").to_owned(),
+        F::Unsupported => tr("not yet for this system").to_owned(),
+    }
+}
+
 /// What the download button brings: Maia herself, or (the small one being there) the
 /// large one for the strength chosen.
 fn download_note(model: Option<Model>) -> String {
@@ -1158,13 +1705,19 @@ impl End {
             Ending::InsufficientMaterial => tr("neither side can checkmate"),
             Ending::Threefold => tr("the position occurred three times"),
             Ending::FiftyMoves => tr("50 moves without a capture or a pawn move"),
-            Ending::Time { draw: true, loser } if loser == self.user => {
-                tr("time is up, but Maia cannot checkmate")
-            }
-            Ending::Time { draw: true, .. } => tr("Maia's time is up, but you cannot checkmate"),
+            Ending::Time { draw: true, loser } if loser == self.user => said(
+                self.start.rival,
+                "time is up, but Maia cannot checkmate",
+                "time is up, but Rodent V cannot checkmate",
+            ),
+            Ending::Time { draw: true, .. } => said(
+                self.start.rival,
+                "Maia's time is up, but you cannot checkmate",
+                "Rodent V's time is up, but you cannot checkmate",
+            ),
             Ending::Time { .. } => tr("time is up"),
             Ending::Resigned { loser } if loser == self.user => "",
-            Ending::Resigned { .. } => tr("Maia resigned"),
+            Ending::Resigned { .. } => said(self.start.rival, "Maia resigned", "Rodent V resigned"),
             Ending::DrawAgreed => tr("by agreement"),
         }
     }

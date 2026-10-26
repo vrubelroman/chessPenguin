@@ -24,6 +24,7 @@ mod own_db;
 mod play;
 mod reference;
 mod review;
+mod rodent_download;
 mod san;
 mod settings;
 mod settings_ui;
