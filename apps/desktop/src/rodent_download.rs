@@ -38,7 +38,7 @@ pub fn available() -> bool {
 }
 
 pub fn size_mb() -> u64 {
-    ARCHIVE.size.div_ceil(1_000_000)
+    (ARCHIVE.size + 500_000) / 1_000_000
 }
 
 /// `<local data dir>/engines/rodent_v_1.2/` (`CP_RODENT` elsewhere: development).
@@ -50,11 +50,20 @@ pub fn dir() -> Option<PathBuf> {
         .map(|d| d.data_local_dir().join("engines").join("rodent_v_1.2"))
 }
 
-/// The installed engine, if it is there (with its personalities beside it).
+/// Written last, once the engine started from its unpacked folder: a folder cut short
+/// (the program closed while unpacking) is not taken for an installed engine.
+const COMPLETE: &str = ".complete";
+
+/// The installed engine, if it is all there (its personalities, nets and books beside
+/// it; a development folder of `CP_RODENT` needs no mark).
 pub fn installed() -> Option<PathBuf> {
     let d = dir()?;
     let exe = d.join(EXE);
-    (exe.is_file() && d.join("personalities").is_dir()).then_some(exe)
+    let whole = ["personalities", "nets", "books"]
+        .iter()
+        .all(|f| d.join(f).is_dir());
+    let marked = std::env::var_os("CP_RODENT").is_some() || d.join(COMPLETE).is_file();
+    (exe.is_file() && whole && marked).then_some(exe)
 }
 
 /// Removes the downloaded engine (a broken one, or to free its space).
@@ -86,7 +95,11 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
             report(Stage::Unpacking);
             unpack(&archive, &dir, bin)
         })
-        .and_then(|exe| check_runs(&exe).map(|()| exe));
+        .and_then(|exe| check_runs(&exe).map(|()| exe))
+        .and_then(|exe| {
+            std::fs::write(dir.join(COMPLETE), TAG).map_err(disk)?;
+            Ok(exe)
+        });
     let _ = std::fs::remove_file(&archive);
     if result.is_err() {
         // Nothing half-installed is left behind.

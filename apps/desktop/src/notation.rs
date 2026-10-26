@@ -452,7 +452,7 @@ fn handle_move_response(
                 over.is_none(),
                 egui::Button::new(tr("Play on from here…")).shortcut_text("Ctrl+G"),
             )
-            .on_hover_text(tr("A game against Maia from this position"));
+            .on_hover_text(tr("A game against the computer from this position"));
         let play = match over {
             Some(why) => play.on_disabled_hover_text(crate::i18n::trf(
                 "The game is over here: {why}",

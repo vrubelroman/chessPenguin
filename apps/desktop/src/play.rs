@@ -515,7 +515,7 @@ impl Opponent {
                 };
                 let engine = match uci::Engine::spawn_with(config, Box::new(|| {})) {
                     Ok(e) => e,
-                    Err(e) => return fail(e.to_string()),
+                    Err(e) => return fail(start_failure(&e.to_string())),
                 };
                 let personality = format!("personalities/{style}.txt");
                 let mut setup = vec![
@@ -528,11 +528,11 @@ impl Opponent {
                 }
                 let ready = engine.set_threads(1).and_then(|()| engine.set_hash_mb(64));
                 if let Err(e) = ready {
-                    return fail(e.to_string());
+                    return fail(start_failure(&e.to_string()));
                 }
                 for (name, value) in &setup {
                     if let Err(e) = engine.set_option(name, Some(value)) {
-                        return fail(e.to_string());
+                        return fail(start_failure(&e.to_string()));
                     }
                 }
                 let _ = engine.new_game();
@@ -560,7 +560,9 @@ impl Opponent {
                             }) if search_id == id => {
                                 break b;
                             }
-                            Some(uci::EngineEvent::Terminated(e)) => return fail(format!("{e:?}")),
+                            Some(uci::EngineEvent::Terminated(_)) => {
+                                return fail(tr("it stopped while playing").to_owned());
+                            }
                             _ if started.elapsed() > think + Duration::from_secs(20) => {
                                 let _ = engine.stop();
                             }
@@ -1033,6 +1035,20 @@ impl Dialog {
         if prefs.clock.is_some_and(|c| !c.allowed()) {
             prefs.clock = PlayPrefs::default().clock;
         }
+        // A remembered strength the opponent does not play (another build's range, an
+        // edited file): to the nearest one that is played.
+        let rodent_ok = crate::rodent_download::available();
+        if prefs.rival == Rival::Rodent && !rodent_ok {
+            prefs.rival = Rival::Maia;
+        }
+        match prefs.rival {
+            Rival::Maia if prefs.strength > STRENGTH_MAX && rodent_ok => {
+                prefs.rival = Rival::Rodent;
+                prefs.strength = prefs.strength.clamp(RODENT_MIN, RODENT_MAX);
+            }
+            Rival::Maia => prefs.strength = prefs.strength.clamp(STRENGTH_MIN, STRENGTH_MAX),
+            Rival::Rodent => prefs.strength = prefs.strength.clamp(RODENT_MIN, RODENT_MAX),
+        }
         let custom = prefs.clock.is_some_and(|c| !PRESETS.contains(&c));
         Dialog {
             name: settings.your_name.clone(),
@@ -1098,6 +1114,7 @@ impl Dialog {
     ) -> Option<DialogOutcome> {
         use egui::RichText;
         let mut out = None;
+        let rival_before = self.prefs.rival;
         let model = model_for(self.prefs.strength);
         let body_h = (ctx.content_rect().height() - 140.0).max(160.0);
         egui::Modal::new(egui::Id::new("play_dialog")).show(ctx, |ui| {
@@ -1187,7 +1204,13 @@ impl Dialog {
                     let fill = if on { ui.visuals().selection.bg_fill } else { v.weak_bg_fill };
                     ui.painter().rect(rect, v.corner_radius, fill, v.bg_stroke, egui::StrokeKind::Inside);
                     let (text, weak) = if enabled {
-                        (if on { ui.visuals().selection.stroke.color } else { v.text_color() }, ui.visuals().weak_text_color())
+                        if on {
+                            // On the selected fill the caption takes its text colour, softer.
+                            let c = ui.visuals().selection.stroke.color;
+                            (c, c.gamma_multiply(0.8))
+                        } else {
+                            (v.text_color(), ui.visuals().weak_text_color())
+                        }
                     } else {
                         let c = ui.visuals().weak_text_color();
                         (c, c)
@@ -1285,9 +1308,15 @@ impl Dialog {
                         "Stronger than {elo} plays Rodent V, from {min} on: Maia does not play that strong.",
                         &[("elo", &STRENGTH_MAX), ("min", &RODENT_MIN)],
                     ));
+                } else if self.prefs.rival == Rival::Rodent
+                    && self.prefs.strength < RODENT_MIN
+                    && self.prefs.strength > STRENGTH_MAX
+                {
+                    // In the gap nobody plays: Rodent stays, at his lowest (a drag through
+                    // it does not flip between the two every frame).
+                    self.prefs.strength = RODENT_MIN;
                 } else if self.prefs.rival == Rival::Rodent && self.prefs.strength < RODENT_MIN {
                     self.prefs.rival = Rival::Maia;
-                    self.prefs.strength = self.prefs.strength.min(STRENGTH_MAX);
                     self.auto_switched = false;
                     self.event = Some(crate::i18n::trf("Weaker than {elo} plays Maia.", &[("elo", &RODENT_MIN)]));
                 } else if self.auto_switched && self.prefs.strength <= STRENGTH_MAX {
@@ -1433,6 +1462,11 @@ impl Dialog {
             // seen. The line stays while either Maia's large model or Rodent is missing,
             // so that switching the opponent does not change the dialog's height; it is
             // about the opponent chosen.
+            // The opponent changed: a game asked for by «Download and play» is not started
+            // for the other one when its file comes.
+            if self.prefs.rival != rival_before {
+                self.play_after = false;
+            }
             let rodent = self.prefs.rival == Rival::Rodent;
             let stage = self.download.as_ref().map(|d| d.stage());
             let rstage = self.rodent_download.as_ref().map(|d| d.stage());
@@ -1687,6 +1721,12 @@ fn download_failure(f: &crate::engine_download::Failure) -> String {
         F::Checksum => tr("The file is not the published one").to_owned(),
         F::Unsupported => tr("not yet for this system").to_owned(),
     }
+}
+
+/// Why an engine did not start, in words: the details go to the log.
+fn start_failure(detail: &str) -> String {
+    eprintln!("rodent: {detail}");
+    tr("it does not start on this computer").to_owned()
 }
 
 /// What the download button brings: Maia herself, or (the small one being there) the

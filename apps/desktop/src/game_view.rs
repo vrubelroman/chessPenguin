@@ -3050,7 +3050,10 @@ impl GameView {
                     } else {
                         format!("{king} {}", s.rival_label())
                     };
-                    ui.label(RichText::new(name).size(15.0));
+                    // One line however narrow the panel: a long style is cut, not wrapped
+                    // under the clock (the whole name on hover).
+                    ui.add(egui::Label::new(RichText::new(&name).size(15.0)).truncate())
+                        .on_hover_text(&name);
                     let state = if side != user && s.resign_offer.is_some() {
                         tr("resigns")
                     } else if side != user && s.opponent.thinking {
@@ -3244,7 +3247,11 @@ impl GameView {
                 if let Some((you, maia)) = end.left {
                     ui.label(
                         RichText::new(trf(
-                            "Left: you {you} · Maia {maia}",
+                            crate::play::said(
+                                end.start.rival,
+                                "Left: you {you} · Maia {maia}",
+                                "Left: you {you} · Rodent V {maia}",
+                            ),
                             &[
                                 ("you", &crate::play::clock_text(you)),
                                 ("maia", &crate::play::clock_text(maia)),
