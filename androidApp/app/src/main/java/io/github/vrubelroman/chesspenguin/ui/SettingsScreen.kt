@@ -118,6 +118,7 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
             Toggle(stringResource(R.string.best_arrow), prefs.bestArrow) { v -> set { it.copy(bestArrow = v) } }
             Toggle(stringResource(R.string.sound), prefs.sound) { v -> set { it.copy(sound = v) } }
             Toggle(stringResource(R.string.vibration), prefs.vibration) { v -> set { it.copy(vibration = v) } }
+            Toggle(stringResource(R.string.record_games), prefs.recordGames) { v -> set { it.copy(recordGames = v) } }
 
             Group(stringResource(R.string.group_look))
             Item(stringResource(R.string.board_and_pieces), boardLabel(prefs.board) + " · " + prefs.pieces.dir, onClick = onBoardStyle)

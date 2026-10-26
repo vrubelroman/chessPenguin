@@ -14,6 +14,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -123,7 +127,51 @@ fun PlaySheet(from: PlayFrom?, onPlay: (Int, Boolean, String) -> Unit, onDismiss
                 }
             }
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.play_your_name)) }, singleLine = true)
+            // The name, with the players of this phone to pick from; under it, where the
+            // games go (player-games.md §6).
+            val players = remember { app.playerGames.players() }
+            var picking by remember { mutableStateOf(false) }
+            val line = if (!prefs.recordGames) {
+                stringResource(R.string.player_line_off)
+            } else {
+                val db = app.playerGames.database(name)
+                when {
+                    app.playerGames.tidy(name).isEmpty() -> stringResource(R.string.player_line_noname, db?.name ?: app.playerGames.dbName(""))
+                    db != null -> stringResource(R.string.player_line_existing, db.name) + " · " +
+                        androidx.compose.ui.res.pluralStringResource(R.plurals.games_count, db.games ?: 0, groupDigits(db.games ?: 0))
+                    else -> stringResource(R.string.player_line_new, app.playerGames.dbName(name))
+                }
+            }
+            // The players whose names begin with what is typed (none once it is one of them).
+            val typed = app.playerGames.tidy(name).lowercase()
+            val matching = players.filter { it.lowercase().startsWith(typed) && it.lowercase() != typed }
+            // Opened by typing or by its arrow, not by a tap in the field (it would cover «Play»).
+            ExposedDropdownMenuBox(expanded = picking && matching.isNotEmpty(), onExpandedChange = { if (!it) picking = false }) {
+                OutlinedTextField(
+                    name,
+                    {
+                        name = it
+                        picking = it.isNotBlank()
+                    },
+                    Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
+                    label = { Text(stringResource(R.string.play_your_name)) },
+                    supportingText = { Text(line) },
+                    trailingIcon = {
+                        if (matching.isNotEmpty()) {
+                            IconButton(onClick = { picking = !picking }) { ExposedDropdownMenuDefaults.TrailingIcon(expanded = picking) }
+                        }
+                    },
+                    singleLine = true,
+                )
+                ExposedDropdownMenu(expanded = picking && matching.isNotEmpty(), onDismissRequest = { picking = false }) {
+                    matching.forEach { p ->
+                        DropdownMenuItem(text = { Text(p) }, onClick = {
+                            name = p
+                            picking = false
+                        })
+                    }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             // The state of Maia's file: always one line, so that nothing jumps.
             Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {

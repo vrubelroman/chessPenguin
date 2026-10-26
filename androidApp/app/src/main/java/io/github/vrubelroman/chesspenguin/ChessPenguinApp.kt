@@ -11,6 +11,7 @@ import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.EngineFiles
 import io.github.vrubelroman.chesspenguin.data.MaiaFiles
 import io.github.vrubelroman.chesspenguin.data.MaiaGames
+import io.github.vrubelroman.chesspenguin.data.PlayerGames
 import io.github.vrubelroman.chesspenguin.data.Sounds
 import io.github.vrubelroman.chesspenguin.data.Library
 import io.github.vrubelroman.chesspenguin.data.OnlineDownloads
@@ -37,6 +38,8 @@ class ChessPenguinApp : Application() {
     val maiaFiles by lazy { MaiaFiles(this, scope) }
     /// The game against Maia in hand (android-play.md §31.7).
     val maiaGames by lazy { MaiaGames(this) }
+    /// The players' databases: games against Maia written by themselves (player-games.md).
+    val playerGames by lazy { PlayerGames(this, library) }
     /// The sounds of moves and of the end of a game (android-play.md §33).
     val sounds by lazy { Sounds(this, settings) }
     /// Games from Lichess and Chess.com being downloaded (android-ui.md §23).

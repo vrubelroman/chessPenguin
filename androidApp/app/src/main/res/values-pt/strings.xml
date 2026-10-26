@@ -489,7 +489,7 @@
     <string name="color_black">Pretas</string>
     <string name="color_random">Aleatório</string>
     <string name="play_opponent">Adversário — Maia %1$s</string>
-    <string name="play_measured">A força medida dela, na escala de blitz do Lichess.</string>
+    <string name="play_measured">O rating próprio da Maia: não corresponde ao Elo de uma pessoa.</string>
     <string name="play_download_note">A Maia é baixada uma única vez (%1$s MB, de huggingface.co, o arquivo dos próprios autores).</string>
     <string name="play_download_and_play">Baixar e jogar</string>
     <string name="play_play">Jogar</string>
@@ -506,7 +506,7 @@
     <string name="play_note_from">A partir daqui, uma partida contra Maia %1$s.</string>
     <string name="play_abort">Abortar</string>
     <string name="play_with_maia">Jogar com a Maia</string>
-    <string name="play_your_name">Seu nome (para a partida)</string>
+    <string name="play_your_name">O seu nome</string>
     <string name="play_maia_ready">A Maia foi baixada</string>
     <string name="play_retry">Tentar de novo</string>
     <string name="play_her_position_lost">A posição dela está perdida. Aceitar a vitória ou continuar?</string>
@@ -535,10 +535,23 @@
     <string name="play_adjourned_q">Há uma partida adiada contra a Maia %1$s</string>
     <string name="play_continue_it">Continuá-la</string>
     <string name="play_start_new">Começar uma nova</string>
-    <string name="play_adjourned_new_text">Uma nova partida a substitui.</string>
+    <string name="play_adjourned_new_text">Uma nova partida a substitui; o que foi jogado vai, inacabado, para a base do jogador.</string>
     <string name="play_offer_draw">Empate</string>
     <string name="end_agreement">por acordo</string>
     <string name="play_draw_declined">A Maia recusa o empate</string>
     <string name="play_draw_later">A Maia recusou; ofereça de novo após dois lances dela</string>
     <string name="play_draw_no_engine">A Maia responde ao empate com o Stockfish: baixe-o com «Motor»</string>
+    <string name="player_db_name">%1$s — partidas contra o computador</string>
+    <string name="player_db_shared">Partidas contra o computador</string>
+    <string name="player_written">✓ Em «%1$s», n.º %2$s ›</string>
+    <string name="player_kept_unfinished">Partida gravada inacabada em «%1$s»</string>
+    <string name="player_db_row">gravadas sozinhas</string>
+    <string name="record_games">Gravar as partidas contra a Maia na base do jogador</string>
+    <string name="player_line_existing">As partidas são gravadas em «%1$s»</string>
+    <string name="player_line_new">As partidas serão gravadas numa nova base «%1$s».</string>
+    <string name="player_line_noname">Sem nome, as partidas vão para «%1$s». Escreva um nome para ter a sua própria base.</string>
+    <string name="player_line_off">As partidas não são gravadas sozinhas (Definições).</string>
+    <string name="player_written_new">✓ Nova base «%1$s», n.º %2$s ›</string>
+    <string name="player_write_failed">Não foi possível gravar em «%1$s»: %2$s</string>
+    <string name="play_adjourned_replaced">Uma nova partida a substitui.</string>
 </resources>

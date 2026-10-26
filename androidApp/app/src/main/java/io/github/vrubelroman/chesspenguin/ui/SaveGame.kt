@@ -50,6 +50,10 @@ class GameEdit : ViewModel() {
     var notes: List<String> = emptyList()
     /// Where a new game or a copy was saved: saving again replaces it there.
     var savedTo: Pair<String, UInt>? = null
+    /// Where the game against Maia went by itself (its player's database), if it did.
+    val recorded = mutableStateOf<io.github.vrubelroman.chesspenguin.data.Written?>(null)
+    /// Why it did not (the card says so; «Save…» stays).
+    val recordError = mutableStateOf<String?>(null)
     /// An opening being learned over the game (android-play.md §32), how far, the board's side.
     val trainer = mutableStateOf<uniffi.mobile_api.Trainer?>(null)
     /// The game against Maia, when this screen plays one (§31).

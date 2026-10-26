@@ -34,10 +34,18 @@ class MaiaGames(context: Context) {
     /// The PGN of the game in hand.
     fun pgn(): String? = runCatching { file.readText() }.getOrNull()
 
+    /// Which game is in hand: bumped by each new one (a write that ends after a rematch
+    /// began is not taken for the new game's).
+    var serial = 0
+        private set
+
     /// A new game: it replaces the one in hand.
     fun begin(pgn: String, meta: PlayMeta) {
+        serial++
         write(pgn)
         prefs.edit()
+            .remove("writtenDb")
+            .remove("writtenIndex")
             .putInt("strength", meta.strength)
             .putBoolean("white", meta.userWhite)
             .putString("name", meta.name)
@@ -55,8 +63,21 @@ class MaiaGames(context: Context) {
     /// The game ended: it is not offered to go on with any more.
     fun finish(pgn: String) {
         save(pgn)
-        prefs.edit().putBoolean("over", true).apply()
+        // At once (commit): a game over must not come back as one to go on with.
+        prefs.edit().putBoolean("over", true).commit()
         _current.value = _current.value?.copy(over = true)
+    }
+
+    /// The game was written into its player's database: database and number there.
+    fun setWritten(id: String, index: UInt, game: Int) {
+        if (game != serial) return
+        prefs.edit().putString("writtenDb", id).putLong("writtenIndex", index.toLong()).commit()
+    }
+
+    /// Where the game in hand was written, if it was.
+    fun written(): Pair<String, UInt>? {
+        val id = prefs.getString("writtenDb", null) ?: return null
+        return id to prefs.getLong("writtenIndex", 0).toUInt()
     }
 
     /// The game is gone (left after its end, removed by the user).

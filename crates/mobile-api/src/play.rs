@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use maia::strength::{Model, choose, rating_input, temperature};
+use maia::strength::choose;
 use shakmaty::{CastlingMode, Chess};
 
 use std::sync::Mutex;
@@ -179,9 +179,10 @@ impl ResignJudge {
     }
 }
 
-/// The weakest and strongest Maia on the phone (the small model's measured range).
-pub const PHONE_MIN: u32 = 1100;
-pub const PHONE_MAX: u32 = maia::strength::SMALL_MAX;
+/// Maia's own scale, as on the desktop (decisions «Сила соперника — по шкале самого
+/// движка»): the ratings her network was trained on, not a person's Elo.
+pub const PHONE_MIN: u32 = 600;
+pub const PHONE_MAX: u32 = 2600;
 
 /// The strengths the phone offers: (weakest, strongest).
 #[uniffi::export]
@@ -228,12 +229,8 @@ impl MaiaPlayer {
             )
         })?;
         let strength = strength.clamp(PHONE_MIN, PHONE_MAX);
-        let p = self.maia.predict(
-            &history,
-            rating_input(Model::Small, strength),
-            opponent.unwrap_or(strength),
-        );
-        choose(&p, temperature(Model::Small, strength), random)
+        let p = self.maia.predict(&history, strength, opponent.unwrap_or(strength));
+        choose(&p, 1.0, random)
             .map(|m| m.to_uci(CastlingMode::Standard).to_string())
     }
 }

@@ -479,7 +479,7 @@
     <string name="color_black">Qoralar</string>
     <string name="color_random">Tasodifiy</string>
     <string name="play_opponent">Raqib — Maia %1$s</string>
-    <string name="play_measured">Uning o‘lchangan kuchi, Lichess blits shkalasi bo‘yicha.</string>
+    <string name="play_measured">Maia ning o‘z reytingi: u odamning Elo reytingiga teng emas.</string>
     <string name="play_download_note">Maia bir marta yuklab olinadi (%1$s MB, huggingface.co dan — mualliflarning o‘z fayli).</string>
     <string name="play_download_and_play">Yuklab olish va o‘ynash</string>
     <string name="play_play">O‘ynash</string>
@@ -496,7 +496,7 @@
     <string name="play_note_from">Bundan keyin — Maia %1$s bilan o‘yin.</string>
     <string name="play_abort">To‘xtatish</string>
     <string name="play_with_maia">Maia bilan o‘ynash</string>
-    <string name="play_your_name">Ismingiz (o‘yin yozuvi uchun)</string>
+    <string name="play_your_name">Ismingiz</string>
     <string name="play_maia_ready">Maia yuklab olindi</string>
     <string name="play_retry">Qayta urinish</string>
     <string name="play_her_position_lost">Uning pozitsiyasi yutqazilgan. G‘alabani qabul qilasizmi yoki davom etasizmi?</string>
@@ -525,10 +525,23 @@
     <string name="play_adjourned_q">Maia %1$s bilan to‘xtatilgan o‘yin bor</string>
     <string name="play_continue_it">Davom ettirish</string>
     <string name="play_start_new">Yangisini boshlash</string>
-    <string name="play_adjourned_new_text">Yangi o‘yin uning o‘rnini oladi.</string>
+    <string name="play_adjourned_new_text">Yangi o‘yin uning o‘rnini oladi; o‘ynalgani tugallanmagan holda o‘yinchi bazasiga yoziladi.</string>
     <string name="play_offer_draw">Durang</string>
     <string name="end_agreement">kelishuv bo‘yicha</string>
     <string name="play_draw_declined">Maia durangdan bosh tortadi</string>
     <string name="play_draw_later">Maia rad etdi; uning ikki yurishidan keyin yana taklif qiling</string>
     <string name="play_draw_no_engine">Maia durangga Stockfish bilan javob beradi: uni «Dvigatel» tugmasi bilan yuklab oling</string>
+    <string name="player_db_name">%1$s — kompyuter bilan o‘yinlar</string>
+    <string name="player_db_shared">Kompyuter bilan o‘yinlar</string>
+    <string name="player_written">✓ «%1$s» da, № %2$s ›</string>
+    <string name="player_kept_unfinished">O‘yin tugallanmagan holda «%1$s» ga yozildi</string>
+    <string name="player_db_row">o‘zi yoziladi</string>
+    <string name="record_games">Maia bilan o‘yinlarni o‘yinchi bazasiga yozish</string>
+    <string name="player_line_existing">O‘yinlar «%1$s» ga yoziladi</string>
+    <string name="player_line_new">O‘yinlar yangi «%1$s» bazasiga yoziladi.</string>
+    <string name="player_line_noname">Ismsiz o‘yinlar «%1$s» ga tushadi. O‘z bazangiz bo‘lishi uchun ismingizni yozing.</string>
+    <string name="player_line_off">O‘yinlar o‘zi yozilmaydi (Sozlamalar).</string>
+    <string name="player_written_new">✓ Yangi baza «%1$s», № %2$s ›</string>
+    <string name="player_write_failed">«%1$s» ga yozib bo‘lmadi: %2$s</string>
+    <string name="play_adjourned_replaced">Yangi o‘yin uning o‘rnini oladi.</string>
 </resources>

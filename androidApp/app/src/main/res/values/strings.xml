@@ -484,7 +484,7 @@
     <string name="color_black">Black</string>
     <string name="color_random">Random</string>
     <string name="play_opponent">Opponent — Maia %1$s</string>
-    <string name="play_measured">Her measured strength, on the Lichess blitz scale.</string>
+    <string name="play_measured">Maia’s own rating: it does not match a person’s Elo.</string>
     <string name="play_download_note">Maia is downloaded once (%1$s MB, from huggingface.co, the authors\' own file).</string>
     <string name="play_download_and_play">Download and play</string>
     <string name="play_play">Play</string>
@@ -501,7 +501,7 @@
     <string name="play_note_from">From here on, a game against Maia %1$s.</string>
     <string name="play_abort">Abort</string>
     <string name="play_with_maia">Play with Maia</string>
-    <string name="play_your_name">Your name (for the game’s record)</string>
+    <string name="play_your_name">Your name</string>
     <string name="play_maia_ready">Maia is downloaded</string>
     <string name="play_retry">Try again</string>
     <string name="play_her_position_lost">Her position is lost. Accept the win or play on?</string>
@@ -530,10 +530,23 @@
     <string name="play_adjourned_q">There is a game put aside against Maia %1$s</string>
     <string name="play_continue_it">Continue it</string>
     <string name="play_start_new">Start a new one</string>
-    <string name="play_adjourned_new_text">A new game replaces it.</string>
+    <string name="play_adjourned_new_text">A new game replaces it; what was played goes into the player’s database, unfinished.</string>
     <string name="play_offer_draw">Draw</string>
     <string name="end_agreement">by agreement</string>
     <string name="play_draw_declined">Maia declines the draw</string>
     <string name="play_draw_later">Maia declined; offer again after two of her moves</string>
     <string name="play_draw_no_engine">Maia answers a draw offer with Stockfish: download it in the game screen («Engine»)</string>
+    <string name="player_db_name">%1$s — games against the computer</string>
+    <string name="player_db_shared">Games against the computer</string>
+    <string name="player_written">✓ In “%1$s”, No. %2$s ›</string>
+    <string name="player_kept_unfinished">Game written to “%1$s” unfinished</string>
+    <string name="player_db_row">recorded automatically</string>
+    <string name="record_games">Write games against Maia to the player’s database</string>
+    <string name="player_line_existing">Games are written to “%1$s”</string>
+    <string name="player_line_new">Games will be written to a new database “%1$s”.</string>
+    <string name="player_line_noname">Without a name games go to “%1$s”. Enter a name to have a database of your own.</string>
+    <string name="player_line_off">Games are not written by themselves (Settings).</string>
+    <string name="player_written_new">✓ New database “%1$s”, No. %2$s ›</string>
+    <string name="player_write_failed">Could not write to “%1$s”: %2$s</string>
+    <string name="play_adjourned_replaced">A new game replaces it.</string>
 </resources>

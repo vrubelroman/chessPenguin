@@ -480,7 +480,7 @@
     <string name="color_black">Schwarz</string>
     <string name="color_random">Zufällig</string>
     <string name="play_opponent">Gegner — Maia %1$s</string>
-    <string name="play_measured">Ihre gemessene Spielstärke, auf der Lichess-Blitz-Skala.</string>
+    <string name="play_measured">Die eigene Wertung von Maia: sie entspricht nicht der Elo eines Menschen.</string>
     <string name="play_download_note">Maia wird einmalig heruntergeladen (%1$s MB, von huggingface.co, die Datei der Autoren selbst).</string>
     <string name="play_download_and_play">Herunterladen und spielen</string>
     <string name="play_play">Spielen</string>
@@ -497,7 +497,7 @@
     <string name="play_note_from">Ab hier eine Partie gegen Maia %1$s.</string>
     <string name="play_abort">Abbrechen</string>
     <string name="play_with_maia">Gegen Maia spielen</string>
-    <string name="play_your_name">Ihr Name (für die Partie)</string>
+    <string name="play_your_name">Ihr Name</string>
     <string name="play_maia_ready">Maia ist heruntergeladen</string>
     <string name="play_retry">Erneut versuchen</string>
     <string name="play_her_position_lost">Ihre Stellung ist verloren. Sieg annehmen oder weiterspielen?</string>
@@ -526,10 +526,23 @@
     <string name="play_adjourned_q">Eine Partie gegen Maia %1$s ist zurückgestellt</string>
     <string name="play_continue_it">Fortsetzen</string>
     <string name="play_start_new">Neue beginnen</string>
-    <string name="play_adjourned_new_text">Eine neue Partie ersetzt sie.</string>
+    <string name="play_adjourned_new_text">Eine neue Partie ersetzt sie; das Gespielte kommt unvollendet in die Datenbank des Spielers.</string>
     <string name="play_offer_draw">Remis</string>
     <string name="end_agreement">durch Einigung</string>
     <string name="play_draw_declined">Maia lehnt das Remis ab</string>
     <string name="play_draw_later">Maia hat abgelehnt; nach zwei ihrer Züge wieder anbieten</string>
     <string name="play_draw_no_engine">Maia beantwortet Remis mit Stockfish: über „Engine“ herunterladen</string>
+    <string name="player_db_name">%1$s — Partien gegen den Computer</string>
+    <string name="player_db_shared">Partien gegen den Computer</string>
+    <string name="player_written">✓ In „%1$s“, Nr. %2$s ›</string>
+    <string name="player_kept_unfinished">Partie unvollendet in „%1$s“ gespeichert</string>
+    <string name="player_db_row">werden selbst gespeichert</string>
+    <string name="record_games">Partien gegen Maia in die Datenbank des Spielers schreiben</string>
+    <string name="player_line_existing">Partien werden in „%1$s“ gespeichert</string>
+    <string name="player_line_new">Die Partien werden in eine neue Datenbank „%1$s“ gespeichert.</string>
+    <string name="player_line_noname">Ohne Namen gehen die Partien in „%1$s“. Geben Sie einen Namen ein, um eine eigene Datenbank zu bekommen.</string>
+    <string name="player_line_off">Partien werden nicht von selbst gespeichert (Einstellungen).</string>
+    <string name="player_written_new">✓ Neue Datenbank „%1$s“, Nr. %2$s ›</string>
+    <string name="player_write_failed">Konnte nicht in „%1$s“ schreiben: %2$s</string>
+    <string name="play_adjourned_replaced">Eine neue Partie ersetzt sie.</string>
 </resources>

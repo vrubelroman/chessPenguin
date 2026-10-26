@@ -109,6 +109,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.vrubelroman.chesspenguin.data.Source
+import io.github.vrubelroman.chesspenguin.data.Written
 import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.EngineSession
 import io.github.vrubelroman.chesspenguin.data.NetState
@@ -137,9 +138,19 @@ private data class Preview(val line: EngineLine, val step: Int, val best: Boolea
 /// under the thumb; ‹ › page the games of the list (android-ui.md §7).
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, onSettings: () -> Unit, onPlayGame: () -> Unit = {}) {
+fun GameScreen(
+    db: String,
+    startPlace: Int,
+    query: String,
+    onBack: () -> Unit,
+    onSettings: () -> Unit,
+    onPlayGame: () -> Unit = {},
+    onOpenDatabase: (String) -> Unit = {},
+) {
     val app = app()
     val context = LocalContext.current
+    // Configuration-aware (the language can change while the screen is up).
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val prefs by app.settings.prefs.collectAsState()
     val libraryEntries by app.library.entries.collectAsState()
     val dbEntry = libraryEntries.firstOrNull { it.id == db }
@@ -184,7 +195,11 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     return@LaunchedEffect
                 }
                 held.key = PLAY_GAME
-                held.savedTo = null
+                // A game written into its player's database is that database's game.
+                val written = app.maiaGames.written()
+                held.savedTo = written
+                held.recordError.value = null
+                held.recorded.value = written?.let { (id, n) -> Written(id, app.library.entry(id)?.name ?: "", n, false) }
                 val s = GameSession.fromPgn(pgn)
                 edit = s
                 val d = s.data()
@@ -443,6 +458,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     fun persist() {
         if (run != null) edit?.let { app.maiaGames.save(it.pgn()) }
     }
+    val recordFailedText = stringResource(R.string.player_write_failed)
     fun finishGame(over: PlayOver) {
         val r = run ?: return
         val e = edit ?: return
@@ -452,7 +468,27 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
         e.setData(listOf(uniffi.mobile_api.Tag("Termination", "Normal")), over.result)
         game = e.data().copy(notes = held.notes)
         r.over.value = over
-        app.maiaGames.finish(e.pgn())
+        val pgn = e.pgn()
+        app.maiaGames.finish(pgn)
+        // Into the player's database by itself (player-games.md); a new one is said once.
+        val serial = app.maiaGames.serial
+        if (prefs.recordGames && app.maiaGames.written() == null) scope.launch {
+            runCatching { app.playerGames.write(r.meta.name, pgn) }
+                .onSuccess { w ->
+                    app.maiaGames.setWritten(w.id, w.index, serial)
+                    // The screen still shows that game (no rematch since).
+                    if (app.maiaGames.serial == serial) {
+                        if (edit === e && e.pgn() == pgn) e.markSaved()
+                        held.savedTo = w.id to w.index
+                        held.recorded.value = w
+                    }
+                }
+                .onFailure { err ->
+                    if (app.maiaGames.serial != serial) return@onFailure
+                    val name = app.playerGames.database(r.meta.name)?.name ?: app.playerGames.dbName(r.meta.name)
+                    held.recordError.value = String.format(recordFailedText, name, err.message ?: err.javaClass.simpleName)
+                }
+        }
         app.sounds.play(
             when (over.heading) {
                 R.string.play_won -> io.github.vrubelroman.chesspenguin.data.Sound.Success
@@ -758,6 +794,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 onResign = { resigning = true },
                 onDraw = ::offerDraw,
                 onAbort = {
+                    app.playerGames.keepUnfinished(app.maiaGames, prefs.recordGames, app.scope)
                     app.maiaGames.clear()
                     onBack()
                 },
@@ -927,6 +964,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                             maiaRetry = true
                         },
                         onAbort = {
+                            app.playerGames.keepUnfinished(app.maiaGames, prefs.recordGames, app.scope)
                             app.maiaGames.clear()
                             onBack()
                         },
@@ -934,6 +972,9 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                     runOver != null && !resultClosed -> ResultCard(
                         runOver,
                         saved = held.savedTo != null && !modified,
+                        recorded = held.recorded.value,
+                        recordError = held.recordError.value,
+                        onOpenRecorded = { id -> onOpenDatabase(id) },
                         onAnalyse = {
                             val e = edit
                             // The report takes the place: the card would be squeezed.
@@ -1283,8 +1324,10 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
                 onPlay = { strength, white, name ->
                     playFrom = null
                     val s = runCatching { edit?.playFrom(fromMove.toUInt()) }.getOrNull() ?: return@PlaySheet
-                    beginMaiaGame(app, s, strength, white, name, depth(g, fromMove), eventText, context.getString(R.string.play_note_from, strength.toString()))
+                    beginMaiaGame(app, s, strength, white, name, depth(g, fromMove), eventText, resources.getString(R.string.play_note_from, strength.toString()))
                     s.close()
+                    // On the play screen itself the game in hand is read anew.
+                    held.key = null
                     onPlayGame()
                 },
                 onDismiss = { playFrom = null },
@@ -1296,6 +1339,7 @@ fun GameScreen(db: String, startPlace: Int, query: String, onBack: () -> Unit, o
     if (askAt != null && adjournedMeta != null) {
         AdjournedQuestion(adjournedMeta, onContinue = {
             askFrom = null
+            held.key = null
             onPlayGame()
         }, onNew = {
             askFrom = null

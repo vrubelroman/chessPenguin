@@ -133,7 +133,7 @@ fun MainNavigation() {
                 GameScreen(PLAY_GAME, 0, "", onBack = { backStack.removeLastOrNull() }, onSettings = { backStack.add(SettingsKey) }, onPlayGame = {
                     backStack.removeLastOrNull()
                     backStack.add(PlayKey)
-                })
+                }, onOpenDatabase = { id -> backStack.add(Games(id)) })
             }
             entry<Games> { key ->
                 GamesScreen(key.db, onBack = { backStack.removeLastOrNull() }, onGame = { place, query -> backStack.add(GameAt(key.db, place, query)) })

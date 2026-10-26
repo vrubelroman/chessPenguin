@@ -176,6 +176,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     val theApp = app()
     val adjourned by theApp.maiaGames.current.collectAsState()
     val playRemovedText = stringResource(R.string.play_removed)
+    val keptText = stringResource(R.string.player_kept_unfinished)
     var playing by remember { mutableStateOf(false) }
     // A game put aside: asked about before a new one replaces it.
     var askingAdjourned by remember { mutableStateOf(false) }
@@ -276,6 +277,18 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                             )
                             TextButton(onClick = onPlay) { Text(stringResource(R.string.play_continue)) }
                             IconButton(onClick = {
+                                // Played on both sides: kept in the player's database,
+                                // unfinished (no «Undo»: it is there to be deleted).
+                                val kept = theApp.playerGames.keepUnfinished(theApp.maiaGames, theApp.settings.prefs.value.recordGames, scope) { w ->
+                                    scope.launch {
+                                        snackbar.currentSnackbarData?.dismiss()
+                                        snackbar.showSnackbar(String.format(keptText, w.name))
+                                    }
+                                }
+                                if (kept) {
+                                    theApp.maiaGames.clear()
+                                    return@IconButton
+                                }
                                 val pgn = theApp.maiaGames.pgn()
                                 theApp.maiaGames.clear()
                                 scope.launch {
@@ -321,6 +334,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                 items(own, key = { it.id }) { e ->
                     OwnRow(
                         e,
+                        player = theApp.playerGames.isPlayers(e.id),
                         onOpen = { onOpen(e.id) },
                         onRename = { renaming = e },
                         onExport = {
@@ -526,7 +540,7 @@ private fun NewOwnDialog(suggested: String, onDismiss: () -> Unit, onCreate: (St
 /// An own database: its games are the user's, kept on the phone (android-play.md §30.2).
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun OwnRow(e: DbEntry, onOpen: () -> Unit, onRename: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit, modifier: Modifier) {
+private fun OwnRow(e: DbEntry, player: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onExport: () -> Unit, onDelete: () -> Unit, modifier: Modifier) {
     var menu by remember { mutableStateOf(false) }
     val n = e.games ?: 0
     Box(modifier) {
@@ -541,11 +555,18 @@ private fun OwnRow(e: DbEntry, onOpen: () -> Unit, onRename: () -> Unit, onExpor
             Box(
                 Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Rounded.EditNote, null, tint = MaterialTheme.colorScheme.onPrimaryContainer) }
+            ) {
+                // A player's database (games against Maia written by themselves): a knight.
+                if (player) {
+                    Text("♞", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                } else {
+                    Icon(Icons.Rounded.EditNote, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
             Column(Modifier.weight(1f).padding(start = 16.dp)) {
                 Text(displayName(e), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    pluralStringResource(R.plurals.games_count, n, groupDigits(n)) + " · " + stringResource(R.string.own_on_phone),
+                    pluralStringResource(R.plurals.games_count, n, groupDigits(n)) + " · " + stringResource(if (player) R.string.player_db_row else R.string.own_on_phone),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

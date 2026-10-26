@@ -36,6 +36,8 @@ data class Prefs(
     val yourName: String = "",
     /// Sounds of moves and of the end of a game (§33).
     val sound: Boolean = true,
+    /// Games against Maia go by themselves into the player's database (player-games.md).
+    val recordGames: Boolean = true,
 )
 
 /// Half the cores, at most 2: the engine leaves the phone's interface room (§9).
@@ -76,6 +78,7 @@ class Settings(context: Context) {
             maiaColor = store.getInt("maiaColor", d.maiaColor).coerceIn(-1, 1),
             yourName = store.getString("yourName", d.yourName) ?: d.yourName,
             sound = store.getBoolean("sound", d.sound),
+            recordGames = store.getBoolean("recordGames", d.recordGames),
         )
     }
 
@@ -100,6 +103,7 @@ class Settings(context: Context) {
             .putInt("maiaColor", p.maiaColor)
             .putString("yourName", p.yourName)
             .putBoolean("sound", p.sound)
+            .putBoolean("recordGames", p.recordGames)
             .apply()
     }
 }

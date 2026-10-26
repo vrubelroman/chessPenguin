@@ -1,5 +1,11 @@
 package io.github.vrubelroman.chesspenguin.ui
 
+import androidx.compose.foundation.layout.wrapContentHeight
+
+import androidx.compose.foundation.layout.heightIn
+
+import androidx.compose.foundation.clickable
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.res.stringResource
@@ -164,7 +171,17 @@ fun OfferCard(onAccept: () -> Unit, onPlayOn: () -> Unit) {
 
 /// The end of the game (§31.4): the result, then analyse, rematch, save.
 @Composable
-fun ResultCard(over: PlayOver, saved: Boolean, onAnalyse: () -> Unit, onRematch: () -> Unit, onSave: () -> Unit, onClose: () -> Unit) {
+fun ResultCard(
+    over: PlayOver,
+    saved: Boolean,
+    recorded: io.github.vrubelroman.chesspenguin.data.Written?,
+    recordError: String?,
+    onOpenRecorded: (String) -> Unit,
+    onAnalyse: () -> Unit,
+    onRematch: () -> Unit,
+    onSave: () -> Unit,
+    onClose: () -> Unit,
+) {
     Card {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -174,14 +191,32 @@ fun ResultCard(over: PlayOver, saved: Boolean, onAnalyse: () -> Unit, onRematch:
             )
             IconButton(onClick = onClose) { Icon(Icons.Rounded.Close, stringResource(R.string.close)) }
         }
+        // Where the game went by itself: its player's database, opened by a tap.
+        // A new database says so here, once (no snackbar over the buttons).
+        recorded?.let { w ->
+            Text(
+                stringResource(if (w.created) R.string.player_written_new else R.string.player_written, w.name, (w.index + 1u).toString()),
+                Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable { onOpenRecorded(w.id) }.wrapContentHeight(Alignment.CenterVertically),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        recordError?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, maxLines = 3)
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val pad = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)
             Button(onClick = onAnalyse, modifier = Modifier.weight(1f), contentPadding = pad) { Text(stringResource(R.string.play_analyse_short), maxLines = 1, overflow = TextOverflow.Ellipsis) }
             OutlinedButton(onClick = onRematch, modifier = Modifier.weight(1f), contentPadding = pad) {
                 Text(stringResource(R.string.play_rematch).removePrefix("↻ "), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            OutlinedButton(onClick = onSave, enabled = !saved, modifier = Modifier.weight(1f), contentPadding = pad) {
-                Text(stringResource(if (saved) R.string.play_saved else R.string.play_save), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Written by itself: the line above says where; no third button.
+            if (recorded == null) {
+                OutlinedButton(onClick = onSave, enabled = !saved, modifier = Modifier.weight(1f), contentPadding = pad) {
+                    Text(stringResource(if (saved) R.string.play_saved else R.string.play_save), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }
@@ -220,6 +255,9 @@ fun beginMaiaGame(
         runCatching { session.addComment(lineEnd(data).toUInt(), note) }
     }
     session.markSaved()
+    // The game it replaces, if left unfinished, is kept in its player's database.
+    app.playerGames.keepUnfinished(app.maiaGames, app.settings.prefs.value.recordGames, app.scope)
+    app.playerGames.remember(name)
     app.maiaGames.begin(session.pgn(), PlayMeta(strength, userWhite, name, floor))
 }
 
@@ -239,10 +277,13 @@ fun FailureCard(onRetry: () -> Unit, onAbort: () -> Unit) {
 /// replaced).
 @Composable
 fun AdjournedQuestion(meta: PlayMeta, onContinue: () -> Unit, onNew: () -> Unit, onDismiss: () -> Unit) {
+    val app = app()
+    // Said only when the game will be kept (moves of both sides, writing on).
+    val kept = remember { app.playerGames.wouldKeep(app.maiaGames, app.settings.prefs.value.recordGames) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.play_adjourned_q, meta.strength.toString())) },
-        text = { Text(stringResource(R.string.play_adjourned_new_text)) },
+        text = { Text(stringResource(if (kept) R.string.play_adjourned_new_text else R.string.play_adjourned_replaced)) },
         confirmButton = { androidx.compose.material3.TextButton(onClick = onContinue) { Text(stringResource(R.string.play_continue_it)) } },
         dismissButton = { androidx.compose.material3.TextButton(onClick = onNew) { Text(stringResource(R.string.play_start_new)) } },
     )
