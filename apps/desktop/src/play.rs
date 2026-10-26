@@ -618,10 +618,10 @@ mod tests {
     #[test]
     fn rodent_strength_to_uci_elo() {
         use super::{RODENT_MAX, RODENT_MIN, rodent_elo};
-        assert_eq!(rodent_elo(1890), Some(800));
-        assert!(rodent_elo(RODENT_MIN).is_some_and(|e| e < 900));
-        assert_eq!(rodent_elo(2549), Some(2000));
-        let mid = rodent_elo(2635).unwrap();
+        assert_eq!(rodent_elo(2254), Some(800));
+        assert!(rodent_elo(RODENT_MIN).is_some_and(|e| e <= 800));
+        assert_eq!(rodent_elo(2715), Some(2000));
+        let mid = rodent_elo(2778).unwrap();
         assert!((2090..=2110).contains(&mid), "{mid}");
         assert!(rodent_elo(RODENT_MAX).is_some_and(|e| e < 3000));
         // Stronger always means a higher setting.
@@ -890,23 +890,24 @@ pub fn engine_for(start: &Start) -> Option<(Engine, std::path::PathBuf)> {
 /// Lichess blitz scale (default personality, its book off; 3900 games with random
 /// openings against Maia and the Maia-1 bots, and level against level).
 const RODENT: &[(u32, u32)] = &[
-    (800, 1890),
-    (1000, 1994),
-    (1200, 2065),
-    (1400, 2135),
-    (1600, 2220),
-    (1800, 2376),
-    (2000, 2549),
-    (2200, 2721),
-    (2400, 2841),
-    (2600, 2971),
-    (2800, 3119),
-    (3000, 3230),
+    (800, 2254),
+    (1000, 2344),
+    (1200, 2401),
+    (1400, 2458),
+    (1600, 2506),
+    (1800, 2606),
+    (2000, 2715),
+    (2200, 2842),
+    (2400, 2948),
+    (2600, 3079),
+    (2800, 3226),
+    (3000, 3338),
 ];
 
 /// The weakest Rodent plays (his lowest setting), and the strongest offered: a strong
-/// grandmaster's blitz; beyond, the scale is not measured against people.
-pub const RODENT_MIN: u32 = 1900;
+/// grandmaster's blitz; beyond, the scale is not measured against people. Between Maia's
+/// top and his bottom nobody plays: the slider passes over it.
+pub const RODENT_MIN: u32 = 2250;
 pub const RODENT_MAX: u32 = 3000;
 
 /// The UCI_Elo for Rodent to play at `strength` (in proportion between the measured
@@ -1278,13 +1279,15 @@ impl Dialog {
                 // bottom: Maia. Moving back keeps the choice, with a word about it.
                 if self.prefs.rival == Rival::Maia && self.prefs.strength > STRENGTH_MAX {
                     self.prefs.rival = Rival::Rodent;
+                    self.prefs.strength = self.prefs.strength.max(RODENT_MIN);
                     self.auto_switched = true;
                     self.event = Some(crate::i18n::trf(
-                        "Stronger than {elo} plays Rodent V: Maia does not play that strong.",
-                        &[("elo", &STRENGTH_MAX)],
+                        "Stronger than {elo} plays Rodent V, from {min} on: Maia does not play that strong.",
+                        &[("elo", &STRENGTH_MAX), ("min", &RODENT_MIN)],
                     ));
                 } else if self.prefs.rival == Rival::Rodent && self.prefs.strength < RODENT_MIN {
                     self.prefs.rival = Rival::Maia;
+                    self.prefs.strength = self.prefs.strength.min(STRENGTH_MAX);
                     self.auto_switched = false;
                     self.event = Some(crate::i18n::trf("Weaker than {elo} plays Maia.", &[("elo", &RODENT_MIN)]));
                 } else if self.auto_switched && self.prefs.strength <= STRENGTH_MAX {
