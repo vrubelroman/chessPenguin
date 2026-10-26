@@ -397,6 +397,17 @@ impl App {
             );
             app.toast(ctx, msg);
         }
+        // Games a crash left half played go into their databases now.
+        for r in crate::player_games::recover() {
+            let res = r.written.map_err(|e| {
+                let db = own_db::base_name(&r.target);
+                trf(
+                    "Could not write to «{db}»: {reason}",
+                    &[("db", &db), ("reason", &e)],
+                )
+            });
+            app.recorded(ctx, &r.player, res, true);
+        }
         app
     }
 
@@ -649,9 +660,14 @@ impl App {
     }
 
     fn toast(&mut self, ctx: &egui::Context, msg: impl Into<String>) {
+        self.toast_for(ctx, msg, 3.5);
+    }
+
+    /// A message said once and seldom (a database made for the player): longer in view.
+    fn toast_for(&mut self, ctx: &egui::Context, msg: impl Into<String>, secs: f64) {
         self.toast = Some(Toast {
             text: msg.into(),
-            until: ctx.input(|i| i.time) + 3.5,
+            until: ctx.input(|i| i.time) + secs,
             undo: false,
         });
     }
@@ -873,6 +889,7 @@ impl App {
                     });
                     g.target = None;
                     g.game.mark_saved();
+                    g.unwritten = None;
                 }
                 self.settings.last_target = Some(target.clone());
                 self.settings_dirty = true;
@@ -909,6 +926,7 @@ impl App {
                         block: None,
                     });
                     g.game.mark_saved();
+                    g.unwritten = None;
                 }
                 self.settings.last_target = Some(target.clone());
                 self.settings_dirty = true;
@@ -1425,8 +1443,63 @@ impl App {
             Some(from) => self.game_from(from),
             None => self.new_game(),
         }
+        // Where the game goes by itself (player-games.md): the player's database.
+        let record = self
+            .settings
+            .record_games
+            .then(|| self.player_target(&start.user_name));
         if let Some(g) = self.game.as_mut() {
-            g.start_play(start, maia, judge, ctx);
+            g.start_play(start, maia, judge, record, ctx);
+        }
+    }
+
+    /// The database of the player of this name: theirs, else a new one in the folder of
+    /// new databases.
+    fn player_target(&self, name: &str) -> PathBuf {
+        let dir = own_db::default_base_dir(self.settings.new_database_dir.as_deref());
+        crate::player_games::target(&self.settings.players, name, &dir)
+    }
+
+    /// A game went into the player's database (or a game a crash left, at the start):
+    /// the player is linked to it, it is first on the shelf and read anew; a new one is
+    /// said once.
+    fn recorded(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        res: Result<crate::player_games::Written, String>,
+        crashed: bool,
+    ) {
+        match res {
+            Ok(w) => {
+                crate::player_games::link(&mut self.settings.players, name, &w.path);
+                self.settings.touch_database(&w.path);
+                self.settings_dirty = true;
+                self.library.reload(&w.path, ctx);
+                let db = own_db::base_name(&w.path);
+                if crashed {
+                    self.toast_for(
+                        ctx,
+                        trf(
+                            "An unfinished game (the program closed) is written to «{db}», No. {n}",
+                            &[("db", &db), ("n", &(w.index + 1))],
+                        ),
+                        6.0,
+                    );
+                } else if w.created {
+                    self.toast_for(
+                        ctx,
+                        trf(
+                            "Database «{db}» created: your games will be written there",
+                            &[("db", &db)],
+                        ),
+                        6.0,
+                    );
+                }
+            }
+            // The result strip says so (with «Add to database…»); after a crash, a toast.
+            Err(e) if crashed => self.toast(ctx, e),
+            Err(_) => {}
         }
     }
 
@@ -2323,9 +2396,20 @@ impl eframe::App for App {
             // The analysis options (its dialog) are kept.
             self.settings_dirty |= self.settings.review != review;
             self.reference_tab = game.reference_tab();
+            // Before the actions: leaving may take the game away.
+            if let Some(res) = game.record_news.take() {
+                let name = game.player_name();
+                self.recorded(&ctx, &name, res, false);
+            }
             for a in actions {
                 match a {
                     GameAction::Back => self.request_close(&ctx, CloseIntent::BackToLibrary),
+                    // The game's database in the library, the game's row shown (its row is
+                    // revealed as the game closes).
+                    GameAction::OpenDatabase(path) => {
+                        self.library.select_db(&path, &ctx);
+                        self.request_close(&ctx, CloseIntent::BackToLibrary);
+                    }
                     GameAction::FindPosition(db) => self.find_position(&ctx, db),
                     GameAction::ReferenceChoose(p) => {
                         self.settings.reference_db = Some(p);
@@ -2654,6 +2738,22 @@ impl eframe::App for App {
 
         self.confirm_dialog(&ctx);
         self.own_dialogs(&ctx);
+        // The number of games of the database the dialog names (read once, if needed).
+        if let Some(d) = self.play_dialog.as_mut()
+            && let Some(path) = d.record_target().map(std::path::Path::to_path_buf)
+            && path.exists()
+            && !d.counts.contains_key(&path)
+        {
+            match self.library.database(&path) {
+                Some(db) => {
+                    d.counts.insert(path, db.len());
+                }
+                None if !self.library.loading(&path) && self.library.failure(&path).is_none() => {
+                    self.library.load(&path, &ctx)
+                }
+                None => {}
+            }
+        }
         if let Some(d) = self.play_dialog.as_mut()
             && let Some(out) = d.show(&ctx, &mut self.settings)
         {

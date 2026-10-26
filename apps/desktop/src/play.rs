@@ -822,6 +822,8 @@ mod tests {
 
 /// A game against Maia in progress (lives in the game screen while it is played).
 pub struct Session {
+    /// The game kept for the player's database (none: not written by itself).
+    pub journal: Option<crate::player_games::Journal>,
     pub user: Color,
     /// The opponent's strength (Lichess blitz scale), what plays it and in which style.
     pub strength: u32,
@@ -1073,6 +1075,10 @@ pub struct Dialog {
     /// rematch).
     keep_color: bool,
     focus: bool,
+    /// The number of games of the players' databases read so far (the app fills it).
+    pub counts: std::collections::HashMap<std::path::PathBuf, usize>,
+    /// Where the games of the name typed go: for that name (found once per name).
+    target: Option<(String, std::path::PathBuf)>,
 }
 
 pub enum DialogOutcome {
@@ -1116,6 +1122,8 @@ impl Dialog {
             focus: true,
             from: None,
             keep_color: false,
+            counts: Default::default(),
+            target: None,
         }
     }
 
@@ -1149,6 +1157,49 @@ impl Dialog {
         };
         d.keep_color = true;
         d
+    }
+
+    /// Where the games of the name typed go (player-games.md §3): said before the game.
+    fn record_line(&mut self, settings: &crate::settings::Settings) -> String {
+        use crate::i18n::trf;
+        if !settings.record_games {
+            return tr(
+                "Games are not written by themselves (Settings → Interface → Your databases).",
+            )
+            .to_owned();
+        }
+        let name = crate::player_games::tidy(&self.name);
+        if self.target.as_ref().is_none_or(|(n, _)| *n != name) {
+            let dir = crate::own_db::default_base_dir(settings.new_database_dir.as_deref());
+            let path = crate::player_games::target(&settings.players, &name, &dir);
+            self.target = Some((name.clone(), path));
+        }
+        let path = &self.target.as_ref().expect("target").1;
+        let db = crate::own_db::base_name(path);
+        if name.is_empty() {
+            return trf(
+                "Without a name games go to «{db}». Enter a name to have a database of your own.",
+                &[("db", &db)],
+            );
+        }
+        if !path.exists() {
+            return trf(
+                "Games will be written to a new database «{db}».",
+                &[("db", &db)],
+            );
+        }
+        match self.counts.get(path) {
+            Some(&n) => trf(
+                "Games are written to «{db}» · {n}",
+                &[("db", &db), ("n", &crate::i18n::games(n))],
+            ),
+            None => trf("Games are written to «{db}»", &[("db", &db)]),
+        }
+    }
+
+    /// The database the games of the name typed go to.
+    pub fn record_target(&self) -> Option<&std::path::Path> {
+        self.target.as_ref().map(|(_, p)| p.as_path())
     }
 
     fn rating(&self) -> Option<u32> {
@@ -1213,12 +1264,80 @@ impl Dialog {
                 .spacing(egui::vec2(8.0, GAP))
                 .show(ui, |ui| {
                     ui.label(tr("Name:"));
-                    let r = ui.add(
-                        egui::TextEdit::singleline(&mut self.name).desired_width(f32::INFINITY),
-                    );
-                    if std::mem::take(&mut self.focus) && self.name.is_empty() {
-                        r.request_focus();
-                    }
+                    ui.horizontal(|ui| {
+                        // The players of this computer, for a family (each their database
+                        // and rating).
+                        let known: Vec<_> = settings
+                            .players
+                            .iter()
+                            .filter(|p| !p.name.is_empty())
+                            .cloned()
+                            .collect();
+                        let menu_w = if known.is_empty() { 0.0 } else { 34.0 };
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut self.name)
+                                .desired_width(ui.available_width() - menu_w),
+                        );
+                        if std::mem::take(&mut self.focus) && self.name.is_empty() {
+                            r.request_focus();
+                        }
+                        let mut pick = None;
+                        // ↓ / ↑ in the field go through the players.
+                        if r.has_focus() && !known.is_empty() {
+                            let step = ui.input_mut(|i| {
+                                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                                    1
+                                } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                                    -1
+                                } else {
+                                    0
+                                }
+                            });
+                            if step != 0 {
+                                let n = known.len() as i32;
+                                let now = crate::player_games::tidy(&self.name).to_lowercase();
+                                let at = known
+                                    .iter()
+                                    .position(|p| p.name.to_lowercase() == now)
+                                    .map_or(if step > 0 { -1 } else { n }, |k| k as i32);
+                                pick = Some(known[(at + step).rem_euclid(n) as usize].clone());
+                            }
+                        }
+                        if !known.is_empty() {
+                            let size = egui::vec2(menu_w - ui.spacing().item_spacing.x, r.rect.height());
+                            let (resp, _) = egui::containers::menu::MenuButton::from_button(
+                                egui::Button::new("▾").min_size(size),
+                            )
+                            .ui(ui, |ui| {
+                                for p in &known {
+                                    let mut label = p.name.clone();
+                                    if let Some(r) = p.rating {
+                                        label += &format!(" · {r}");
+                                    }
+                                    if let Some(n) = p.path.as_ref().and_then(|q| self.counts.get(q)) {
+                                        label += &format!(" · {}", crate::i18n::games(*n));
+                                    }
+                                    if ui.button(label).clicked() {
+                                        pick = Some(p.clone());
+                                        ui.close();
+                                    }
+                                }
+                            });
+                            resp.on_hover_text(tr("Players of this computer (↓ in the name field)"));
+                        }
+                        if let Some(p) = pick {
+                            self.name = p.name.clone();
+                            self.rating = p.rating.map(|r| r.to_string()).unwrap_or_default();
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("");
+                    // As wide as the field: the line wraps, the dialog keeps its width.
+                    let line = self.record_line(settings);
+                    ui.scope(|ui| {
+                        ui.set_max_width(W - 80.0);
+                        ui.add(egui::Label::new(RichText::new(line).weak().size(12.5)).wrap());
+                    });
                     ui.end_row();
                     ui.label(tr("Rating:"));
                     ui.horizontal(|ui| {
@@ -1687,6 +1806,9 @@ impl Dialog {
                     };
                     settings.your_name = self.name.trim().to_owned();
                     settings.rating = rating;
+                    if !self.name.trim().is_empty() {
+                        crate::player_games::remember(&mut settings.players, &self.name, rating);
+                    }
                     // From a position the colour is the side to move's, not a habit.
                     let color = settings.play.color;
                     settings.play = self.prefs.clone();

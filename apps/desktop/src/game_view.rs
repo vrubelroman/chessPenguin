@@ -66,6 +66,14 @@ pub struct GameView {
     pub play: Option<crate::play::Session>,
     /// The game just played: the result strip.
     pub play_end: Option<crate::play::End>,
+    /// Where the game just played went by itself (player-games.md), or why it did not:
+    /// said on the result strip.
+    pub recorded: Option<Result<crate::player_games::Written, String>>,
+    /// The same, once, for the program: the shelf, the player's link, a toast.
+    pub record_news: Option<Result<crate::player_games::Written, String>>,
+    /// The journal of a game its database did not take: kept (a crash still leaves the
+    /// game to the next start) until the game is saved elsewhere or left.
+    pub unwritten: Option<crate::player_games::Journal>,
     /// What the play started with (for the end, a rematch).
     play_start: Option<crate::play::Start>,
     /// «The game is on» asked (leaving during a game); the clocks wait meanwhile.
@@ -105,6 +113,8 @@ enum SideTab {
 
 pub enum GameAction {
     Back,
+    /// Back to the library with this database chosen (the game's own).
+    OpenDatabase(PathBuf),
     /// «Play on from here»: the play dialog for this position.
     PlayFrom(Box<crate::play::StartFrom>),
     /// «Learn the opening up to this move»: the training over this game.
@@ -169,6 +179,9 @@ impl GameView {
             editor: None,
             play: None,
             play_end: None,
+            recorded: None,
+            record_news: None,
+            unwritten: None,
             play_start: None,
             play_leave: None,
             paste_pending: None,
@@ -2100,6 +2113,7 @@ impl GameView {
         start: crate::play::Start,
         (engine, file): (crate::play::Engine, std::path::PathBuf),
         judge: Option<std::path::PathBuf>,
+        record: Option<std::path::PathBuf>,
         ctx: &egui::Context,
     ) {
         use crate::play::{Clock, Opponent, Session};
@@ -2191,7 +2205,9 @@ impl GameView {
         }
         self.flipped = start.user == Color::Black;
         self.play_end = None;
+        self.recorded = None;
         self.play = Some(Session {
+            journal: record.map(|t| crate::player_games::Journal::new(t, &start.user_name)),
             user: start.user,
             strength: start.strength,
             engine,
@@ -2463,6 +2479,7 @@ impl GameView {
         if let Some(e) = crate::play::ending(&self.mainline_positions()) {
             self.finish_play(e, actions);
         } else {
+            self.keep_journal();
             self.ask_maia();
         }
     }
@@ -2523,7 +2540,10 @@ impl GameView {
                 }
             };
             actions.push(GameAction::Toast(trf(text, &[("e", &err)])));
-            self.play = None;
+            // What was played is kept, unfinished.
+            let journal = self.play.take().and_then(|mut s| s.journal.take());
+            self.game.set_tag("Termination", "Unterminated");
+            self.record(journal);
             self.game.mark_saved();
             actions.push(GameAction::Back);
             return;
@@ -2575,6 +2595,7 @@ impl GameView {
         self.game.set_result(ending.result());
         self.game.set_tag("Termination", ending.termination());
         self.game.forget_history();
+        self.record(s.journal.take());
         let end = self.play_end_node();
         self.goto(end);
         if matches!(ending, crate::play::Ending::Checkmate { .. }) {
@@ -2588,6 +2609,56 @@ impl GameView {
                 left,
             });
         }
+    }
+
+    /// The game as a crash would leave it, kept after each move (once both have moved).
+    fn keep_journal(&self) {
+        if !self.play_started() {
+            return;
+        }
+        if let Some(j) = self.play.as_ref().and_then(|s| s.journal.as_ref()) {
+            let mut g = self.game.clone();
+            g.set_tag("Termination", "Unterminated");
+            j.save(&g.to_pgn());
+        }
+    }
+
+    /// The game ended (or stopped): it goes into the player's database, once a move of
+    /// it was made; it becomes that database's record.
+    fn record(&mut self, journal: Option<crate::player_games::Journal>) {
+        let Some(journal) = journal else { return };
+        if self.played().is_empty() {
+            return;
+        }
+        let name = crate::own_db::base_name(journal.target());
+        let res = journal.finish(&self.game.to_pgn()).map_err(|e| {
+            trf(
+                "Could not write to «{db}»: {reason}",
+                &[("db", &name), ("reason", &e)],
+            )
+        });
+        if let Ok(w) = &res {
+            self.source = Some(GameSource {
+                path: w.path.clone(),
+                index: w.index,
+                block: None,
+            });
+            self.target = None;
+            self.game.mark_saved();
+        }
+        if res.is_err() {
+            self.unwritten = Some(journal);
+        }
+        self.recorded = Some(res.clone());
+        self.record_news = Some(res);
+    }
+
+    /// The player's name of the game against the computer on the screen.
+    pub fn player_name(&self) -> String {
+        self.play_start
+            .as_ref()
+            .map(|s| s.user_name.clone())
+            .unwrap_or_default()
     }
 
     /// Before both sides have moved there is nothing to lose: the game is dropped.
@@ -2765,6 +2836,7 @@ impl GameView {
                 c.take_back(user, moved, std::time::Instant::now());
             }
         }
+        self.keep_journal();
         self.ask_maia();
     }
 
@@ -2881,10 +2953,22 @@ impl GameView {
         egui::Modal::new(egui::Id::new("play_leave")).show(ctx, |ui| {
             ui.set_width(460.0);
             ui.heading(tr("The game is on"));
-            ui.label(tr("If you leave, the game ends with your resignation."));
+            // A game written by itself needs no «add»: where it goes is said instead.
+            let target = self
+                .play
+                .as_ref()
+                .and_then(|s| s.journal.as_ref())
+                .map(|j| crate::own_db::base_name(j.target()));
+            match &target {
+                Some(db) => ui.label(trf(
+                    "If you leave, the game ends with your resignation and is written to «{db}».",
+                    &[("db", db)],
+                )),
+                None => ui.label(tr("If you leave, the game ends with your resignation.")),
+            };
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
-                if ui.button(tr("Resign and add to a database…")).clicked() {
+                if target.is_none() && ui.button(tr("Resign and add to a database…")).clicked() {
                     choice = Some(0);
                 }
                 if ui.button(tr("Resign and leave")).clicked() {
@@ -2916,7 +3000,8 @@ impl GameView {
                 self.resign_if_playing();
                 actions.push(GameAction::SaveAndLeave(intent));
             }
-            // Leaving was the answer: no second question about saving.
+            // Leaving was the answer: no second question about saving (a game written
+            // by itself is in its database already).
             1 => {
                 self.resign_if_playing();
                 self.game.mark_saved();
@@ -3293,15 +3378,51 @@ impl GameView {
                         .weak(),
                     );
                 }
+                // Where the game went by itself (player-games.md §4); a write that failed
+                // is said, and «Save to a database…» stays for it.
+                match &self.recorded {
+                    Some(Ok(w)) => {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            // The database's name is under the title already: here only
+                            // the number, the name on hover.
+                            let db = crate::own_db::base_name(&w.path);
+                            ui.label(
+                                RichText::new(trf(
+                                    "✔ Written to the database, No. {n}",
+                                    &[("n", &(w.index + 1))],
+                                ))
+                                .weak(),
+                            )
+                            .on_hover_text(&db);
+                            if ui
+                                .link(tr("Open"))
+                                .on_hover_text(tr(
+                                    "The database in the library, this game selected",
+                                ))
+                                .clicked()
+                            {
+                                actions.push(GameAction::OpenDatabase(w.path.clone()));
+                            }
+                        });
+                    }
+                    Some(Err(e)) => {
+                        ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
+                    }
+                    None => {}
+                }
                 ui.add_space(4.0);
-                // All four in a row when they fit; else Analyse, then Rematch and New
-                // game side by side, then Save — each as wide as the strip.
+                // All in a row when they fit; else Analyse, then Rematch and New game side
+                // by side, then Save (when the game is not in a database) — each as wide
+                // as the strip.
+                let saved = matches!(self.recorded, Some(Ok(_)));
                 let labels = [
                     tr("📈 Analyse"),
                     tr("↻ Rematch"),
                     tr("♞ New game"),
                     tr("💾 Save to a database…"),
                 ];
+                let labels = &labels[..if saved { 3 } else { 4 }];
                 let font = egui::FontId::proportional(14.0);
                 let pad = 2.0 * ui.spacing().button_padding.x + ui.spacing().item_spacing.x;
                 let one_row: f32 = labels
@@ -3340,7 +3461,7 @@ impl GameView {
                 };
                 if fits {
                     ui.horizontal(|ui| {
-                        for k in 0..4 {
+                        for k in 0..labels.len() {
                             button(ui, k, 0.0);
                         }
                     });
@@ -3352,7 +3473,9 @@ impl GameView {
                         button(ui, 1, half);
                         button(ui, 2, half);
                     });
-                    button(ui, 3, full);
+                    if !saved {
+                        button(ui, 3, full);
+                    }
                 }
                 if clicked[0] {
                     self.review_asked = true;

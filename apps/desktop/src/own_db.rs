@@ -69,7 +69,7 @@ pub fn base_name(path: &Path) -> String {
 }
 
 /// Characters a file name cannot have (on any of the three systems).
-const FORBIDDEN: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+pub const FORBIDDEN: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 
 // --- New database ------------------------------------------------------------------------
 

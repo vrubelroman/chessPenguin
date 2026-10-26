@@ -175,6 +175,8 @@ const SEARCH_BOARD_MIN: f32 = 340.0;
 
 pub struct Library {
     slots: HashMap<PathBuf, Slot>,
+    /// The players' databases (player_games.rs) and whose: a knight on their cards.
+    player_dbs: Vec<(PathBuf, String)>,
     /// Games the user has opened (by content).
     viewed: Viewed,
     /// Filters, quick search, position and game list of each database (for the session).
@@ -201,6 +203,7 @@ impl Library {
     pub fn new() -> Self {
         Self {
             slots: HashMap::new(),
+            player_dbs: Vec::new(),
             viewed: Viewed::load(),
             large: HashMap::new(),
             pending_position: None,
@@ -470,6 +473,11 @@ impl Library {
         settings: &Settings,
     ) -> Vec<LibraryAction> {
         self.poll();
+        self.player_dbs = settings
+            .players
+            .iter()
+            .filter_map(|p| Some((p.path.clone()?, p.name.clone())))
+            .collect();
         let mut actions = Vec::new();
         // A field had the keyboard when this frame began: its Escape is its own.
         let typing = ui.ctx().egui_wants_keyboard_input();
@@ -654,8 +662,12 @@ impl Library {
         ui.horizontal(|ui| {
             let current = self.selected_db.as_deref().map(name).unwrap_or_default();
             let mut pick = None;
+            let icon = match self.selected_db.as_deref() {
+                Some(p) if self.player_dbs.iter().any(|(q, _)| q == p) => "♞",
+                _ => "🗄",
+            };
             egui::ComboBox::from_id_salt("shelf_db")
-                .selected_text(format!("🗄 {current}"))
+                .selected_text(format!("{icon} {current}"))
                 .width(list)
                 .truncate()
                 .show_ui(ui, |ui| {
@@ -950,6 +962,11 @@ impl Library {
     }
 
     fn db_card(&mut self, ui: &mut Ui, path: &Path, actions: &mut Vec<LibraryAction>) {
+        let player = self
+            .player_dbs
+            .iter()
+            .find(|(p, _)| p == path)
+            .map(|(_, n)| n.clone());
         let selected = self.selected_db.as_deref() == Some(path);
         let name = path
             .file_stem()
@@ -998,6 +1015,8 @@ impl Library {
             egui::Align2::LEFT_TOP,
             if crate::online::is_online(path) {
                 "🌐"
+            } else if player.is_some() {
+                "♞"
             } else {
                 "🗄"
             },
@@ -1024,7 +1043,20 @@ impl Library {
             egui::FontId::proportional(12.0),
             v.weak_text_color(),
         );
-        let resp = resp.on_hover_text(path.display().to_string());
+        let resp = match &player {
+            Some(name) => {
+                let whose = if name.is_empty() {
+                    tr("Games against the computer are written here").to_owned()
+                } else {
+                    trf(
+                        "{name}'s games against the computer are written here",
+                        &[("name", name)],
+                    )
+                };
+                resp.on_hover_text(format!("{whose}\n{}", path.display()))
+            }
+            None => resp.on_hover_text(path.display().to_string()),
+        };
         if resp.clicked() {
             self.select_db(path, ui.ctx());
         }

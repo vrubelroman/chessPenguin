@@ -22,6 +22,7 @@ mod online;
 mod online_ui;
 mod own_db;
 mod play;
+mod player_games;
 mod reference;
 mod review;
 mod rodent_download;

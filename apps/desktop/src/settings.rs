@@ -145,6 +145,10 @@ pub struct Settings {
     pub rating: Option<u32>,
     /// The last choices of the play dialog.
     pub play: crate::play::PlayPrefs,
+    /// Games against the computer go by themselves into the player's database.
+    pub record_games: bool,
+    /// Who played on this computer, the last first (`player_games.rs`).
+    pub players: Vec<crate::player_games::Player>,
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -225,6 +229,8 @@ impl Default for Settings {
             your_name: String::new(),
             new_database_dir: None,
             last_target: None,
+            record_games: true,
+            players: Vec::new(),
             rating: None,
             play: Default::default(),
         }

@@ -189,6 +189,12 @@ impl SettingsWindow {
                                 actions.push(SettingsAction::PickBaseFolder);
                             }
                         });
+                        changed |= ui
+                            .checkbox(
+                                &mut s.record_games,
+                                tr("Write games against the computer to the player's database"),
+                            )
+                            .changed();
                     }
                 });
             });
