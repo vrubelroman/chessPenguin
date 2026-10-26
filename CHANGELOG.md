@@ -4,10 +4,12 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-10-26
+
 - Games against the computer are written by themselves into the player's database,
   «Roman — games against the computer» (without a name, «Games against the computer»),
   made at the first game in the folder of new databases. The play dialog says where the
-  games go; the result strip says «Written to …, No. n · Open». A game the program
+  games go; the result strip says «Written to the database, No. n · Open». A game the program
   stopped in (a crash, a power cut) is written at the next start, unfinished. Several
   players of one computer each get their own database (the ▾ list by the name). It can
   be turned off: Settings → Interface → Your databases. Android: the same in «My

@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.6.0" date="2026-10-26">
+      <description>
+        <p>Play against Rodent V, a strong engine with a style of play (Linux and Windows, downloaded once). Each engine's strength is on its own scale: Maia 600–2600, Rodent V 800–3000. Offer the engine a draw. Games against the computer are written by themselves into the player's database. On Android too: Maia 600–2600, draw offers and the player's database.</p>
+      </description>
+    </release>
     <release version="1.5.0" date="2026-10-26">
       <description>
         <p>Play against the large Maia model (downloaded once): the strength slider shows her measured strength on the Lichess blitz scale, from 1100 to 2100. Game analysis starts at once with the options chosen before. On Android: moves on the board, your own databases, games against Maia and the opening trainer.</p>
