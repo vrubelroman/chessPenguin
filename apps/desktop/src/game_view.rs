@@ -2137,7 +2137,6 @@ impl GameView {
             &start.user_name,
             start.user_elo,
             &start.rival_name(),
-            start.strength,
             &start.clock.map_or_else(|| "-".to_owned(), |tc| tc.pgn()),
         ) {
             g.set_tag(&name, &value);

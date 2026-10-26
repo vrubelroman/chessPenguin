@@ -20,7 +20,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   600–2600, Rodent V 800–3000 (its UCI_Elo). The dialog says that these are the engines'
   ratings, not a person's Elo. (1.5's slider showed Maia's strength measured on the
   Lichess blitz scale; a remembered strength keeps its number.) Android too: Maia
-  600–2600.
+  600–2600. The engine's strength is in its name in the game («Maia 1550»),
+  with no Elo tag for it.
 - Offer Maia a draw (desktop and Android): she accepts when she is clearly worse, or
   when the position is about level (at most +0.2 for her) and has kept its character for
   her last three moves; after a refusal, again two of her moves later. She judges with

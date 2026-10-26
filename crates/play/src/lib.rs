@@ -132,16 +132,16 @@ pub fn pause(clock: Option<(Duration, u32)>, ply: usize, only_move: bool) -> Dur
 // ----- the game's tags -----------------------------------------------------------------
 
 /// The tags of a game against a program (as Lichess writes one): `event` in the app's
-/// language, the user's name ("?" unknown) and rating, the program's name («Maia 1500»,
-/// «Rodent V 2400 (Tal)») and strength, the time control in PGN ("-": none). The rest
-/// (date, result) is the game's.
+/// language, the user's name ("?" unknown) and rating, the program's name with its
+/// strength («Maia 1500», «Rodent V 2400 (Tal)»: the engine's own scale, so no Elo tag
+/// for it — the owner's decision), the time control in PGN ("-": none). The rest (date,
+/// result) is the game's.
 pub fn game_tags(
     event: &str,
     user: Color,
     user_name: &str,
     user_elo: Option<u32>,
     program: &str,
-    strength: u32,
     time_control: &str,
 ) -> Vec<(String, String)> {
     let maia = program.to_owned();
@@ -151,8 +151,8 @@ pub fn game_tags(
         user_name.trim().to_owned()
     };
     let (white, black, we, be, wt, bt) = match user {
-        Color::White => (you, maia, user_elo, Some(strength), "human", "program"),
-        Color::Black => (maia, you, Some(strength), user_elo, "program", "human"),
+        Color::White => (you, maia, user_elo, None, "human", "program"),
+        Color::Black => (maia, you, None, user_elo, "program", "human"),
     };
     let mut tags = vec![
         ("Event".to_owned(), event.to_owned()),
@@ -379,6 +379,16 @@ impl Judge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_engine_has_its_strength_in_its_name_and_no_elo() {
+        let tags = game_tags("Game", Color::Black, "Roman", Some(1500), "Maia 1550", "-");
+        let get = |k: &str| tags.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("White"), Some("Maia 1550"));
+        assert_eq!(get("WhiteElo"), None);
+        assert_eq!(get("BlackElo"), Some("1500"));
+        assert_eq!(get("WhiteType"), Some("program"));
+    }
 
     #[test]
     fn maia_resigns_only_when_hopeless() {

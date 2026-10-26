@@ -82,7 +82,6 @@ pub fn maia_game_tags(
         &user_name,
         None,
         &format!("Maia {strength}"),
-        strength,
         "-",
     )
     .into_iter()
@@ -229,9 +228,10 @@ impl MaiaPlayer {
             )
         })?;
         let strength = strength.clamp(PHONE_MIN, PHONE_MAX);
-        let p = self.maia.predict(&history, strength, opponent.unwrap_or(strength));
-        choose(&p, 1.0, random)
-            .map(|m| m.to_uci(CastlingMode::Standard).to_string())
+        let p = self
+            .maia
+            .predict(&history, strength, opponent.unwrap_or(strength));
+        choose(&p, 1.0, random).map(|m| m.to_uci(CastlingMode::Standard).to_string())
     }
 }
 
