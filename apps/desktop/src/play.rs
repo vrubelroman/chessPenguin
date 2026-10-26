@@ -189,7 +189,7 @@ pub const STYLES: &[Style] = &[
         title: "Attacking",
         about: "Active pieces and attack, sound pawn structure.",
         player: false,
-        weaker: &[(1600, 295), (2400, 308)],
+        weaker: &[(800, 288), (1600, 295), (2400, 308), (3000, 301)],
     },
     Style {
         id: "chaotic",
@@ -197,7 +197,7 @@ pub const STYLES: &[Style] = &[
         title: "Chaotic",
         about: "Aggressive, tricky openings, careless with pawns.",
         player: false,
-        weaker: &[(1600, 252), (2400, 363)],
+        weaker: &[(800, 338), (1600, 252), (2400, 363), (3000, 354)],
     },
     Style {
         id: "nimzoid",
@@ -205,7 +205,7 @@ pub const STYLES: &[Style] = &[
         title: "Restricting",
         about: "Closed positions, cramping the opponent, old openings.",
         player: false,
-        weaker: &[(1600, 200), (2400, 147)],
+        weaker: &[(800, 173), (1600, 200), (2400, 147), (3000, 263)],
     },
     Style {
         id: "hector",
@@ -213,7 +213,7 @@ pub const STYLES: &[Style] = &[
         title: "Classical",
         about: "Hand-written evaluation, no neural network.",
         player: false,
-        weaker: &[(1600, 402), (2400, 512)],
+        weaker: &[(800, 392), (1600, 402), (2400, 512), (3000, 372)],
     },
     Style {
         id: "tal_hybrid",
@@ -221,7 +221,7 @@ pub const STYLES: &[Style] = &[
         title: "Tal",
         about: "Attacking style tuned on Tal's games.",
         player: true,
-        weaker: &[(1600, 392), (2400, 676)],
+        weaker: &[(800, 463), (1600, 392), (2400, 676), (3000, 676)],
     },
     Style {
         id: "tal_nnue",
@@ -229,14 +229,15 @@ pub const STYLES: &[Style] = &[
         title: "Tal (network)",
         about: "A neural network trained on Tal's games.",
         player: true,
-        weaker: &[(1600, 115), (2400, 131)],
+        weaker: &[(800, 78), (1600, 115), (2400, 131), (3000, 131)],
     },
 ];
 
-/// «Attacking — Ampere»; a style named as its personality just once («Tal»).
+/// «Attacking — Ampere»; «Balanced», «Tal»: no name twice.
 fn style_label(st: &Style) -> String {
     let title = tr(st.title());
-    if title == st.name || st.title() == st.name {
+    // The default one is Rodent himself, the players' are named by their title.
+    if st.player || st.id == "rodent" {
         title.to_owned()
     } else {
         format!("{title} — {}", st.name)
@@ -1010,17 +1011,18 @@ impl Session {
         }
     }
 
-    /// The opponent on its bar: «Maia 1500», «Rodent V 2400 · Tal».
+    /// The opponent on its bar: «Maia 1500», «Rodent V 2400».
     pub fn rival_label(&self) -> String {
         match self.engine {
             Engine::Maia(_) => format!("Maia {}", self.strength),
-            Engine::Rodent if self.style == STYLES[0].id => format!("Rodent V {}", self.strength),
-            Engine::Rodent => format!(
-                "Rodent V {} · {}",
-                self.strength,
-                tr(style(&self.style).title())
-            ),
+            Engine::Rodent => format!("Rodent V {}", self.strength),
         }
+    }
+
+    /// Rodent's style, under his name on the bar (none for Maia and the default style).
+    pub fn rival_style(&self) -> Option<&'static str> {
+        (self.engine == Engine::Rodent && self.style != STYLES[0].id)
+            .then(|| tr(style(&self.style).title()))
     }
 }
 
@@ -1314,10 +1316,10 @@ impl Dialog {
                     }
                 }
             });
-            // One scale for both: a point of the slider is always the same strength. Up to
-            // the top of Rodent with the style chosen (each style is measured).
+            // One scale for both: a point of the slider is always the same strength, whatever
+            // is chosen; the thumb stops at the top of Rodent's style.
             let (rodent_min, rodent_max) = rodent_range(style(&self.prefs.style));
-            let top = if rodent_ok { rodent_max } else { STRENGTH_MAX };
+            let top = if rodent_ok { RODENT_TOP } else { STRENGTH_MAX };
             let before = self.prefs.strength;
             ui.horizontal(|ui| {
                 let end = |ui: &mut egui::Ui, v: u32| {
@@ -1330,33 +1332,38 @@ impl Dialog {
                         .step_by(50.0)
                         .show_value(false),
                 );
-                // Maia's zone under the track (§4): lit while she is chosen.
+                // Where each plays, under the track: Maia's zone, then Rodent's with the
+                // style chosen; the chosen one's lit.
                 if rodent_ok {
                     let rect = resp.rect;
                     let pad = rect.height() / 2.0;
                     let x = |v: u32| {
                         rect.left() + pad + (v - STRENGTH_MIN) as f32 / (top - STRENGTH_MIN) as f32 * (rect.width() - 2.0 * pad)
                     };
-                    let band = egui::Rect::from_min_max(
-                        egui::pos2(x(STRENGTH_MIN), rect.bottom() + 1.0),
-                        egui::pos2(x(STRENGTH_MAX), rect.bottom() + 4.0),
-                    );
-                    let color = if self.prefs.rival == Rival::Maia {
-                        ui.visuals().selection.bg_fill.gamma_multiply(0.6)
-                    } else {
-                        ui.visuals().widgets.inactive.bg_stroke.color
-                    };
-                    ui.painter().rect_filled(band, 1.0, color);
+                    let lit = ui.visuals().selection.bg_fill.gamma_multiply(0.6);
+                    let dim = ui.visuals().weak_text_color().gamma_multiply(0.4);
+                    let maia = self.prefs.rival == Rival::Maia;
+                    for (from, to, y, on) in
+                        [(STRENGTH_MIN, STRENGTH_MAX, 1.0, maia), (rodent_min, rodent_max, 5.0, !maia)]
+                    {
+                        let band = egui::Rect::from_min_max(
+                            egui::pos2(x(from), rect.bottom() + y),
+                            egui::pos2(x(to), rect.bottom() + y + 3.0),
+                        );
+                        ui.painter().rect_filled(band, 1.0, if on { lit } else { dim });
+                    }
                 }
                 end(ui, top);
             });
-            ui.add_space(4.0);
+            ui.add_space(8.0);
             if self.prefs.strength != before {
+                // A word stays only while it is about the strength shown.
+                self.event = None;
                 // Past Maia's top: Rodent at once (the owner's rule); below Rodent's
                 // bottom: Maia. Moving back keeps the choice, with a word about it.
                 if self.prefs.rival == Rival::Maia && self.prefs.strength > STRENGTH_MAX {
                     self.prefs.rival = Rival::Rodent;
-                    self.prefs.strength = self.prefs.strength.max(rodent_min);
+                    self.prefs.strength = self.prefs.strength.clamp(rodent_min, rodent_max);
                     self.auto_switched = true;
                     self.event = Some(if rodent_min > STRENGTH_MAX {
                         crate::i18n::trf(
@@ -1376,6 +1383,8 @@ impl Dialog {
                     // In the gap nobody plays: Rodent stays, at his lowest (a drag through
                     // it does not flip between the two every frame).
                     self.prefs.strength = rodent_min;
+                } else if self.prefs.rival == Rival::Rodent && self.prefs.strength > rodent_max {
+                    self.prefs.strength = rodent_max;
                 } else if self.prefs.rival == Rival::Rodent && self.prefs.strength < rodent_min {
                     self.prefs.rival = Rival::Maia;
                     self.auto_switched = false;
@@ -1396,7 +1405,10 @@ impl Dialog {
             ui.add(egui::Label::new(RichText::new(note).weak().size(11.5)).truncate());
             // Rodent's style: always in its place (greyed for Maia), so nothing jumps.
             ui.add_space(4.0);
+            let style_before = self.prefs.style.clone();
             ui.add_enabled_ui(rodent, |ui| {
+                // As tall as the buttons around it.
+                ui.spacing_mut().interact_size.y = 32.0;
                 let current = style(&self.prefs.style);
                 let shown = if rodent {
                     style_label(current)
@@ -1411,8 +1423,18 @@ impl Dialog {
                         for (head, player) in [(tr("Style"), false), (tr("As a player"), true)] {
                             ui.label(RichText::new(head).weak().size(11.5));
                             for st in STYLES.iter().filter(|st| st.player == player) {
-                                let text = style_label(st);
-                                ui.selectable_value(&mut self.prefs.style, st.id.to_owned(), text)
+                                // Each style's strengths at the right: who plays weaker or stronger.
+                                let (min, max) = rodent_range(st);
+                                let mut job = egui::text::LayoutJob::default();
+                                let font = egui::TextStyle::Button.resolve(ui.style());
+                                let text_color = ui.visuals().text_color();
+                                job.append(&style_label(st), 0.0, egui::TextFormat::simple(font.clone(), text_color));
+                                job.append(
+                                    &format!("{min}–{max}"),
+                                    12.0,
+                                    egui::TextFormat::simple(font, ui.visuals().weak_text_color()),
+                                );
+                                ui.selectable_value(&mut self.prefs.style, st.id.to_owned(), job)
                                     .on_hover_text(tr(st.about));
                             }
                             if !player {
@@ -1424,6 +1446,9 @@ impl Dialog {
                     .on_disabled_hover_text(tr("The style is chosen for Rodent V"));
             });
             // Another style plays at other strengths: the strength is kept inside them.
+            if self.prefs.style != style_before {
+                self.event = None;
+            }
             if rodent {
                 let (min, max) = rodent_range(style(&self.prefs.style));
                 let kept = self.prefs.strength.clamp(min, max);
@@ -1436,9 +1461,11 @@ impl Dialog {
                 }
             }
             let about = if rodent {
-                tr(style(&self.prefs.style).about)
+                let st = style(&self.prefs.style);
+                let (min, max) = rodent_range(st);
+                format!("{} · {min}–{max}", tr(st.about))
             } else {
-                tr("Maia does not pick a style: she plays like people of her rating.")
+                tr("Maia does not pick a style: she plays like people of her rating.").to_owned()
             };
             ui.add(egui::Label::new(RichText::new(about).weak().size(11.5)).truncate());
             let rating = self.rating();
@@ -1625,8 +1652,10 @@ impl Dialog {
                 let main = ui
                     .add_enabled_ui(!busy, |ui| crate::widgets::primary_wide(ui, label, width))
                     .inner;
+                // Enter plays unless it is meant for a focused control or the open list.
+                let free = ctx.memory(|m| m.focused().is_none()) && !ctx.any_popup_open();
                 let pressed = !busy
-                    && (main.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                    && (main.clicked() || (free && ui.input(|i| i.key_pressed(egui::Key::Enter))));
                 if pressed && !ready {
                     if rodent {
                         self.rodent_download = Some(crate::rodent_download::start(ctx));

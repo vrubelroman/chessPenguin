@@ -3042,8 +3042,32 @@ impl GameView {
         ui.add_space(4.0);
         frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
+            // The clock gives way to the opponent's name in a narrow panel: smaller digits
+            // (the same on both bars), then the name cut.
+            let width = |text: String, font: egui::FontId| {
+                ui.painter()
+                    .layout_no_wrap(text, font, egui::Color32::WHITE)
+                    .size()
+                    .x
+            };
+            let rival_w = width(
+                format!("♚ {}", s.rival_label()),
+                egui::FontId::proportional(15.0),
+            );
+            let clock_size = left.map_or(28.0, |l| {
+                let at_28 = width(crate::play::clock_text(l), egui::FontId::monospace(28.0));
+                let room = ui.available_width() - rival_w - 16.0;
+                (28.0 * room / at_28).clamp(18.0, 28.0)
+            });
+            let clock_w = left.map_or(0.0, |l| {
+                width(
+                    crate::play::clock_text(l),
+                    egui::FontId::monospace(clock_size),
+                ) + 12.0
+            });
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
+                    ui.set_max_width(ui.available_width() - clock_w);
                     let king = if side == Color::White { "♔" } else { "♚" };
                     let name = if side == user {
                         match s.user_elo {
@@ -3068,13 +3092,19 @@ impl GameView {
                     } else {
                         ""
                     };
-                    ui.label(RichText::new(state).weak().size(13.0));
+                    // Rodent's style before what he does: «Tal · thinking…».
+                    let state = match s.rival_style().filter(|_| side != user) {
+                        Some(st) if state.is_empty() => st.to_owned(),
+                        Some(st) => format!("{st} · {state}"),
+                        None => state.to_owned(),
+                    };
+                    ui.add(egui::Label::new(RichText::new(state).weak().size(13.0)).truncate());
                 });
                 if let Some(left) = left {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let mut t = RichText::new(crate::play::clock_text(left))
                             .monospace()
-                            .size(28.0);
+                            .size(clock_size);
                         if low {
                             t = t.color(ui.visuals().error_fg_color);
                         } else if active {
