@@ -2203,7 +2203,10 @@ impl GameView {
                 crate::play::Engine::Rodent => Opponent::start_rodent(
                     file,
                     start.style.clone(),
-                    crate::play::rodent_elo(start.strength),
+                    Some(crate::play::rodent_elo(
+                        crate::play::style(&start.style),
+                        start.strength,
+                    )),
                     ctx,
                 ),
             },

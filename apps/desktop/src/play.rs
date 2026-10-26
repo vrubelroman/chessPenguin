@@ -162,6 +162,9 @@ pub struct Style {
     title: &'static str,
     pub about: &'static str,
     pub player: bool,
+    /// Measured: how much weaker (Elo) the style plays than the balanced one at the same
+    /// UCI_Elo, at some UCI_Elo values (in proportion between them, the nearest beyond).
+    weaker: &'static [(u32, u32)],
 }
 
 impl Style {
@@ -178,6 +181,7 @@ pub const STYLES: &[Style] = &[
         title: "Balanced",
         about: "Even, all-round play with no bias.",
         player: false,
+        weaker: &[],
     },
     Style {
         id: "ampere",
@@ -185,6 +189,7 @@ pub const STYLES: &[Style] = &[
         title: "Attacking",
         about: "Active pieces and attack, sound pawn structure.",
         player: false,
+        weaker: &[(1600, 295), (2400, 308)],
     },
     Style {
         id: "chaotic",
@@ -192,6 +197,7 @@ pub const STYLES: &[Style] = &[
         title: "Chaotic",
         about: "Aggressive, tricky openings, careless with pawns.",
         player: false,
+        weaker: &[(1600, 252), (2400, 363)],
     },
     Style {
         id: "nimzoid",
@@ -199,6 +205,7 @@ pub const STYLES: &[Style] = &[
         title: "Restricting",
         about: "Closed positions, cramping the opponent, old openings.",
         player: false,
+        weaker: &[(1600, 200), (2400, 147)],
     },
     Style {
         id: "hector",
@@ -206,6 +213,7 @@ pub const STYLES: &[Style] = &[
         title: "Classical",
         about: "Hand-written evaluation, no neural network.",
         player: false,
+        weaker: &[(1600, 402), (2400, 512)],
     },
     Style {
         id: "tal_hybrid",
@@ -213,6 +221,7 @@ pub const STYLES: &[Style] = &[
         title: "Tal",
         about: "Attacking style tuned on Tal's games.",
         player: true,
+        weaker: &[(1600, 392), (2400, 676)],
     },
     Style {
         id: "tal_nnue",
@@ -220,6 +229,7 @@ pub const STYLES: &[Style] = &[
         title: "Tal (network)",
         about: "A neural network trained on Tal's games.",
         player: true,
+        weaker: &[(1600, 115), (2400, 131)],
     },
 ];
 
@@ -619,20 +629,26 @@ impl Opponent {
 mod tests {
     #[test]
     fn rodent_strength_to_uci_elo() {
-        use super::{RODENT_MAX, RODENT_MIN, rodent_elo};
-        assert_eq!(rodent_elo(2254), Some(800));
-        assert!(rodent_elo(RODENT_MIN).is_some_and(|e| e <= 800));
-        assert_eq!(rodent_elo(2715), Some(2000));
-        let mid = rodent_elo(2778).unwrap();
+        use super::{STYLES, rodent_elo, rodent_range, style};
+        let balanced = style("rodent");
+        assert_eq!(rodent_range(balanced), (2250, 3000));
+        assert_eq!(rodent_elo(balanced, 2254), 800);
+        assert_eq!(rodent_elo(balanced, 2715), 2000);
+        let mid = rodent_elo(balanced, 2778);
         assert!((2090..=2110).contains(&mid), "{mid}");
-        assert!(rodent_elo(RODENT_MAX).is_some_and(|e| e < 3000));
-        // Stronger always means a higher setting.
-        let mut last = 0;
-        for s in (RODENT_MIN..=RODENT_MAX).step_by(50) {
-            let e = rodent_elo(s).unwrap();
-            assert!(e >= last, "{s}");
-            last = e;
+        for st in STYLES {
+            let (min, max) = rodent_range(st);
+            assert!(min < max, "{}", st.id);
+            // A stronger choice always means a higher setting, within his settings.
+            let mut last = 0;
+            for s in (min..=max).step_by(50) {
+                let e = rodent_elo(st, s);
+                assert!(e >= last && (800..=3000).contains(&e), "{} {s}", st.id);
+                last = e;
+            }
         }
+        // A weaker style needs a higher setting for the same strength.
+        assert!(rodent_elo(style("tal_hybrid"), 2400) > rodent_elo(balanced, 2400));
     }
 
     #[test]
@@ -906,29 +922,63 @@ const RODENT: &[(u32, u32)] = &[
     (3000, 3338),
 ];
 
-/// The weakest Rodent plays (his lowest setting), and the strongest offered: a strong
-/// grandmaster's blitz; beyond, the scale is not measured against people. Between Maia's
-/// top and his bottom nobody plays: the slider passes over it.
-pub const RODENT_MIN: u32 = 2250;
-pub const RODENT_MAX: u32 = 3000;
+/// The strongest Rodent offered: a strong grandmaster's blitz; beyond, the scale is not
+/// measured against people.
+const RODENT_TOP: u32 = 3000;
 
-/// The UCI_Elo for Rodent to play at `strength` (in proportion between the measured
-/// points; `None` above them: no limit).
-pub fn rodent_elo(strength: u32) -> Option<u32> {
-    let (first, last) = (RODENT[0], RODENT[RODENT.len() - 1]);
-    if strength <= first.1 {
-        return Some(first.0);
+/// In proportion between measured points `(x, y)` (sorted by x), the nearest beyond.
+fn between(points: &[(u32, u32)], x: u32) -> f64 {
+    let Some(&(x0, y0)) = points.first() else {
+        return 0.0;
+    };
+    if x <= x0 {
+        return f64::from(y0);
     }
-    if strength >= last.1 {
-        return None;
+    for w in points.windows(2) {
+        let ((a, ya), (b, yb)) = (w[0], w[1]);
+        if x <= b {
+            let t = f64::from(x - a) / f64::from(b - a);
+            return f64::from(ya) + t * (f64::from(yb) - f64::from(ya));
+        }
     }
-    let i = RODENT
+    f64::from(points[points.len() - 1].1)
+}
+
+/// The strength Rodent plays at with `style` at each measured UCI_Elo: (UCI_Elo, strength).
+fn rodent_curve(style: &Style) -> Vec<(u32, f64)> {
+    RODENT
         .iter()
-        .position(|p| p.1 >= strength)
-        .unwrap_or(RODENT.len() - 1);
-    let ((a_in, a_out), (b_in, b_out)) = (RODENT[i - 1], RODENT[i]);
-    let t = f64::from(strength - a_out) / f64::from(b_out - a_out);
-    Some((f64::from(a_in) + t * f64::from(b_in - a_in)).round() as u32)
+        .map(|&(elo, base)| (elo, f64::from(base) - between(style.weaker, elo)))
+        .collect()
+}
+
+/// The strengths Rodent plays with `style` (from his lowest setting up to `RODENT_TOP`, or
+/// his top with the style), on the slider's steps of 50 (the nearest one at the bottom:
+/// well within the measurement's error).
+pub fn rodent_range(style: &Style) -> (u32, u32) {
+    let curve = rodent_curve(style);
+    let (low, high) = (curve[0].1, curve[curve.len() - 1].1);
+    let min = ((low / 50.0).round() * 50.0) as u32;
+    let max = (((high / 50.0).floor() * 50.0) as u32).min(RODENT_TOP);
+    (min, max)
+}
+
+/// The UCI_Elo for Rodent to play at `strength` with `style` (in proportion between the
+/// measured points; his lowest or highest setting beyond them).
+pub fn rodent_elo(style: &Style, strength: u32) -> u32 {
+    let curve = rodent_curve(style);
+    let s = f64::from(strength);
+    if s <= curve[0].1 {
+        return curve[0].0;
+    }
+    for w in curve.windows(2) {
+        let ((a, sa), (b, sb)) = (w[0], w[1]);
+        if s <= sb {
+            let t = (s - sa) / (sb - sa);
+            return (f64::from(a) + t * f64::from(b - a)).round() as u32;
+        }
+    }
+    curve[curve.len() - 1].0
 }
 
 /// Dev hook `CP_RIVAL=rodent[:style]`: the opponent of a game started by a hook.
@@ -1041,13 +1091,14 @@ impl Dialog {
         if prefs.rival == Rival::Rodent && !rodent_ok {
             prefs.rival = Rival::Maia;
         }
+        let (rodent_min, rodent_max) = rodent_range(style(&prefs.style));
         match prefs.rival {
             Rival::Maia if prefs.strength > STRENGTH_MAX && rodent_ok => {
                 prefs.rival = Rival::Rodent;
-                prefs.strength = prefs.strength.clamp(RODENT_MIN, RODENT_MAX);
+                prefs.strength = prefs.strength.clamp(rodent_min, rodent_max);
             }
             Rival::Maia => prefs.strength = prefs.strength.clamp(STRENGTH_MIN, STRENGTH_MAX),
-            Rival::Rodent => prefs.strength = prefs.strength.clamp(RODENT_MIN, RODENT_MAX),
+            Rival::Rodent => prefs.strength = prefs.strength.clamp(rodent_min, rodent_max),
         }
         let custom = prefs.clock.is_some_and(|c| !PRESETS.contains(&c));
         Dialog {
@@ -1253,17 +1304,20 @@ impl Dialog {
                     self.prefs.rival = Rival::Rodent;
                     self.auto_switched = false;
                     self.event = None;
-                    if self.prefs.strength < RODENT_MIN {
-                        self.prefs.strength = RODENT_MIN;
+                    let (min, _) = rodent_range(style(&self.prefs.style));
+                    if self.prefs.strength < min {
+                        self.prefs.strength = min;
                         self.event = Some(crate::i18n::trf(
                             "Rodent V plays from {elo}: the strength is raised to {elo}.",
-                            &[("elo", &RODENT_MIN)],
+                            &[("elo", &min)],
                         ));
                     }
                 }
             });
-            // One scale for both: a point of the slider is always the same strength.
-            let top = if rodent_ok { RODENT_MAX } else { STRENGTH_MAX };
+            // One scale for both: a point of the slider is always the same strength. Up to
+            // the top of Rodent with the style chosen (each style is measured).
+            let (rodent_min, rodent_max) = rodent_range(style(&self.prefs.style));
+            let top = if rodent_ok { rodent_max } else { STRENGTH_MAX };
             let before = self.prefs.strength;
             ui.horizontal(|ui| {
                 let end = |ui: &mut egui::Ui, v: u32| {
@@ -1302,23 +1356,30 @@ impl Dialog {
                 // bottom: Maia. Moving back keeps the choice, with a word about it.
                 if self.prefs.rival == Rival::Maia && self.prefs.strength > STRENGTH_MAX {
                     self.prefs.rival = Rival::Rodent;
-                    self.prefs.strength = self.prefs.strength.max(RODENT_MIN);
+                    self.prefs.strength = self.prefs.strength.max(rodent_min);
                     self.auto_switched = true;
-                    self.event = Some(crate::i18n::trf(
-                        "Stronger than {elo} plays Rodent V, from {min} on: Maia does not play that strong.",
-                        &[("elo", &STRENGTH_MAX), ("min", &RODENT_MIN)],
-                    ));
+                    self.event = Some(if rodent_min > STRENGTH_MAX {
+                        crate::i18n::trf(
+                            "Stronger than {elo} plays Rodent V, from {min} on: Maia does not play that strong.",
+                            &[("elo", &STRENGTH_MAX), ("min", &rodent_min)],
+                        )
+                    } else {
+                        crate::i18n::trf(
+                            "Stronger than {elo} plays Rodent V: Maia does not play that strong.",
+                            &[("elo", &STRENGTH_MAX)],
+                        )
+                    });
                 } else if self.prefs.rival == Rival::Rodent
-                    && self.prefs.strength < RODENT_MIN
+                    && self.prefs.strength < rodent_min
                     && self.prefs.strength > STRENGTH_MAX
                 {
                     // In the gap nobody plays: Rodent stays, at his lowest (a drag through
                     // it does not flip between the two every frame).
-                    self.prefs.strength = RODENT_MIN;
-                } else if self.prefs.rival == Rival::Rodent && self.prefs.strength < RODENT_MIN {
+                    self.prefs.strength = rodent_min;
+                } else if self.prefs.rival == Rival::Rodent && self.prefs.strength < rodent_min {
                     self.prefs.rival = Rival::Maia;
                     self.auto_switched = false;
-                    self.event = Some(crate::i18n::trf("Weaker than {elo} plays Maia.", &[("elo", &RODENT_MIN)]));
+                    self.event = Some(crate::i18n::trf("Weaker than {elo} plays Maia.", &[("elo", &rodent_min)]));
                 } else if self.auto_switched && self.prefs.strength <= STRENGTH_MAX {
                     self.event = Some(tr("Maia can play here too: choose her if you want human mistakes.").to_owned());
                 }
@@ -1362,6 +1423,18 @@ impl Dialog {
                     .response
                     .on_disabled_hover_text(tr("The style is chosen for Rodent V"));
             });
+            // Another style plays at other strengths: the strength is kept inside them.
+            if rodent {
+                let (min, max) = rodent_range(style(&self.prefs.style));
+                let kept = self.prefs.strength.clamp(min, max);
+                if kept != self.prefs.strength {
+                    self.prefs.strength = kept;
+                    self.event = Some(crate::i18n::trf(
+                        "In this style Rodent V plays from {min} to {max}: the strength is set to {elo}.",
+                        &[("min", &min), ("max", &max), ("elo", &kept)],
+                    ));
+                }
+            }
             let about = if rodent {
                 tr(style(&self.prefs.style).about)
             } else {
