@@ -252,6 +252,7 @@ fun MiniBoard(fen: String, flipped: Boolean, size: androidx.compose.ui.unit.Dp) 
         description = "",
         animated = false,
         modifier = Modifier.width(size),
+        coordinates = false,
     )
 }
 

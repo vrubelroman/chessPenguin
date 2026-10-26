@@ -190,6 +190,8 @@ fun Board(
     input: BoardInput? = null,
     /// Two squares lit red: a wrong move of the trainer, shown for a moment (§32.2).
     alert: Pair<String, String>? = null,
+    /// The files and ranks along the edges (none on a small board that only shows).
+    coordinates: Boolean = true,
 ) {
     val colors = LocalChessColors.current
     val context = LocalContext.current
@@ -372,7 +374,7 @@ fun Board(
         }
         // Over the pieces, so that b, c, f, g stay readable (as on Lichess).
         // Coordinates: files along the bottom edge, ranks along the left edge.
-        for (k in 0 until 8) {
+        for (k in 0 until (if (coordinates) 8 else 0)) {
             val fileIndex = if (flipped) 7 - k else k
             val rankIndex = if (flipped) k else 7 - k
             val bottomLight = (7 + k) % 2 == 0

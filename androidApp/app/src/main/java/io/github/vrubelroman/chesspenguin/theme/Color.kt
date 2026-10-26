@@ -77,3 +77,29 @@ fun nagColor(nag: Int, dark: Boolean): Color? = if (dark) {
         else -> null
     }
 }
+
+/// The kinds of databases, each in its own colour on its badge (android-lists.md §5.1).
+enum class DbKind { Pgn, ChessBase, Archive, Online, Own }
+
+/// A badge's background and what is written on it.
+data class KindColor(val container: Color, val content: Color)
+
+/// The colour of a kind of database, from Catppuccin (the owner's choice): Mocha in the
+/// dark theme, Latte in the light one, on a tint of the same hue (contrast at least 5:1).
+fun kindColor(kind: DbKind, dark: Boolean): KindColor = if (dark) {
+    when (kind) {
+        DbKind.Pgn -> KindColor(Color(0xFF384660), Color(0xFF89B4FA)) // blue
+        DbKind.ChessBase -> KindColor(Color(0xFF55443B), Color(0xFFFAB387)) // peach
+        DbKind.Archive -> KindColor(Color(0xFF4A3F5E), Color(0xFFCBA6F7)) // mauve
+        DbKind.Online -> KindColor(Color(0xFF3A5250), Color(0xFF94E2D5)) // teal
+        DbKind.Own -> KindColor(Color(0xFF3F523F), Color(0xFFA6E3A1)) // green
+    }
+} else {
+    when (kind) {
+        DbKind.Pgn -> KindColor(Color(0xFFDFEAFE), Color(0xFF1957D0))
+        DbKind.ChessBase -> KindColor(Color(0xFFFFE9DD), Color(0xFFA54107))
+        DbKind.Archive -> KindColor(Color(0xFFEEE3FD), Color(0xFF7A33D7))
+        DbKind.Online -> KindColor(Color(0xFFDFF0F1), Color(0xFF116D73))
+        DbKind.Own -> KindColor(Color(0xFFE4F2E1), Color(0xFF2D701E))
+    }
+}

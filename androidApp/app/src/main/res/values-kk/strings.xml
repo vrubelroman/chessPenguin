@@ -546,4 +546,7 @@
     <string name="player_written_new">✓ Жаңа база «%1$s», № %2$s ›</string>
     <string name="player_write_failed">«%1$s» базасына жазу мүмкін болмады: %2$s</string>
     <string name="play_adjourned_replaced">Жаңа ойын оның орнын басады.</string>
+    <string name="last_opened">Соңғы ашылған</string>
+    <string name="play_adjourned_title">Maia %1$s-мен ойын</string>
+    <string name="play_move_n">%1$d-жүріс</string>
 </resources>

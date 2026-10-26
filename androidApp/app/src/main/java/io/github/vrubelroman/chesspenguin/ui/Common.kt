@@ -1,5 +1,7 @@
 package io.github.vrubelroman.chesspenguin.ui
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -33,6 +35,12 @@ import androidx.compose.ui.text.withStyle
 import io.github.vrubelroman.chesspenguin.ChessPenguinApp
 import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.theme.Tabular
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxSize
+import io.github.vrubelroman.chesspenguin.theme.kindColor
+import io.github.vrubelroman.chesspenguin.theme.LocalChessColors
+import io.github.vrubelroman.chesspenguin.theme.DbKind
 import io.github.vrubelroman.chesspenguin.data.Notation
 import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.Source
@@ -73,21 +81,57 @@ fun formatName(e: DbEntry): String = when (e.fileName.substringAfterLast('.', ""
     else -> "PGN"
 }
 
+/// What kind of database an entry is (its badge's colour, android-lists.md §5.1).
+fun kindOf(e: DbEntry): DbKind {
+    return when {
+        e.source == Source.Own -> DbKind.Own
+        e.source == Source.Online -> DbKind.Online
+        else -> when (badge(e)) {
+            "CB" -> DbKind.ChessBase
+            "7Z", "ZIP" -> DbKind.Archive
+            else -> DbKind.Pgn
+        }
+    }
+}
+
+/// A database's badge: 40 dp, the colour of its kind, a word or an icon on it.
 @Composable
-fun FormatBadge(text: String, error: Boolean = false) {
+fun KindBadge(
+    kind: DbKind,
+    error: Boolean = false,
+    content: @Composable (Color) -> Unit,
+) {
+    val c = kindColor(kind, LocalChessColors.current.dark)
     Box(
         Modifier
             .size(40.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer),
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (error) MaterialTheme.colorScheme.errorContainer else c.container),
         contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
-        )
-    }
+    ) { content(if (error) MaterialTheme.colorScheme.error else c.content) }
+}
+
+@Composable
+fun FormatBadge(text: String, error: Boolean = false, kind: DbKind = DbKind.Pgn) {
+    KindBadge(kind, error) { color -> Text(text, style = MaterialTheme.typography.labelSmall, color = color) }
+}
+
+/// The shape of a card in a group of `count` (android-lists.md §5.3): 16 dp outside,
+/// 4 dp where it meets its neighbours.
+fun groupShape(index: Int, count: Int): RoundedCornerShape {
+    val top = if (index == 0) 16.dp else 4.dp
+    val bottom = if (index == count - 1) 16.dp else 4.dp
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
+}
+
+/// A row of a group drawn as its card: 12 dp from the screen's edges, 2 dp between cards.
+@Composable
+fun Modifier.groupCard(index: Int, count: Int): Modifier {
+    val shape = groupShape(index, count)
+    return this
+        .padding(start = 12.dp, end = 12.dp, bottom = 2.dp)
+        .clip(shape)
+        .background(MaterialTheme.colorScheme.surfaceContainerLow, shape)
 }
 
 /// "Carlsen, Magnus" → "Carlsen M."; other names stay as in the file (§6.2).
@@ -111,11 +155,57 @@ fun PlayerName(
     color: Color = Color.Unspecified,
     maxLines: Int = 1,
     abbreviate: Boolean = true,
+    /// Words searched for: shown marked where they are in the name as shown.
+    highlight: String? = null,
 ) {
     val measurer = rememberTextMeasurer()
     BoxWithConstraints(modifier) {
         val text = if (abbreviate && measurer.measure(name, style, softWrap = false).size.width > constraints.maxWidth) shortName(name) else name
-        Text(text, style = style, color = color, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+        Text(highlighted(text, highlight), style = style, color = color, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/// `text` with the first place of each searched word marked (android-lists.md §3.7);
+/// case does not matter.
+@Composable
+fun highlighted(text: String, query: String?): AnnotatedString {
+    val words = query?.split(' ')?.filter { it.isNotBlank() }.orEmpty()
+    if (words.isEmpty()) return AnnotatedString(text)
+    val mark = SpanStyle(
+        background = MaterialTheme.colorScheme.primaryContainer,
+        color = MaterialTheme.colorScheme.onPrimaryContainer,
+    )
+    return buildAnnotatedString {
+        append(text)
+        for (w in words) {
+            val at = text.indexOf(w, ignoreCase = true)
+            if (at >= 0) addStyle(mark, at, at + w.length)
+        }
+    }
+}
+
+/// A player's share of the result in the list of games (android-lists.md §3.3): the
+/// winner's «1» on a tile, «½» on a quieter one, a loss as a plain «0».
+@Composable
+fun ResultTile(result: String?) {
+    // At least 24×20 dp; it grows with the font.
+    Box(Modifier.widthIn(min = 24.dp).heightIn(min = 20.dp), contentAlignment = Alignment.Center) {
+        when (result) {
+            "1" -> Box(
+                Modifier.widthIn(min = 24.dp).heightIn(min = 20.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("1", style = MaterialTheme.typography.labelLarge.merge(Tabular), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+            "½" -> Box(
+                Modifier.widthIn(min = 24.dp).heightIn(min = 20.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("½", style = MaterialTheme.typography.labelLarge.merge(Tabular), color = MaterialTheme.colorScheme.onSurface)
+            }
+            null -> {}
+            else -> Text(result, style = MaterialTheme.typography.labelLarge.merge(Tabular), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -132,11 +222,14 @@ fun elo(value: String): String = value.trim().takeIf { v -> v.toIntOrNull()?.let
 
 /// The colour of a side: a small disc (white with a rim, or black).
 @Composable
-fun SideDisc(white: Boolean) {
+fun SideDisc(white: Boolean, size: androidx.compose.ui.unit.Dp = 12.dp) {
+    // Black darker than any background, white whiter; the ring in the text's muted colour
+    // keeps either from reading as an empty circle (android-lists.md §3.2).
+    val dark = LocalChessColors.current.dark
     Box(
-        Modifier.size(12.dp).clip(CircleShape)
-            .background(if (white) Color(0xFFF5F5F0) else Color(0xFF26282B))
-            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+        Modifier.size(size).clip(CircleShape)
+            .background(if (white) Color.White else if (dark) Color(0xFF0E0F10) else Color(0xFF1C1D1F))
+            .border(1.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
     )
 }
 

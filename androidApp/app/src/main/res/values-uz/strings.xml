@@ -544,4 +544,7 @@
     <string name="player_written_new">✓ Yangi baza «%1$s», № %2$s ›</string>
     <string name="player_write_failed">«%1$s» ga yozib bo‘lmadi: %2$s</string>
     <string name="play_adjourned_replaced">Yangi o‘yin uning o‘rnini oladi.</string>
+    <string name="last_opened">Oxirgi ochilgan</string>
+    <string name="play_adjourned_title">Maia %1$s bilan o‘yin</string>
+    <string name="play_move_n">%1$d-yurish</string>
 </resources>

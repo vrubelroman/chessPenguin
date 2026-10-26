@@ -553,4 +553,7 @@
     <string name="player_written_new">✓ Nuovo database «%1$s», n. %2$s ›</string>
     <string name="player_write_failed">Impossibile scrivere in «%1$s»: %2$s</string>
     <string name="play_adjourned_replaced">Una nuova partita la sostituisce.</string>
+    <string name="last_opened">Aperta per ultima</string>
+    <string name="play_adjourned_title">Partita contro Maia %1$s</string>
+    <string name="play_move_n">mossa %1$d</string>
 </resources>

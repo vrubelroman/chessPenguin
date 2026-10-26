@@ -1,5 +1,15 @@
 package io.github.vrubelroman.chesspenguin.ui
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.font.FontWeight
+import io.github.vrubelroman.chesspenguin.theme.DbKind
+import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.SpanStyle
 import android.content.ClipboardManager
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -175,6 +185,8 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     val own = entries.filter { it.source == Source.Own }
     val theApp = app()
     val adjourned by theApp.maiaGames.current.collectAsState()
+    // Back on the list of databases, a list of games was left: its mark goes (android-lists.md §3.6).
+    LaunchedEffect(Unit) { theApp.lastOpened.clear() }
     val playRemovedText = stringResource(R.string.play_removed)
     val keptText = stringResource(R.string.player_kept_unfinished)
     var playing by remember { mutableStateOf(false) }
@@ -264,18 +276,33 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                 // A game against Maia put aside (§31.7): go on with it, or let it go.
                 adjourned?.takeIf { !it.over }?.let { m ->
                     item(key = "adjourned") {
+                        // The game's position on a small board, the side and the move, and
+                        // «Continue» as the screen's main action while it waits (android-lists.md §5.4).
+                        val shownAt = remember(m) { adjournedPosition(theApp.maiaGames.pgn()) }
+                        val sideText = stringResource(if (m.userWhite) R.string.play_as_white else R.string.play_as_black)
+                        val sub = shownAt?.second?.let { sideText + " · " + stringResource(R.string.play_move_n, it) } ?: sideText
+                        val title = stringResource(R.string.play_adjourned_title, m.strength.toString())
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
-                                .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp))
-                                .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                .clickable(onClick = onPlay)
+                                .semantics(mergeDescendants = true) {}
+                                .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+                            verticalAlignment = Alignment.Top,
                         ) {
-                            Text(
-                                stringResource(R.string.play_adjourned, m.strength.toString(), stringResource(if (m.userWhite) R.string.play_as_white else R.string.play_as_black)),
-                                Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            TextButton(onClick = onPlay) { Text(stringResource(R.string.play_continue)) }
+                            shownAt?.let { (fen, _) ->
+                                Box(Modifier.clip(RoundedCornerShape(6.dp))) { MiniBoard(fen, flipped = !m.userWhite, size = 72.dp) }
+                                Spacer(Modifier.width(12.dp))
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                Text(sub, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                Spacer(Modifier.height(8.dp))
+                                Button(onClick = onPlay, modifier = Modifier.heightIn(min = 32.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
+                                    Text(stringResource(R.string.play_continue))
+                                }
+                            }
                             IconButton(onClick = {
                                 // Played on both sides: kept in the player's database,
                                 // unfinished (no «Undo»: it is there to be deleted).
@@ -302,14 +329,20 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                     }
                 }
                 item(key = "actions") {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = { if (adjourned?.over == false) askingAdjourned = true else playing = true }, modifier = Modifier.height(48.dp)) {
-                            Icon(Icons.Rounded.SmartToy, null)
+                    // Two equal buttons over the whole width (android-lists.md §5.5).
+                    // Neutral, as the cards' edges: the blue stays for the game put aside and the FAB.
+                    val quiet = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        FilledTonalButton(onClick = { if (adjourned?.over == false) askingAdjourned = true else playing = true }, modifier = Modifier.weight(1f).heightIn(min = 56.dp), shape = RoundedCornerShape(16.dp), colors = quiet) {
+                            Icon(Icons.Rounded.SmartToy, null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.size(8.dp))
                             Text(stringResource(R.string.play_with_maia))
                         }
-                        FilledTonalButton(onClick = onNewGame, modifier = Modifier.height(48.dp)) {
-                            Icon(Icons.Rounded.Add, null)
+                        FilledTonalButton(onClick = onNewGame, modifier = Modifier.weight(1f).heightIn(min = 56.dp), shape = RoundedCornerShape(16.dp), colors = quiet) {
+                            Icon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.size(8.dp))
                             Text(stringResource(R.string.new_game))
                         }
@@ -331,7 +364,8 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                         )
                     }
                 }
-                items(own, key = { it.id }) { e ->
+                items(own.size, key = { own[it].id }) { k ->
+                    val e = own[k]
                     OwnRow(
                         e,
                         player = theApp.playerGames.isPlayers(e.id),
@@ -360,7 +394,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                                 deleting = e
                             }
                         },
-                        modifier = Modifier.animateItem(),
+                        modifier = Modifier.animateItem().groupCard(k, own.size),
                     )
                 }
                 item(key = "files-head") {
@@ -371,7 +405,8 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
-                items(files, key = { it.id }) { e ->
+                items(files.size, key = { files[it].id }) { k ->
+                    val e = files[k]
                     DatabaseRow(
                         e,
                         download = views[e.id],
@@ -404,7 +439,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                                 }
                             }
                         },
-                        modifier = Modifier.animateItem(),
+                        modifier = Modifier.animateItem().groupCard(k, files.size),
                     )
                 }
             }
@@ -549,24 +584,21 @@ private fun OwnRow(e: DbEntry, player: Boolean, onOpen: () -> Unit, onRename: ()
                 .fillMaxWidth()
                 .height(72.dp)
                 .combinedClickable(onClick = onOpen, onLongClick = { menu = true })
-                .padding(start = 16.dp, end = 4.dp),
+                .padding(start = 12.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center,
-            ) {
+            KindBadge(DbKind.Own) { color ->
                 // A player's database (games against Maia written by themselves): a knight.
                 if (player) {
-                    Text("♞", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("♞", style = MaterialTheme.typography.titleLarge, color = color)
                 } else {
-                    Icon(Icons.Rounded.EditNote, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Icon(Icons.Rounded.EditNote, null, tint = color)
                 }
             }
-            Column(Modifier.weight(1f).padding(start = 16.dp)) {
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(displayName(e), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    pluralStringResource(R.plurals.games_count, n, groupDigits(n)) + " · " + stringResource(if (player) R.string.player_db_row else R.string.own_on_phone),
+                    countFirst(pluralStringResource(R.plurals.games_count, n, groupDigits(n)), stringResource(if (player) R.string.player_db_row else R.string.own_on_phone)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -641,6 +673,7 @@ private fun DatabaseRow(
     val subtitle = e.games?.let {
         stringResource(R.string.games_with_format, pluralStringResource(R.plurals.games_count, it, groupDigits(it)), e.format ?: format)
     } ?: stringResource(R.string.not_opened, formatName(e))
+    val gamesText = e.games?.let { pluralStringResource(R.plurals.games_count, it, groupDigits(it)) }
     val shownSubtitle = when {
         // A copy kept in the app says so: removing it deletes it.
         e.source == Source.Copy -> subtitle + " · " + stringResource(R.string.db_copy)
@@ -664,14 +697,20 @@ private fun DatabaseRow(
                 .fillMaxWidth()
                 .height(72.dp)
                 .combinedClickable(onClick = onOpen, onLongClick = { menu = true })
-                .padding(start = 16.dp, end = 4.dp),
+                .padding(start = 12.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            FormatBadge(format)
-            Column(Modifier.weight(1f).padding(start = 16.dp)) {
+            // A downloaded database is told by where it comes from, not by its format.
+            val kind = kindOf(e)
+            KindBadge(kind) { color ->
+                if (kind == DbKind.Online) Icon(Icons.Rounded.CloudDownload, null, tint = color, modifier = Modifier.size(22.dp))
+                else Text(format, style = MaterialTheme.typography.labelSmall, color = color)
+            }
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(displayName(e), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    shownSubtitle,
+                    // The number of games stands out (a big database from a small one).
+                    if (failure == null && gamesText != null && shownSubtitle.startsWith(gamesText)) countFirst(gamesText, shownSubtitle.removePrefix(gamesText).removePrefix(" · ")) else androidx.compose.ui.text.AnnotatedString(shownSubtitle),
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (failure != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -726,6 +765,31 @@ private fun RenameDialog(name: String, own: Boolean = false, onDismiss: () -> Un
         confirmButton = { TextButton(onClick = { onSave(trimmed) }, enabled = trimmed.isNotEmpty()) { Text(stringResource(R.string.save)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
+}
+
+/// «**267 games** · PGN»: the number of games heavier and in the text's colour.
+@Composable
+private fun countFirst(count: String, rest: String): androidx.compose.ui.text.AnnotatedString {
+    val strong = SpanStyle(fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+    return buildAnnotatedString {
+        withStyle(strong) { append(count) }
+        if (rest.isNotEmpty()) append(" · $rest")
+    }
+}
+
+/// The position on the board of a game put aside, and the number of its last move.
+private fun adjournedPosition(pgn: String?): Pair<String, Int>? {
+    pgn ?: return null
+    val s = runCatching { uniffi.mobile_api.GameSession.fromPgn(pgn) }.getOrNull() ?: return null
+    return try {
+        val d = s.data()
+        val end = lineEnd(d)
+        val node = d.nodes[end]
+        // The move to be made: after White's, the same number; after Black's, the next.
+        node.fen to (if (end == 0) 1 else node.moveNumber.toInt() + if (node.white) 0 else 1)
+    } finally {
+        s.close()
+    }
 }
 
 /// The name of pasted games: one game by its players, games of one event by it, others by

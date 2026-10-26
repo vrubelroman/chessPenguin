@@ -549,4 +549,7 @@
     <string name="player_written_new">✓ New database “%1$s”, No. %2$s ›</string>
     <string name="player_write_failed">Could not write to “%1$s”: %2$s</string>
     <string name="play_adjourned_replaced">A new game replaces it.</string>
+    <string name="last_opened">Last opened</string>
+    <string name="play_adjourned_title">Game against Maia %1$s</string>
+    <string name="play_move_n">move %1$d</string>
 </resources>

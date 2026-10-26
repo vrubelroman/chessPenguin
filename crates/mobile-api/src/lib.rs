@@ -317,8 +317,8 @@ impl Database {
             .collect()
     }
 
-    /// The numbers of the games whose players, event, site or date contain every word
-    /// of `text` (case does not matter); all games for an empty text.
+    /// The numbers of the games whose players, event, site, date or opening code (ECO)
+    /// contain every word of `text` (case does not matter); all games for an empty text.
     pub fn find(&self, text: String) -> Vec<u32> {
         let Some(pgn) = self.db.as_pgn() else {
             return Vec::new();
@@ -328,7 +328,7 @@ impl Database {
             .iter()
             .filter(|e| {
                 words.is_empty() || {
-                    let hay = ["White", "Black", "Event", "Site", "Date"]
+                    let hay = ["White", "Black", "Event", "Site", "Date", "ECO"]
                         .iter()
                         .filter_map(|t| e.tag(t))
                         .collect::<Vec<_>>()
@@ -626,6 +626,10 @@ mod tests {
                 .all(|r| r.white.contains("Morphy") || r.black.contains("Morphy"))
         );
         assert!(db.find("no such player anywhere".into()).is_empty());
+        // By the opening code too: the Opera game is a Philidor (C41).
+        let c41 = db.find("c41".into());
+        assert!(!c41.is_empty());
+        assert!(db.rows_of(c41).iter().all(|r| r.eco == "C41"));
     }
 
     #[test]

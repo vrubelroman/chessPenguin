@@ -58,6 +58,9 @@ class ChessPenguinApp : Application() {
     /// The games shown on the list of each database (after a search), for paging
     /// games from the game screen: database id → game numbers.
     val shown = HashMap<String, List<UInt>>()
+    /// The game last opened from a database's list: the search it was found with and its
+    /// place there (android-lists.md §3.6; the list marks it and shows it again).
+    val lastOpened = HashMap<String, Pair<String, Int>>()
 
     /// Changes each time the app goes to the background, and in every new process: the
     /// engine button of a game holds only for the visit it was pressed in (§8.3).

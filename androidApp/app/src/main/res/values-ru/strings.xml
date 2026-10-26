@@ -561,4 +561,7 @@
     <string name="player_written_new">✓ Создана база «%1$s», № %2$s ›</string>
     <string name="player_write_failed">Не удалось записать в «%1$s»: %2$s</string>
     <string name="play_adjourned_replaced">Новая партия заменит её.</string>
+    <string name="last_opened">Открыта последней</string>
+    <string name="play_adjourned_title">Партия с Maia %1$s</string>
+    <string name="play_move_n">%1$d-й ход</string>
 </resources>

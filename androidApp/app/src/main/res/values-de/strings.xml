@@ -545,4 +545,7 @@
     <string name="player_written_new">✓ Neue Datenbank „%1$s“, Nr. %2$s ›</string>
     <string name="player_write_failed">Konnte nicht in „%1$s“ schreiben: %2$s</string>
     <string name="play_adjourned_replaced">Eine neue Partie ersetzt sie.</string>
+    <string name="last_opened">Zuletzt geöffnet</string>
+    <string name="play_adjourned_title">Partie gegen Maia %1$s</string>
+    <string name="play_move_n">Zug %1$d</string>
 </resources>

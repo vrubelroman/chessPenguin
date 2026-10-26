@@ -156,6 +156,8 @@ fun GameScreen(
     val dbEntry = libraryEntries.firstOrNull { it.id == db }
     var games by remember { mutableStateOf(app.shown[db]) }
     var place by rememberSaveable { mutableIntStateOf(startPlace) }
+    // The list marks the game it comes back to (the one paged to with ‹ ›, too).
+    LaunchedEffect(place) { if (db != NEW_GAME && db != PLAY_GAME) app.lastOpened[db] = query to place }
     // The game as changed on the board (android-play.md §29), kept while the phone turns:
     // a game of someone else's file is changed for analysis and never written there.
     val held: GameEdit = viewModel()

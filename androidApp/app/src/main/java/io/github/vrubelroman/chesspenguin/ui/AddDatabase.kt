@@ -1,5 +1,8 @@
 package io.github.vrubelroman.chesspenguin.ui
 
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import io.github.vrubelroman.chesspenguin.theme.DbKind
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -53,6 +56,16 @@ import io.github.vrubelroman.chesspenguin.data.FolderScan
 import io.github.vrubelroman.chesspenguin.data.Found
 import io.github.vrubelroman.chesspenguin.data.Source
 
+/// The icon of a way to add, in a round tile coloured as the database it brings
+/// (android-lists.md §6).
+@Composable
+private fun KindIcon(kind: DbKind, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    val c = io.github.vrubelroman.chesspenguin.theme.kindColor(kind, io.github.vrubelroman.chesspenguin.theme.LocalChessColors.current.dark)
+    Box(Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape).background(c.container), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = c.content, modifier = Modifier.size(22.dp))
+    }
+}
+
 /// "Add a database": games in the clipboard, a file, every database in a folder, or a
 /// player's games from Lichess and Chess.com.
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,7 +84,7 @@ fun AddSheet(onFile: () -> Unit, onFolder: () -> Unit, onPaste: (() -> Unit)?, o
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.add_paste)) },
                     supportingContent = { Text(stringResource(R.string.add_paste_hint)) },
-                    leadingContent = { Icon(Icons.Outlined.ContentPaste, null) },
+                    leadingContent = { KindIcon(DbKind.Pgn, Icons.Outlined.ContentPaste) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.clickable(role = Role.Button, onClick = onPaste).padding(horizontal = 8.dp),
                 )
@@ -79,21 +92,21 @@ fun AddSheet(onFile: () -> Unit, onFolder: () -> Unit, onPaste: (() -> Unit)?, o
             ListItem(
                 headlineContent = { Text(stringResource(R.string.online_title)) },
                 supportingContent = { Text(stringResource(R.string.add_online_hint)) },
-                leadingContent = { Icon(Icons.Outlined.CloudDownload, null) },
+                leadingContent = { KindIcon(DbKind.Online, Icons.Outlined.CloudDownload) },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.clickable(role = Role.Button, onClick = onOnline).padding(horizontal = 8.dp),
             )
             ListItem(
                 headlineContent = { Text(stringResource(R.string.add_file)) },
                 supportingContent = { Text(stringResource(R.string.add_file_hint)) },
-                leadingContent = { Icon(Icons.Outlined.Description, null) },
+                leadingContent = { KindIcon(DbKind.Pgn, Icons.Outlined.Description) },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.clickable(role = Role.Button, onClick = onFile).padding(horizontal = 8.dp),
             )
             ListItem(
                 headlineContent = { Text(stringResource(R.string.add_folder)) },
                 supportingContent = { Text(stringResource(R.string.add_folder_hint)) },
-                leadingContent = { Icon(Icons.Outlined.Folder, null) },
+                leadingContent = { KindIcon(DbKind.Pgn, Icons.Outlined.Folder) },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.clickable(role = Role.Button, onClick = onFolder).padding(horizontal = 8.dp),
             )
@@ -197,7 +210,7 @@ private fun FoundRow(f: Found, checked: Boolean, onChange: (Boolean) -> Unit) {
     ) {
         Checkbox(checked = checked || f.added, onCheckedChange = null, enabled = enabled)
         Spacer(Modifier.size(12.dp))
-        FormatBadge(label, error = f.incomplete)
+        FormatBadge(label, error = f.incomplete, kind = when (label) { "CB" -> DbKind.ChessBase; "7Z", "ZIP" -> DbKind.Archive; else -> DbKind.Pgn })
         Column(Modifier.weight(1f).padding(start = 16.dp)) {
             Text(f.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val where = if (f.path.isEmpty()) note else "${f.path} · $note"

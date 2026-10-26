@@ -1,7 +1,15 @@
 package io.github.vrubelroman.chesspenguin.ui
 
+import androidx.compose.foundation.layout.heightIn
+import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.snapshotFlow
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -99,8 +107,18 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
         val found = withContext(Dispatchers.Default) { app.library.listed(db, d, query) }
         rows.clear()
         shown = found
-        // New results start at the top.
-        list.scrollToItem(0)
+        // Once the new list is laid out (else the list keeps its place by a row's key).
+        snapshotFlow { list.layoutInfo.totalItemsCount }.first { it == found.size }
+        // Back from a game: it in sight; new results start at the top.
+        val last = app.lastOpened[db]?.takeIf { it.first == query }?.second?.takeIf { it < found.size }
+        val first = list.firstVisibleItemIndex
+        val seen = list.layoutInfo.visibleItemsInfo.size.takeIf { it > 0 } ?: 6
+        when {
+            last == null -> list.scrollToItem(0)
+            // Already on the screen (the list kept its place): it stays where it is.
+            last in first until first + seen - 1 -> {}
+            else -> list.scrollToItem((last - 3).coerceAtLeast(0))
+        }
         app.shown[db] = found
     }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
@@ -219,6 +237,7 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
                 else -> {
                     // Wide enough for the database's largest number.
                     val numberWidth = numberWidth(database?.len()?.toInt() ?: games.size)
+                    val last = app.lastOpened[db]?.takeIf { it.first == query }?.second
                     LazyColumn(Modifier.fillMaxSize(), state = list) {
                     items(games.size, key = { games[it].toLong() }) { place ->
                         val chunk = place / CHUNK
@@ -227,10 +246,19 @@ fun GamesScreen(db: String, onBack: () -> Unit, onGame: (place: Int, query: Stri
                             if (rows[chunk] == null) {
                                 val d = database ?: return@LaunchedEffect
                                 val part = games.subList(chunk * CHUNK, minOf(games.size, (chunk + 1) * CHUNK))
-                                rows[chunk] = withContext(Dispatchers.Default) { d.rowsOf(part) }
+                                val read = withContext(Dispatchers.Default) { d.rowsOf(part) }
+                                // Rows of a list replaced meanwhile (a new search) are not this one's.
+                                if (shown === games) rows[chunk] = read
                             }
                         }
-                        GameRowView(games[place].toInt() + 1, numberWidth, loaded?.getOrNull(place % CHUNK)) { onGame(place, query) }
+                        GameRowView(
+                            games[place].toInt() + 1,
+                            numberWidth,
+                            loaded?.getOrNull(place % CHUNK),
+                            lastOpened = place == last,
+                            divider = place < games.size - 1,
+                            query = query,
+                        ) { onGame(place, query) }
                     }
                 }
                 }
@@ -277,67 +305,158 @@ private fun numberWidth(count: Int): androidx.compose.ui.unit.Dp {
     }
 }
 
-/// One game (§6.2): its number, White and Black each on a line of their own (with the
-/// rating and the share of the result), then event · year · ECO. The row is read as one
-/// sentence by TalkBack.
+/// One game (§6.2, android-lists.md §3): its number, White and Black each on a line of
+/// their own (a disc of the side, the rating, the share of the result), then event · year
+/// and the ECO on a tag. A thin line under it; the game last opened is marked. The row
+/// is read as one sentence by TalkBack.
 @Composable
-private fun GameRowView(number: Int, numberWidth: androidx.compose.ui.unit.Dp, row: GameRow?, onClick: () -> Unit) {
+private fun GameRowView(
+    number: Int,
+    numberWidth: androidx.compose.ui.unit.Dp,
+    row: GameRow?,
+    lastOpened: Boolean,
+    divider: Boolean,
+    query: String,
+    onClick: () -> Unit,
+) {
     // 6 + 24 + 24 + 20 + 6 = 80 dp at the normal font size; the lines grow with a larger font.
     val nameLine = lineHeight(MaterialTheme.typography.bodyLarge, 24.dp)
     val detailsLine = lineHeight(MaterialTheme.typography.bodyMedium, 20.dp)
-    val said = row?.let { rowDescription(number, it) } ?: ""
-    Row(
+    val lastText = stringResource(R.string.last_opened)
+    val said = row?.let { rowDescription(number, it) + if (lastOpened) ". $lastText" else "" } ?: ""
+    val colors = MaterialTheme.colorScheme
+    Box(
         Modifier
             .fillMaxWidth()
             .height(12.dp + nameLine * 2 + detailsLine)
+            .background(if (lastOpened) colors.surfaceContainer else Color.Transparent)
             .clickable(enabled = row != null, onClick = onClick)
-            .clearAndSetSemantics { if (row != null) contentDescription = said }
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.Top,
+            .clearAndSetSemantics { if (row != null) contentDescription = said },
     ) {
-        // Level with White's line.
-        Box(Modifier.width(numberWidth).height(nameLine), contentAlignment = Alignment.CenterEnd) {
-            Text(
-                groupDigits(number),
-                style = MaterialTheme.typography.bodySmall.merge(Tabular),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+        Row(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.Top) {
+            // Level with White's line.
+            Box(Modifier.width(numberWidth).height(nameLine), contentAlignment = Alignment.CenterEnd) {
+                Text(
+                    groupDigits(number),
+                    style = MaterialTheme.typography.bodySmall.merge(Tabular),
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            GameRowText(row, nameLine, detailsLine, query, Modifier.weight(1f))
+        }
+        if (lastOpened) {
+            Box(
+                Modifier.align(Alignment.CenterStart).width(3.dp).fillMaxHeight()
+                    .background(colors.primary, RoundedCornerShape(topEnd = 2.dp, bottomEnd = 2.dp)),
             )
         }
-        Spacer(Modifier.width(12.dp))
-        GameRowText(row, nameLine, detailsLine, Modifier.weight(1f))
+        // From the discs to 16 dp before the edge; the number stays in the margin.
+        if (divider) {
+            Box(
+                Modifier.align(Alignment.BottomStart).padding(start = 16.dp + numberWidth + 12.dp, end = 16.dp)
+                    .fillMaxWidth().height(1.dp).background(colors.outlineVariant),
+            )
+        }
     }
 }
 
 @Composable
-private fun GameRowText(row: GameRow?, nameLine: androidx.compose.ui.unit.Dp, detailsLine: androidx.compose.ui.unit.Dp, modifier: Modifier) {
+private fun GameRowText(row: GameRow?, nameLine: androidx.compose.ui.unit.Dp, detailsLine: androidx.compose.ui.unit.Dp, query: String, modifier: Modifier) {
     Column(modifier) {
         if (row == null) return@Column
         val style = MaterialTheme.typography.bodyLarge
         val muted = MaterialTheme.colorScheme.onSurfaceVariant
         val white = row.white.trim().takeIf { it.isNotEmpty() && it != "?" }
         val black = row.black.trim().takeIf { it.isNotEmpty() && it != "?" }
-        if (white != null && black == null) {
+        val study = white != null && black == null
+        if (study) {
             // A study or a book position: a title for White and no Black — two lines of it.
-            // From the top, level with the number, not centred in the two lines.
+            // From the top, level with the number, not centred in the two lines; no discs:
+            // these are not players.
             Box(Modifier.height(nameLine * 2)) {
-                PlayerLine(white, elo(row.whiteElo), null, style, maxLines = 2, abbreviate = false)
+                PlayerName(white, style, maxLines = 2, abbreviate = false, highlight = query)
             }
         } else {
-            PlayerLine(white ?: "?", elo(row.whiteElo), sideResult(row.result, true), style, Modifier.height(nameLine), nameColor = if (white == null) muted else androidx.compose.ui.graphics.Color.Unspecified)
-            PlayerLine(black ?: "?", elo(row.blackElo), sideResult(row.result, false), style, Modifier.height(nameLine), nameColor = if (black == null) muted else androidx.compose.ui.graphics.Color.Unspecified)
+            ListPlayer(white, elo(row.whiteElo), sideResult(row.result, true), true, style, nameLine, query)
+            ListPlayer(black, elo(row.blackElo), sideResult(row.result, false), false, style, nameLine, query)
         }
-        val details = joinKnown(row.event, year(row.date), row.eco)
-        if (details.isNotEmpty()) {
-            Text(
-                details,
-                style = MaterialTheme.typography.bodyMedium,
-                color = muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.height(detailsLine),
+        val details = joinKnown(row.event, year(row.date))
+        val eco = row.eco.trim().takeIf { it.isNotEmpty() && it != "?" }
+        if (details.isNotEmpty() || eco != null) {
+            // Under the names (past the discs); the ECO tag never gives way, the event does.
+            Row(Modifier.height(detailsLine).padding(start = if (study) 0.dp else 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    highlighted(details, query),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (eco != null) {
+                    Spacer(Modifier.width(8.dp))
+                    EcoTag(eco, marked = query.split(' ').any { it.isNotBlank() && eco.startsWith(it.trim(), ignoreCase = true) })
+                }
+            }
+        }
+    }
+}
+
+/// One player in the list: the disc of the side, the name (the winner's a little
+/// heavier), the rating, the share of the result on its tile.
+@Composable
+private fun ListPlayer(
+    name: String?,
+    rating: String,
+    result: String?,
+    white: Boolean,
+    style: androidx.compose.ui.text.TextStyle,
+    height: androidx.compose.ui.unit.Dp,
+    query: String,
+) {
+    val won = result == "1"
+    Row(Modifier.height(height), verticalAlignment = Alignment.CenterVertically) {
+        SideDisc(white, 8.dp)
+        Spacer(Modifier.width(8.dp))
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            PlayerName(
+                name ?: "?",
+                if (won) style.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium) else style,
+                Modifier.weight(1f, fill = false),
+                if (name == null) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
+                highlight = query,
             )
+            if (rating.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                Text(rating, style = MaterialTheme.typography.bodyMedium.merge(Tabular), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
         }
+        Spacer(Modifier.width(8.dp))
+        ResultTile(result)
+    }
+}
+
+/// The opening's code on a small outlined tag at the right of the details line; filled
+/// like the other matches when it is what was searched for.
+@Composable
+private fun EcoTag(eco: String, marked: Boolean) {
+    val shape = RoundedCornerShape(4.dp)
+    val colors = MaterialTheme.colorScheme
+    Box(
+        Modifier.heightIn(min = 16.dp).widthIn(min = 32.dp)
+            .background(if (marked) colors.primaryContainer else Color.Transparent, shape)
+            .border(1.dp, if (marked) colors.primaryContainer else colors.outline, shape)
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            eco,
+            style = MaterialTheme.typography.labelSmall.merge(Tabular),
+            color = if (marked) colors.onPrimaryContainer else colors.onSurfaceVariant,
+            maxLines = 1,
+        )
     }
 }
 

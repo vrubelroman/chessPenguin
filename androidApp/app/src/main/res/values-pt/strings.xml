@@ -554,4 +554,7 @@
     <string name="player_written_new">✓ Nova base «%1$s», n.º %2$s ›</string>
     <string name="player_write_failed">Não foi possível gravar em «%1$s»: %2$s</string>
     <string name="play_adjourned_replaced">Uma nova partida a substitui.</string>
+    <string name="last_opened">Aberta por último</string>
+    <string name="play_adjourned_title">Partida contra a Maia %1$s</string>
+    <string name="play_move_n">lance %1$d</string>
 </resources>

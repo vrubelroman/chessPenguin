@@ -1,5 +1,26 @@
 package io.github.vrubelroman.chesspenguin.ui
 
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.SdCard
+import androidx.compose.material.icons.rounded.DeveloperBoard
+import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.GridOn
+import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.rounded.Vibration
+import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
+import androidx.compose.material.icons.automirrored.rounded.Notes
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.automirrored.rounded.ArrowRightAlt
+import androidx.compose.material.icons.rounded.Animation
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
 import android.app.Activity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -104,8 +125,9 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
             Group(stringResource(R.string.group_game))
+            Cards {
             val notationNow = notationNames.firstOrNull { it.first == prefs.notation } ?: notationNames.first()
-            Item(stringResource(R.string.notation), notationNow.second) {
+            Item(stringResource(R.string.notation), notationNow.second, icon = Icons.AutoMirrored.Rounded.Notes) {
                 choice = Choice(
                     R.string.notation,
                     notationNames.map { it.second },
@@ -114,15 +136,17 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
                 ) { i -> set { it.copy(notation = notationNames[i].first) } }
             }
 
-            Toggle(stringResource(R.string.animation), prefs.animation) { v -> set { it.copy(animation = v) } }
-            Toggle(stringResource(R.string.best_arrow), prefs.bestArrow) { v -> set { it.copy(bestArrow = v) } }
-            Toggle(stringResource(R.string.sound), prefs.sound) { v -> set { it.copy(sound = v) } }
-            Toggle(stringResource(R.string.vibration), prefs.vibration) { v -> set { it.copy(vibration = v) } }
-            Toggle(stringResource(R.string.record_games), prefs.recordGames) { v -> set { it.copy(recordGames = v) } }
+            Toggle(stringResource(R.string.animation), prefs.animation, Icons.Rounded.Animation) { v -> set { it.copy(animation = v) } }
+            Toggle(stringResource(R.string.best_arrow), prefs.bestArrow, Icons.AutoMirrored.Rounded.ArrowRightAlt) { v -> set { it.copy(bestArrow = v) } }
+            Toggle(stringResource(R.string.sound), prefs.sound, Icons.AutoMirrored.Rounded.VolumeUp) { v -> set { it.copy(sound = v) } }
+            Toggle(stringResource(R.string.vibration), prefs.vibration, Icons.Rounded.Vibration) { v -> set { it.copy(vibration = v) } }
+            Toggle(stringResource(R.string.record_games), prefs.recordGames, Icons.Rounded.Save) { v -> set { it.copy(recordGames = v) } }
+            }
 
             Group(stringResource(R.string.group_look))
-            Item(stringResource(R.string.board_and_pieces), boardLabel(prefs.board) + " · " + prefs.pieces.dir, onClick = onBoardStyle)
-            Item(stringResource(R.string.theme), themeNames.first { it.first == prefs.theme }.second) {
+            Cards {
+            Item(stringResource(R.string.board_and_pieces), boardLabel(prefs.board) + " · " + prefs.pieces.dir, icon = Icons.Rounded.GridOn, onClick = onBoardStyle)
+            Item(stringResource(R.string.theme), themeNames.first { it.first == prefs.theme }.second, icon = Icons.Rounded.Palette) {
                 choice = Choice(R.string.theme, themeNames.map { it.second }, themeNames.indexOfFirst { it.first == prefs.theme }) { i ->
                     set { it.copy(theme = themeNames[i].first) }
                 }
@@ -132,41 +156,44 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
                 if (it.isEmpty()) stringResource(R.string.theme_system) else Locale.forLanguageTag(it).let { l -> l.getDisplayLanguage(l).replaceFirstChar(Char::uppercase) }
             }
             val language = remember { Language.get(context) }
-            Item(stringResource(R.string.language), languageNames[LANGUAGES.indexOf(language).coerceAtLeast(0)]) {
+            Item(stringResource(R.string.language), languageNames[LANGUAGES.indexOf(language).coerceAtLeast(0)], icon = Icons.Rounded.Translate) {
                 choice = Choice(R.string.language, languageNames, LANGUAGES.indexOf(language).coerceAtLeast(0)) { i ->
                     if (Language.set(context, LANGUAGES[i])) (context as? Activity)?.recreate()
                 }
             }
+            }
 
             Group(stringResource(R.string.group_engine))
+            Cards {
             when {
-                files.builtIn -> Status(stringResource(R.string.engine_built_in))
+                files.builtIn -> Status(stringResource(R.string.engine_built_in), Icons.Rounded.Memory)
                 net == NetState.Ready -> {
-                    Status(stringResource(R.string.engine_downloaded))
-                    Item(stringResource(R.string.engine_delete, size), null) { deleting = true }
+                    Status(stringResource(R.string.engine_downloaded), Icons.Rounded.Memory)
+                    Item(stringResource(R.string.engine_delete, size), null, icon = Icons.Rounded.Delete) { deleting = true }
                 }
                 net is NetState.Loading -> {
                     val l = net as NetState.Loading
-                    Item(stringResource(R.string.engine_downloading, (l.done / 1_000_000).toInt(), (l.total / 1_000_000).toInt()), null) { sheet = true }
+                    Item(stringResource(R.string.engine_downloading, (l.done / 1_000_000).toInt(), (l.total / 1_000_000).toInt()), null, icon = Icons.Rounded.Memory) { sheet = true }
                 }
                 // The same sheet as in a game: the size, mobile data, cancel (§9).
-                else -> Item(stringResource(R.string.engine_missing, size), null) { sheet = true }
+                else -> Item(stringResource(R.string.engine_missing, size), null, icon = Icons.Rounded.Memory) { sheet = true }
             }
-            Item(stringResource(R.string.lines), "${prefs.engineLines}") {
+            Item(stringResource(R.string.lines), "${prefs.engineLines}", icon = Icons.AutoMirrored.Rounded.FormatListBulleted) {
                 choice = Choice(R.string.lines, listOf("1", "2", "3"), prefs.engineLines - 1) { i -> set { it.copy(engineLines = i + 1) } }
             }
-            Item(stringResource(R.string.time_per_position), secondsNames.firstOrNull { it.first == prefs.engineSeconds }?.second ?: "") {
+            Item(stringResource(R.string.time_per_position), secondsNames.firstOrNull { it.first == prefs.engineSeconds }?.second ?: "", icon = Icons.Rounded.Timer) {
                 choice = Choice(R.string.time_per_position, secondsNames.map { it.second }, secondsNames.indexOfFirst { it.first == prefs.engineSeconds }) { i ->
                     set { it.copy(engineSeconds = secondsNames[i].first) }
                 }
             }
-            Item(stringResource(R.string.threads), "${prefs.engineThreads}") {
+            Item(stringResource(R.string.threads), "${prefs.engineThreads}", icon = Icons.Rounded.DeveloperBoard) {
                 choice = Choice(R.string.threads, (1..cores).map { "$it" }, prefs.engineThreads - 1) { i -> set { it.copy(engineThreads = i + 1) } }
             }
             val hashes = listOf(16, 32, 64, 128, 256)
             val hashNames = hashes.map { stringResource(R.string.megabytes, it) }
-            Item(stringResource(R.string.memory), stringResource(R.string.megabytes, prefs.engineHashMb)) {
+            Item(stringResource(R.string.memory), stringResource(R.string.megabytes, prefs.engineHashMb), icon = Icons.Rounded.SdCard) {
                 choice = Choice(R.string.memory, hashNames, hashes.indexOf(prefs.engineHashMb)) { i -> set { it.copy(engineHashMb = hashes[i]) } }
+            }
             }
             Text(
                 stringResource(R.string.engine_battery),
@@ -176,7 +203,9 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
             )
             Spacer(Modifier.height(16.dp))
             // A newer version of the app, even with its card hidden (android-ui.md §25.5).
-            Item(stringResource(R.string.about), aboutUpdateLine(), valueColor = MaterialTheme.colorScheme.primary, onClick = onAbout)
+            Cards {
+                Item(stringResource(R.string.about), aboutUpdateLine(), valueColor = MaterialTheme.colorScheme.primary, icon = Icons.Rounded.Info, onClick = onAbout)
+            }
         }
     }
 
@@ -250,44 +279,75 @@ private fun Group(title: String) {
     )
 }
 
+/// A group's items as cards (android-lists.md §6): 16 dp corners outside, 4 dp between
+/// them, 2 dp of the background between cards.
 @Composable
-private fun Item(title: String, value: String?, valueColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified, onClick: (() -> Unit)?) {
+private fun Cards(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     Column(
+        Modifier.padding(horizontal = 12.dp).clip(RoundedCornerShape(16.dp)),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp),
+        content = content,
+    )
+}
+
+/// One card of a group.
+@Composable
+private fun Modifier.card(): Modifier = fillMaxWidth().clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow)
+
+/// An item's icon: 24 dp, then 16 dp to its text.
+@Composable
+private fun ItemIcon(icon: androidx.compose.ui.graphics.vector.ImageVector?) {
+    if (icon == null) return
+    Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
+    Spacer(Modifier.width(16.dp))
+}
+
+@Composable
+private fun Item(
+    title: String,
+    value: String?,
+    valueColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    onClick: (() -> Unit)?,
+) {
+    Row(
         Modifier
-            .fillMaxWidth()
+            .card()
             .heightIn(min = 56.dp)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, style = MaterialTheme.typography.bodyLarge)
-        if (value != null) {
-            Text(value, style = MaterialTheme.typography.bodyMedium, color = valueColor.takeOrElse { MaterialTheme.colorScheme.onSurfaceVariant })
+        ItemIcon(icon)
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (value != null) {
+                Text(value, style = MaterialTheme.typography.bodyMedium, color = valueColor.takeOrElse { MaterialTheme.colorScheme.onSurfaceVariant })
+            }
         }
     }
 }
 
 /// A line that tells, not a button.
 @Composable
-private fun Status(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-    )
+private fun Status(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
+    Row(Modifier.card().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        ItemIcon(icon)
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable
-private fun Toggle(title: String, value: Boolean, onChange: (Boolean) -> Unit) {
+private fun Toggle(title: String, value: Boolean, icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
-            .fillMaxWidth()
+            .card()
             .heightIn(min = 56.dp)
             .selectable(selected = value, role = Role.Switch) { onChange(!value) }
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        ItemIcon(icon)
         Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         Switch(checked = value, onCheckedChange = null)
     }
