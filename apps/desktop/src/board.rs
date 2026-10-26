@@ -184,7 +184,13 @@ impl BoardView<'_> {
     /// Draws the board into the available square area. Returns a move the user made, if any.
     pub fn show(self, ui: &mut egui::Ui, state: &mut BoardState) -> Option<Move> {
         let avail = ui.available_size();
-        let side = avail.x.min(avail.y).max(64.0).floor();
+        // A board to play on stays usable; one only shown may be a thumbnail.
+        let least = if self.interactive || self.premove.is_some() {
+            64.0
+        } else {
+            16.0
+        };
+        let side = avail.x.min(avail.y).max(least).floor();
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(side), Sense::click_and_drag());
         let sq_size = side / 8.0;
         let geo = Geometry {

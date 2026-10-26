@@ -195,6 +195,17 @@ pub struct App {
     own: Own,
     /// The play dialog («Play against the computer»).
     play_dialog: Option<crate::play::Dialog>,
+    /// A game against the computer put aside (or left by a crash): it can go on
+    /// (docs/design/desktop-adjourned.md).
+    put_aside: Option<crate::player_games::PutAside>,
+    /// A new game was asked for while a game is put aside: «There is a game put aside»
+    /// asks first; what was asked for comes after «Start a new one».
+    aside_question: Option<PlayNext>,
+    /// × on the card of a game that goes into no database: «Delete it?».
+    aside_delete: bool,
+    /// The opponent of the game put aside is not on the disk: offered for download
+    /// (`Some(None)`: asked, not started), then the game goes on.
+    aside_fetch: Option<Option<crate::play::Fetch>>,
     /// After the current game is closed: a new game against Maia (a rematch, or the
     /// dialog for a new one).
     play_next: Option<PlayNext>,
@@ -365,6 +376,10 @@ impl App {
             toast: None,
             own: Own::default(),
             play_dialog: None,
+            put_aside: None,
+            aside_question: None,
+            aside_delete: false,
+            aside_fetch: None,
             play_next: None,
             tx,
             rx,
@@ -399,8 +414,21 @@ impl App {
             );
             app.toast(ctx, msg);
         }
-        // Games a crash left half played go into their databases now.
-        for r in crate::player_games::recover() {
+        // Journals no program plays now: a game that can go on is put aside; finished
+        // games kept from their database and older ones go into it now.
+        let (written, aside) = crate::player_games::recover();
+        let mut aside = aside;
+        let crashed = aside.as_ref().is_some_and(|a| a.crashed());
+        if let Some(a) = aside.as_mut().filter(|_| crashed) {
+            // Said once: from now on it is a game put aside.
+            a.crash_said();
+        }
+        app.set_aside(aside);
+        for r in written {
+            if r.put_aside {
+                app.written_unfinished(ctx, r);
+                continue;
+            }
             let res = r.written.map_err(|e| {
                 let db = own_db::base_name(&r.target);
                 trf(
@@ -409,6 +437,13 @@ impl App {
                 )
             });
             app.recorded(ctx, &r.player, res, true);
+        }
+        if crashed {
+            app.toast_for(
+                ctx,
+                tr("The program closed during a game: the game is put aside, you can go on with it"),
+                6.0,
+            );
         }
         app
     }
@@ -462,6 +497,22 @@ impl App {
     }
 
     fn debug_screenshot(&mut self, ctx: &egui::Context) {
+        // `CP_RESUME=1`: the game put aside goes on at once; `=ask`: a new game is asked
+        // for over it.
+        static RESUMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if let Ok(v) = std::env::var("CP_RESUME")
+            && self.put_aside.is_some()
+            && self.game.is_none()
+            && self.aside_question.is_none()
+            && ctx.input(|i| i.time) > 1.0
+            && !RESUMED.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            if v == "ask" {
+                self.play_new(ctx, PlayNext::Dialog(None));
+            } else {
+                self.resume_aside(ctx);
+            }
+        }
         if self.debug.open_settings && ctx.input(|i| i.time) > 1.5 {
             self.debug.open_settings = false;
             self.settings_ui.open = true;
@@ -1363,6 +1414,11 @@ impl App {
 
     /// What comes after a game against Maia was closed: a rematch, the dialog.
     fn play_next_now(&mut self, ctx: &egui::Context) {
+        // A game put aside: asked about first.
+        if self.put_aside.is_some() && self.play_next.is_some() {
+            self.aside_question = self.play_next.take();
+            return;
+        }
         match self.play_next.take() {
             Some(PlayNext::Rematch(s)) => self.start_play(ctx, s),
             Some(PlayNext::Dialog(None)) => {
@@ -1371,6 +1427,274 @@ impl App {
             Some(PlayNext::Dialog(Some(from))) => {
                 self.play_dialog = Some(crate::play::Dialog::new_from(&self.settings, *from))
             }
+            None => {}
+        }
+    }
+
+    /// A new game against the computer, or its dialog (asking first about a game put
+    /// aside).
+    fn play_new(&mut self, ctx: &egui::Context, next: PlayNext) {
+        self.play_next = Some(next);
+        self.play_next_now(ctx);
+    }
+
+    /// The game put aside, and its card on the shelf.
+    fn set_aside(&mut self, aside: Option<crate::player_games::PutAside>) {
+        self.library.aside = aside.as_ref().map(crate::adjourned::Card::new);
+        self.put_aside = aside;
+    }
+
+    /// The game being played is put aside (its card on the shelf). False: it could not
+    /// be (no folder for its journal): it goes on.
+    fn put_game_aside(&mut self, ctx: &egui::Context) -> bool {
+        let Some(aside) = self.game.as_mut().and_then(|g| g.put_aside()) else {
+            self.toast(
+                ctx,
+                tr("The game could not be put aside: its file could not be written"),
+            );
+            return false;
+        };
+        // One at a time: a game started over another asked about it first.
+        self.let_go_aside(ctx);
+        self.set_aside(Some(aside));
+        true
+    }
+
+    /// The game put aside is let go: written into its player's database unfinished, or
+    /// deleted when games are not written.
+    fn let_go_aside(&mut self, ctx: &egui::Context) {
+        let Some(aside) = self.put_aside.take() else {
+            return;
+        };
+        self.library.aside = None;
+        match aside.discard() {
+            Ok(Some(r)) => self.written_unfinished(ctx, r),
+            Ok(None) => {}
+            // Not written: it stays put aside (its card back), the reason said.
+            Err(b) => {
+                let (r, aside) = *b;
+                self.set_aside(Some(aside));
+                self.written_unfinished(ctx, r);
+            }
+        }
+    }
+
+    /// A game put aside went into its database unfinished (or could not): said.
+    fn written_unfinished(&mut self, ctx: &egui::Context, r: crate::player_games::Recovered) {
+        let db = own_db::base_name(&r.target);
+        match r.written {
+            Ok(w) => {
+                let n = w.index + 1;
+                self.recorded(ctx, &r.player, Ok(w), false);
+                self.toast_for(
+                    ctx,
+                    trf(
+                        "Game written to «{db}» unfinished, No. {n}",
+                        &[("db", &db), ("n", &n)],
+                    ),
+                    6.0,
+                );
+            }
+            Err(e) => self.toast(
+                ctx,
+                trf(
+                    "Could not write to «{db}»: {reason}",
+                    &[("db", &db), ("reason", &e)],
+                ),
+            ),
+        }
+    }
+
+    /// Goes on with the game put aside: its record on the screen, the opponent started
+    /// again with its moves, the clocks where they stopped.
+    fn resume_aside(&mut self, ctx: &egui::Context) {
+        let Some(aside) = self.put_aside.as_ref() else {
+            return;
+        };
+        let saved = aside.game().clone();
+        let Some(game) = crate::play::parse_game(aside.pgn()) else {
+            self.toast(ctx, tr("The game put aside could not be read"));
+            return;
+        };
+        let Some(engine) = crate::play::engine_for(&saved.start(None)) else {
+            // Its opponent is no longer on the disk: downloaded first.
+            self.aside_fetch = Some(None);
+            return;
+        };
+        let judge = crate::engines::own_stockfish().or_else(|| {
+            self.settings
+                .active_engine()
+                .and_then(|e| e.executable())
+                .filter(|p| p.is_file())
+        });
+        let Some(aside) = self.put_aside.take() else {
+            return;
+        };
+        self.library.aside = None;
+        let to_move_left = aside.to_move_left();
+        self.open_over(game);
+        if let Some(g) = self.game.as_mut() {
+            g.resume_play(&saved, to_move_left, engine, judge, aside.resume(), ctx);
+        }
+    }
+
+    /// «There is a game put aside»: go on with it, or let it go for the new game.
+    fn aside_question(&mut self, ctx: &egui::Context) {
+        if self.aside_question.is_none() {
+            return;
+        }
+        let Some(card) = self.library.aside.as_ref() else {
+            // Let go meanwhile: what was asked for goes on.
+            self.play_next = self.aside_question.take();
+            self.play_next_now(ctx);
+            return;
+        };
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("aside_question")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.heading(tr("There is a game put aside"));
+            ui.add_space(4.0);
+            card.summary(ui, &self.settings);
+            ui.add_space(8.0);
+            ui.label(match &card.db {
+                Some(db) => trf(
+                    "A new game replaces it; the one put aside is written to «{db}» unfinished.",
+                    &[("db", db)],
+                ),
+                None => tr("A new game replaces it: the one put aside is deleted.").to_owned(),
+            });
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let go_on = crate::widgets::primary(ui, tr("Continue it"));
+                // The main answer has the keyboard (its focus seen).
+                if ui.memory(|m| m.focused().is_none()) {
+                    go_on.request_focus();
+                }
+                if go_on.clicked() {
+                    choice = Some(true);
+                }
+                if ui.button(tr("Start a new one")).clicked() {
+                    choice = Some(false);
+                }
+            });
+        });
+        if choice.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter)) {
+            choice = Some(true);
+        }
+        if choice.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape))
+        {
+            self.aside_question = None;
+            return;
+        }
+        match choice {
+            Some(true) => {
+                self.aside_question = None;
+                self.resume_aside(ctx);
+            }
+            Some(false) => {
+                self.let_go_aside(ctx);
+                self.play_next = self.aside_question.take();
+                self.play_next_now(ctx);
+            }
+            None => {}
+        }
+    }
+
+    /// The opponent of the game put aside is downloaded, then the game goes on; the card
+    /// stays meanwhile and after a failure.
+    fn aside_fetch_question(&mut self, ctx: &egui::Context) {
+        let Some(fetch) = self.aside_fetch.as_ref() else {
+            return;
+        };
+        let Some(saved) = self.put_aside.as_ref().map(|a| a.game().clone()) else {
+            self.aside_fetch = None;
+            return;
+        };
+        let mut start = false;
+        let mut close = false;
+        let mut done = false;
+        egui::Modal::new(egui::Id::new("aside_fetch")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.heading(tr("The opponent of this game is not installed"));
+            if let Some(card) = self.library.aside.as_ref() {
+                ui.add_space(4.0);
+                card.summary(ui, &self.settings);
+            }
+            ui.add_space(8.0);
+            let state = match fetch {
+                None => {
+                    ui.label(RichText::new(crate::play::Fetch::note(&saved)).weak());
+                    None
+                }
+                Some(f) => Some(f.show(ui)),
+            };
+            done = state == Some(crate::play::Fetched::Done);
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                match state {
+                    None => start |= crate::widgets::primary(ui, tr("Download")).clicked(),
+                    Some(crate::play::Fetched::Failed) => {
+                        start |= crate::widgets::primary(ui, tr("Try again")).clicked()
+                    }
+                    _ => {}
+                }
+                close |= ui.button(tr("Cancel")).clicked();
+            });
+        });
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+            close = true;
+        }
+        if done {
+            self.aside_fetch = None;
+            self.resume_aside(ctx);
+        } else if close {
+            // Dropping the download stops it.
+            self.aside_fetch = None;
+        } else if start {
+            self.aside_fetch = Some(Some(crate::play::Fetch::start(&saved, ctx)));
+        }
+    }
+
+    /// × on the card of a game that goes into no database: deleting it is asked.
+    fn aside_delete_question(&mut self, ctx: &egui::Context) {
+        if !self.aside_delete {
+            return;
+        }
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("aside_delete")).show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.heading(tr("Delete the game put aside?"));
+            if let Some(card) = self.library.aside.as_ref() {
+                ui.add_space(4.0);
+                card.summary(ui, &self.settings);
+                ui.add_space(8.0);
+            }
+            ui.label(tr(
+                "Games are not written into a database: it is not kept anywhere.",
+            ));
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tr("Cancel")).clicked() {
+                    choice = Some(false);
+                }
+                let delete =
+                    egui::Button::new(RichText::new(tr("Delete")).color(egui::Color32::WHITE))
+                        .fill(ui.visuals().error_fg_color);
+                if ui.add(delete).clicked() {
+                    choice = Some(true);
+                }
+            });
+        });
+        if choice.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape))
+        {
+            choice = Some(false);
+        }
+        match choice {
+            Some(true) => {
+                self.aside_delete = false;
+                self.let_go_aside(ctx);
+            }
+            Some(false) => self.aside_delete = false,
             None => {}
         }
     }
@@ -1963,10 +2287,16 @@ impl App {
         if let Some(g) = self.game.as_mut() {
             g.commit_editor();
             if g.playing_started() {
-                g.ask_leave(intent);
-                return;
+                // Quitting puts the game aside: nothing is lost, no question.
+                if intent != CloseIntent::QuitApp || !self.put_game_aside(ctx) {
+                    if let Some(g) = self.game.as_mut() {
+                        g.ask_leave(intent);
+                    }
+                    return;
+                }
+            } else {
+                g.resign_if_playing();
             }
-            g.resign_if_playing();
         }
         if self.game.as_ref().is_some_and(|g| g.game.is_modified()) {
             self.confirm_close = Some(intent);
@@ -2017,6 +2347,9 @@ impl App {
                 // The settings first (the new process reads them), and none of the dev
                 // hooks of this one (they would start the update again).
                 let _ = self.settings.save();
+                // The game put aside is let go of (its files stay): the new process
+                // offers it.
+                self.set_aside(None);
                 let mut cmd = std::process::Command::new(exe);
                 for (k, _) in std::env::vars_os() {
                     if k.to_string_lossy().starts_with("CP_") {
@@ -2290,8 +2623,13 @@ impl eframe::App for App {
         {
             g.commit_editor();
             if g.playing_started() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                g.ask_leave(CloseIntent::QuitApp);
+                // Put aside: the next start offers to go on with it.
+                if !self.put_game_aside(&ctx) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    if let Some(g) = self.game.as_mut() {
+                        g.ask_leave(CloseIntent::QuitApp);
+                    }
+                }
             } else {
                 g.resign_if_playing();
             }
@@ -2353,7 +2691,7 @@ impl eframe::App for App {
         // In the library a game from the start; on a game's screen the game plays on
         // from its position (the game view takes Ctrl+G there).
         if self.game.is_none() && ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G))) {
-            self.play_dialog = Some(crate::play::Dialog::new(&self.settings));
+            self.play_new(&ctx, PlayNext::Dialog(None));
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))) && self.game.is_none() {
             self.new_game();
@@ -2498,9 +2836,22 @@ impl eframe::App for App {
                         self.request_close(&ctx, intent);
                     }
                     GameAction::Train(start) => self.open_training(*start),
-                    GameAction::PlayFrom(from) => {
-                        self.play_dialog =
-                            Some(crate::play::Dialog::new_from(&self.settings, *from));
+                    GameAction::PlayFrom(from) => self.play_new(&ctx, PlayNext::Dialog(Some(from))),
+                    GameAction::PutAside(intent) => {
+                        let intent = intent.unwrap_or(
+                            if self.game.as_ref().is_some_and(|g| g.previous.is_some()) {
+                                CloseIntent::ReturnToPrevious
+                            } else {
+                                CloseIntent::BackToLibrary
+                            },
+                        );
+                        if self.put_game_aside(&ctx) {
+                            // Over another game the shelf is not in view: said.
+                            if intent == CloseIntent::ReturnToPrevious {
+                                self.toast(&ctx, tr("Game put aside: go on from the library"));
+                            }
+                            self.request_close(&ctx, intent);
+                        }
                     }
                     GameAction::AddToDatabase => {
                         if let Some(g) = self.game.as_mut() {
@@ -2570,9 +2921,15 @@ impl eframe::App for App {
                     }
                     LibraryAction::OpenPgn(text) => self.open_pgn_text(&ctx, text, true),
                     LibraryAction::NewGame => self.new_game(),
-                    LibraryAction::Play => {
-                        self.play_dialog = Some(crate::play::Dialog::new(&self.settings))
+                    LibraryAction::ResumeAside => self.resume_aside(&ctx),
+                    LibraryAction::DiscardAside => {
+                        if self.library.aside.as_ref().is_some_and(|c| c.db.is_some()) {
+                            self.let_go_aside(&ctx);
+                        } else {
+                            self.aside_delete = true;
+                        }
                     }
+                    LibraryAction::Play => self.play_new(&ctx, PlayNext::Dialog(None)),
                     LibraryAction::NewGameIn(path) => {
                         self.new_game();
                         if let Some(g) = self.game.as_mut() {
@@ -2762,6 +3119,9 @@ impl eframe::App for App {
                 None => {}
             }
         }
+        self.aside_question(&ctx);
+        self.aside_delete_question(&ctx);
+        self.aside_fetch_question(&ctx);
         if let Some(d) = self.play_dialog.as_mut()
             && let Some(out) = d.show(&ctx, &mut self.settings)
         {

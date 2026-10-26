@@ -4,6 +4,11 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- A game against the computer can be put aside and continued later: «⏸ Put aside» in
+  the game, the main answer of «The game is on», and closing the window put it aside;
+  a card on the library's shelf continues it with the clocks as they were. A game a
+  crash interrupted is put aside too, no longer written into the database unfinished.
+  Starting a new game over it asks first.
 - The window no longer freezes when a database on a network drive (NFS) becomes
   unreachable, for example when the network drops during a game: whether the shelf's
   files are there, their sizes and permissions are looked at by a thread of their own,

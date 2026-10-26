@@ -720,6 +720,25 @@ impl Clock {
         }
     }
 
+    /// A clock going on from a game put aside: the time each side had left, whether it
+    /// has moved (its first move is free), the side to move's clock running from `now`.
+    pub fn resumed(
+        control: TimeControl,
+        left: [Option<Duration>; 2],
+        to_move: Color,
+        now: Instant,
+    ) -> Clock {
+        let mut c = Clock::new(control);
+        for side in [Color::White, Color::Black] {
+            if let Some(d) = left[idx(side)] {
+                c.left[idx(side)] = d;
+                c.moved[idx(side)] = true;
+            }
+        }
+        c.running = Some((to_move, now));
+        c
+    }
+
     /// The time left of `c` at `now`.
     pub fn left(&self, c: Color, now: Instant) -> Duration {
         let base = self.left[idx(c)];
@@ -800,6 +819,59 @@ pub fn clock_text(d: Duration) -> String {
 pub fn clk_command(d: Duration) -> String {
     let s = d.as_secs();
     format!("[%clk {}:{:02}:{:02}]", s / 3600, s / 60 % 60, s % 60)
+}
+
+/// The time each side had left in a game put aside (white, black; `None`: it has not
+/// moved): the `[%clk]` of its last move among those played after `floor` half-moves;
+/// the side to move's `to_move` when it is known (its time when the game was put aside).
+pub fn times_left(
+    game: &chess_core::Game,
+    floor: usize,
+    to_move: Option<Duration>,
+) -> [Option<Duration>; 2] {
+    let mut left = [None, None];
+    let line = game.mainline();
+    for &id in line.iter().skip(floor) {
+        let mover = game.position_before(id).map(|p| p.turn());
+        let clk = game
+            .node(id)
+            .and_then(|n| n.comments_after().iter().find_map(|c| clk_of(c)));
+        if let (Some(m), Some(t)) = (mover, clk) {
+            left[idx(m)] = Some(t);
+        }
+    }
+    let end = line.last().copied().unwrap_or(chess_core::NodeId::ROOT);
+    if let (Some(t), Some(p)) = (to_move, game.position(end)) {
+        left[idx(p.turn())] = Some(t);
+    }
+    left
+}
+
+/// The game of a PGN text (a journal's: one game, UTF-8).
+pub fn parse_game(pgn: &str) -> Option<chess_core::Game> {
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let db = chess_core::PgnDatabase::from_bytes(
+        pgn.as_bytes().to_vec(),
+        Some(chess_core::TextEncoding::Utf8),
+        &mut |_| {},
+        &never,
+    )
+    .ok()?;
+    db.load_game(0).map(|p| p.game)
+}
+
+/// The time a `[%clk h:mm:ss]` of a comment says.
+pub fn clk_of(comment: &str) -> Option<Duration> {
+    // The PGN writer may break the line after «[%clk».
+    let rest = &comment[comment.find("[%clk")? + 5..];
+    let text = &rest[..rest.find(']')?];
+    let mut secs = 0u64;
+    for part in text.trim().split(':') {
+        // Seconds may have a fraction («0:03:12.4»): whole ones are enough.
+        let whole = part.split('.').next()?.parse::<u64>().ok()?;
+        secs = secs * 60 + whole;
+    }
+    Some(Duration::from_secs(secs))
 }
 
 // ----- Maia's moves -------------------------------------------------------------------
@@ -1040,6 +1112,62 @@ mod tests {
     use chess_core::shakmaty::uci::UciMove;
 
     #[test]
+    fn the_time_of_a_clk_comment() {
+        assert_eq!(clk_of("[%clk 0:03:12]"), Some(Duration::from_secs(192)));
+        assert_eq!(
+            clk_of("Good move [%clk 1:00:05.3] [%cal Ge2e4]"),
+            Some(Duration::from_secs(3605))
+        );
+        assert_eq!(
+            clk_of(&clk_command(Duration::from_secs(4321))),
+            Some(Duration::from_secs(4321))
+        );
+        assert_eq!(clk_of("[%clk\n0:04:11]"), Some(Duration::from_secs(251)));
+        assert_eq!(clk_of("no clock"), None);
+    }
+
+    #[test]
+    fn a_clock_goes_on_from_the_times_left() {
+        let now = Instant::now();
+        let tc = TimeControl {
+            base: 300,
+            increment: 3,
+        };
+        let c = Clock::resumed(
+            tc,
+            [Some(Duration::from_secs(250)), None],
+            Color::Black,
+            now,
+        );
+        assert_eq!(c.left(Color::White, now), Duration::from_secs(250));
+        // Black has not moved: its first move is free, its time the base.
+        assert_eq!(
+            c.left(Color::Black, now + Duration::from_secs(9)),
+            Duration::from_secs(300)
+        );
+        assert_eq!(c.running(), None);
+        // Both have moved: the side to move's clock runs from the moment it goes on.
+        let c = Clock::resumed(
+            tc,
+            [
+                Some(Duration::from_secs(250)),
+                Some(Duration::from_secs(200)),
+            ],
+            Color::White,
+            now,
+        );
+        assert_eq!(c.running(), Some(Color::White));
+        assert_eq!(
+            c.left(Color::White, now + Duration::from_secs(10)),
+            Duration::from_secs(240)
+        );
+        assert_eq!(
+            c.left(Color::Black, now + Duration::from_secs(10)),
+            Duration::from_secs(200)
+        );
+    }
+
+    #[test]
     fn speeds_as_lichess() {
         let s = |base, increment| TimeControl { base, increment }.speed();
         assert_eq!(s(180, 0), Speed::Blitz);
@@ -1202,6 +1330,51 @@ pub struct Session {
     pub floor: chess_core::NodeId,
 }
 
+/// What a game against the computer is played with, kept in its journal so that it can
+/// go on later (a game put aside, docs/design/desktop-adjourned.md).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Saved {
+    pub white: bool,
+    pub strength: u32,
+    pub rival: Rival,
+    pub style: String,
+    pub user_elo: Option<u32>,
+    pub user_name: String,
+    pub clock: Option<TimeControl>,
+    /// Half-moves of the game it went on from (not played here: not taken back).
+    pub floor: usize,
+    /// That game and its move, as the note and a rematch name them.
+    pub from_game: Option<String>,
+    pub from_after: Option<String>,
+    pub from_after_shown: Option<String>,
+}
+
+impl Saved {
+    /// The start of the game again, with the position it went on from (rebuilt from the
+    /// game itself) for a rematch.
+    pub fn start(&self, from: Option<StartFrom>) -> Start {
+        Start {
+            user: if self.white {
+                Color::White
+            } else {
+                Color::Black
+            },
+            strength: self.strength,
+            rival: self.rival,
+            style: self.style.clone(),
+            user_elo: self.user_elo,
+            user_name: self.user_name.clone(),
+            clock: self.clock,
+            from: from.map(|mut f| {
+                f.game = self.from_game.clone();
+                f.after = self.from_after.clone();
+                f.after_shown = self.from_after_shown.clone();
+                Box::new(f)
+            }),
+        }
+    }
+}
+
 /// What the play dialog starts.
 #[derive(Clone, Debug)]
 pub struct Start {
@@ -1218,6 +1391,23 @@ pub struct Start {
 }
 
 impl Start {
+    /// What the game is played with, for its journal; `floor`: half-moves it went on from.
+    pub fn saved(&self, floor: usize) -> Saved {
+        Saved {
+            white: self.user == Color::White,
+            strength: self.strength,
+            rival: self.rival,
+            style: self.style.clone(),
+            user_elo: self.user_elo,
+            user_name: self.user_name.clone(),
+            clock: self.clock,
+            floor,
+            from_game: self.from.as_ref().and_then(|f| f.game.clone()),
+            from_after: self.from.as_ref().and_then(|f| f.after.clone()),
+            from_after_shown: self.from.as_ref().and_then(|f| f.after_shown.clone()),
+        }
+    }
+
     /// The opponent as the game names it: «Maia 1500», «Rodent V 2400 (Tal)».
     pub fn rival_name(&self) -> String {
         rival_name(self.rival, self.strength, &self.style)
@@ -2143,6 +2333,108 @@ fn position_block(
                 });
             });
         });
+}
+
+/// The opponent of a game put aside, downloaded so that the game can go on (it was
+/// removed meanwhile): the same files and words as in the play dialog.
+pub enum Fetch {
+    Maia(crate::maia_download::Download),
+    Rodent(crate::engine_download::Download),
+}
+
+/// How a `Fetch` goes.
+#[derive(PartialEq)]
+pub enum Fetched {
+    Going,
+    Done,
+    Failed,
+}
+
+impl Fetch {
+    pub fn start(saved: &Saved, ctx: &egui::Context) -> Fetch {
+        match saved.rival {
+            Rival::Maia => Fetch::Maia(crate::maia_download::Download::start(
+                ctx,
+                model_for().err().unwrap_or(Model::Large),
+            )),
+            Rival::Rodent => Fetch::Rodent(style(&saved.style).rodent.start(ctx)),
+        }
+    }
+
+    /// What is downloaded, said before it is.
+    pub fn note(saved: &Saved) -> String {
+        match saved.rival {
+            Rival::Maia => download_note(model_for().err()),
+            Rival::Rodent => {
+                let which = style(&saved.style).rodent;
+                let mb = which.size_mb();
+                match which {
+                    Gen::V => crate::i18n::trf(
+                        "Rodent V is downloaded once ({mb} MB, from github.com, the authors' own file).",
+                        &[("mb", &mb)],
+                    ),
+                    Gen::IV => crate::i18n::trf(
+                        "Rodent IV is downloaded once ({mb} MB): the engine built from its authors' sources, its characters and books from their repository.",
+                        &[("mb", &mb)],
+                    ),
+                }
+            }
+        }
+    }
+
+    /// Its progress, or why it failed.
+    pub fn show(&self, ui: &mut egui::Ui) -> Fetched {
+        use crate::engine_download::Stage as R;
+        use crate::maia_download::Stage as M;
+        let failed = |ui: &mut egui::Ui, text: String| {
+            ui.label(egui::RichText::new(text).color(ui.visuals().error_fg_color));
+            Fetched::Failed
+        };
+        match self {
+            Fetch::Maia(d) => match d.stage() {
+                M::Downloading { done } => {
+                    ui.add(
+                        egui::ProgressBar::new(done as f32 / d.model.size() as f32)
+                            .show_percentage(),
+                    );
+                    Fetched::Going
+                }
+                M::Checking => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label(tr("Checking…"));
+                    });
+                    Fetched::Going
+                }
+                M::Done(_) => Fetched::Done,
+                M::Failed(e) => failed(ui, e),
+            },
+            Fetch::Rodent(d) => match d.stage() {
+                R::Downloading { done, total } => {
+                    ui.add(
+                        egui::ProgressBar::new(done as f32 / total.max(1) as f32).show_percentage(),
+                    );
+                    Fetched::Going
+                }
+                R::Unpacking => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label(tr("Unpacking…"));
+                    });
+                    Fetched::Going
+                }
+                R::Done(_) => Fetched::Done,
+                R::Failed(f) => failed(
+                    ui,
+                    crate::i18n::trf(
+                        "Could not download Rodent: {error}",
+                        &[("error", &download_failure(&f))],
+                    ),
+                ),
+                R::Cancelled => Fetched::Failed,
+            },
+        }
+    }
 }
 
 /// Why Rodent's download failed, in words.

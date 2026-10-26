@@ -127,6 +127,9 @@ pub enum GameAction {
     Rematch,
     /// Leaving after «The game is on» was answered.
     Leave(crate::app::CloseIntent),
+    /// The game in progress is put aside (GameView::put_aside), then leaving: where the
+    /// user was going (`None`: where «⬅» leads).
+    PutAside(Option<crate::app::CloseIntent>),
     /// Saving into a database, then leaving.
     SaveAndLeave(crate::app::CloseIntent),
     /// After a game against Maia: the play dialog.
@@ -2116,7 +2119,7 @@ impl GameView {
         record: Option<std::path::PathBuf>,
         ctx: &egui::Context,
     ) {
-        use crate::play::{Clock, Opponent, Session};
+        use crate::play::Clock;
         // Dev hook `CP_PREMOVE=e7e5`: a premove set at the start (to see it without a mouse).
         if let Some(pm) = std::env::var("CP_PREMOVE").ok().filter(|p| p.len() == 4)
             && let (Ok(from), Ok(to)) = (pm[..2].parse(), pm[2..].parse())
@@ -2202,17 +2205,87 @@ impl GameView {
         if floor != NodeId::ROOT {
             self.goto(floor);
         }
+        // Its journal keeps what it is played with: it can be put aside and go on.
+        let floor_plies = self.plies_to(floor);
+        let journal = Some(crate::player_games::Journal::new(
+            record,
+            &start.user_name,
+            start.saved(floor_plies),
+        ));
+        let clock = start.clock.map(Clock::new);
+        self.begin_play(start, (engine, file), judge, journal, clock, floor, ctx);
+    }
+
+    /// Goes on with a game put aside (docs/design/desktop-adjourned.md): the game on the
+    /// screen is its record so far; the clocks have the time each side had left (the side
+    /// to move's when it was put aside, the other's at its last move, `[%clk]`); its own
+    /// journal goes on.
+    pub fn resume_play(
+        &mut self,
+        saved: &crate::play::Saved,
+        to_move_left: Option<std::time::Duration>,
+        engine: (crate::play::Engine, std::path::PathBuf),
+        judge: Option<std::path::PathBuf>,
+        journal: crate::player_games::Journal,
+        ctx: &egui::Context,
+    ) {
+        use crate::play::Clock;
+        // Unfinished while it was aside: the game goes on.
+        self.game.remove_tag("Termination");
+        self.game.mark_saved();
+        let line = self.game.mainline();
+        let floor = if saved.floor == 0 {
+            NodeId::ROOT
+        } else {
+            line.get(saved.floor - 1).copied().unwrap_or(NodeId::ROOT)
+        };
+        let from = (floor != NodeId::ROOT)
+            .then(|| self.start_from(floor).ok())
+            .flatten();
+        let start = saved.start(from);
+        let end = self.play_end_node();
+        let to_move = self.game.position(end).map_or(Color::White, |p| p.turn());
+        let left = crate::play::times_left(&self.game, saved.floor, to_move_left);
+        let clock = start
+            .clock
+            .map(|tc| Clock::resumed(tc, left, to_move, std::time::Instant::now()));
+        self.goto(end);
+        self.begin_play(start, engine, judge, Some(journal), clock, floor, ctx);
+    }
+
+    /// Half-moves of the main line up to `node` (0 for the start).
+    fn plies_to(&self, node: NodeId) -> usize {
+        self.game
+            .mainline()
+            .iter()
+            .position(|&n| n == node)
+            .map_or(0, |k| k + 1)
+    }
+
+    /// The game against the computer runs: its opponent and judge start, its clocks.
+    #[allow(clippy::too_many_arguments)]
+    fn begin_play(
+        &mut self,
+        start: crate::play::Start,
+        (engine, file): (crate::play::Engine, std::path::PathBuf),
+        judge: Option<std::path::PathBuf>,
+        journal: Option<crate::player_games::Journal>,
+        clock: Option<crate::play::Clock>,
+        floor: NodeId,
+        ctx: &egui::Context,
+    ) {
+        use crate::play::{Opponent, Session};
         self.flipped = start.user == Color::Black;
         self.play_end = None;
         self.recorded = None;
         self.play = Some(Session {
-            journal: record.map(|t| crate::player_games::Journal::new(t, &start.user_name)),
+            journal,
             user: start.user,
             strength: start.strength,
             engine,
             style: start.style.clone(),
             user_elo: start.user_elo,
-            clock: start.clock.map(Clock::new),
+            clock,
             opponent: match engine {
                 crate::play::Engine::Maia(_) => Opponent::start(file, ctx),
                 crate::play::Engine::Rodent(_) => {
@@ -2623,8 +2696,14 @@ impl GameView {
         if self.played().is_empty() {
             return;
         }
-        let name = crate::own_db::base_name(journal.target());
-        let res = journal.finish(&self.game.to_pgn()).map_err(|e| {
+        let Some(target) = journal.target() else {
+            return;
+        };
+        let name = crate::own_db::base_name(target);
+        let Some(res) = journal.finish(&self.game.to_pgn()) else {
+            return;
+        };
+        let res = res.map_err(|e| {
             trf(
                 "Could not write to «{db}»: {reason}",
                 &[("db", &name), ("reason", &e)],
@@ -2644,6 +2723,45 @@ impl GameView {
         }
         self.recorded = Some(res.clone());
         self.record_news = Some(res);
+    }
+
+    /// Puts the game in progress aside (docs/design/desktop-adjourned.md): it stops here,
+    /// its journal stays and it can go on later. `None`: its journal could not be made
+    /// (no folder for it): the game is left as it is, still played.
+    pub fn put_aside(&mut self) -> Option<crate::player_games::PutAside> {
+        let journal = self.play.as_ref()?.journal.as_ref()?;
+        if !journal.can_put_aside() {
+            return None;
+        }
+        // «The game is on» was open (the window closed over it): the clocks waited.
+        if let Some((_, since)) = self.play_leave.take()
+            && let Some(s) = self.play.as_mut()
+            && s.resign_offer.is_none()
+            && let Some(c) = s.clock.as_mut()
+        {
+            c.pause(since.elapsed());
+        }
+        self.close_resign_offer();
+        let mut s = self.play.take()?;
+        s.opponent.forget();
+        self.board.clear_premove();
+        let mut g = self.game.clone();
+        g.set_tag("Termination", "Unterminated");
+        // The side to move keeps the time it had now (not its last move's).
+        let to_move = self
+            .game
+            .position(self.play_end_node())
+            .map_or(Color::White, |p| p.turn());
+        let left = s
+            .clock
+            .as_ref()
+            .map(|c| c.left(to_move, std::time::Instant::now()));
+        let aside = s
+            .journal
+            .take()
+            .and_then(|j| j.put_aside(&g.to_pgn(), left));
+        self.game.mark_saved();
+        aside
     }
 
     /// The player's name of the game against the computer on the screen.
@@ -2937,7 +3055,8 @@ impl GameView {
         self.play.is_some() && self.play_started()
     }
 
-    /// «The game is on»: resign and add, resign and leave, keep playing.
+    /// «The game is on»: resign (and add), keep playing, put aside (the main answer: it
+    /// costs nothing).
     fn leave_question(&mut self, ctx: &egui::Context, actions: &mut Vec<GameAction>) {
         let Some((intent, since)) = self.play_leave else {
             return;
@@ -2951,29 +3070,52 @@ impl GameView {
                 .play
                 .as_ref()
                 .and_then(|s| s.journal.as_ref())
-                .map(|j| crate::own_db::base_name(j.target()));
+                .and_then(|j| j.target())
+                .map(crate::own_db::base_name);
             match &target {
                 Some(db) => ui.label(trf(
-                    "If you leave, the game ends with your resignation and is written to «{db}».",
+                    "Put the game aside: the clocks stop, and you can go on from its card in the library. If you resign, the game ends and is written to «{db}».",
                     &[("db", db)],
                 )),
-                None => ui.label(tr("If you leave, the game ends with your resignation.")),
+                None => ui.label(tr("Put the game aside: the clocks stop, and you can go on from its card in the library. If you resign, the game ends.")),
             };
             ui.add_space(8.0);
-            ui.horizontal_wrapped(|ui| {
-                if target.is_none() && ui.button(tr("Resign and add to a database…")).clicked() {
-                    choice = Some(0);
+            // Resigning on the left, apart from the main answer; all of one height. With
+            // «add to a database» too they take a row of their own above.
+            let button = |text: &str| egui::Button::new(text).min_size(vec2(0.0, 30.0));
+            let resign = |ui: &mut Ui, choice: &mut Option<u8>| {
+                if target.is_none() && ui.add(button(tr("Resign and add to a database…"))).clicked() {
+                    *choice = Some(0);
                 }
-                if ui.button(tr("Resign and leave")).clicked() {
-                    choice = Some(1);
+                if ui.add(button(tr("Resign and leave"))).clicked() {
+                    *choice = Some(1);
                 }
-                if crate::widgets::primary(ui, tr("Keep playing")).clicked() {
-                    choice = Some(2);
+            };
+            let main = |ui: &mut Ui, choice: &mut Option<u8>| {
+                if crate::widgets::primary(ui, tr("Put aside")).clicked() {
+                    *choice = Some(3);
                 }
-            });
+                if ui.add(button(tr("Keep playing"))).clicked() {
+                    *choice = Some(2);
+                }
+            };
+            if target.is_none() {
+                ui.horizontal(|ui| resign(ui, &mut choice));
+                ui.add_space(4.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    main(ui, &mut choice)
+                });
+            } else {
+                let mut right = None;
+                egui::Sides::new().show(ui, |ui| resign(ui, &mut choice), |ui| main(ui, &mut right));
+                choice = choice.or(right);
+            }
         });
         if choice.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             choice = Some(2);
+        }
+        if choice.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+            choice = Some(3);
         }
         let Some(choice) = choice else { return };
         self.play_leave = None;
@@ -3000,6 +3142,7 @@ impl GameView {
                 self.game.mark_saved();
                 actions.push(GameAction::Leave(intent));
             }
+            3 => actions.push(GameAction::PutAside(Some(intent))),
             _ => {}
         }
     }
@@ -3312,6 +3455,41 @@ impl GameView {
                             said("Maia declines the draw", "Rodent declines the draw").into(),
                         ));
                     }
+                }
+                // Leaving without an end, apart from the game's endings. Short of room
+                // it is its icon (the words in its tooltip), on the next row with no
+                // separator left at the end of this one.
+                let hint = format!(
+                    "{}\n{}",
+                    tr("⏸ Put aside"),
+                    tr("Put the game aside: the clocks stop; go on from its card in the library")
+                );
+                let w = |t: &str| {
+                    ui.fonts_mut(|f| {
+                        f.layout_no_wrap(t.to_owned(), egui::FontId::proportional(14.0), Color32::WHITE)
+                            .size()
+                            .x
+                    }) + 2.0 * ui.spacing().button_padding.x
+                };
+                let separator = 2.0 * ui.spacing().item_spacing.x + 1.0;
+                // What is left of this row (a wrapping row offers its whole width).
+                let room = ui.max_rect().right() - ui.cursor().min.x;
+                let full = room >= separator + w(tr("⏸ Put aside"));
+                let fits = room >= separator + w("⏸");
+                if fits {
+                    ui.separator();
+                }
+                let label = if full { tr("⏸ Put aside") } else { "⏸" };
+                if ui
+                    .add(word(label))
+                    .on_hover_text(if full {
+                        tr("Put the game aside: the clocks stop; go on from its card in the library")
+                    } else {
+                        &hint
+                    })
+                    .clicked()
+                {
+                    actions.push(GameAction::PutAside(None));
                 }
             }
         });

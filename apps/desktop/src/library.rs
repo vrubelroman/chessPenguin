@@ -40,6 +40,9 @@ pub enum LibraryAction {
     NewGame,
     /// A game against Maia: the play dialog.
     Play,
+    /// The game put aside: go on with it, or let it go (adjourned.rs).
+    ResumeAside,
+    DiscardAside,
     /// A new game meant for this database (the table's «+ Game»): Ctrl+S adds it there.
     NewGameIn(PathBuf),
     PastePgn,
@@ -134,6 +137,15 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
 }
 
 /// A shelf button's tooltip: with icons only, its name first.
+/// What was pressed on the card of a game put aside, as the library's action.
+fn push_pressed(p: Option<crate::adjourned::Pressed>, actions: &mut Vec<LibraryAction>) {
+    match p {
+        Some(crate::adjourned::Pressed::Continue) => actions.push(LibraryAction::ResumeAside),
+        Some(crate::adjourned::Pressed::Discard) => actions.push(LibraryAction::DiscardAside),
+        None => {}
+    }
+}
+
 fn shelf_hint(icons: bool, full: &str, hint: &str) -> String {
     if icons {
         format!(
@@ -198,6 +210,8 @@ pub struct Library {
     pub online_running: Option<usize>,
     /// A newer version to offer (its number), next to Settings.
     pub update: Option<String>,
+    /// The card of the game put aside, on the shelf.
+    pub aside: Option<crate::adjourned::Card>,
 }
 
 impl Library {
@@ -216,6 +230,7 @@ impl Library {
             online_busy: Vec::new(),
             online_running: None,
             update: None,
+            aside: None,
         }
     }
 
@@ -489,12 +504,20 @@ impl Library {
             .is_some_and(|p| self.large.get(p).is_some_and(|v| v.pane() == Pane::Board));
         // The shelf's rows hold the databases only (their actions are in the title row).
         let cards = databases.len();
+        // The card of a game put aside stands right of the databases (they wrap beside
+        // it), or above them when not even one fits beside it.
+        let cards_width = match &self.aside {
+            Some(card) if width - 16.0 - card.width(ui) - 24.0 >= 190.0 => {
+                width - card.width(ui) - 24.0
+            }
+            _ => width,
+        };
         let card_rows = {
             let mut rows = 1;
             let mut x = 0.0;
             for _ in 0..cards {
                 let w = 190.0;
-                if x > 0.0 && x + w > width - 16.0 {
+                if x > 0.0 && x + w > cards_width - 16.0 {
                     rows += 1;
                     x = 0.0;
                 }
@@ -503,10 +526,12 @@ impl Library {
             rows
         };
         if card_rows > 2 || height < 600.0 || (board_open && height < 760.0) {
-            egui::Panel::top("shelf_compact")
-                .show(ui, |ui| self.compact_shelf(ui, databases, &mut actions));
+            egui::Panel::top("shelf_compact").show(ui, |ui| {
+                self.compact_shelf(ui, databases, settings, &mut actions)
+            });
         } else {
-            egui::Panel::top("shelf").show(ui, |ui| self.shelf(ui, databases, &mut actions));
+            egui::Panel::top("shelf")
+                .show(ui, |ui| self.shelf(ui, databases, settings, &mut actions));
         }
         // A database has its filter panel or its search board on the right, when the
         // window leaves the table its least width beside them (narrow-windows.md §2.1);
@@ -641,6 +666,7 @@ impl Library {
         &mut self,
         ui: &mut Ui,
         databases: &[PathBuf],
+        settings: &Settings,
         actions: &mut Vec<LibraryAction>,
     ) {
         let name = |p: &Path| {
@@ -686,6 +712,12 @@ impl Library {
                 self.app_buttons(ui, icons, actions);
             });
         });
+        // The game put aside: a strip under the line.
+        if let Some(card) = &self.aside {
+            ui.add_space(4.0);
+            push_pressed(card.strip(ui, settings), actions);
+            ui.add_space(4.0);
+        }
     }
 
     /// "⚙ Settings" and the newer version (right to left): the program's corner, the
@@ -758,7 +790,13 @@ impl Library {
         }
     }
 
-    fn shelf(&mut self, ui: &mut Ui, databases: &[PathBuf], actions: &mut Vec<LibraryAction>) {
+    fn shelf(
+        &mut self,
+        ui: &mut Ui,
+        databases: &[PathBuf],
+        settings: &Settings,
+        actions: &mut Vec<LibraryAction>,
+    ) {
         ui.add_space(8.0);
         // The title row (library-layout.md §1.4): «Databases», then what to put in — the
         // game ones first (used daily), then, apart, the database actions; the program's
@@ -791,15 +829,38 @@ impl Library {
                 self.app_buttons(ui, icons, actions);
             });
         });
-        if !databases.is_empty() {
+        let card = self.aside.take();
+        let card_w = card.as_ref().map_or(0.0, |c| c.width(ui));
+        let width = ui.available_width();
+        let beside = card.is_some() && width - card_w - 24.0 >= 190.0;
+        // Not even one database beside it: the card has a row of its own, above them.
+        if let Some(c) = card.as_ref().filter(|_| !beside) {
             ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-                for path in databases {
-                    self.db_card(ui, path, actions);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                push_pressed(c.show(ui, card_w, settings), actions);
+            });
+        }
+        if !databases.is_empty() || beside {
+            ui.add_space(4.0);
+            ui.horizontal_top(|ui| {
+                let dbs_w = if beside { width - card_w - 24.0 } else { width };
+                ui.allocate_ui(vec2(dbs_w, 0.0), |ui| {
+                    ui.set_max_width(dbs_w);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                        for path in databases {
+                            self.db_card(ui, path, actions);
+                        }
+                    });
+                });
+                if let Some(c) = card.as_ref().filter(|_| beside) {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        push_pressed(c.show(ui, card_w, settings), actions);
+                    });
                 }
             });
         }
+        self.aside = card;
         ui.add_space(8.0);
     }
 
