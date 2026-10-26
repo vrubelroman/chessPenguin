@@ -616,6 +616,24 @@ impl Opponent {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn rodent_strength_to_uci_elo() {
+        use super::{RODENT_MAX, RODENT_MIN, rodent_elo};
+        assert_eq!(rodent_elo(1890), Some(800));
+        assert!(rodent_elo(RODENT_MIN).is_some_and(|e| e < 900));
+        assert_eq!(rodent_elo(2549), Some(2000));
+        let mid = rodent_elo(2635).unwrap();
+        assert!((2090..=2110).contains(&mid), "{mid}");
+        assert!(rodent_elo(RODENT_MAX).is_some_and(|e| e < 3000));
+        // Stronger always means a higher setting.
+        let mut last = 0;
+        for s in (RODENT_MIN..=RODENT_MAX).step_by(50) {
+            let e = rodent_elo(s).unwrap();
+            assert!(e >= last, "{s}");
+            last = e;
+        }
+    }
+
+    #[test]
     fn strength_to_rating_input() {
         use maia::strength::Model;
         // The measured points themselves, in proportion between them, the ends held.
@@ -869,25 +887,37 @@ pub fn engine_for(start: &Start) -> Option<(Engine, std::path::PathBuf)> {
 }
 
 /// Measured (docs/research/rodent.md, «Замер»): Rodent's UCI_Elo → its strength on the
-/// Lichess blitz scale (default personality, its book off).
-const RODENT: &[(u32, u32)] = &[(800, 1500), (3000, 2700)];
+/// Lichess blitz scale (default personality, its book off; 3900 games with random
+/// openings against Maia and the Maia-1 bots, and level against level).
+const RODENT: &[(u32, u32)] = &[
+    (800, 1890),
+    (1000, 1994),
+    (1200, 2065),
+    (1400, 2135),
+    (1600, 2220),
+    (1800, 2376),
+    (2000, 2549),
+    (2200, 2721),
+    (2400, 2841),
+    (2600, 2971),
+    (2800, 3119),
+    (3000, 3230),
+];
 
-/// The weakest and strongest Rodent plays (its top: full strength).
-pub const RODENT_MIN: u32 = 1500;
-pub const RODENT_MAX: u32 = 2700;
+/// The weakest Rodent plays (his lowest setting), and the strongest offered: a strong
+/// grandmaster's blitz; beyond, the scale is not measured against people.
+pub const RODENT_MIN: u32 = 1900;
+pub const RODENT_MAX: u32 = 3000;
 
 /// The UCI_Elo for Rodent to play at `strength` (in proportion between the measured
-/// points; `None` at the top: full strength).
+/// points; `None` above them: no limit).
 pub fn rodent_elo(strength: u32) -> Option<u32> {
-    if strength >= RODENT_MAX {
-        return None;
-    }
     let (first, last) = (RODENT[0], RODENT[RODENT.len() - 1]);
     if strength <= first.1 {
         return Some(first.0);
     }
     if strength >= last.1 {
-        return Some(last.0);
+        return None;
     }
     let i = RODENT
         .iter()

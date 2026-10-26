@@ -155,11 +155,7 @@ impl Download {
 
     /// Runs `job` (a download and what follows it) in a thread of its own; `total`: the
     /// bytes expected, shown until the server says.
-    pub fn spawn(
-        ctx: &egui::Context,
-        total: u64,
-        job: Job,
-    ) -> Download {
+    pub fn spawn(ctx: &egui::Context, total: u64, job: Job) -> Download {
         let stage = Arc::new(Mutex::new(Stage::Downloading { done: 0, total }));
         let cancel = Arc::new(AtomicBool::new(false));
         let (s, c, ctx) = (stage.clone(), cancel.clone(), ctx.clone());
