@@ -4,6 +4,13 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Android: the lists look richer. Games are divided by thin lines, each side has its
+  colour disc, the winner's «1» stands on a tile, the opening code (ECO) on a tag of its
+  own, and the game you came back from is marked. Search also finds by the ECO. On
+  «Databases» each kind has its colour (Catppuccin: PGN, ChessBase, archives, downloaded,
+  your own), groups are cards, and a game put aside shows its position. Settings are
+  grouped the same way, with icons.
+
 ## [1.6.0] — 2026-10-26
 
 - Games against the computer are written by themselves into the player's database,
