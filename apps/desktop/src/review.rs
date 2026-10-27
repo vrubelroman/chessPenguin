@@ -680,7 +680,12 @@ impl Review {
                     .enumerate()
                 {
                     if let Some(a) = s.phase_accuracy[i] {
-                        value_row(ui, percent(a), label, Some(accuracy_color(a, ui.visuals().dark_mode)));
+                        value_row(
+                            ui,
+                            percent(a),
+                            label,
+                            Some(accuracy_color(a, ui.visuals().dark_mode)),
+                        );
                     }
                 }
             });

@@ -19,8 +19,6 @@ pub struct MoveFeatures {
     /// After the move the opponent can win a piece (a knight or more) for at least two
     /// points more than the move took; a piece that was lost anyway does not count.
     pub sacrifice: bool,
-    /// A piece (not the king) under attack moves away without loss.
-    pub escape: bool,
     /// A capture that wins two points or more.
     pub winning_capture: bool,
 }
@@ -34,8 +32,16 @@ impl MoveFeatures {
         let taken = m.capture().map_or(0, value);
         // The opponent's best gain on each of the mover's pieces after the move.
         let threats = threats(&after);
-        let threat = threats.iter().map(|t| t.0).max().unwrap_or(0);
-        let offered = threats
+        // Offered by this move: the piece moved, or one the move left open to a bigger
+        // loss than before; a piece that hung already was not given by it (chess.com's
+        // reading: 18…Rg8 of the Evergreen game, the knight on e7 under the pawn on f6
+        // before and after, is no sacrifice).
+        let given: Vec<&(i32, i32, Square)> = threats
+            .iter()
+            .filter(|t| t.2 == m.to() || pseudo_threat(before.board(), t.2, mover.other()) < t.0)
+            .collect();
+        let threat = given.iter().map(|t| t.0).max().unwrap_or(0);
+        let offered = given
             .iter()
             .filter(|t| t.0 == threat)
             .map(|t| t.1)
@@ -55,7 +61,6 @@ impl MoveFeatures {
             mates: after.is_checkmate(),
             recapture: m.is_capture() && prev.is_some_and(|p| p.is_capture() && p.to() == m.to()),
             sacrifice: offered >= 3 && taken - threat <= -2 && !lost_anyway,
-            escape: lost_anyway && from_threat < 900 && gain >= 0,
             winning_capture: m.is_capture() && gain >= 2,
         }
     }
@@ -65,9 +70,10 @@ impl MoveFeatures {
         self.sacrifice && self.legal > 1 && !self.check && !self.promotion
     }
 
-    /// Could be great: not a forced, obvious or finishing move.
+    /// Could be great: not a forced, obvious or finishing move. A piece saving itself on
+    /// the only good square can be (chess.com: 13.Qa4 of the Evergreen game).
     pub fn great_shape(&self) -> bool {
-        self.legal > 1 && !self.mates && !self.escape && !self.recapture && !self.winning_capture
+        self.legal > 1 && !self.mates && !self.recapture && !self.winning_capture
     }
 
     /// Worth asking the engine for the best other move.
@@ -219,13 +225,24 @@ mod tests {
     }
 
     #[test]
-    fn a_piece_saved_or_lost_anyway_is_no_move_of_note() {
-        // The bishop on c4 attacked by the pawn on d5: Bb3 saves it.
+    fn a_piece_saved_or_lost_anyway_is_no_sacrifice() {
+        // The bishop on c4 attacked by the pawn on d5: Bb3 saves it, which can be the only
+        // good move (great), never a sacrifice.
         let f = features("4k3/8/8/3p4/2B5/8/8/4K3 w - - 0 1", "Bb3");
-        assert!(f.escape && !f.great_shape() && !f.sacrifice, "{f:?}");
+        assert!(f.great_shape() && !f.sacrifice, "{f:?}");
         // Taking the pawn instead, into the knight: it was lost anyway (desperado).
         let f = features("4k3/8/5n2/3p4/2B5/8/8/4K3 w - - 0 1", "Bxd5");
         assert!(!f.sacrifice, "{f:?}");
+    }
+
+    #[test]
+    fn only_what_the_move_gives_up_is_offered() {
+        // The knight on e5 hangs to the pawn on d6 before and after Ra2: not given by it.
+        let f = features("4k3/8/3p4/4N3/8/8/8/R3K3 w - - 0 1", "Ra2");
+        assert!(!f.sacrifice, "{f:?}");
+        // The rook on e1 guards it; Ra1 takes the guard away: the knight is given up.
+        let f = features("4k3/8/3p4/4N3/8/8/8/4RK2 w - - 0 1", "Ra1");
+        assert!(f.sacrifice, "{f:?}");
     }
 
     #[test]

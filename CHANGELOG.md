@@ -14,6 +14,9 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   engine searches a second time for the moves that could be such (about a third longer
   analysis); for an analysis from before, «Update» looks for them without evaluating the
   game again. With evaluations from the PGN alone there are none (the report says so).
+  Calibrated on chess.com's marks of the Evergreen game: a sacrifice is a piece the move
+  itself gives up, every move of a combination is marked, and a piece saving itself on
+  the only good square or the only good move in an equal position is great too.
 - The review's mark in the notation stands right after the move, the move in its color
   (Qg7?? in red), as on Lichess, instead of a colored pill at the edge of the cell; the
   author's own sign, when there is one, stands instead.
