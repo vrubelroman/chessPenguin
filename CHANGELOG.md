@@ -4,6 +4,15 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [1.9.1] — 2026-10-27
+
+- macOS: Rodent IV plays. Its build had no home folder on macOS (its authors left it
+  unwritten), found none of its personalities and offered no «Personality», so every game
+  ended at once with «Rodent did not start: it does not start on this computer». The
+  engine now takes its own folder, as on Linux and Windows; the program offers to
+  download it again, and only the engine itself (250 KB) is fetched. Its build is now
+  checked to offer its personalities from a folder like the one the program uses.
+
 ## [1.9.0] — 2026-10-27
 
 - Android: a new version is offered at each start of the app, as on the desktop (it used to

@@ -12,8 +12,9 @@ use crate::engine_download::{Asset, Download, Failure, Stage, already, disk, fet
 use ::play::rodent::{BOOK_NAMES, FILES, file_url};
 
 /// This platform's build: the release of our builds it is in (the macOS build of
-/// `rodent-iv-0.33` searched garbage, `think-thread.patch`; the GCC builds of Linux and
-/// Windows did not) and the file there, checked against its SHA-256.
+/// `rodent-iv-0.33` searched garbage, `think-thread.patch`; the one of `rodent-iv-0.33-2`
+/// had no home folder and offered no personality, `home-dir.patch`; the GCC builds of
+/// Linux and Windows had neither fault) and the file there, checked against its SHA-256.
 fn binary() -> Option<(&'static str, Asset)> {
     let (tag, file, sha256, size) = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => (
@@ -29,10 +30,10 @@ fn binary() -> Option<(&'static str, Asset)> {
             1_288_192,
         ),
         ("macos", "aarch64") => (
-            "rodent-iv-0.33-2",
+            "rodent-iv-0.33-3",
             "rodent-iv-macos-arm64",
-            "ceaa1514126fb72550698ede2648ecc5a1fa2d82f09a49e4a176658ba87548e3",
-            248_920,
+            "4e84159598196e164400c056eff04baebcaf1a045a9b7aaf63ffabe98b9df6af",
+            249_096,
         ),
         _ => return None,
     };

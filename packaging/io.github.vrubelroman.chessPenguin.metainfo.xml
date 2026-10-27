@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.9.1" date="2026-10-27">
+      <description>
+        <p>On macOS, Rodent IV plays: its build found none of its personalities, so no game against it could start.</p>
+      </description>
+    </release>
     <release version="1.9.0" date="2026-10-27">
       <description>
         <p>Against the computer a move can be taken back in blitz games only. On macOS, Rodent IV downloaded over an older one starts again. On Android, a new version is offered at each start of the app.</p>
