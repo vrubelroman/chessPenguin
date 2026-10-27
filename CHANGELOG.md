@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [1.9.4] — 2026-10-27
+
 - Desktop: the database cards show how many games each holds instead of «not loaded»:
   the databases are counted in the background, one after another, and the counts are
   remembered for the next start (a changed file is counted again).

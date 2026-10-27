@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.9.4" date="2026-10-27">
+      <description>
+        <p>Database cards show how many games each holds, the strength in the play dialog follows the slider's handle, the game buttons are even, and translation of annotations is faster.</p>
+      </description>
+    </release>
     <release version="1.9.3" date="2026-10-27">
       <description>
         <p>On Android, «About» no longer calls the app an alpha, describes what it does now and shows the penguin in a crown.</p>
