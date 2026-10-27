@@ -198,11 +198,17 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         }
     }
 
-    /// On start and on return to the app: a check when one is due (§25.6).
+    /// Whether this run of the app asked already: the first start always asks.
+    private var askedThisRun = false
+
+    /// On start and on return to the app: a check when one is due (§25.6): at each start
+    /// of the app, as the desktop does (a release out since the last check is offered at
+    /// once), and on return 6 h after the last answer (1 h after a failed try).
     fun checkIfDue() {
         if (!_auto.value || busy()) return
         val now = System.currentTimeMillis()
-        if (now - _lastCheck.value < DAY || now - prefs.getLong(LAST_ATTEMPT, 0L) < HOUR) return
+        if (askedThisRun && (now - _lastCheck.value < RECHECK || now - prefs.getLong(LAST_ATTEMPT, 0L) < HOUR)) return
+        askedThisRun = true
         scope.launch { runCheck(manual = false) }
     }
 
@@ -613,7 +619,7 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         const val UPDATED_FROM = "updatedFrom"
         /// No longer used (until 1.0.1).
         const val UPDATED_PAGE = "updatedPage"
-        const val DAY = 24 * 60 * 60 * 1000L
+        const val RECHECK = 6 * 60 * 60 * 1000L
         const val HOUR = 60 * 60 * 1000L
     }
 }
