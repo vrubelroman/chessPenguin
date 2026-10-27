@@ -10848,6 +10848,17 @@ const ROWS: &[[&str; 9]] = &[
         "Қарсылас — Maia {elo}",
     ],
     [
+        "Time control",
+        "Контроль времени",
+        "Cadence",
+        "Bedenkzeit",
+        "Ritmo de juego",
+        "Cadenza",
+        "Ritmo de jogo",
+        "Vaqt nazorati",
+        "Уақыт бақылауы",
+    ],
+    [
         "Unlimited",
         "Бессрочно",
         "Illimité",

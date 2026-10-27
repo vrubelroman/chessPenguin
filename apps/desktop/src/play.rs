@@ -841,6 +841,8 @@ pub struct Session {
     pub opponent: Opponent,
     /// «Resign?» waits for the second click.
     pub resign_asked: bool,
+    /// The player's clock got low and was heard (once a game).
+    pub low_time_heard: bool,
     /// The engine judging the game for Maia's resignation (none without an engine).
     pub judge: Option<Judge>,
     /// Maia's turns in a row with her position hopeless.

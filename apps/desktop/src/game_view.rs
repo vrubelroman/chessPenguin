@@ -967,8 +967,19 @@ impl GameView {
                 )
                 + notes.as_ref().map_or(0.0, |n| button(ui, n.text()))
         };
-        let result = result_label(self.game.result());
-        let result_w = result.map_or(0.0, |r| {
+        // The result, or during a game against the computer its time control («5+3», «∞»)
+        // in the same place.
+        let (result, result_hint) = match result_label(self.game.result()) {
+            Some(r) => (Some(r.to_owned()), result_hint(self.game.result())),
+            None => match &self.play {
+                Some(s) => match &s.clock {
+                    Some(c) => (Some(c.control.label()), tr("Time control")),
+                    None => (Some("∞".to_owned()), tr("Unlimited")),
+                },
+                None => (None, ""),
+            },
+        };
+        let result_w = result.as_ref().map_or(0.0, |r| {
             ui.painter()
                 .layout_no_wrap(
                     format!(" {r} "),
@@ -1042,14 +1053,14 @@ impl GameView {
                                 actions.push(GameAction::EditGameData);
                             }
                         });
-                        if let Some(result) = result {
+                        if let Some(result) = &result {
                             ui.label(
                                 RichText::new(format!(" {result} "))
                                     .strong()
                                     .size(15.0)
                                     .background_color(ui.visuals().widgets.inactive.weak_bg_fill),
                             )
-                            .on_hover_text(result_hint(self.game.result()));
+                            .on_hover_text(result_hint);
                         }
                     });
                     let sub: Vec<String> = self
@@ -2278,6 +2289,11 @@ impl GameView {
         self.flipped = start.user == Color::Black;
         self.play_end = None;
         self.recorded = None;
+        // A game put aside with the player's time already low goes on without the tick:
+        // it was heard before.
+        let low_time_heard = clock
+            .as_ref()
+            .is_some_and(|c| c.left(start.user, std::time::Instant::now()) <= c.low());
         self.play = Some(Session {
             journal,
             user: start.user,
@@ -2293,6 +2309,7 @@ impl GameView {
                 }
             },
             resign_asked: false,
+            low_time_heard,
             judge: judge.map(|p| {
                 let ctx = ctx.clone();
                 crate::play::Judge::start(
@@ -2639,6 +2656,12 @@ impl GameView {
                 let draw = end_pos.is_some_and(|p| p.has_insufficient_material(!side));
                 self.finish_play(crate::play::Ending::Time { loser: side, draw }, actions);
                 return;
+            }
+            // The player's time getting low is heard once, as on Lichess (the clock turns
+            // red at the same moment).
+            if side == s.user && left <= c.low() && !s.low_time_heard {
+                s.low_time_heard = true;
+                actions.push(GameAction::Sound(Sound::LowTime));
             }
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -3073,10 +3096,37 @@ impl GameView {
         let Some((intent, since)) = self.play_leave else {
             return;
         };
+        // Which game: «Rodent IV 2800 · Tal · you play white · 5+3 · move 10», as on the
+        // card of a game put aside.
+        let context = self.play.as_ref().map(|s| {
+            let mut parts = vec![s.rival_label()];
+            parts.extend(s.rival_style().map(str::to_owned));
+            parts.push(
+                if s.user == Color::White {
+                    tr("you play white")
+                } else {
+                    tr("you play black")
+                }
+                .to_owned(),
+            );
+            parts.push(
+                s.clock
+                    .as_ref()
+                    .map_or_else(|| tr("no clock").to_owned(), |c| c.control.label()),
+            );
+            if let Some(pos) = self.game.position(self.play_end_node()) {
+                parts.push(trf("move {n}", &[("n", &pos.fullmoves().get())]));
+            }
+            parts.join(" · ")
+        });
         let mut choice = None;
         egui::Modal::new(egui::Id::new("play_leave")).show(ctx, |ui| {
             ui.set_width(460.0);
             ui.heading(tr("The game is on"));
+            if let Some(context) = &context {
+                ui.label(RichText::new(context).weak());
+                ui.add_space(4.0);
+            }
             // A game written by itself needs no «add»: where it goes is said instead.
             let target = self
                 .play
@@ -3170,7 +3220,7 @@ impl GameView {
         hub: &mut crate::translate_ui::Hub,
         actions: &mut Vec<GameAction>,
     ) {
-        let _ = (settings, analysis, reference, hub);
+        let _ = (analysis, reference, hub);
         let Some(s) = &self.play else { return };
         let user = s.user;
         // The side whose pieces are at the top of the board is at the top.
@@ -3182,10 +3232,10 @@ impl GameView {
         egui::Panel::bottom("play_toolbar").show(ui, |ui| self.play_toolbar(ui, actions));
         egui::Panel::bottom("play_card_bottom")
             .show_separator_line(false)
-            .show(ui, |ui| self.clock_card(ui, !top, user));
+            .show(ui, |ui| self.clock_card(ui, !top, user, settings.piece_set));
         egui::Panel::top("play_card_top")
             .show_separator_line(false)
-            .show(ui, |ui| self.clock_card(ui, top, user));
+            .show(ui, |ui| self.clock_card(ui, top, user, settings.piece_set));
         if self.play.as_ref().is_some_and(|s| s.resign_offer.is_some()) {
             egui::Panel::bottom("play_resign_offer")
                 .show_separator_line(false)
@@ -3240,7 +3290,7 @@ impl GameView {
     }
 
     /// A player's card: name, rating, the clock and what is going on.
-    fn clock_card(&self, ui: &mut Ui, side: Color, user: Color) {
+    fn clock_card(&self, ui: &mut Ui, side: Color, user: Color, pieces: crate::assets::PieceSet) {
         let Some(s) = &self.play else { return };
         // While «The game is on» is open, the clocks stand at the moment it opened.
         let now = self
@@ -3283,10 +3333,11 @@ impl GameView {
                     .size()
                     .x
             };
-            let rival_w = width(
-                format!("♚ {}", s.rival_label()),
-                egui::FontId::proportional(15.0),
-            );
+            // The king of the board's piece set before the name.
+            let king_size = 22.0;
+            let rival_w = king_size
+                + ui.spacing().item_spacing.x
+                + width(s.rival_label(), egui::FontId::proportional(15.0));
             let clock_size = left.map_or(28.0, |l| {
                 let at_28 = width(crate::play::clock_text(l), egui::FontId::monospace(28.0));
                 let room = ui.available_width() - rival_w - 16.0;
@@ -3301,19 +3352,27 @@ impl GameView {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.set_max_width(ui.available_width() - clock_w);
-                    let king = if side == Color::White { "♔" } else { "♚" };
                     let name = if side == user {
                         match s.user_elo {
-                            Some(r) => format!("{king} {} · {r}", tr("You")),
-                            None => format!("{king} {}", tr("You")),
+                            Some(r) => format!("{} · {r}", tr("You")),
+                            None => tr("You").to_owned(),
                         }
                     } else {
-                        format!("{king} {}", s.rival_label())
+                        s.rival_label()
                     };
-                    // One line however narrow the panel: a long style is cut, not wrapped
-                    // under the clock (the whole name on hover).
-                    ui.add(egui::Label::new(RichText::new(&name).size(15.0)).truncate())
-                        .on_hover_text(&name);
+                    ui.horizontal(|ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(vec2(king_size, king_size), Sense::hover());
+                        let king = chess_core::shakmaty::Piece {
+                            color: side,
+                            role: chess_core::shakmaty::Role::King,
+                        };
+                        pieces.paint(ui, king, rect);
+                        // One line however narrow the panel: a long style is cut, not
+                        // wrapped under the clock (the whole name on hover).
+                        ui.add(egui::Label::new(RichText::new(&name).size(15.0)).truncate())
+                            .on_hover_text(&name);
+                    });
                     let state = if side != user && s.resign_offer.is_some() {
                         tr("resigns")
                     } else if side != user && s.opponent.thinking {
@@ -3331,7 +3390,11 @@ impl GameView {
                         Some(st) => format!("{st} · {state}"),
                         None => state.to_owned(),
                     };
-                    ui.add(egui::Label::new(RichText::new(state).weak().size(13.0)).truncate());
+                    // Under the name, not under the king.
+                    ui.horizontal(|ui| {
+                        ui.add_space(king_size + ui.spacing().item_spacing.x);
+                        ui.add(egui::Label::new(RichText::new(state).weak().size(13.0)).truncate());
+                    });
                 });
                 if let Some(left) = left {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

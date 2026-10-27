@@ -59,6 +59,9 @@ other sets, re-encoded as Ogg Vorbis.
 
 `apps/desktop/assets/sounds/common/Wrong.ogg` (a wrong move while learning an opening, every
 set) is Kenney's `error_003` of "Interface Sounds" (CC0), made the same way.
+`apps/desktop/assets/sounds/common/LowTime.ogg` (the player's clock getting low, every set) is
+two of Kenney's `tick_004` of "Interface Sounds" (CC0) 180 ms apart, 4 dB quieter, re-encoded
+as Ogg Vorbis.
 
 The Defeat and Success sounds of the Lichess sets (`Defeat.ogg` and `Victory.ogg` of
 `public/sound/sfx`, `piano`, `futuristic`, `nes`, by Enigmahack, AGPLv3+) were downloaded

@@ -562,6 +562,8 @@ pub enum Sound {
     Wrong,
     /// The line done (learning an opening).
     Success,
+    /// The player's clock got low (once a game).
+    LowTime,
 }
 
 pub fn sound_bytes(set: SoundSet, sound: Sound) -> &'static [u8] {
@@ -605,6 +607,8 @@ pub fn sound_bytes(set: SoundSet, sound: Sound) -> &'static [u8] {
         (SoundSet::Clicks, Sound::Defeat) => s!("clicks", "Defeat"),
         // One short falling tone for every set (Kenney, CC0).
         (_, Sound::Wrong) => s!("common", "Wrong"),
+        // A double tick for every set (Kenney, CC0).
+        (_, Sound::LowTime) => s!("common", "LowTime"),
         (SoundSet::Sfx, Sound::Success) => s!("sfx", "Success"),
         (SoundSet::Piano, Sound::Success) => s!("piano", "Success"),
         (SoundSet::Futuristic, Sound::Success) => s!("futuristic", "Success"),
@@ -629,6 +633,7 @@ mod tests {
                 Sound::Check,
                 Sound::Checkmate,
                 Sound::Defeat,
+                Sound::LowTime,
             ] {
                 let b = sound_bytes(set, s);
                 assert!(b.starts_with(b"OggS") && b.len() > 1000, "{set:?} {s:?}");
