@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.9.2" date="2026-10-27">
+      <description>
+        <p>In a game against the computer the header shows the time control, the players' cards show the kings of the chosen piece set, and a low clock is heard once. On Android, adding a database moved into the Files heading.</p>
+      </description>
+    </release>
     <release version="1.9.1" date="2026-10-27">
       <description>
         <p>On macOS, Rodent IV plays: its build found none of its personalities, so no game against it could start.</p>

@@ -4,6 +4,16 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [1.9.2] — 2026-10-27
+
+- Desktop, a game against the computer: the header shows its time control («5+3», «∞»)
+  where the result comes after it; the players' cards show the king of the chosen piece
+  set; the player's clock turning red is heard once a game (a double tick, every sound
+  set); «The game is on» says which game is left («Maia 1550 · you play white · 5+3 ·
+  move 5»).
+- Android: «+ Add» sits in the Files heading, as «+ New database» in My databases,
+  instead of a button floating over the list.
+
 ## [1.9.1] — 2026-10-27
 
 - macOS: Rodent IV plays. Its build had no home folder on macOS (its authors left it
