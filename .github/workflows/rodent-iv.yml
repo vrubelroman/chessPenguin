@@ -37,14 +37,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: cp
-      - name: Sources at the pinned commit, with our one fix
+      - name: Sources at the pinned commit, with our two fixes
         shell: bash
         # packaging/rodent-iv/home-dir.patch: on Linux the engine now and then took a
         # wrong home folder and played without its personality and books.
+        # packaging/rodent-iv/think-thread.patch: the search thread read its parameter
+        # after it was gone; clang builds (macOS) searched garbage out of the book.
         run: |
           git clone https://github.com/nescitus/rodent-iv.git src
           git -C src checkout "$COMMIT"
           git -C src apply ../cp/packaging/rodent-iv/home-dir.patch
+          git -C src apply ../cp/packaging/rodent-iv/think-thread.patch
       - name: Windows compiler (MinGW-w64, linked statically)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
@@ -70,6 +73,14 @@ jobs:
       - name: It answers UCI
         shell: bash
         run: printf 'uci\nquit\n' | "./${{ matrix.name }}" | grep -q "Rodent IV"
+      - name: It searches (a legal first move out of a book)
+        shell: bash
+        run: |
+          out=$( (printf 'uci\nsetoption name UseBook value false\nisready\nposition startpos\ngo depth 8\n'; sleep 10; printf 'quit\n') | "./${{ matrix.name }}" )
+          best=$(printf '%s\n' "$out" | grep -o 'bestmove [a-h1-8]*' | tail -n1 | cut -d' ' -f2)
+          echo "bestmove: $best"
+          legal=" a2a3 a2a4 b2b3 b2b4 c2c3 c2c4 d2d3 d2d4 e2e3 e2e4 f2f3 f2f4 g2g3 g2g4 h2h3 h2h4 b1a3 b1c3 g1f3 g1h3 "
+          [[ -n "$best" && "$legal" == *" $best "* ]]
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
@@ -90,9 +101,10 @@ jobs:
           cat > "${RUNNER_TEMP}/notes.md" <<EOF
           Rodent IV 0.33 by Paweł Koziol and Bernhard C. Maerz (GPL-3.0), built from the
           authors' sources at https://github.com/nescitus/rodent-iv/tree/${COMMIT}
-          with one fix (packaging/rodent-iv/home-dir.patch in ChessPenguin's repository:
-          the engine's home folder on Linux) for ChessPenguin, which downloads it on
-          request. Not a ChessPenguin release.
+          with two fixes (packaging/rodent-iv/home-dir.patch and think-thread.patch in
+          ChessPenguin's repository: the engine's home folder on Linux; the search
+          thread's parameter, which clang builds read after it was gone) for
+          ChessPenguin, which downloads it on request. Not a ChessPenguin release.
           EOF
       - uses: softprops/action-gh-release@v3
         with:
