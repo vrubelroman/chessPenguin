@@ -4,6 +4,9 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- macOS: Rodent IV out of its opening book searched garbage (a bug of its sources that
+  only builds by clang show) and is now built with the fix; an installed Rodent IV is
+  offered for download again, and only the engine itself (250 KB) is fetched.
 - Android: Rodent IV joins Maia as an opponent. «Play» opens the sheet with the choice of
   Maia or Rodent IV and, for Rodent, one of its 13 characters or 22 famous players (Tal,
   Kasparov, Karpov…), each with its own strength scale (Rodent: 800–2800). The engine is

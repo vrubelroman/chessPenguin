@@ -8,38 +8,43 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use crate::engine_download::{Asset, Download, Failure, Stage, disk, fetch};
+use crate::engine_download::{Asset, Download, Failure, Stage, already, disk, fetch};
 use ::play::rodent::{BOOK_NAMES, FILES, file_url};
 
-/// The release of our builds.
-const TAG: &str = "rodent-iv-0.33";
-
-/// This platform's build in the release, if there is one (checked against its SHA-256).
-fn binary() -> Option<Asset> {
-    let (file, sha256, size) = match (std::env::consts::OS, std::env::consts::ARCH) {
+/// This platform's build: the release of our builds it is in (the macOS build of
+/// `rodent-iv-0.33` searched garbage, `think-thread.patch`; the GCC builds of Linux and
+/// Windows did not) and the file there, checked against its SHA-256.
+fn binary() -> Option<(&'static str, Asset)> {
+    let (tag, file, sha256, size) = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => (
+            "rodent-iv-0.33",
             "rodent-iv-linux-x86_64",
             "bb2cd533d89d6431e50a101242a74806d5c022f4d5893fe0d16dbd24b2f62efd",
             1_291_352,
         ),
         ("windows", "x86_64") => (
+            "rodent-iv-0.33",
             "rodent-iv-windows-x86_64.exe",
             "aa0f58ee10a2366cf86064d152a29ab344faf02e1d199934232eb98f813aac4b",
             1_288_192,
         ),
         ("macos", "aarch64") => (
+            "rodent-iv-0.33-2",
             "rodent-iv-macos-arm64",
-            "c1abd5cc7970427f34632d8d3b7337e2c17499d182ab3f9be8e625fb3535c135",
+            "ceaa1514126fb72550698ede2648ecc5a1fa2d82f09a49e4a176658ba87548e3",
             248_920,
         ),
         _ => return None,
     };
-    (!sha256.is_empty()).then_some(Asset {
-        file,
-        sha256,
-        size,
-        zip: false,
-    })
+    (!sha256.is_empty()).then_some((
+        tag,
+        Asset {
+            file,
+            sha256,
+            size,
+            zip: false,
+        },
+    ))
 }
 
 #[cfg(windows)]
@@ -54,7 +59,7 @@ pub fn available() -> bool {
 
 /// The download in all: the engine, its personalities and books.
 fn total() -> u64 {
-    binary().map_or(0, |b| b.size) + FILES.iter().map(|f| f.1).sum::<u64>()
+    binary().map_or(0, |(_, b)| b.size) + FILES.iter().map(|f| f.1).sum::<u64>()
 }
 
 pub fn size_mb() -> u64 {
@@ -70,15 +75,20 @@ pub fn dir() -> Option<PathBuf> {
         .map(|d| d.data_local_dir().join("engines").join("rodent_iv_0.33"))
 }
 
-/// Written last, once the engine started from its folder with everything beside it.
+/// Written last, once the engine started from its folder with everything beside it: the
+/// release its build came from.
 const COMPLETE: &str = ".complete";
 
-/// The installed engine, if it is all there.
+/// The installed engine, if it is all there and its build is this version's (an older
+/// one is downloaded again; the files that did not change are kept).
 pub fn installed() -> Option<PathBuf> {
     let d = dir()?;
     let exe = d.join(EXE);
     let whole = d.join("personalities").join("basic.ini").is_file();
-    let marked = std::env::var_os("CP_RODENT4").is_some() || d.join(COMPLETE).is_file();
+    let marked = std::env::var_os("CP_RODENT4").is_some()
+        || binary().is_some_and(|(tag, _)| {
+            std::fs::read_to_string(d.join(COMPLETE)).is_ok_and(|m| m.trim() == tag)
+        });
     (exe.is_file() && whole && marked).then_some(exe)
 }
 
@@ -98,7 +108,7 @@ pub fn start(ctx: &egui::Context) -> Download {
 }
 
 fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> {
-    let bin = binary().ok_or(Failure::Unsupported)?;
+    let (tag, bin) = binary().ok_or(Failure::Unsupported)?;
     let dir = dir().ok_or_else(|| Failure::Disk("no data directory".into()))?;
     std::fs::create_dir_all(&dir).map_err(disk)?;
     let grand = total();
@@ -116,10 +126,12 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
     let result = (|| {
         let exe = dir.join(EXE);
         let url = format!(
-            "https://github.com/vrubelroman/chessPenguin/releases/download/{TAG}/{}",
+            "https://github.com/vrubelroman/chessPenguin/releases/download/{tag}/{}",
             bin.file
         );
-        fetch(&url, &exe, &bin, &step(base), cancel)?;
+        if !already(&exe, &bin) {
+            fetch(&url, &exe, &bin, &step(base), cancel)?;
+        }
         base += bin.size;
         #[cfg(unix)]
         {
@@ -137,7 +149,9 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
                 size,
                 zip: false,
             };
-            fetch(&file_url(path), &dest, &asset, &step(base), cancel)?;
+            if !already(&dest, &asset) {
+                fetch(&file_url(path), &dest, &asset, &step(base), cancel)?;
+            }
             base += size;
         }
         report(Stage::Unpacking);
@@ -148,7 +162,7 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
             }
         }
         crate::rodent_download::check_runs(&exe)?;
-        std::fs::write(dir.join(COMPLETE), TAG).map_err(disk)?;
+        std::fs::write(dir.join(COMPLETE), tag).map_err(disk)?;
         Ok(exe)
     })();
     if result.is_err() {

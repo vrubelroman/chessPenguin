@@ -275,15 +275,35 @@ pub fn fetch(
         }
     }
     file.sync_all().map_err(disk)?;
-    let digest: String = hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    if done != asset.size || digest != asset.sha256 {
+    if done != asset.size || hex(hasher) != asset.sha256 {
         return Err(Failure::Checksum);
     }
     Ok(())
+}
+
+fn hex(hasher: Sha256) -> String {
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Whether the file is there already as the asset is (a folder of an older build: only
+/// what changed is downloaded again).
+pub fn already(file: &Path, asset: &Asset) -> bool {
+    let Ok(mut f) = std::fs::File::open(file) else {
+        return false;
+    };
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => return hex(hasher) == asset.sha256,
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(_) => return false,
+        }
+    }
 }
 
 /// Takes the engine executable and its license files out of the archive.
@@ -366,6 +386,26 @@ pub fn disk(e: std::io::Error) -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_already_there_is_known_by_its_checksum() {
+        let dir = std::env::temp_dir().join(format!("cp-already-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("book.bin");
+        std::fs::write(&file, b"abc").unwrap();
+        let mut asset = Asset {
+            file: "book.bin",
+            // SHA-256 of «abc».
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            size: 3,
+            zip: false,
+        };
+        assert!(already(&file, &asset));
+        asset.sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+        assert!(!already(&file, &asset));
+        assert!(!already(&dir.join("missing.bin"), &asset));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn this_platform_has_a_pinned_download() {
