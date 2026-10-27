@@ -8,6 +8,7 @@ mod assets;
 mod board;
 mod board_search;
 mod chatgpt;
+mod db_counts;
 mod engine_download;
 mod engine_offer;
 mod engines;

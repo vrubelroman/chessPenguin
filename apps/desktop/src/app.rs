@@ -358,7 +358,7 @@ impl App {
             let _ = settings.save();
         }
         let (tx, rx) = channel();
-        let mut library = Library::new();
+        let mut library = Library::new(ctx);
         // Read in the background: a missing file says so there (a lost network drive
         // does not hold the start).
         if let Some(first) = settings.databases.first() {

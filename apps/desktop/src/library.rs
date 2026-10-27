@@ -212,10 +212,12 @@ pub struct Library {
     pub update: Option<String>,
     /// The card of the game put aside, on the shelf.
     pub aside: Option<crate::adjourned::Card>,
+    /// The games of the databases not opened, for their cards.
+    counts: crate::db_counts::Counts,
 }
 
 impl Library {
-    pub fn new() -> Self {
+    pub fn new(ctx: &egui::Context) -> Self {
         Self {
             slots: HashMap::new(),
             files: crate::file_state::FileStates::new(),
@@ -231,6 +233,7 @@ impl Library {
             online_running: None,
             update: None,
             aside: None,
+            counts: crate::db_counts::Counts::new(ctx),
         }
     }
 
@@ -436,6 +439,7 @@ impl Library {
                         {
                             b.set_booster_dir(&dir.join("boosters"));
                         }
+                        self.counts.opened(path, &o.db);
                         Slot::Ready(Arc::new(o.db))
                     }
                     Err(e) => Slot::Failed(import_error(&e)),
@@ -1031,17 +1035,18 @@ impl Library {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let detail = match self.slots.get(path) {
-            Some(Slot::Ready(db)) => match db.as_chessbase() {
-                Some(b) => format!(
+        let shown = |c: crate::db_counts::Count| {
+            if c.locked {
+                format!(
                     "{} · 🔒",
-                    trf(
-                        "{n} games",
-                        &[("n", &large_db::short_count(b.games() + b.texts()))],
-                    )
-                ),
-                None => crate::i18n::games(db.len()),
-            },
+                    trf("{n} games", &[("n", &large_db::short_count(c.games))])
+                )
+            } else {
+                crate::i18n::games(c.games)
+            }
+        };
+        let detail = match self.slots.get(path) {
+            Some(Slot::Ready(db)) => shown(crate::db_counts::Count::of(db)),
             Some(Slot::Loading { progress, .. }) => {
                 let p = progress.lock().map(|g| *g).unwrap_or(ScanProgress {
                     bytes_done: 0,
@@ -1052,7 +1057,8 @@ impl Library {
             }
             Some(Slot::Failed(_)) => tr("error").into(),
             None if !self.files.exists(path) => tr("file not found").into(),
-            None => tr("not loaded").into(),
+            // Not opened: its games once counted, nothing till then.
+            None => self.counts.get(path).map(shown).unwrap_or_default(),
         };
         let (rect, resp) = ui.allocate_exact_size(vec2(190.0, 64.0), Sense::click());
         let v = ui.visuals();

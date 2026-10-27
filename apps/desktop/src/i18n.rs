@@ -7103,17 +7103,6 @@ const ROWS: &[[&str; 9]] = &[
         "файл табылмады",
     ],
     [
-        "not loaded",
-        "не загружена",
-        "non chargée",
-        "nicht geladen",
-        "no cargada",
-        "non caricato",
-        "não carregada",
-        "yuklanmagan",
-        "жүктелмеген",
-    ],
-    [
         "Reload file",
         "Перечитать файл",
         "Recharger le fichier",

@@ -4,6 +4,14 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Desktop: the database cards show how many games each holds instead of «not loaded»:
+  the databases are counted in the background, one after another, and the counts are
+  remembered for the next start (a changed file is counted again).
+- Desktop, the play dialog: the strength rides above the slider's handle, where the eye
+  is while it moves.
+- Desktop, a game against the computer: the buttons under the clocks are of one height;
+  the moves and the board flip on one row, the game's own actions on the next.
+
 ## [1.9.3] — 2026-10-27
 
 - Android: «About» no longer calls the app an alpha, says what it does now (chess

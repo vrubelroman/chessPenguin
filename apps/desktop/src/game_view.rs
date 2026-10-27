@@ -3420,33 +3420,35 @@ impl GameView {
     /// moves).
     fn play_toolbar(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
         ui.add_space(4.0);
+        // Every button of one height; the moves and the board on one row, the game's own
+        // actions on the next (a row wrapping in the middle of a group looks broken).
+        const H: f32 = 28.0;
+        let icon = |s: &str| egui::Button::new(RichText::new(s).size(18.0)).min_size(vec2(0.0, H));
+        let word = |s: &str| egui::Button::new(RichText::new(s).size(14.0)).min_size(vec2(0.0, H));
         ui.horizontal_wrapped(|ui| {
-            let big = |s: &str| RichText::new(s).size(18.0);
-            // The words as tall as the icon buttons beside them.
-            let word =
-                |s: &str| egui::Button::new(RichText::new(s).size(14.0)).min_size(vec2(0.0, 28.0));
-            if ui.button(big("⏮")).clicked() {
+            if ui.add(icon("⏮")).clicked() {
                 self.goto(NodeId::ROOT);
             }
-            if ui.button(big("◀")).clicked() {
+            if ui.add(icon("◀")).clicked() {
                 self.step_back();
             }
-            if ui.button(big("▶")).clicked() {
+            if ui.add(icon("▶")).clicked() {
                 self.step_forward(actions);
             }
-            if ui.button(big("⏭")).clicked() {
+            if ui.add(icon("⏭")).clicked() {
                 let end = self.play_end_node();
                 self.goto(end);
             }
             ui.separator();
             if ui
-                .button(big("🔃"))
+                .add(icon("🔃"))
                 .on_hover_text(tr("Flip board (F)"))
                 .clicked()
             {
                 self.flipped = !self.flipped;
             }
-            ui.separator();
+        });
+        ui.horizontal_wrapped(|ui| {
             let user = self.play.as_ref().map_or(Color::White, |s| s.user);
             let user_moved = self.user_moved(user);
             if self.take_back_offered()
@@ -3534,8 +3536,7 @@ impl GameView {
                     }
                 }
                 // Leaving without an end, apart from the game's endings. Short of room
-                // it is its icon (the words in its tooltip), on the next row with no
-                // separator left at the end of this one.
+                // it is its icon (the words in its tooltip).
                 let hint = format!(
                     "{}\n{}",
                     tr("⏸ Put aside"),
@@ -3548,14 +3549,9 @@ impl GameView {
                             .x
                     }) + 2.0 * ui.spacing().button_padding.x
                 };
-                let separator = 2.0 * ui.spacing().item_spacing.x + 1.0;
                 // What is left of this row (a wrapping row offers its whole width).
                 let room = ui.max_rect().right() - ui.cursor().min.x;
-                let full = room >= separator + w(tr("⏸ Put aside"));
-                let fits = room >= separator + w("⏸");
-                if fits {
-                    ui.separator();
-                }
+                let full = room >= w(tr("⏸ Put aside"));
                 let label = if full { tr("⏸ Put aside") } else { "⏸" };
                 if ui
                     .add(word(label))

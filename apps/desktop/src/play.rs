@@ -1414,16 +1414,29 @@ impl Dialog {
             });
             // Each engine on its own scale (its authors'): not a person's Elo, said under it.
             let (min, max) = range(self.prefs.rival, &self.prefs.style);
+            // Room for the rating that rides above the handle.
+            ui.add_space(16.0);
             ui.horizontal(|ui| {
                 let end = |ui: &mut egui::Ui, v: u32| {
                     ui.add_sized([34.0, 18.0], egui::Label::new(RichText::new(v.to_string()).weak()))
                 };
                 end(ui, min);
                 ui.spacing_mut().slider_width = W - 2.0 * 34.0 - 2.0 * GAP;
-                ui.add(
+                let r = ui.add(
                     egui::Slider::new(&mut self.prefs.strength, min..=max)
                         .step_by(50.0)
                         .show_value(false),
+                );
+                // The eye is on the handle while it moves, not on the heading: the rating
+                // follows it (the handle's travel as egui's slider has it).
+                let travel = r.rect.x_range().shrink(r.rect.height() / 2.5);
+                let t = self.prefs.strength.saturating_sub(min) as f32 / (max - min).max(1) as f32;
+                ui.painter().text(
+                    egui::pos2(travel.min + t * travel.span(), r.rect.top() - 2.0),
+                    egui::Align2::CENTER_BOTTOM,
+                    self.prefs.strength.to_string(),
+                    egui::FontId::proportional(14.0),
+                    ui.visuals().strong_text_color(),
                 );
                 end(ui, max);
             });
