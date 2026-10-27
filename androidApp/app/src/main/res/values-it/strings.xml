@@ -255,8 +255,6 @@
     <string name="review_brilliant">Mossa brillante</string>
     <string name="review_greats">Ottime mosse</string>
     <string name="review_brilliants">Mosse brillanti</string>
-    <string name="review_why_brilliant">Un sacrificio corretto</string>
-    <string name="review_why_great">L\'unica buona mossa</string>
     <string name="review_missing">Non valutate: %d</string>
     <string name="review_failed">L\'analisi si è interrotta</string>
     <string name="review_resume">Continua</string>

@@ -290,10 +290,7 @@ impl Review {
                             // Written into the game: Latin, as PGN always is.
                             &[("judgement", &name), ("best", best)],
                         ),
-                        None => match judgement_reason(mark.judgement) {
-                            Some(why) => format!("{name}. {why}"),
-                            None => format!("{name}."),
-                        },
+                        None => format!("{name}."),
                     };
                     if !comments.contains(&text) {
                         comments.push(text);
@@ -885,15 +882,6 @@ pub fn judgement_text_color(j: Judgement, dark: bool) -> Color32 {
         Judgement::Blunder => Color32::from_rgb(0xc2, 0x3b, 0x3b),
         Judgement::Great => Color32::from_rgb(0x4e, 0x7f, 0x22),
         Judgement::Brilliant => Color32::from_rgb(0x12, 0x80, 0x6f),
-    }
-}
-
-/// Why a move of note is one, under it in the notation and in the game's comment.
-pub fn judgement_reason(j: Judgement) -> Option<&'static str> {
-    match j {
-        Judgement::Brilliant => Some(tr("A sound sacrifice.")),
-        Judgement::Great => Some(tr("The only good move.")),
-        _ => None,
     }
 }
 

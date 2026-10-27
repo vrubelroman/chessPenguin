@@ -125,14 +125,6 @@ fun judgementName(j: MoveJudgement): String = stringResource(
     },
 )
 
-/// Why a move of note is one (none for an error).
-@Composable
-fun judgementReason(j: MoveJudgement): String? = when (j) {
-    MoveJudgement.BRILLIANT -> stringResource(R.string.review_why_brilliant)
-    MoveJudgement.GREAT -> stringResource(R.string.review_why_great)
-    else -> null
-}
-
 @Composable
 private fun judgementPlural(j: MoveJudgement): String = stringResource(
     when (j) {
@@ -143,23 +135,6 @@ private fun judgementPlural(j: MoveJudgement): String = stringResource(
         MoveJudgement.BRILLIANT -> R.string.review_brilliants
     },
 )
-
-/// The engine's mark after a main-line move in the notation (§21.4): a layer of its own,
-/// apart from the author's NAGs.
-@Composable
-fun ReviewBadge(j: MoveJudgement, modifier: Modifier = Modifier) {
-    val c = judgementColor(j, LocalChessColors.current.dark)
-    Text(
-        judgementSymbol(j),
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Bold,
-        color = c,
-        modifier = modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(c.copy(alpha = 0.16f))
-            .padding(horizontal = 4.dp, vertical = 1.dp),
-    )
-}
 
 /// The place in `state.points` of a node: itself on the main line, or the main-line move
 /// its variation leaves from.
@@ -228,7 +203,6 @@ fun ReviewPanel(
                     val link = MaterialTheme.colorScheme.primary
                     val text = buildAnnotatedString {
                         withStyle(SpanStyle(color = c, fontWeight = FontWeight.Bold)) { append(judgementSymbol(mark.judgement) + " " + name) }
-                        judgementReason(mark.judgement)?.let { append(" · "); append(it) }
                         if (better != null && betterText != null) {
                             append(" · ")
                             append(betterText.first())

@@ -4,9 +4,7 @@
 use std::collections::HashMap;
 
 use crate::i18n::tr;
-use crate::review::{
-    Mark, judgement_color, judgement_name, judgement_reason, judgement_symbol, judgement_text_color,
-};
+use crate::review::{Mark, judgement_name, judgement_symbol, judgement_text_color};
 use crate::translate_ui::Mark as Translated;
 use chess_core::shakmaty::{Color, Position};
 use chess_core::{Game, Nag, NodeId};
@@ -235,7 +233,12 @@ impl Notation<'_> {
             }
             let after = comment_text(n.comments_after());
             let vars = game.variations(node);
-            let mark = self.marks.and_then(|m| m.get(&child));
+            // A block under the move only for an error (its better line): !! and ! say
+            // all they have to say beside the move.
+            let mark = self
+                .marks
+                .and_then(|m| m.get(&child))
+                .filter(|m| m.judgement.is_error());
             let editing_after = editing == Some(Slot::After(child));
             let interrupted = editing_after
                 || !after.is_empty()
@@ -311,11 +314,17 @@ impl Row {
                     let dim = n
                         .dim_until
                         .is_some_and(|p| n.game.node(id).is_some_and(|nd| nd.ply() <= p));
-                    let text_right =
-                        paint_move_cell(ui, cell, n.game, id, id == n.cursor, resp.hovered(), dim);
-                    if let Some(mark) = n.marks.and_then(|m| m.get(&id)) {
-                        paint_badge(ui, cell, mark);
-                    }
+                    let mark = n.marks.and_then(|m| m.get(&id));
+                    let text_right = paint_move_cell(
+                        ui,
+                        cell,
+                        n.game,
+                        id,
+                        mark,
+                        id == n.cursor,
+                        resp.hovered(),
+                        dim,
+                    );
                     if let Some(&(count, shown)) = n.mistakes.and_then(|m| m.get(&id)) {
                         let color = if shown {
                             ui.visuals().warn_fg_color
@@ -547,11 +556,13 @@ fn symbol_hint(nag: Nag, name: &'static str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_move_cell(
     ui: &Ui,
     cell: egui::Rect,
     game: &Game,
     id: NodeId,
+    mark: Option<&Mark>,
     current: bool,
     hovered: bool,
     dim: bool,
@@ -567,9 +578,18 @@ fn paint_move_cell(
     let node = game.node(id);
     let san = game.game_move(id).map(|m| m.san.as_str()).unwrap_or("?");
     let san = crate::san::show(san);
-    let (sym, color) = node
+    let (mut sym, mut color) = node
         .map(|n| move_glyph(n.nags()))
         .unwrap_or((String::new(), None));
+    // The engine's verdict right after the move, the move in its color (as on Lichess);
+    // the author's own sign stands instead when there is one.
+    let authored = node.is_some_and(|n| n.nags().iter().any(|g| g.is_move_assessment()));
+    if let Some(m) = mark
+        && !authored
+    {
+        sym.insert_str(0, judgement_symbol(m.judgement));
+        color = Some(judgement_text_color(m.judgement, visuals.dark_mode));
+    }
     let text_color = if current {
         visuals.selection.stroke.color
     } else if dim {
@@ -586,25 +606,6 @@ fn paint_move_cell(
             text_color,
         )
         .right()
-}
-
-/// Engine verdict at the right edge of a move cell: a filled pill, unlike the author's NAGs.
-fn paint_badge(ui: &Ui, cell: egui::Rect, mark: &Mark) {
-    let color = judgement_color(mark.judgement);
-    let font = FontId::proportional(12.0);
-    let galley = ui.painter().layout_no_wrap(
-        judgement_symbol(mark.judgement).to_string(),
-        font,
-        Color32::WHITE,
-    );
-    let size = vec2(galley.size().x + 10.0, 16.0);
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(cell.right() - size.x - 6.0, cell.center().y - size.y / 2.0),
-        size,
-    );
-    ui.painter().rect_filled(rect, 8.0, color);
-    ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
 }
 
 /// "Mistake. Best: 23…Nf6 24.Nd5 …" under a marked main-line move. Each move opens the line
@@ -637,9 +638,6 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
                         .color(color)
                         .strong(),
                 );
-                if let Some(why) = judgement_reason(mark.judgement) {
-                    ui.label(RichText::new(why).weak());
-                }
                 if mark.best_san.is_empty() {
                     return;
                 }

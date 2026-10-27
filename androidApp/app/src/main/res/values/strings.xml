@@ -254,8 +254,6 @@
     <string name="review_brilliant">Brilliant move</string>
     <string name="review_greats">Great moves</string>
     <string name="review_brilliants">Brilliant moves</string>
-    <string name="review_why_brilliant">A sound sacrifice</string>
-    <string name="review_why_great">The only good move</string>
     <string name="review_missing">Not evaluated: %d</string>
     <string name="review_failed">The analysis stopped</string>
     <string name="review_resume">Continue</string>

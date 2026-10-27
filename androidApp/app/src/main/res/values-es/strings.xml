@@ -255,8 +255,6 @@
     <string name="review_brilliant">Jugada brillante</string>
     <string name="review_greats">Grandes jugadas</string>
     <string name="review_brilliants">Jugadas brillantes</string>
-    <string name="review_why_brilliant">Un sacrificio correcto</string>
-    <string name="review_why_great">La única buena jugada</string>
     <string name="review_missing">Sin evaluar: %d</string>
     <string name="review_failed">El análisis se interrumpió</string>
     <string name="review_resume">Continuar</string>

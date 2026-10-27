@@ -357,9 +357,9 @@ private fun MoveCell(
     onLongMove: ((Int) -> Unit)?,
 ) {
     val selected = id != null && id == current
-    // The engine's mark is left out where the author already put the same sign ("Nf6? ?"
-    // reads as a typo, §21.4).
-    val mark = mark?.takeIf { m -> id == null || game.nodes[id].nags.none { it.toInt() == judgementNag(m) } }
+    // The engine's mark stands right after the move, the move in its color (as on Lichess);
+    // where the author already gave the move a sign, the author's sign stands instead.
+    val mark = mark?.takeIf { id == null || game.nodes[id].nags.none { (it.toInt() and 0xFF) in 1..6 } }
     // TalkBack reads "4, White, dxe5", the engine's judgement, and whether it is the
     // current move.
     val markName = mark?.let { judgementName(it) }
@@ -411,7 +411,11 @@ private fun MoveCell(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
-                    Text(san(n.san), fontSize = 17.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                    val markColor = mark?.takeIf { !selected }?.let { judgementColor(it, chess.dark) }
+                    Text(san(n.san), fontSize = 17.sp, fontWeight = FontWeight.Medium, color = markColor ?: MaterialTheme.colorScheme.onSurface)
+                    if (mark != null) {
+                        Text(judgementSymbol(mark), fontSize = 17.sp, fontWeight = FontWeight.Medium, color = markColor ?: MaterialTheme.colorScheme.onSurface)
+                    }
                     if (n.nagSymbols.isNotEmpty()) {
                         Text(
                             n.nagSymbols,
@@ -425,7 +429,6 @@ private fun MoveCell(
                         )
                     }
                 }
-                if (mark != null) ReviewBadge(mark, Modifier.padding(start = 2.dp))
             }
         }
     }

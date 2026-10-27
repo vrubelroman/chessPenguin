@@ -251,8 +251,6 @@
     <string name="review_brilliant">Brillanter Zug</string>
     <string name="review_greats">Starke Züge</string>
     <string name="review_brilliants">Brillante Züge</string>
-    <string name="review_why_brilliant">Ein korrektes Opfer</string>
-    <string name="review_why_great">Der einzige gute Zug</string>
     <string name="review_missing">Ohne Bewertung: %d</string>
     <string name="review_failed">Die Analyse wurde unterbrochen</string>
     <string name="review_resume">Fortsetzen</string>
