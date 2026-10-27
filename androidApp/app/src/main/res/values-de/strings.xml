@@ -397,6 +397,8 @@
     <string name="own_databases">Meine Datenbanken</string>
     <string name="own_new">+ Neue Datenbank</string>
     <string name="own_empty">Hier stehen die Partien, die Sie eingeben oder gegen den Computer spielen</string>
+    <string name="files_add">+ Hinzufügen</string>
+    <string name="files_empty">Hier stehen PGN- und ChessBase-Dateien, Ordner und Partien aus dem Internet, die Sie hinzufügen</string>
     <string name="files">Dateien</string>
     <string name="own_default_name">Meine Partien</string>
     <string name="own_new_title">Neue Datenbank</string>

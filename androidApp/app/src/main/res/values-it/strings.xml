@@ -403,6 +403,8 @@
     <string name="own_databases">I miei database</string>
     <string name="own_new">+ Nuovo database</string>
     <string name="own_empty">Qui ci saranno le partite che inserisci o giochi contro il computer</string>
+    <string name="files_add">+ Aggiungi</string>
+    <string name="files_empty">Qui ci saranno i file PGN e ChessBase, le cartelle e le partite da internet che aggiungi</string>
     <string name="files">File</string>
     <string name="own_default_name">Le mie partite</string>
     <string name="own_new_title">Nuovo database</string>

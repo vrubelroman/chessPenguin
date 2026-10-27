@@ -50,7 +50,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -67,7 +66,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -224,7 +222,6 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     LaunchedEffect(cardShown) {
         if (cardShown && list.firstVisibleItemIndex == 1 && list.firstVisibleItemScrollOffset == 0) list.animateScrollToItem(0)
     }
-    val expanded by remember { derivedStateOf { list.firstVisibleItemIndex == 0 } }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
     // The samples are small: read them at once, so their rows show the number of games.
     LaunchedEffect(Unit) {
@@ -243,19 +240,6 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
-        floatingActionButton = {
-            if (entries.isNotEmpty()) {
-                val addLabel = stringResource(R.string.add_database)
-                ExtendedFloatingActionButton(
-                    // Folded while the list is scrolled: its label is still read out.
-                    modifier = Modifier.semantics { contentDescription = addLabel },
-                    onClick = add,
-                    expanded = expanded,
-                    icon = { Icon(Icons.Rounded.Add, null) },
-                    text = { Text(stringResource(R.string.add_database)) },
-                )
-            }
-        },
     ) { padding ->
         if (entries.isEmpty()) {
             Column(Modifier.padding(padding)) {
@@ -269,7 +253,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
             LazyColumn(
                 Modifier.fillMaxSize(),
                 state = list,
-                contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 88.dp),
+                contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 16.dp),
             ) {
                 // A newer version of the app (android-ui.md §25.2): the first item of the list.
                 update?.let { u -> item(key = "update") { UpdateCard(u, onDismissed = onUpdateDismissed, modifier = Modifier.animateItem()) } }
@@ -333,7 +317,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                 }
                 item(key = "actions") {
                     // Two equal buttons over the whole width (android-lists.md §5.5).
-                    // Neutral, as the cards' edges: the blue stays for the game put aside and the FAB.
+                    // Neutral, as the cards' edges: the blue stays for the game put aside.
                     val quiet = ButtonDefaults.filledTonalButtonColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -407,13 +391,24 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                         modifier = Modifier.animateItem().groupCard(k, own.size),
                     )
                 }
+                // «+ Add» in the section's heading, as «+ New database» in its own: nothing
+                // floats over the list.
                 item(key = "files-head") {
-                    Text(
-                        stringResource(R.string.files),
-                        Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    val addLabel = stringResource(R.string.add_database)
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp).height(48.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.files), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        TextButton(onClick = add, modifier = Modifier.semantics { contentDescription = addLabel }) { Text(stringResource(R.string.files_add)) }
+                    }
+                }
+                if (files.isEmpty()) {
+                    item(key = "files-empty") {
+                        Text(
+                            stringResource(R.string.files_empty),
+                            Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 items(files.size, key = { files[it].id }) { k ->
                     val e = files[k]

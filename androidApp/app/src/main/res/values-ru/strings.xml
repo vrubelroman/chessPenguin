@@ -409,6 +409,8 @@
     <string name="own_databases">Мои базы</string>
     <string name="own_new">+ Новая база</string>
     <string name="own_empty">Здесь будут партии, которые вы введёте или сыграете с компьютером</string>
+    <string name="files_add">+ Добавить</string>
+    <string name="files_empty">Здесь будут файлы PGN и ChessBase, папки и партии из интернета, которые вы добавите</string>
     <string name="files">Файлы</string>
     <string name="own_default_name">Мои партии</string>
     <string name="own_new_title">Новая база</string>

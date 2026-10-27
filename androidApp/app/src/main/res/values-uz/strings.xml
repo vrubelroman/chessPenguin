@@ -396,6 +396,8 @@
     <string name="own_databases">Mening bazalarim</string>
     <string name="own_new">+ Yangi baza</string>
     <string name="own_empty">Bu yerda siz kiritgan yoki kompyuter bilan o‘ynagan o‘yinlar bo‘ladi</string>
+    <string name="files_add">+ Qo‘shish</string>
+    <string name="files_empty">Bu yerda siz qo‘shgan PGN va ChessBase fayllari, papkalar va internetdagi o‘yinlar bo‘ladi</string>
     <string name="files">Fayllar</string>
     <string name="own_default_name">Mening o‘yinlarim</string>
     <string name="own_new_title">Yangi baza</string>

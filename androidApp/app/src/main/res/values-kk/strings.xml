@@ -398,6 +398,8 @@
     <string name="own_databases">Менің базаларым</string>
     <string name="own_new">+ Жаңа база</string>
     <string name="own_empty">Мұнда сіз енгізген немесе компьютермен ойнаған ойындар болады</string>
+    <string name="files_add">+ Қосу</string>
+    <string name="files_empty">Мұнда сіз қосқан PGN және ChessBase файлдары, қалталар және интернеттегі ойындар болады</string>
     <string name="files">Файлдар</string>
     <string name="own_default_name">Менің ойындарым</string>
     <string name="own_new_title">Жаңа база</string>

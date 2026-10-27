@@ -401,6 +401,8 @@
     <string name="own_databases">My databases</string>
     <string name="own_new">+ New database</string>
     <string name="own_empty">Games you enter or play against the computer will be here</string>
+    <string name="files_add">+ Add</string>
+    <string name="files_empty">PGN and ChessBase files, folders and games from the internet that you add will be here</string>
     <string name="files">Files</string>
     <string name="own_default_name">My games</string>
     <string name="own_new_title">New database</string>
