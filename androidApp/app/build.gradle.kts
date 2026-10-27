@@ -147,6 +147,9 @@ android {
         buildConfigField("String", "NET_NAME", "\"nn-1a298aa575a0.nnue\"")
         buildConfigField("String", "NET_SHA256", "\"1a298aa575a085434d29027978dc36867fe9c5bcea9376654b7a8eba1e52dfc2\"")
         buildConfigField("long", "NET_SIZE", "98511183L")
+        // The app checks for its releases and installs them itself (android-ui.md §25);
+        // the check is what the site counts installations by. Off for stores.
+        buildConfigField("boolean", "SELF_UPDATE", "true")
         buildConfigField(
             "String",
             "NET_URL",
@@ -181,6 +184,14 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
+        }
+        // RuStore (docs/decisions.md «RuStore»): the release, signed with the same key,
+        // without the app's own updates and the check the site counts installations by;
+        // the store updates it. Its manifest (src/rustore) drops the install permissions.
+        create("rustore") {
+            initWith(getByName("release"))
+            buildConfigField("boolean", "SELF_UPDATE", "false")
+            matchingFallbacks += listOf("release")
         }
     }
     // The languages of the interface; the libraries' other translations stay out.
@@ -227,6 +238,11 @@ kotlin {
 
 tasks.named("preBuild") {
     dependsOn(uniffiBindings, bundleAssets, stockfish, rodent4)
+}
+
+// RuStore gets the full build only (Stockfish inside: nothing to fetch from GitHub).
+androidComponents {
+    beforeVariants(selector().withBuildType("rustore").withFlavor("engine" to "light")) { it.enable = false }
 }
 
 dependencies {

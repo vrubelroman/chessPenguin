@@ -169,6 +169,11 @@ jobs:
         with:
           name: android
           path: androidApp/dist/*.apk
+      # The RuStore build: uploaded to the store by hand, not a file of the release.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rustore
+          path: androidApp/dist-rustore/*.apk
 
   publish:
     needs: [version, linux, flatpak, windows, macos, android]
@@ -180,6 +185,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # The RuStore build stays an artifact of the run (merge-multiple brought it here).
+      - name: Not the store's build
+        run: rm -f dist/*-rustore.apk
       - name: Stockfish source (GPL-3.0 source offer for the engine bundled in the Flatpak and Android)
         run: packaging/stockfish.sh source dist
       - name: Checksums

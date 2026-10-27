@@ -186,8 +186,9 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
         }
         val update = known()
         when {
-            // Installed by hand from the site, or never newer than this app.
-            update == null || !newer(update.version) -> forgetAll()
+            // Installed by hand from the site, or never newer than this app; or a store's
+            // build put over the site's (the store updates it, a release kept is dropped).
+            !BuildConfig.SELF_UPDATE || update == null || !newer(update.version) -> forgetAll()
             prefs.getLong(DOWNLOAD, -1L) != -1L -> watch(update, prefs.getLong(DOWNLOAD, -1L))
             update.sha256.isEmpty() -> _state.value = UpdateState.Failed(update, UpdateProblem.BadRelease, null)
             prefs.getString(READY, null) == update.version && apk(update).exists() -> _state.value = UpdateState.Ready(update, aborted = false)
@@ -205,7 +206,7 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
     /// of the app, as the desktop does (a release out since the last check is offered at
     /// once), and on return 6 h after the last answer (1 h after a failed try).
     fun checkIfDue() {
-        if (!_auto.value || busy()) return
+        if (!BuildConfig.SELF_UPDATE || !_auto.value || busy()) return
         val now = System.currentTimeMillis()
         if (askedThisRun && (now - _lastCheck.value < RECHECK || now - prefs.getLong(LAST_ATTEMPT, 0L) < HOUR)) return
         askedThisRun = true
@@ -214,11 +215,13 @@ class AppUpdates(private val context: Context, private val scope: CoroutineScope
 
     /// «Check now» (works with the automatic check off).
     fun checkNow() {
-        if (_check.value == CheckState.Checking) return
+        if (!BuildConfig.SELF_UPDATE || _check.value == CheckState.Checking) return
         scope.launch { runCheck(manual = true) }
     }
 
     private suspend fun runCheck(manual: Boolean) {
+        // A store's build never asks the site (nor counts itself there).
+        if (!BuildConfig.SELF_UPDATE) return
         if (busy()) {
             if (manual) _check.value = CheckState.Idle
             return

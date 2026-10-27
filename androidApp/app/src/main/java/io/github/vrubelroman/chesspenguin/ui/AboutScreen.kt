@@ -86,9 +86,12 @@ fun AboutScreen(onBack: () -> Unit) {
             val build = stringResource(if (BuildConfig.NET_BUILT_IN) R.string.build_full else R.string.build_light)
             Text("${BuildConfig.VERSION_NAME} ${stringResource(R.string.alpha)} · $build", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(24.dp))
-            // Right under the version (android-ui.md §25.5).
-            AboutUpdates()
-            Spacer(Modifier.height(24.dp))
+            // Right under the version (android-ui.md §25.5); a store's build is updated by
+            // the store.
+            if (BuildConfig.SELF_UPDATE) {
+                AboutUpdates()
+                Spacer(Modifier.height(24.dp))
+            }
             Text(stringResource(R.string.about_text), style = MaterialTheme.typography.bodyLarge)
             TextButton(onClick = { uri.openUri(SITE) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
                 Text(stringResource(R.string.website))
