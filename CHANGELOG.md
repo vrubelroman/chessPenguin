@@ -4,6 +4,9 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- macOS: an engine downloaded over an older one (Rodent IV from 1.7 to 1.8) no longer
+  fails «it does not start on this computer»: a download is written beside and put in
+  place, never rewritten in place (Apple silicon kills an executable changed that way).
 - Desktop: a move can be taken back only in a blitz game against the computer; in rapid,
   classical and games without a clock «↶ Take back» (and Ctrl+Z) is gone.
 

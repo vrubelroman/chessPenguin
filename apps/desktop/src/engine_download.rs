@@ -228,8 +228,29 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
     result
 }
 
-/// Downloads `url` into `to`, checking the size and the SHA-256 on the way.
+/// Downloads `url` into `to`, checking the size and the SHA-256 on the way. The file is
+/// written beside and put in place once checked: a new file, never the old one rewritten
+/// (macOS on Apple silicon kills an executable rewritten in place after it once ran: it
+/// keeps the old signature for that file).
 pub fn fetch(
+    url: &str,
+    to: &Path,
+    asset: &Asset,
+    report: &dyn Fn(Stage),
+    cancel: &AtomicBool,
+) -> Result<(), Failure> {
+    let mut part = to.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    let result = fetch_into(url, &part, asset, report, cancel)
+        .and_then(|()| std::fs::rename(&part, to).map_err(disk));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    result
+}
+
+fn fetch_into(
     url: &str,
     to: &Path,
     asset: &Asset,
