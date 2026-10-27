@@ -58,7 +58,7 @@ val DarkChess = LightChess.copy(
 /// background they are darkened to stay readable (contrast at least 4.5:1).
 fun nagColor(nag: Int, dark: Boolean): Color? = if (dark) {
     when (nag) {
-        1 -> Color(0xFF81B64C) // !
+        1 -> Color(0xFF7AAB59) // !
         2 -> Color(0xFFFFA459) // ?
         3 -> Color(0xFF26C2A3) // !!
         4 -> Color(0xFFFA412D) // ??
@@ -68,7 +68,7 @@ fun nagColor(nag: Int, dark: Boolean): Color? = if (dark) {
     }
 } else {
     when (nag) {
-        1 -> Color(0xFF5B8135)
+        1 -> Color(0xFF5B8141)
         2 -> Color(0xFFC25700)
         3 -> Color(0xFF1A846F)
         4 -> Color(0xFFD2301C)
