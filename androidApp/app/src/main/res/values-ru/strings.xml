@@ -257,8 +257,8 @@
     <string name="review_blunders">Зевки</string>
     <string name="review_great">Замечательный ход</string>
     <string name="review_brilliant">Блестящий ход</string>
-    <string name="review_greats">Замечательные ходы</string>
-    <string name="review_brilliants">Блестящие ходы</string>
+    <string name="review_greats">Замечательный</string>
+    <string name="review_brilliants">Блестящий</string>
     <string name="review_missing">Без оценки: %d</string>
     <string name="review_failed">Анализ прервался</string>
     <string name="review_resume">Продолжить</string>

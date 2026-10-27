@@ -469,7 +469,7 @@ impl BoardView<'_> {
                 c,
                 egui::Align2::CENTER_CENTER,
                 b.text,
-                egui::FontId::proportional(radius * 1.05),
+                crate::assets::bold(radius * 1.05),
                 Color32::WHITE,
             );
         }

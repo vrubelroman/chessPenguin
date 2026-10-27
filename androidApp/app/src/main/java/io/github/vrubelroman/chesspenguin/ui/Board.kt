@@ -409,7 +409,7 @@ fun Board(
             drawCircle(Color.White, r, center, style = Stroke(width = sq * 0.025f))
             val label = measurer.measure(
                 b.text,
-                TextStyle(color = Color.White, fontWeight = FontWeight.Bold, fontSize = with(density) { (r * 1.05f).toSp() }),
+                TextStyle(color = Color.White, fontWeight = FontWeight.Black, fontSize = with(density) { (r * 1.05f).toSp() }),
             )
             drawText(label, topLeft = center - Offset(label.size.width / 2f, label.size.height / 2f))
         }

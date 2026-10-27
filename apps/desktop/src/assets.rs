@@ -156,6 +156,20 @@ pub fn install(ctx: &egui::Context) {
     ctx.set_fonts(font_definitions());
 }
 
+/// The font families of the heavier faces.
+pub const MEDIUM: &str = "ubuntu-medium";
+pub const BOLD: &str = "ubuntu-bold";
+
+/// A font of the medium face (the moves of the notation).
+pub fn medium(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(MEDIUM.into()))
+}
+
+/// A font of the bold face (the marks on the board).
+pub fn bold(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(BOLD.into()))
+}
+
 /// egui's fonts with ours added: figurines for the move notation, then the fallbacks.
 pub fn font_definitions() -> egui::FontDefinitions {
     // Arrows (→ ⇄ ↔) are only in egui's monospace font, and three evaluation signs
@@ -181,7 +195,34 @@ pub fn font_definitions() -> egui::FontDefinitions {
             ),
         ),
     );
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+    // The heavier faces of the same family (egui's text is Ubuntu Light): the moves of the
+    // notation and the marks on the board.
+    for (name, bytes) in [
+        (MEDIUM, &include_bytes!("../assets/fonts/Ubuntu-M.ttf")[..]),
+        (BOLD, &include_bytes!("../assets/fonts/Ubuntu-B.ttf")[..]),
+    ] {
+        fonts.font_data.insert(
+            name.into(),
+            std::sync::Arc::new(egui::FontData::from_static(bytes)),
+        );
+        let mut list = vec![name.to_string()];
+        list.extend(
+            fonts
+                .families
+                .get(&egui::FontFamily::Proportional)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        fonts
+            .families
+            .insert(egui::FontFamily::Name(name.into()), list);
+    }
+    for family in [
+        egui::FontFamily::Proportional,
+        egui::FontFamily::Monospace,
+        egui::FontFamily::Name(MEDIUM.into()),
+        egui::FontFamily::Name(BOLD.into()),
+    ] {
         if let Some(list) = fonts.families.get_mut(&family) {
             list.insert(1, "figurine".into());
         }
@@ -191,7 +232,12 @@ pub fn font_definitions() -> egui::FontDefinitions {
         .get(&egui::FontFamily::Monospace)
         .and_then(|f| f.first())
         .cloned();
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+    for family in [
+        egui::FontFamily::Proportional,
+        egui::FontFamily::Monospace,
+        egui::FontFamily::Name(MEDIUM.into()),
+        egui::FontFamily::Name(BOLD.into()),
+    ] {
         if let Some(list) = fonts.families.get_mut(&family) {
             if let Some(m) = &mono
                 && !list.contains(m)
