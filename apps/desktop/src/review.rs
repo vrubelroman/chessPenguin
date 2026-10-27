@@ -905,7 +905,7 @@ fn judgement_plural(j: Judgement) -> &'static str {
     }
 }
 
-/// Accuracy in the colors of the move marks: green, yellow, orange, red.
+/// Accuracy in the colors of the move marks: green, blue, orange, red.
 fn accuracy_color(a: f64, dark: bool) -> Color32 {
     let j = if a >= 85.0 {
         Judgement::Great

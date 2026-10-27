@@ -63,7 +63,7 @@ fun nagColor(nag: Int, dark: Boolean): Color? = if (dark) {
         3 -> Color(0xFF26C2A3) // !!
         4 -> Color(0xFFFA412D) // ??
         5 -> Color(0xFFEA45D8) // !?
-        6 -> Color(0xFFF7C631) // ?!
+        6 -> Color(0xFF56B4E9) // ?! (Lichess blue)
         else -> null
     }
 } else {
@@ -73,7 +73,7 @@ fun nagColor(nag: Int, dark: Boolean): Color? = if (dark) {
         3 -> Color(0xFF1A846F)
         4 -> Color(0xFFD2301C)
         5 -> Color(0xFFB0259F)
-        6 -> Color(0xFF937006)
+        6 -> Color(0xFF1F72A8)
         else -> null
     }
 }

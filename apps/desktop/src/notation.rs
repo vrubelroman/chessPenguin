@@ -698,7 +698,7 @@ pub fn assessment_color(nag: Nag) -> Option<Color32> {
         3 => Color32::from_rgb(0x26, 0xc2, 0xa3),
         4 => Color32::from_rgb(0xfa, 0x41, 0x2d),
         5 => Color32::from_rgb(0xea, 0x45, 0xd8),
-        6 => Color32::from_rgb(0xf7, 0xc6, 0x31),
+        6 => Color32::from_rgb(0x56, 0xb4, 0xe9),
         _ => return None,
     })
 }
@@ -715,7 +715,7 @@ pub fn assessment_text_color(nag: Nag, dark: bool) -> Option<Color32> {
         3 => Color32::from_rgb(0x1a, 0x84, 0x6f),
         4 => Color32::from_rgb(0xd2, 0x30, 0x1c),
         5 => Color32::from_rgb(0xb0, 0x25, 0x9f),
-        6 => Color32::from_rgb(0x93, 0x70, 0x06),
+        6 => Color32::from_rgb(0x1f, 0x72, 0xa8),
         _ => return None,
     })
 }
