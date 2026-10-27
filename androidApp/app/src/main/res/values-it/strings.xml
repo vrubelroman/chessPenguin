@@ -251,6 +251,12 @@
     <string name="review_inaccuracies">Imprecisioni</string>
     <string name="review_mistakes">Errori</string>
     <string name="review_blunders">Svarioni</string>
+    <string name="review_great">Ottima mossa</string>
+    <string name="review_brilliant">Mossa brillante</string>
+    <string name="review_greats">Ottime mosse</string>
+    <string name="review_brilliants">Mosse brillanti</string>
+    <string name="review_why_brilliant">Un sacrificio corretto</string>
+    <string name="review_why_great">L\'unica buona mossa</string>
     <string name="review_missing">Non valutate: %d</string>
     <string name="review_failed">L\'analisi si è interrotta</string>
     <string name="review_resume">Continua</string>
@@ -260,6 +266,8 @@
     <string name="review_endgame">Finale</string>
     <string name="review_source">%1$s · %2$s nodi per mossa</string>
     <string name="review_source_pgn" formatted="false">Valutazioni dal PGN ([%eval])</string>
+    <string name="review_no_notes">!! e ! richiedono il motore: il PGN contiene solo valutazioni</string>
+    <string name="review_no_seconds">Questa analisi non ha ancora cercato !! e !</string>
     <string name="review_hide">Nascondi l\'analisi</string>
     <string name="review_graph">Grafico di valutazione</string>
     <string name="review_engine_paused">In pausa: analisi della partita in corso</string>

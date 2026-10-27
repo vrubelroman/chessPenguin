@@ -117,6 +117,87 @@ pub enum Judgement {
     Inaccuracy,
     Mistake,
     Blunder,
+    /// The only good move, or one that turned the game (!).
+    Great,
+    /// A sound sacrifice of a piece (!!).
+    Brilliant,
+}
+
+impl Judgement {
+    /// An error (?!, ?, ??), not a move of note.
+    pub fn is_error(self) -> bool {
+        matches!(
+            self,
+            Judgement::Inaccuracy | Judgement::Mistake | Judgement::Blunder
+        )
+    }
+}
+
+/// The thresholds of !! and ! in the mover's win % (docs/research/brilliant-moves.md §10).
+mod good {
+    /// At most this behind the engine's best move.
+    pub const NEAR_BEST: f64 = 2.0;
+    /// !!: the position after the sacrifice is at least this good.
+    pub const SOUND_AFTER: f64 = 45.0;
+    /// !!: without the move the game was not won anyway.
+    pub const WON_ANYWAY: f64 = 90.0;
+    /// !: every other move loses at least this much.
+    pub const GAP: f64 = 10.0;
+    /// !: lost below, won above (the move changes which).
+    pub const LOST: f64 = 33.0;
+    pub const WON: f64 = 67.0;
+    /// !: the position after the move is not lost, and the best other move did not win.
+    pub const GREAT_AFTER: f64 = 40.0;
+    pub const GREAT_ALT: f64 = 75.0;
+    /// An opponent's move losing this much (or judged a mistake or a blunder: near a mate
+    /// the win % hardly moves) starts a new combination.
+    pub const OPPONENT_ERROR: f64 = 10.0;
+    /// Below this the mover's position is too bad for either mark: no second search.
+    /// (The lower of the two floors after the move, !'s, less the step from the best.)
+    pub const SECOND_FROM: f64 = GREAT_AFTER - NEAR_BEST;
+}
+
+/// Whether the best other move is worth searching for: the move played was the engine's
+/// best (`eval` the position's evaluation), and the position is good enough for !! or !.
+pub fn worth_second(eval: Eval, mover: Color) -> bool {
+    eval.win_percent(mover) >= good::SECOND_FROM
+}
+
+/// Lost, equal, won (0, 1, 2).
+fn outcome(win: f64) -> u8 {
+    if win < good::LOST {
+        0
+    } else if win > good::WON {
+        2
+    } else {
+        1
+    }
+}
+
+/// Brilliant or great, from the evaluations around the move (before the combination rule).
+fn note(before: Eval, after: Eval, ply: &Ply) -> Option<Judgement> {
+    let f = ply.features?;
+    let (wb, wa) = (before.win_percent(ply.mover), after.win_percent(ply.mover));
+    let loss = wb - wa;
+    let second = ply.second.map(|e| e.win_percent(ply.mover));
+    // Without the move: the best other move, or the best move when another was played.
+    let without = if ply.best { second } else { Some(wb) };
+    if f.brilliant_shape()
+        && (ply.best || loss <= good::NEAR_BEST)
+        && wa >= good::SOUND_AFTER
+        && without.is_some_and(|w| w < good::WON_ANYWAY)
+    {
+        return Some(Judgement::Brilliant);
+    }
+    let w2 = second?;
+    (f.great_shape()
+        && ply.best
+        && loss <= good::NEAR_BEST
+        && wb - w2 >= good::GAP
+        && outcome(wa) > outcome(w2)
+        && wa >= good::GREAT_AFTER
+        && w2 < good::GREAT_ALT)
+        .then_some(Judgement::Great)
 }
 
 /// Judgement of a move from the evaluations before and after it.
@@ -221,6 +302,10 @@ pub struct Ply {
     pub null: bool,
     /// The move played equals the engine's best move (never judged as an error).
     pub best: bool,
+    /// What the move does on the board (`None`: not known, never !! or !).
+    pub features: Option<crate::MoveFeatures>,
+    /// The best other move's evaluation, when the move played was the best.
+    pub second: Option<Eval>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -228,6 +313,8 @@ pub struct SideStats {
     pub inaccuracies: u32,
     pub mistakes: u32,
     pub blunders: u32,
+    pub great: u32,
+    pub brilliant: u32,
     /// Average centipawn loss.
     pub acpl: Option<u32>,
     pub accuracy: Option<f64>,
@@ -264,6 +351,9 @@ impl Report {
             ..Report::default()
         };
         let mut losses: [Vec<i32>; 2] = [Vec::new(), Vec::new()];
+        // Moves that passed !! or ! before the combination rule, and each move's loss.
+        let mut noted = vec![false; n];
+        let mut lost = vec![0.0; n];
         for i in 0..n {
             let ply = plies[i];
             let (Some(before), Some(after)) = (evals[i], evals[i + 1]) else {
@@ -272,11 +362,29 @@ impl Report {
             if ply.null {
                 continue;
             }
-            let j = if ply.best {
+            lost[i] = before.win_percent(ply.mover) - after.win_percent(ply.mover);
+            let error = if ply.best {
                 None
             } else {
                 judge(before, after, ply.mover)
             };
+            let good = if error.is_none() {
+                note(before, after, &ply)
+            } else {
+                None
+            };
+            noted[i] = good.is_some();
+            // One mark a combination: the moves that go on with it after a mark are not
+            // marked again, unless the opponent erred in between.
+            let erred = |k: usize| {
+                lost[k] >= good::OPPONENT_ERROR
+                    || matches!(
+                        report.judgements[k],
+                        Some(Judgement::Mistake | Judgement::Blunder)
+                    )
+            };
+            let goes_on = i >= 2 && noted[i - 2] && !erred(i - 1);
+            let j = error.or(good.filter(|_| !goes_on));
             report.judgements[i] = j;
             let stats = match ply.mover {
                 Color::White => &mut report.white,
@@ -286,6 +394,8 @@ impl Report {
                 Some(Judgement::Inaccuracy) => stats.inaccuracies += 1,
                 Some(Judgement::Mistake) => stats.mistakes += 1,
                 Some(Judgement::Blunder) => stats.blunders += 1,
+                Some(Judgement::Great) => stats.great += 1,
+                Some(Judgement::Brilliant) => stats.brilliant += 1,
                 None => {}
             }
             let loss = (before.cp_for(ply.mover) - after.cp_for(ply.mover)).max(0);
@@ -398,6 +508,8 @@ mod tests {
             mover,
             null: false,
             best: false,
+            features: None,
+            second: None,
         }
     }
 
@@ -565,5 +677,115 @@ mod tests {
         assert!(mid > 4 && mid < 25, "{mid}");
         assert_eq!(p.of(0), Phase::Opening);
         assert_eq!(p.of(mid), Phase::Middlegame);
+    }
+
+    fn noted(mover: Color, sacrifice: bool, second: Option<Eval>) -> Ply {
+        Ply {
+            mover,
+            null: false,
+            best: true,
+            features: Some(crate::MoveFeatures {
+                legal: 30,
+                sacrifice,
+                ..Default::default()
+            }),
+            second,
+        }
+    }
+
+    #[test]
+    fn a_sound_sacrifice_is_brilliant_unless_the_game_was_won_anyway() {
+        let w = Color::White;
+        let evals = [Some(Eval::Cp(100)), Some(Eval::Cp(100))];
+        let r = Report::build(
+            &evals,
+            &[noted(w, true, Some(Eval::Cp(-100)))],
+            Phases::default(),
+        );
+        assert_eq!(r.judgements[0], Some(Judgement::Brilliant));
+        assert_eq!(r.white.brilliant, 1);
+        // Another move won as well: no !!.
+        let r = Report::build(
+            &evals,
+            &[noted(w, true, Some(Eval::Cp(800)))],
+            Phases::default(),
+        );
+        assert_eq!(r.judgements[0], None);
+        // No best other move known (an older analysis): nothing said.
+        let r = Report::build(&evals, &[noted(w, true, None)], Phases::default());
+        assert_eq!(r.judgements[0], None);
+        // Unsound: the position after it is bad.
+        let bad = [Some(Eval::Cp(-200)), Some(Eval::Cp(-200))];
+        let r = Report::build(
+            &bad,
+            &[noted(w, true, Some(Eval::Cp(-400)))],
+            Phases::default(),
+        );
+        assert_eq!(r.judgements[0], None);
+    }
+
+    #[test]
+    fn the_only_move_that_turns_the_game_is_great() {
+        let w = Color::White;
+        let evals = [Some(Eval::Cp(300)), Some(Eval::Cp(300))];
+        let r = Report::build(
+            &evals,
+            &[noted(w, false, Some(Eval::Cp(-300)))],
+            Phases::default(),
+        );
+        assert_eq!(r.judgements[0], Some(Judgement::Great));
+        assert_eq!(r.white.great, 1);
+        // Others are worse but still win: not great.
+        let r = Report::build(
+            &evals,
+            &[noted(w, false, Some(Eval::Cp(250)))],
+            Phases::default(),
+        );
+        assert_eq!(r.judgements[0], None);
+        // Not the engine's move: never great.
+        let mut p = noted(w, false, Some(Eval::Cp(-300)));
+        p.best = false;
+        assert_eq!(
+            Report::build(&evals, &[p], Phases::default()).judgements[0],
+            None
+        );
+    }
+
+    #[test]
+    fn a_combination_is_marked_once_unless_the_opponent_errs() {
+        let (w, b) = (Color::White, Color::Black);
+        let quiet = ply(b);
+        let great = || noted(w, false, Some(Eval::Cp(-300)));
+        let evals = [Some(Eval::Cp(300)); 4];
+        let r = Report::build(&evals, &[great(), quiet, great()], Phases::default());
+        assert_eq!(r.judgements, vec![Some(Judgement::Great), None, None]);
+        // Black blunders in between: a new mark.
+        let evals = [
+            Some(Eval::Cp(300)),
+            Some(Eval::Cp(300)),
+            Some(Eval::Cp(900)),
+            Some(Eval::Cp(900)),
+        ];
+        let mut strong = great();
+        strong.second = Some(Eval::Cp(-300));
+        let r = Report::build(&evals, &[great(), quiet, strong], Phases::default());
+        assert_eq!(r.judgements[1], Some(Judgement::Blunder));
+        assert_eq!(r.judgements[0], Some(Judgement::Great));
+    }
+
+    #[test]
+    fn an_opponent_letting_a_mate_in_starts_a_new_combination() {
+        // Near a mate the win % hardly moves: Black's move loses little of it but lets a
+        // forced mate in, a mistake; White's next move of note is marked again.
+        let (w, b) = (Color::White, Color::Black);
+        let mate = Some(Eval::Mate {
+            white: true,
+            moves: 3,
+        });
+        let evals = [Some(Eval::Cp(900)), Some(Eval::Cp(900)), mate, mate];
+        let great = || noted(w, false, Some(Eval::Cp(-300)));
+        let r = Report::build(&evals, &[great(), ply(b), great()], Phases::default());
+        assert_eq!(r.judgements[1], Some(Judgement::Mistake));
+        assert_eq!(r.judgements[2], Some(Judgement::Great));
     }
 }

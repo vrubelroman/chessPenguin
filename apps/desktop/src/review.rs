@@ -245,9 +245,9 @@ impl Review {
 
     // ----- writing into the game -------------------------------------------------
 
-    /// Adds `[%eval]` to every main-line move and, for errors, a move-assessment NAG
-    /// (unless the author gave one), a comment and the better line as a variation.
-    /// One undo step. Returns the number of annotated errors.
+    /// Adds `[%eval]` to every main-line move and, for marked moves, a move-assessment
+    /// NAG (unless the author gave one) and a comment; for errors also the better line as
+    /// a variation. One undo step. Returns the number of marked moves.
     pub fn write_to_game(&self, game: &mut Game) -> usize {
         game.edit_group(|g| {
             let mut errors = 0;
@@ -267,12 +267,20 @@ impl Review {
                     comments.insert(0, format!("[%eval {}]", e.pgn()));
                 }
                 if let Some(mark) = self.analysis.marks.get(&id) {
+                    // The author's own sign stands; praise over it would contradict it.
+                    let authored = nags.iter().any(|n| n.is_move_assessment());
+                    if !mark.judgement.is_error() && authored {
+                        let _ = g.annotate(id, nags, comments);
+                        continue;
+                    }
                     errors += 1;
-                    if !nags.iter().any(|n| n.is_move_assessment()) {
+                    if !authored {
                         nags.push(match mark.judgement {
                             Judgement::Inaccuracy => Nag::DUBIOUS_MOVE,
                             Judgement::Mistake => Nag::MISTAKE,
                             Judgement::Blunder => Nag::BLUNDER,
+                            Judgement::Great => Nag::GOOD_MOVE,
+                            Judgement::Brilliant => Nag::BRILLIANT_MOVE,
                         });
                     }
                     let name = judgement_name(mark.judgement);
@@ -282,7 +290,10 @@ impl Review {
                             // Written into the game: Latin, as PGN always is.
                             &[("judgement", &name), ("best", best)],
                         ),
-                        None => format!("{name}."),
+                        None => match judgement_reason(mark.judgement) {
+                            Some(why) => format!("{name}. {why}"),
+                            None => format!("{name}."),
+                        },
                     };
                     if !comments.contains(&text) {
                         comments.push(text);
@@ -472,7 +483,10 @@ impl Review {
                     ui.label(RichText::new(label).strong());
                     ui.label(eval);
                     if let Some(j) = mark {
-                        ui.label(RichText::new(judgement_name(j)).color(judgement_color(j)));
+                        ui.label(
+                            RichText::new(judgement_name(j))
+                                .color(judgement_text_color(j, ui.visuals().dark_mode)),
+                        );
                     }
                 });
             });
@@ -517,17 +531,28 @@ impl Review {
                 )
             };
             ui.label(RichText::new(source).small().weak());
+            if meta.nodes == 0 {
+                ui.label(
+                    RichText::new(tr("!! and ! need the engine: the PGN has evaluations only"))
+                        .small()
+                        .weak(),
+                );
+            }
         }
         if let Some(e) = &self.error {
             ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
         }
         let missing = self.missing();
-        if missing > 0 && !self.running() {
+        // An analysis from before !! and !: "Update" looks for them, nothing else.
+        let seconds = self.analysis.seconds_missing();
+        if (missing > 0 || seconds > 0) && !self.running() {
             ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    RichText::new(trf("Positions without evaluation: {n}", &[("n", &missing)]))
-                        .color(ui.visuals().warn_fg_color),
-                );
+                let text = if missing > 0 {
+                    trf("Positions without evaluation: {n}", &[("n", &missing)])
+                } else {
+                    tr("!! and ! were not looked for in this analysis").to_string()
+                };
+                ui.label(RichText::new(text).color(ui.visuals().warn_fg_color));
                 let can_update = self.analysis.meta.as_ref().is_some_and(|m| m.nodes > 0);
                 if can_update && ui.button(tr("Update")).clicked() {
                     action = Some(ReportAction::Update);
@@ -542,7 +567,7 @@ impl Review {
                     egui::Button::new(tr("Write analysis to the game")),
                 )
                 .on_hover_text(tr(
-                    "Adds evaluations, ?!/?/?? marks, comments and better lines to the game (Ctrl+Z to undo)",
+                    "Adds evaluations, !!/!/?!/?/?? marks, comments and better lines to the game (Ctrl+Z to undo)",
                 ))
                 .clicked()
             {
@@ -586,23 +611,33 @@ impl Review {
             ui.label(RichText::new(name).strong().size(16.0));
         });
         let s = self.analysis.report.side(color).clone();
+        let pgn_only = self.analysis.meta.as_ref().is_some_and(|m| m.nodes == 0);
         egui::Grid::new(("review_side", color as u8))
             .num_columns(2)
             .spacing(vec2(10.0, 3.0))
             .show(ui, |ui| {
                 for (j, count) in [
+                    (Judgement::Brilliant, s.brilliant),
+                    (Judgement::Great, s.great),
                     (Judgement::Inaccuracy, s.inaccuracies),
                     (Judgement::Mistake, s.mistakes),
                     (Judgement::Blunder, s.blunders),
                 ] {
-                    let c = judgement_color(j);
+                    // From the PGN's evaluations alone !! and ! are not known: a dash,
+                    // not a zero. A row with nothing in it stays quiet.
+                    let unknown = !j.is_error() && pgn_only;
+                    let c = if count > 0 {
+                        judgement_text_color(j, ui.visuals().dark_mode)
+                    } else {
+                        ui.visuals().weak_text_color()
+                    };
+                    let shown = if unknown {
+                        "—".to_string()
+                    } else {
+                        count.to_string()
+                    };
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(count.to_string())
-                                .strong()
-                                .size(15.0)
-                                .color(c),
-                        );
+                        ui.label(RichText::new(shown).strong().size(15.0).color(c));
                     });
                     let text = RichText::new(judgement_plural(j)).size(15.0).color(c);
                     if count > 0 {
@@ -759,7 +794,8 @@ impl Review {
             ui.add_space(6.0);
             let positions = self.analysis.positions();
             let per_thread = self.nps_per_thread.unwrap_or(700_000.0);
-            let secs = positions as f64 * rs.nodes() as f64 / (per_thread * f64::from(rs.threads));
+            let searches = self.analysis.searches();
+            let secs = searches as f64 * rs.nodes() as f64 / (per_thread * f64::from(rs.threads));
             ui.label(trf(
                 "{n} positions, about {time}",
                 &[("n", &positions), ("time", &format_duration(secs))],
@@ -831,6 +867,33 @@ pub fn judgement_color(j: Judgement) -> Color32 {
         Judgement::Inaccuracy => Color32::from_rgb(0x56, 0xb4, 0xe9),
         Judgement::Mistake => Color32::from_rgb(0xe6, 0x8f, 0x00),
         Judgement::Blunder => Color32::from_rgb(0xdf, 0x53, 0x53),
+        // The colors of the signs ! and !! in the notation.
+        Judgement::Great => Color32::from_rgb(0x62, 0x9c, 0x2e),
+        Judgement::Brilliant => Color32::from_rgb(0x22, 0xac, 0x9a),
+    }
+}
+
+/// The color of a judgement as text: on a light background darker than the bright one
+/// of the badges, as on Android.
+pub fn judgement_text_color(j: Judgement, dark: bool) -> Color32 {
+    if dark {
+        return judgement_color(j);
+    }
+    match j {
+        Judgement::Inaccuracy => Color32::from_rgb(0x1f, 0x72, 0xa8),
+        Judgement::Mistake => Color32::from_rgb(0xa3, 0x5f, 0x00),
+        Judgement::Blunder => Color32::from_rgb(0xc2, 0x3b, 0x3b),
+        Judgement::Great => Color32::from_rgb(0x4e, 0x7f, 0x22),
+        Judgement::Brilliant => Color32::from_rgb(0x12, 0x80, 0x6f),
+    }
+}
+
+/// Why a move of note is one, under it in the notation and in the game's comment.
+pub fn judgement_reason(j: Judgement) -> Option<&'static str> {
+    match j {
+        Judgement::Brilliant => Some(tr("A sound sacrifice.")),
+        Judgement::Great => Some(tr("The only good move.")),
+        _ => None,
     }
 }
 
@@ -839,6 +902,8 @@ pub fn judgement_symbol(j: Judgement) -> &'static str {
         Judgement::Inaccuracy => "?!",
         Judgement::Mistake => "?",
         Judgement::Blunder => "??",
+        Judgement::Great => "!",
+        Judgement::Brilliant => "!!",
     }
 }
 
@@ -847,6 +912,8 @@ pub fn judgement_name(j: Judgement) -> &'static str {
         Judgement::Inaccuracy => tr("Inaccuracy"),
         Judgement::Mistake => tr("Mistake"),
         Judgement::Blunder => tr("Blunder"),
+        Judgement::Great => tr("Great move"),
+        Judgement::Brilliant => tr("Brilliant move"),
     }
 }
 
@@ -855,6 +922,8 @@ fn judgement_plural(j: Judgement) -> &'static str {
         Judgement::Inaccuracy => tr("Inaccuracies"),
         Judgement::Mistake => tr("Mistakes"),
         Judgement::Blunder => tr("Blunders"),
+        Judgement::Great => tr("Great moves"),
+        Judgement::Brilliant => tr("Brilliant moves"),
     }
 }
 

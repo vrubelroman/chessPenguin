@@ -247,6 +247,12 @@
     <string name="review_inaccuracies">Noaniqliklar</string>
     <string name="review_mistakes">Xatolar</string>
     <string name="review_blunders">Qoʻpol xatolar</string>
+    <string name="review_great">Kuchli yurish</string>
+    <string name="review_brilliant">Ajoyib yurish</string>
+    <string name="review_greats">Kuchli yurishlar</string>
+    <string name="review_brilliants">Ajoyib yurishlar</string>
+    <string name="review_why_brilliant">Toʻgʻri qurbonlik</string>
+    <string name="review_why_great">Yagona yaxshi yurish</string>
     <string name="review_missing">Baholanmagan: %d</string>
     <string name="review_failed">Tahlil toʻxtadi</string>
     <string name="review_resume">Davom etish</string>
@@ -256,6 +262,8 @@
     <string name="review_endgame">Endshpil</string>
     <string name="review_source">%1$s · har yurishga %2$s tugun</string>
     <string name="review_source_pgn" formatted="false">PGNdagi baholar ([%eval])</string>
+    <string name="review_no_notes">!! va ! faqat dvigatel bilan: PGNda faqat baholar bor</string>
+    <string name="review_no_seconds">Bu tahlilda !! va ! hali qidirilmagan</string>
     <string name="review_hide">Tahlilni yashirish</string>
     <string name="review_graph">Baho grafigi</string>
     <string name="review_engine_paused">Pauza: partiya tahlil qilinmoqda</string>

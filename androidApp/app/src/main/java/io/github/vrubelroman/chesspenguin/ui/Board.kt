@@ -156,6 +156,10 @@ data class BoardArrow(val from: String, val to: String, val color: Color, val we
 /// A marked square of a comment (`[%csl]`), drawn as a ring.
 data class BoardMark(val square: String, val color: Color)
 
+/// A round label over the corner of the square a move went to: the move's assessment
+/// (`!!`, `?`, …) or the review's judgement, as on the desktop (board.rs `Badge`).
+data class BoardBadge(val square: String, val text: String, val color: Color)
+
 /// The comment colors of the desktop app (game_view.rs `shape_color`).
 fun markColor(letter: String): Color = when (letter) {
     "R" -> Color(136, 32, 32, 170)
@@ -192,6 +196,7 @@ fun Board(
     alert: Pair<String, String>? = null,
     /// The files and ranks along the edges (none on a small board that only shows).
     coordinates: Boolean = true,
+    badge: BoardBadge? = null,
 ) {
     val colors = LocalChessColors.current
     val context = LocalContext.current
@@ -388,6 +393,25 @@ fun Board(
             val f = squareIndex(a.from) ?: continue
             val t = squareIndex(a.to) ?: continue
             drawArrow(cell(f) + Offset(sq / 2, sq / 2), cell(t) + Offset(sq / 2, sq / 2), sq, a)
+        }
+        badge?.let { b ->
+            val i = squareIndex(b.square) ?: return@let
+            val c = cell(i)
+            // Readable on a small board too (a split screen).
+            val r = maxOf(sq * 0.21f, with(density) { 9.dp.toPx() })
+            // Over the corner of the square, kept inside the board.
+            val center = Offset(
+                (c.x + sq - r * 0.35f).coerceAtMost(size.width - r - 1f),
+                (c.y + r * 0.35f).coerceAtLeast(r + 1f),
+            )
+            drawCircle(Color(0, 0, 0, 90), r, center + Offset(0f, sq * 0.015f))
+            drawCircle(b.color, r, center)
+            drawCircle(Color.White, r, center, style = Stroke(width = sq * 0.025f))
+            val label = measurer.measure(
+                b.text,
+                TextStyle(color = Color.White, fontWeight = FontWeight.Bold, fontSize = with(density) { (r * 1.05f).toSp() }),
+            )
+            drawText(label, topLeft = center - Offset(label.size.width / 2f, label.size.height / 2f))
         }
         // The dragged piece: bigger and lifted above the finger, a shade on the square
         // under it so that one sees where it goes.

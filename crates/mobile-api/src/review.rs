@@ -22,12 +22,16 @@ use shakmaty::Color;
 use crate::EngineLine;
 use crate::engine::{line_with, pawns};
 
-/// How bad a move was.
+/// How bad a move was, or that it was of note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MoveJudgement {
     Inaccuracy,
     Mistake,
     Blunder,
+    /// The only good move, or one that turned the game (!).
+    Great,
+    /// A sound sacrifice of a piece (!!).
+    Brilliant,
 }
 
 impl From<Judgement> for MoveJudgement {
@@ -36,6 +40,8 @@ impl From<Judgement> for MoveJudgement {
             Judgement::Inaccuracy => MoveJudgement::Inaccuracy,
             Judgement::Mistake => MoveJudgement::Mistake,
             Judgement::Blunder => MoveJudgement::Blunder,
+            Judgement::Great => MoveJudgement::Great,
+            Judgement::Brilliant => MoveJudgement::Brilliant,
         }
     }
 }
@@ -59,6 +65,8 @@ pub struct SideReview {
     pub inaccuracies: u32,
     pub mistakes: u32,
     pub blunders: u32,
+    pub great: u32,
+    pub brilliant: u32,
     /// Average centipawn loss.
     pub acpl: Option<u32>,
     /// Accuracy 0..100 (only when every position is evaluated).
@@ -68,7 +76,8 @@ pub struct SideReview {
     pub endgame: Option<f64>,
 }
 
-/// An inaccuracy, mistake or blunder of the main line.
+/// A marked move of the main line: an inaccuracy, mistake or blunder, or a great or
+/// brilliant move (these have no better line and no reply).
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ReviewMove {
     /// The node of the move.
@@ -104,8 +113,14 @@ pub struct ReviewState {
     pub nodes: u64,
     /// Positions of the main line without an evaluation.
     pub missing: u32,
+    /// Evaluated positions still waiting for the second search of !! and ! (an analysis
+    /// from before them): "fill in" does it.
+    pub seconds_missing: u32,
     /// Positions a full analysis looks at (for the time estimate).
     pub positions: u32,
+    /// Engine searches a full analysis is expected to make (for the time estimate: a
+    /// second search for moves that could be brilliant or great).
+    pub searches: u32,
     /// The engine's speed in the last run, per thread (0 when unknown).
     pub nps_per_thread: u64,
     /// The start position and the position after every main-line move.
@@ -115,7 +130,7 @@ pub struct ReviewState {
     pub endgame: Option<u32>,
     pub white: SideReview,
     pub black: SideReview,
-    /// The errors, in the order of the game.
+    /// The marked moves, in the order of the game.
     pub moves: Vec<ReviewMove>,
 }
 
@@ -347,6 +362,8 @@ fn side(s: &SideStats) -> SideReview {
         inaccuracies: s.inaccuracies,
         mistakes: s.mistakes,
         blunders: s.blunders,
+        great: s.great,
+        brilliant: s.brilliant,
         acpl: s.acpl,
         accuracy: s.accuracy,
         opening: s.phase_accuracy[0],
@@ -380,17 +397,20 @@ fn snapshot(st: &Inner) -> ReviewState {
         let Some(mark) = a.marks.get(id) else {
             continue;
         };
-        let best = a.eval_at(i - 1).filter(|e| !e.pv.is_empty()).and_then(|e| {
-            let root = st.game.position(mark.base)?;
-            let (cp, mate) = match e.eval {
-                Eval::Cp(cp) => (Some(cp), None),
-                Eval::Mate { white, moves } => (
-                    None,
-                    Some(if white { moves as i32 } else { -(moves as i32) }),
-                ),
-            };
-            Some(line_with(root, 1, cp, mate, &e.pv))
-        });
+        let best = a
+            .eval_at(i - 1)
+            .filter(|e| !e.pv.is_empty() && mark.judgement.is_error())
+            .and_then(|e| {
+                let root = st.game.position(mark.base)?;
+                let (cp, mate) = match e.eval {
+                    Eval::Cp(cp) => (Some(cp), None),
+                    Eval::Mate { white, moves } => (
+                        None,
+                        Some(if white { moves as i32 } else { -(moves as i32) }),
+                    ),
+                };
+                Some(line_with(root, 1, cp, mate, &e.pv))
+            });
         // The reply is the first move of the engine line after the bad move.
         let reply = a
             .eval_at(i)
@@ -418,7 +438,9 @@ fn snapshot(st: &Inner) -> ReviewState {
         engine: meta.engine,
         nodes: meta.nodes,
         missing: a.missing() as u32,
+        seconds_missing: a.seconds_missing() as u32,
         positions: a.positions() as u32,
+        searches: a.searches() as u32,
         nps_per_thread: st.nps_per_thread,
         points,
         middlegame: a.report.phases.middlegame.map(|i| i as u32),

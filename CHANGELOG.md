@@ -4,6 +4,15 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Game review marks brilliant moves (!!, a sound piece sacrifice) and great moves (!, the
+  only good move that turns the game), next to inaccuracies, mistakes and blunders: in the
+  report, the notation, the graph and on the board; written to the game as $3 and $1. The
+  engine searches a second time for the moves that could be such (about a third longer
+  analysis); for an analysis from before, «Update» looks for them without evaluating the
+  game again. With evaluations from the PGN alone there are none (the report says so).
+- Android: the board shows the move's mark in the corner of its square, as on the desktop:
+  the review's ?!, ?, ??, !, !! or the author's own sign.
+
 ## [1.9.4] — 2026-10-27
 
 - Desktop: the database cards show how many games each holds instead of «not loaded»:

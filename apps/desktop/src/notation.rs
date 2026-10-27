@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 
 use crate::i18n::tr;
-use crate::review::{Mark, judgement_color, judgement_name, judgement_symbol};
+use crate::review::{
+    Mark, judgement_color, judgement_name, judgement_reason, judgement_symbol, judgement_text_color,
+};
 use crate::translate_ui::Mark as Translated;
 use chess_core::shakmaty::{Color, Position};
 use chess_core::{Game, Nag, NodeId};
@@ -608,7 +610,7 @@ fn paint_badge(ui: &Ui, cell: egui::Rect, mark: &Mark) {
 /// "Mistake. Best: 23…Nf6 24.Nd5 …" under a marked main-line move. Each move opens the line
 /// on the board up to it; the move shown on the board is highlighted like the game cursor.
 fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut NotationResponse) {
-    let color = judgement_color(mark.judgement);
+    let color = judgement_text_color(mark.judgement, ui.visuals().dark_mode);
     let start = n
         .game
         .position(mark.base)
@@ -635,6 +637,9 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
                         .color(color)
                         .strong(),
                 );
+                if let Some(why) = judgement_reason(mark.judgement) {
+                    ui.label(RichText::new(why).weak());
+                }
                 if mark.best_san.is_empty() {
                     return;
                 }

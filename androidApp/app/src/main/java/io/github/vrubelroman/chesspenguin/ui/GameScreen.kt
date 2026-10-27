@@ -128,6 +128,7 @@ import uniffi.mobile_api.EngineLine
 import uniffi.mobile_api.Edited
 import uniffi.mobile_api.GameData
 import uniffi.mobile_api.GameSession
+import io.github.vrubelroman.chesspenguin.theme.nagColor
 import uniffi.mobile_api.MoveJudgement
 import uniffi.mobile_api.MoveNode
 
@@ -887,7 +888,8 @@ fun GameScreen(
         val description = when {
             step != null -> stringResource(R.string.board_description, step.label)
             node == null || current == 0 -> stringResource(R.string.board_start)
-            else -> stringResource(R.string.board_description, (if (node.white) "${node.moveNumber}." else "${node.moveNumber}…") + node.san)
+            else -> stringResource(R.string.board_description, (if (node.white) "${node.moveNumber}." else "${node.moveNumber}…") + node.san + node.nagSymbols) +
+                (currentMark?.let { ", " + judgementName(it.judgement) } ?: "")
         }
         val arrows = buildList {
             if (p != null) {
@@ -913,6 +915,17 @@ fun GameScreen(
         }
         val marks = if (p == null) node?.marks?.filter { it.to == null }?.map { BoardMark(it.from, markColor(it.color)) }.orEmpty() else emptyList()
         val check = (step?.label ?: node?.san ?: "").let { it.endsWith("+") || it.endsWith("#") }
+        // The review's judgement of the move, else the move's own assessment in the game.
+        // The bright colors of the dark theme on every board, as on the desktop.
+        val badge = node?.toSquare?.takeIf { p == null }?.let { to ->
+            currentMark?.let { BoardBadge(to, judgementSymbol(it.judgement), judgementColor(it.judgement, true)) }
+                ?: node.nags.asList().firstNotNullOfOrNull { b ->
+                    val n = b.toInt() and 0xFF
+                    val sym = assessmentSymbol(n)
+                    val c = nagColor(n, true)
+                    if (sym != null && c != null) BoardBadge(to, sym, c) else null
+                }
+        }
         Board(
             fen = fen,
             flipped = flipped,
@@ -924,6 +937,7 @@ fun GameScreen(
             description = description,
             arrows = arrows,
             marks = marks,
+            badge = badge,
             check = check,
             animated = prefs.animation,
             // A touch during a preview of an engine line closes it; no move is made (§29.5).

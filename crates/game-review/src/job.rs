@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use uci::{EngineEvent, EnginePosition, ScoreBound, SearchId, SearchLimits, Side};
 
-use crate::{Eval, PosEval};
+use crate::{Eval, PosEval, Second};
 
 /// A node-limited search should never take this long; stop it if it does.
 const SEARCH_GUARD: Duration = Duration::from_secs(300);
@@ -18,6 +18,13 @@ pub struct Target {
     pub key: String,
     pub pos: EnginePosition,
     pub turn: Side,
+    /// The move played here (UCI), when it could be brilliant or great: if it is the
+    /// engine's best, a second search among `others` finds the best of the rest.
+    pub played: Option<String>,
+    /// The other legal moves (UCI).
+    pub others: Vec<String>,
+    /// The evaluation already there: only the second search is left.
+    pub known: Option<PosEval>,
 }
 
 /// How the engine searches.
@@ -79,66 +86,130 @@ pub fn run(
     let _ = handle.set_hash_mb(settings.hash_mb.max(1));
     let _ = handle.set_multipv(1);
     let _ = handle.new_game();
-    for (i, t) in targets.into_iter().enumerate() {
-        let id = SearchId(i as u64 + 1);
-        handle
-            .search(t.pos.clone(), id, SearchLimits::Nodes(settings.nodes))
-            .map_err(|e| JobFailure::Engine(e.to_string()))?;
-        let started = Instant::now();
-        let mut stopping = false;
-        let mut last: Option<uci::SearchInfo> = None;
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                handle.quit();
-                return Ok(());
-            }
-            if !stopping && started.elapsed() > SEARCH_GUARD {
-                let _ = handle.stop();
-                stopping = true;
-            }
-            match handle.recv_timeout(Duration::from_millis(100)) {
-                Some(EngineEvent::Info { search_id, info }) if search_id == id => {
-                    if info.multipv_index() == 1 && info.score.is_some() {
-                        let exact = info.score.is_some_and(|s| s.bound == ScoreBound::Exact);
-                        if exact || last.is_none() {
-                            last = Some(info);
-                        }
+    let mut next_id = 0;
+    let mut search = |pos: &EnginePosition, among: Vec<String>| {
+        next_id += 1;
+        search_once(
+            &handle,
+            pos,
+            SearchId(next_id),
+            among,
+            settings.nodes,
+            cancel,
+        )
+    };
+    for t in targets {
+        let (mut eval, nps) = match t.known {
+            Some(e) => (e, 0),
+            None => {
+                let Some((info, best)) = search(&t.pos, Vec::new())? else {
+                    if cancel.load(Ordering::Relaxed) {
+                        handle.quit();
+                        return Ok(());
                     }
+                    continue;
+                };
+                let Some(score) = info.score else { continue };
+                let mut pv: Vec<String> = info.pv.iter().take(12).cloned().collect();
+                if let Some(b) = best
+                    && pv.first() != Some(&b)
+                {
+                    pv = vec![b];
                 }
-                Some(EngineEvent::BestMove {
-                    search_id, best, ..
-                }) if search_id == id => {
-                    if let Some(info) = last.take()
-                        && let Some(score) = info.score
-                    {
-                        let eval = Eval::from_white_eval(score.to_white(t.turn).eval);
-                        let mut pv: Vec<String> = info.pv.iter().take(12).cloned().collect();
-                        if let Some(b) = best
-                            && pv.first() != Some(&b)
-                        {
-                            pv = vec![b];
-                        }
-                        on_event(JobEvent::Eval {
-                            key: t.key,
-                            eval: PosEval {
-                                eval,
-                                pv,
-                                depth: info.depth.unwrap_or(0),
-                            },
-                            nps: info.nps.unwrap_or(0),
+                let eval = PosEval {
+                    eval: Eval::from_white_eval(score.to_white(t.turn).eval),
+                    pv,
+                    depth: info.depth.unwrap_or(0),
+                    second: None,
+                };
+                (eval, info.nps.unwrap_or(0))
+            }
+        };
+        // The move played is the engine's best: what the best of the others gives says
+        // whether it was the only good move, or a sacrifice when nothing else won.
+        let mover = match t.turn {
+            Side::White => chess_core::shakmaty::Color::White,
+            Side::Black => chess_core::shakmaty::Color::Black,
+        };
+        if let Some(played) = &t.played
+            && eval.pv.first() == Some(played)
+            && !t.others.is_empty()
+            && crate::report::worth_second(eval.eval, mover)
+        {
+            match search(&t.pos, t.others.clone())? {
+                // An engine that ignores `searchmoves` answers with the move played:
+                // no second move then.
+                Some((info, best))
+                    if best.as_ref() != Some(played) && info.pv.first() != Some(played) =>
+                {
+                    if let Some(score) = info.score {
+                        eval.second = Some(Second {
+                            without: played.clone(),
+                            eval: Eval::from_white_eval(score.to_white(t.turn).eval),
                         });
                     }
-                    break;
                 }
-                Some(EngineEvent::Terminated(reason)) => {
-                    return Err(JobFailure::Terminated(reason));
+                None if cancel.load(Ordering::Relaxed) => {
+                    handle.quit();
+                    return Ok(());
                 }
                 _ => {}
             }
         }
+        on_event(JobEvent::Eval {
+            key: t.key,
+            eval,
+            nps,
+        });
     }
     handle.quit();
     Ok(())
+}
+
+/// One node-limited search: its last full line and the best move. `None` when it gave
+/// no line or `cancel` was set.
+fn search_once(
+    handle: &uci::EngineHandle,
+    pos: &EnginePosition,
+    id: SearchId,
+    among: Vec<String>,
+    nodes: u64,
+    cancel: &AtomicBool,
+) -> Result<Option<(uci::SearchInfo, Option<String>)>, JobFailure> {
+    handle
+        .search_among(pos.clone(), id, SearchLimits::Nodes(nodes), among)
+        .map_err(|e| JobFailure::Engine(e.to_string()))?;
+    let started = Instant::now();
+    let mut stopping = false;
+    let mut last: Option<uci::SearchInfo> = None;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        if !stopping && started.elapsed() > SEARCH_GUARD {
+            let _ = handle.stop();
+            stopping = true;
+        }
+        match handle.recv_timeout(Duration::from_millis(100)) {
+            Some(EngineEvent::Info { search_id, info }) if search_id == id => {
+                if info.multipv_index() == 1 && info.score.is_some() {
+                    let exact = info.score.is_some_and(|s| s.bound == ScoreBound::Exact);
+                    if exact || last.is_none() {
+                        last = Some(info);
+                    }
+                }
+            }
+            Some(EngineEvent::BestMove {
+                search_id, best, ..
+            }) if search_id == id => {
+                return Ok(last.map(|info| (info, best.map(|b| b.to_string()))));
+            }
+            Some(EngineEvent::Terminated(reason)) => {
+                return Err(JobFailure::Terminated(reason));
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

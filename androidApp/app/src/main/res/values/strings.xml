@@ -250,6 +250,12 @@
     <string name="review_inaccuracies">Inaccuracies</string>
     <string name="review_mistakes">Mistakes</string>
     <string name="review_blunders">Blunders</string>
+    <string name="review_great">Great move</string>
+    <string name="review_brilliant">Brilliant move</string>
+    <string name="review_greats">Great moves</string>
+    <string name="review_brilliants">Brilliant moves</string>
+    <string name="review_why_brilliant">A sound sacrifice</string>
+    <string name="review_why_great">The only good move</string>
     <string name="review_missing">Not evaluated: %d</string>
     <string name="review_failed">The analysis stopped</string>
     <string name="review_resume">Continue</string>
@@ -259,6 +265,8 @@
     <string name="review_endgame">Endgame</string>
     <string name="review_source">%1$s · %2$s nodes per move</string>
     <string name="review_source_pgn" formatted="false">Evaluations from the PGN ([%eval])</string>
+    <string name="review_no_notes">!! and ! need the engine: the PGN has evaluations only</string>
+    <string name="review_no_seconds">!! and ! were not looked for in this analysis</string>
     <string name="review_hide">Hide analysis</string>
     <string name="review_graph">Evaluation graph</string>
     <string name="review_engine_paused">Paused: the game is being analysed</string>

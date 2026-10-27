@@ -83,20 +83,35 @@ import uniffi.mobile_api.SideReview
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
-/// The NAG of the same sign: $6 ?!, $2 ?, $4 ??.
+/// The NAG of the same sign: $3 !!, $1 !, $6 ?!, $2 ?, $4 ??.
 fun judgementNag(j: MoveJudgement): Int = when (j) {
     MoveJudgement.INACCURACY -> 6
     MoveJudgement.MISTAKE -> 2
     MoveJudgement.BLUNDER -> 4
+    MoveJudgement.GREAT -> 1
+    MoveJudgement.BRILLIANT -> 3
 }
 
-/// The colors of the NAGs ?!, ? and ?? (§21.4).
+/// The colors of the NAGs !!, !, ?!, ? and ?? (§21.4).
 fun judgementColor(j: MoveJudgement, dark: Boolean): Color = nagColor(judgementNag(j), dark) ?: Color.Unspecified
+
+/// The sign of a move assessment NAG ($1–$6), `null` for others.
+fun assessmentSymbol(nag: Int): String? = when (nag) {
+    1 -> "!"
+    2 -> "?"
+    3 -> "!!"
+    4 -> "??"
+    5 -> "!?"
+    6 -> "?!"
+    else -> null
+}
 
 fun judgementSymbol(j: MoveJudgement): String = when (j) {
     MoveJudgement.INACCURACY -> "?!"
     MoveJudgement.MISTAKE -> "?"
     MoveJudgement.BLUNDER -> "??"
+    MoveJudgement.GREAT -> "!"
+    MoveJudgement.BRILLIANT -> "!!"
 }
 
 @Composable
@@ -105,8 +120,18 @@ fun judgementName(j: MoveJudgement): String = stringResource(
         MoveJudgement.INACCURACY -> R.string.review_inaccuracy
         MoveJudgement.MISTAKE -> R.string.review_mistake
         MoveJudgement.BLUNDER -> R.string.review_blunder
+        MoveJudgement.GREAT -> R.string.review_great
+        MoveJudgement.BRILLIANT -> R.string.review_brilliant
     },
 )
+
+/// Why a move of note is one (none for an error).
+@Composable
+fun judgementReason(j: MoveJudgement): String? = when (j) {
+    MoveJudgement.BRILLIANT -> stringResource(R.string.review_why_brilliant)
+    MoveJudgement.GREAT -> stringResource(R.string.review_why_great)
+    else -> null
+}
 
 @Composable
 private fun judgementPlural(j: MoveJudgement): String = stringResource(
@@ -114,6 +139,8 @@ private fun judgementPlural(j: MoveJudgement): String = stringResource(
         MoveJudgement.INACCURACY -> R.string.review_inaccuracies
         MoveJudgement.MISTAKE -> R.string.review_mistakes
         MoveJudgement.BLUNDER -> R.string.review_blunders
+        MoveJudgement.GREAT -> R.string.review_greats
+        MoveJudgement.BRILLIANT -> R.string.review_brilliants
     },
 )
 
@@ -201,6 +228,7 @@ fun ReviewPanel(
                     val link = MaterialTheme.colorScheme.primary
                     val text = buildAnnotatedString {
                         withStyle(SpanStyle(color = c, fontWeight = FontWeight.Bold)) { append(judgementSymbol(mark.judgement) + " " + name) }
+                        judgementReason(mark.judgement)?.let { append(" · "); append(it) }
                         if (better != null && betterText != null) {
                             append(" · ")
                             append(betterText.first())
@@ -225,9 +253,10 @@ fun ReviewPanel(
                     TextButton(onClick = onResume) { Text(stringResource(R.string.review_resume)) }
                     report()
                 }
-                state.missing > 0u -> {
+                state.missing > 0u || state.secondsMissing > 0u -> {
                     Text(
-                        stringResource(R.string.review_missing, state.missing.toInt()),
+                        // An analysis from before !! and !: filling in looks for them only.
+                        if (state.missing > 0u) stringResource(R.string.review_missing, state.missing.toInt()) else stringResource(R.string.review_no_seconds),
                         style = textStyle.merge(Tabular),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
@@ -447,7 +476,9 @@ fun ReviewStartSheet(
             // "Fill in" keeps the quality of the first run; the choice is for starting over.
             val nodes = (if (partial) state.nodes else REVIEW_NODES[quality.coerceIn(0, REVIEW_NODES.size - 1)]).toDouble()
             val nps = (if (npsPerThread > 0) npsPerThread else GUESS_NPS_PER_THREAD).toDouble() * threads.coerceAtLeast(1)
-            val secs = ceil(positions * nodes / nps).toInt().coerceAtLeast(1)
+            // A full run also searches again for moves that could be !! or ! (about a third more).
+            val searches = if (partial) positions else (state?.searches?.toInt() ?: positions)
+            val secs = ceil(searches * nodes / nps).toInt().coerceAtLeast(1)
             val time = if (secs < 60) stringResource(R.string.review_seconds, secs) else stringResource(R.string.review_minutes, (secs + 59) / 60)
             Text(
                 pluralStringResource(R.plurals.review_estimate, positions, positions, time),
@@ -510,11 +541,20 @@ fun ReviewSheet(
                 black = { ReportNumber(percent(state.black.accuracy), MaterialTheme.typography.headlineSmall) },
             )
             val next = stringResource(R.string.review_next)
-            listOf(MoveJudgement.INACCURACY, MoveJudgement.MISTAKE, MoveJudgement.BLUNDER).forEach { j ->
+            listOf(
+                MoveJudgement.BRILLIANT,
+                MoveJudgement.GREAT,
+                MoveJudgement.INACCURACY,
+                MoveJudgement.MISTAKE,
+                MoveJudgement.BLUNDER,
+            ).forEach { j ->
                 val c = judgementColor(j, dark)
                 val label = judgementPlural(j)
+                // From the PGN's evaluations alone !! and ! are not known: a dash, not a zero.
+                val unknown = state.nodes == 0UL && (j == MoveJudgement.BRILLIANT || j == MoveJudgement.GREAT)
                 val cell: @Composable (Boolean, UInt, String) -> Unit = { isWhite, count, side ->
-                    val active = count > 0u
+                    val active = count > 0u && !unknown
+                    val shown = if (unknown) "\u2014" else count.toString()
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -528,14 +568,14 @@ fun ReviewSheet(
                                             contentDescription = "$label, $side, $count"
                                         }
                                 } else {
-                                    Modifier.clearAndSetSemantics { contentDescription = "$label, $side, $count" }
+                                    Modifier.clearAndSetSemantics { contentDescription = "$label, $side, $shown" }
                                 },
                             ),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.End,
                     ) {
                         Text(
-                            count.toString(),
+                            shown,
                             style = MaterialTheme.typography.titleMedium.merge(Tabular),
                             color = if (active) c else variant,
                         )
@@ -585,6 +625,9 @@ fun ReviewSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = variant,
             )
+            if (state.nodes == 0UL) {
+                Text(stringResource(R.string.review_no_notes), style = MaterialTheme.typography.bodySmall, color = variant)
+            }
             Spacer(Modifier.height(20.dp))
             // With a large font the two buttons go on two lines instead of breaking words.
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
@@ -599,6 +642,8 @@ private fun SideReview.inaccuraciesOf(j: MoveJudgement): UInt = when (j) {
     MoveJudgement.INACCURACY -> inaccuracies
     MoveJudgement.MISTAKE -> mistakes
     MoveJudgement.BLUNDER -> blunders
+    MoveJudgement.GREAT -> great
+    MoveJudgement.BRILLIANT -> brilliant
 }
 
 /// A row of the report: its label, then White's and Black's cells, 96 dp each.

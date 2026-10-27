@@ -269,7 +269,7 @@ impl EnginePosition {
     }
 }
 
-fn is_uci_move(m: &str) -> bool {
+pub(crate) fn is_uci_move(m: &str) -> bool {
     let b = m.as_bytes();
     let sq = |f: u8, r: u8| (b'a'..=b'h').contains(&f) && (b'1'..=b'8').contains(&r);
     match b.len() {

@@ -12,14 +12,16 @@ use std::path::{Path, PathBuf};
 
 use chess_core::shakmaty::san::SanPlus;
 use chess_core::shakmaty::uci::UciMove;
-use chess_core::shakmaty::{Chess, Color, Move, Position};
+use chess_core::shakmaty::{CastlingMode, Chess, Color, Move, Position};
 use chess_core::{Annotation, CommentPart, Game, NodeId, parse_comment};
 use serde::{Deserialize, Serialize};
 use uci::{EnginePosition, Side};
 
+mod features;
 mod job;
 pub mod report;
 
+pub use features::MoveFeatures;
 pub use job::{JobEvent, JobFailure, JobSettings, Target, run};
 pub use report::{Eval, Judgement, Phase, Phases, Ply, Report, SideStats};
 
@@ -32,6 +34,18 @@ pub struct PosEval {
     pub pv: Vec<String>,
     #[serde(default)]
     pub depth: u32,
+    /// The best move but the one played, when that one was the engine's best and could
+    /// be brilliant or great (older analyses have none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub second: Option<Second>,
+}
+
+/// The best of the other moves: how the position stood without the move played.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Second {
+    /// The move left out (UCI).
+    pub without: String,
+    pub eval: Eval,
 }
 
 /// Where the evaluations came from.
@@ -51,7 +65,7 @@ struct CacheFile {
 
 const CACHE_VERSION: u32 = 1;
 
-/// An engine assessment of a main-line move.
+/// An engine assessment of a main-line move: an error, or a move of note (!!, !).
 #[derive(Clone, Debug)]
 pub struct Mark {
     pub judgement: Judgement,
@@ -79,6 +93,11 @@ pub struct GameAnalysis {
     values: Vec<Option<Eval>>,
     /// Positions without legal moves (mate, stalemate): no engine needed.
     terminal: Vec<bool>,
+    /// What each move of the line does on the board (`features[i]`: the move from
+    /// position `i`); `None` for a null move.
+    features: Vec<Option<MoveFeatures>>,
+    /// The move played from each position of the line (UCI; `None` for a null move).
+    played: Vec<Option<String>>,
     pub report: Report,
     pub marks: HashMap<NodeId, Mark>,
 }
@@ -98,6 +117,8 @@ impl GameAnalysis {
             movers: Vec::new(),
             values: Vec::new(),
             terminal: Vec::new(),
+            features: Vec::new(),
+            played: Vec::new(),
             report: Report::default(),
             marks: HashMap::new(),
         };
@@ -143,6 +164,19 @@ impl GameAnalysis {
         self.terminal.iter().filter(|t| !**t).count()
     }
 
+    /// Engine searches a full analysis is expected to make, for its time: one per
+    /// position, and a second one for about half of the moves that could be brilliant or
+    /// great (those the engine finds best too).
+    pub fn searches(&self) -> usize {
+        let candidates = self
+            .features
+            .iter()
+            .flatten()
+            .filter(|f| f.candidate())
+            .count();
+        self.positions() + candidates / 2
+    }
+
     /// Re-derives the report when the game or the evaluations changed. Cheap otherwise.
     pub fn refresh(&mut self, game: &Game) {
         if self.dirty || self.built_rev != Some(game.revision()) {
@@ -165,16 +199,76 @@ impl GameAnalysis {
         self.meta = Some(ReviewMeta { nodes, ..meta });
         self.rebuild(game);
         (0..self.line.len())
-            .filter(|i| self.values[*i].is_none())
             .filter_map(|i| {
+                let known = self.evals.get(&self.keys[i]).cloned();
+                // Already evaluated: only a missing second search can be left.
+                if known.is_some() && !self.second_missing(i)
+                    || known.is_none() && self.values[i].is_some()
+                {
+                    return None;
+                }
+                let here = game.position(self.line[i])?;
+                // The move played, when it could be brilliant or great.
+                let played = self
+                    .features
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .filter(|f| f.candidate())
+                    .and_then(|_| self.played.get(i).cloned().flatten());
+                let others = match &played {
+                    Some(p) => here
+                        .legal_moves()
+                        .iter()
+                        .map(|m| m.to_uci(CastlingMode::Standard).to_string())
+                        .filter(|u| u != p)
+                        .collect(),
+                    None => Vec::new(),
+                };
                 let (key, pos) = position_key(game, self.line[i])?;
-                let turn = match game.position(self.line[i])?.turn() {
+                let turn = match here.turn() {
                     Color::White => Side::White,
                     Color::Black => Side::Black,
                 };
-                Some(Target { key, pos, turn })
+                Some(Target {
+                    key,
+                    pos,
+                    turn,
+                    played,
+                    others,
+                    known,
+                })
             })
             .collect()
+    }
+
+    /// Position `i` is evaluated, its move could be brilliant or great and was the
+    /// engine's best, but the best other move was never searched for (an analysis from
+    /// before !! and !).
+    fn second_missing(&self, i: usize) -> bool {
+        let (Some(e), Some(Some(played)), Some(Some(f))) = (
+            self.evals.get(&self.keys[i]),
+            self.played.get(i),
+            self.features.get(i),
+        ) else {
+            return false;
+        };
+        f.candidate()
+            && e.pv.first() == Some(played)
+            && report::worth_second(e.eval, self.movers[i])
+            && e.second.as_ref().map(|s| &s.without) != Some(played)
+    }
+
+    /// Positions whose evaluation is there but which still want the second search of
+    /// !! and ! ("Update" fills them in without evaluating anything again). None for
+    /// evaluations from the PGN, which have no engine lines.
+    pub fn seconds_missing(&self) -> usize {
+        if self.meta.as_ref().is_none_or(|m| m.nodes == 0) {
+            return 0;
+        }
+        (0..self.played.len())
+            .filter(|i| self.second_missing(*i))
+            .count()
     }
 
     /// Takes in what the engine job reported.
@@ -217,14 +311,38 @@ impl GameAnalysis {
                     .or_else(|| positions.get(i).and_then(terminal_eval))
             })
             .collect();
+        let moves: Vec<Option<Move>> = (1..self.line.len())
+            .map(|i| match game.game_move(self.line[i]).map(|m| m.kind) {
+                Some(chess_core::MoveKind::Normal(m)) => Some(m),
+                _ => None,
+            })
+            .collect();
+        self.features = (0..moves.len())
+            .map(|i| {
+                let (m, before) = (moves[i].as_ref()?, positions.get(i)?);
+                let prev = i.checked_sub(1).and_then(|p| moves[p].as_ref());
+                Some(MoveFeatures::of(before, m, prev))
+            })
+            .collect();
+        self.played = (1..self.line.len())
+            .map(|i| game.game_move(self.line[i]).and_then(|m| m.uci()))
+            .collect();
         let mut plies = Vec::with_capacity(self.line.len().saturating_sub(1));
         for i in 1..self.line.len() {
             let mv = game.game_move(self.line[i]);
-            let best = self.evals.get(&self.keys[i - 1]).and_then(|e| e.pv.first());
+            let e = self.evals.get(&self.keys[i - 1]);
+            let best = e.and_then(|e| e.pv.first());
+            let played = mv.and_then(|m| m.uci());
             plies.push(Ply {
                 mover: positions.get(i - 1).map_or(Color::White, |p| p.turn()),
                 null: mv.is_none_or(|m| m.is_null()),
-                best: best.is_some() && mv.and_then(|m| m.uci()).as_ref() == best,
+                best: best.is_some() && played.as_ref() == best,
+                features: self.features[i - 1],
+                // Only for the move played now (the line may have changed since).
+                second: e
+                    .and_then(|e| e.second.as_ref())
+                    .filter(|s| Some(&s.without) == played.as_ref())
+                    .map(|s| s.eval),
             });
         }
         self.movers = plies.iter().map(|p| p.mover).collect();
@@ -233,8 +351,9 @@ impl GameAnalysis {
         for (i, j) in self.report.judgements.iter().enumerate() {
             let Some(judgement) = *j else { continue };
             let (base, node) = (self.line[i], self.line[i + 1]);
+            // A better line only for an error: a good move was the best one.
             let (best, best_san) = match (self.evals.get(&self.keys[i]), positions.get(i)) {
-                (Some(e), Some(root)) => parse_pv(root, &e.pv),
+                (Some(e), Some(root)) if judgement.is_error() => parse_pv(root, &e.pv),
                 _ => (Vec::new(), Vec::new()),
             };
             let best_label = best_san.first().and_then(|san| {
@@ -263,7 +382,11 @@ impl GameAnalysis {
     /// the player best answers, the first two moves of the engine line from the position
     /// after the move (shown as arrows, as on Lichess).
     pub fn refutation(&self, node: NodeId, game: &Game) -> Vec<Move> {
-        if !self.marks.contains_key(&node) {
+        if !self
+            .marks
+            .get(&node)
+            .is_some_and(|m| m.judgement.is_error())
+        {
             return Vec::new();
         }
         let (Some(i), Some(pos)) = (
@@ -397,6 +520,7 @@ impl GameAnalysis {
                     eval,
                     pv: Vec::new(),
                     depth: 0,
+                    second: None,
                 },
             );
         }
@@ -521,6 +645,7 @@ mod tests {
                     eval: Eval::Cp(20 - i as i32 * 300),
                     pv: vec!["e2e4".into()],
                     depth: 10,
+                    second: None,
                 },
                 nps: 0,
             });
@@ -541,7 +666,13 @@ mod tests {
             engine: "Fake".into(),
             nodes: 250,
         };
-        assert!(c.begin(&g, fast.clone(), false).is_empty());
+        // Nothing left to evaluate; 1.e4, the engine's best, still wants the best other
+        // move (an analysis from before !! and !).
+        assert_eq!(c.seconds_missing(), 1);
+        let left = c.begin(&g, fast.clone(), false);
+        assert_eq!(left.len(), 1);
+        assert!(left[0].known.is_some() && left[0].played.as_deref() == Some("e2e4"));
+        assert!(!left[0].others.is_empty() && !left[0].others.contains(&"e2e4".to_string()));
         assert_eq!(c.meta.as_ref().map(|m| m.nodes), Some(1000));
         c.begin(&g, fast, true);
         assert_eq!(c.meta.as_ref().map(|m| m.nodes), Some(250));
@@ -563,6 +694,7 @@ mod tests {
                     eval: Eval::Cp(20),
                     pv: vec![],
                     depth: 1,
+                    second: None,
                 },
                 nps: 0,
             });

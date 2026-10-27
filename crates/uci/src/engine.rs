@@ -137,6 +137,7 @@ enum Cmd {
         position: EnginePosition,
         id: SearchId,
         limits: SearchLimits,
+        among: Vec<String>,
     },
     Stop,
     /// A complete `setoption ...` / `ucinewgame` line, applied while idle.
@@ -220,11 +221,27 @@ impl EngineHandle {
         search_id: SearchId,
         limits: SearchLimits,
     ) -> Result<(), EngineError> {
+        self.search_among(position, search_id, limits, Vec::new())
+    }
+
+    /// A search among these moves only (`go … searchmoves`, UCI moves of `position`);
+    /// empty: all of them. A move that is not a UCI move is refused.
+    pub fn search_among(
+        &self,
+        position: EnginePosition,
+        search_id: SearchId,
+        limits: SearchLimits,
+        among: Vec<String>,
+    ) -> Result<(), EngineError> {
         position.validate()?;
+        if let Some(bad) = among.iter().find(|m| !crate::types::is_uci_move(m)) {
+            return Err(EngineError::InvalidInput(format!("not a move: {bad:?}")));
+        }
         self.send(Cmd::Search {
             position,
             id: search_id,
             limits,
+            among,
         })
     }
 
@@ -707,6 +724,7 @@ struct PendingSearch {
     position: EnginePosition,
     id: SearchId,
     limits: SearchLimits,
+    among: Vec<String>,
 }
 
 struct Supervisor {
@@ -828,11 +846,13 @@ impl Supervisor {
                 position,
                 id,
                 limits,
+                among,
             } => {
                 if let Some(old) = self.pending.replace(PendingSearch {
                     position,
                     id,
                     limits,
+                    among,
                 }) {
                     self.emit(EngineEvent::Superseded { search_id: old.id });
                 }
@@ -934,7 +954,12 @@ impl Supervisor {
                     match self.pending.take() {
                         Some(p) => {
                             self.write(&p.position.to_command())?;
-                            self.write(&p.limits.to_command())?;
+                            let mut go = p.limits.to_command();
+                            if !p.among.is_empty() {
+                                go += " searchmoves ";
+                                go += &p.among.join(" ");
+                            }
+                            self.write(&go)?;
                             self.state = State::Searching { id: p.id };
                             self.emit(EngineEvent::SearchStarted { search_id: p.id });
                         }
