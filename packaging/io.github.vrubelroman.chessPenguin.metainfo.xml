@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.9.0" date="2026-10-27">
+      <description>
+        <p>Against the computer a move can be taken back in blitz games only. On macOS, Rodent IV downloaded over an older one starts again. On Android, a new version is offered at each start of the app.</p>
+      </description>
+    </release>
     <release version="1.8.0" date="2026-10-27">
       <description>
         <p>A game against the computer can be put aside and continued later, with the clocks as they were; a card on the shelf brings it back. The window no longer freezes when a network drive goes away. On macOS, Rodent IV is built with a fix of its search. On Android, Rodent IV joins Maia as an opponent, with its 13 characters and 22 famous players.</p>

@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-10-27
+
 - Android: a new version is offered at each start of the app, as on the desktop (it used to
   ask once a day, so a release out a day after the last check was not seen at once).
 - macOS: an engine downloaded over an older one (Rodent IV from 1.7 to 1.8) no longer
