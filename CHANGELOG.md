@@ -19,7 +19,7 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   author's own sign, when there is one, stands instead.
 - Desktop, a game against the computer: the draw offer is «½–½» on its button («Offer a
   draw» in its tooltip), so that the game's buttons fit in a narrow panel.
-- Move marks in the owner's palette (as on chess.com): !! #26C2A3, ! #7AAB59, ?! Lichess
+- Move marks in the owner's palette (as on chess.com): !! #26C2A3, ! #81B64C, ?! Lichess
   blue #56B4E9, ? #FFA459, ?? #FA412D, on the board, in the notation, the report and the graph,
   on the desktop and Android; as text in the light theme darkened to stay readable. The
   accuracy numbers follow the same colors (green, blue, orange, red).

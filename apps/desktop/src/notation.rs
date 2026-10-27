@@ -693,7 +693,7 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
 /// for badges and dark backgrounds.
 pub fn assessment_color(nag: Nag) -> Option<Color32> {
     Some(match nag.0 {
-        1 => Color32::from_rgb(0x7a, 0xab, 0x59),
+        1 => Color32::from_rgb(0x81, 0xb6, 0x4c),
         2 => Color32::from_rgb(0xff, 0xa4, 0x59),
         3 => Color32::from_rgb(0x26, 0xc2, 0xa3),
         4 => Color32::from_rgb(0xfa, 0x41, 0x2d),
@@ -710,7 +710,7 @@ pub fn assessment_text_color(nag: Nag, dark: bool) -> Option<Color32> {
         return assessment_color(nag);
     }
     Some(match nag.0 {
-        1 => Color32::from_rgb(0x5b, 0x81, 0x41),
+        1 => Color32::from_rgb(0x5b, 0x81, 0x35),
         2 => Color32::from_rgb(0xc2, 0x57, 0x00),
         3 => Color32::from_rgb(0x1a, 0x84, 0x6f),
         4 => Color32::from_rgb(0xd2, 0x30, 0x1c),
