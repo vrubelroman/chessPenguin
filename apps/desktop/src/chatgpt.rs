@@ -601,14 +601,16 @@ pub fn respond(
     user: &str,
     cancel: &AtomicBool,
 ) -> Result<String, Failure> {
-    let body = json!({
+    let mut body = json!({
         "model": model,
         "instructions": system,
         "input": [{"role": "user", "content": [{"type": "input_text", "text": user}]}],
         "store": false,
         "stream": true,
-    })
-    .to_string();
+        // Translating needs no long thought: at the default effort the model thinks for
+        // most of a minute over each request before it writes a word.
+        "reasoning": {"effort": "low"},
+    });
     let mut refreshed = false;
     with_waits(cancel, || {
         loop {
@@ -618,7 +620,7 @@ pub fn respond(
                 .header("Authorization", format!("Bearer {token}"))
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
-                .send(&body)
+                .send(&body.to_string())
                 .map_err(|e| Failure::Offline(e.to_string()))?;
             let status = resp.status().as_u16();
             if status == 401 && !refreshed {
@@ -636,6 +638,16 @@ pub fn respond(
             if status != 200 {
                 let mut resp = resp;
                 let text = resp.body_mut().read_to_string().unwrap_or_default();
+                // A model that does not think takes no effort: asked again without it.
+                if status == 400
+                    && text.contains("reasoning")
+                    && body
+                        .as_object_mut()
+                        .and_then(|b| b.remove("reasoning"))
+                        .is_some()
+                {
+                    continue;
+                }
                 return Err(failure(status, &text));
             }
             return read_stream(BufReader::new(resp.into_body().into_reader()), cancel);

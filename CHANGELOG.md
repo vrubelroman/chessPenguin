@@ -9,6 +9,9 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   remembered for the next start (a changed file is counted again).
 - Desktop, the play dialog: the strength rides above the slider's handle, where the eye
   is while it moves.
+- Translation of annotations is faster: ChatGPT is asked to think little (translating
+  needs no long thought), and a long game goes in three requests at once instead of one
+  after another.
 - Desktop, a game against the computer: the buttons under the clocks are of one height;
   the moves and the board flip on one row, the game's own actions on the next.
 

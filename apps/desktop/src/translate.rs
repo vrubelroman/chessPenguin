@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write as _};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -1291,59 +1291,72 @@ fn run(
         let _ = tx.send(e);
         ctx.request_repaint();
     };
-    for batch in batches {
-        if cancel.load(Ordering::Relaxed) {
-            return;
+    // A few requests at once: each waits for its whole answer, so one after another
+    // a long game took minutes. The first error stops the rest.
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let stopped = || cancel.load(Ordering::Relaxed) || failed.load(Ordering::Relaxed);
+    let fail = |e: Failure| {
+        if !cancel.load(Ordering::Relaxed) && !failed.swap(true, Ordering::Relaxed) {
+            send(Event::Failed(e));
         }
-        let answer = match backend.complete(&system, &request(context, &batch), cancel) {
-            Ok(a) => a,
-            Err(e) => {
-                if !cancel.load(Ordering::Relaxed) {
-                    send(Event::Failed(e));
-                }
+    };
+    let worker = || {
+        while let Some(batch) = batches.get(next.fetch_add(1, Ordering::Relaxed)) {
+            if stopped() {
                 return;
             }
-        };
-        let got = parse_answer(&answer);
-        let mut done = Vec::new();
-        let mut again = Vec::new();
-        for &(id, text) in &batch {
-            match got.get(&id) {
-                Some(t) if same_moves(text, t) => done.push((text.to_owned(), t.clone())),
-                _ => again.push((id, text)),
-            }
-        }
-        // One more try for each comment that came back wrong, alone.
-        let mut bad = Vec::new();
-        for (id, text) in again {
-            if cancel.load(Ordering::Relaxed) {
-                break;
-            }
-            let retry = backend
-                .complete(&system, &request(context, &[(id, text)]), cancel)
-                .map(|a| parse_answer(&a));
-            match retry {
-                Ok(got) => match got.get(&id) {
+            let answer = match backend.complete(&system, &request(context, batch), cancel) {
+                Ok(a) => a,
+                Err(e) => return fail(e),
+            };
+            let got = parse_answer(&answer);
+            let mut done = Vec::new();
+            let mut again = Vec::new();
+            for &(id, text) in batch {
+                match got.get(&id) {
                     Some(t) if same_moves(text, t) => done.push((text.to_owned(), t.clone())),
-                    _ => bad.push(text.to_owned()),
-                },
-                Err(e) => {
-                    store(target, &done, via);
-                    send(Event::Done(done));
-                    if !cancel.load(Ordering::Relaxed) {
-                        send(Event::Failed(e));
-                    }
-                    return;
+                    _ => again.push((id, text)),
                 }
             }
+            // One more try for each comment that came back wrong, alone.
+            let mut bad = Vec::new();
+            for (id, text) in again {
+                if stopped() {
+                    break;
+                }
+                let retry = backend
+                    .complete(&system, &request(context, &[(id, text)]), cancel)
+                    .map(|a| parse_answer(&a));
+                match retry {
+                    Ok(got) => match got.get(&id) {
+                        Some(t) if same_moves(text, t) => done.push((text.to_owned(), t.clone())),
+                        _ => bad.push(text.to_owned()),
+                    },
+                    Err(e) => {
+                        store(target, &done, via);
+                        send(Event::Done(done));
+                        return fail(e);
+                    }
+                }
+            }
+            store(target, &done, via);
+            send(Event::Done(done));
+            if !bad.is_empty() {
+                send(Event::Bad(bad));
+            }
         }
-        store(target, &done, via);
-        send(Event::Done(done));
-        if !bad.is_empty() {
-            send(Event::Bad(bad));
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..AT_ONCE.min(batches.len()) {
+            scope.spawn(worker);
         }
-    }
+        worker();
+    });
 }
+
+/// Requests sent at once.
+const AT_ONCE: usize = 3;
 
 #[cfg(test)]
 mod tests {
@@ -1615,6 +1628,51 @@ mod tests {
                 .contains("Italian")
         );
         assert!(seen[0].get("response_format").is_none());
+    }
+
+    #[test]
+    fn a_long_game_goes_in_requests_at_once_and_every_comment_comes_back() {
+        // 100 comments: three requests (40, 40, 20), sent together.
+        let (base, server) = fake_service(3);
+        let backend = Backend::Chat {
+            base,
+            key: None,
+            model: "m".into(),
+            json_mode: false,
+            local: true,
+        };
+        let texts: Vec<String> = (0..100)
+            .map(|i| format!("Comment {i} on 12.Nf3."))
+            .collect();
+        let job = Job::start(
+            &egui::Context::default(),
+            backend,
+            Lang::Es,
+            "test".into(),
+            GameContext::default(),
+            texts.clone(),
+        );
+        let mut done = Vec::new();
+        let start = std::time::Instant::now();
+        'wait: while start.elapsed() < Duration::from_secs(20) {
+            for e in job.poll() {
+                match e {
+                    Event::Done(d) => done.extend(d),
+                    Event::Bad(b) => panic!("bad {b:?}"),
+                    Event::Failed(f) => panic!("{f}"),
+                    Event::Finished => break 'wait,
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        done.sort();
+        let mut want: Vec<_> = texts
+            .iter()
+            .map(|t| (t.clone(), format!("RU {t}")))
+            .collect();
+        want.sort();
+        assert_eq!(done, want);
+        assert_eq!(server.join().unwrap().len(), 3);
     }
 }
 
