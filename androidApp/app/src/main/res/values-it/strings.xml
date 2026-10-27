@@ -112,8 +112,7 @@
     <string name="about">Informazioni</string>
     <string name="build_full">Stockfish incluso</string>
     <string name="build_light">Stockfish si scarica nell\'app</string>
-    <string name="alpha">alfa</string>
-    <string name="about_text">Un visualizzatore di database scacchistici: PGN, ChessBase, archivi. I file vengono solo letti, mai modificati.</string>
+    <string name="about_text">Database scacchistici, analisi delle partite e gioco contro il computer. I tuoi file vengono solo letti, mai modificati.</string>
     <string name="licenses">Licenze e autori</string>
     <string name="website">Sito web e codice sorgente</string>
 

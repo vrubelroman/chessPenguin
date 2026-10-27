@@ -4,6 +4,12 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [1.9.3] — 2026-10-27
+
+- Android: «About» no longer calls the app an alpha, says what it does now (chess
+  databases, game analysis, play against the computer) and shows the penguin in a crown,
+  as the app's icon does; the empty list of databases shows it too.
+
 ## [1.9.2] — 2026-10-27
 
 - Desktop, a game against the computer: the header shows its time control («5+3», «∞»)

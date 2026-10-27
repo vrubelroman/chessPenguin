@@ -112,8 +112,7 @@
     <string name="about">Sobre</string>
     <string name="build_full">Stockfish embutido</string>
     <string name="build_light">Stockfish baixado no app</string>
-    <string name="alpha">alfa</string>
-    <string name="about_text">Um visualizador de bases de xadrez: PGN, ChessBase, arquivos compactados. Os arquivos são só lidos, nunca alterados.</string>
+    <string name="about_text">Bases de xadrez, análise de partidas e jogo contra o computador. Os seus arquivos são só lidos, nunca alterados.</string>
     <string name="licenses">Licenças e autores</string>
     <string name="website">Site e código-fonte</string>
 

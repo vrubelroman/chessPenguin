@@ -112,8 +112,7 @@
     <string name="about">Dastur haqida</string>
     <string name="build_full">Stockfish ichki</string>
     <string name="build_light">Stockfish ilovada yuklab olinadi</string>
-    <string name="alpha">alfa</string>
-    <string name="about_text">Shaxmat bazalarini koʻrish vositasi: PGN, ChessBase, arxivlar. Fayllar faqat oʻqiladi, hech qachon oʻzgartirilmaydi.</string>
+    <string name="about_text">Shaxmat bazalari, partiyalar tahlili va kompyuter bilan oʻyin. Fayllaringiz faqat oʻqiladi, hech qachon oʻzgartirilmaydi.</string>
     <string name="licenses">Litsenziyalar va mualliflar</string>
     <string name="website">Sayt va manba kodi</string>
 

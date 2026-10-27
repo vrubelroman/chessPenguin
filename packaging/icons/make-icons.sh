@@ -1,8 +1,8 @@
 #!/bin/sh
 # Makes every icon of ChessPenguin from one picture (default icons/icon2.png): the Linux
 # hicolor PNGs (also the macOS .icns and the packages take them), the window icon, the
-# Windows .ico, the Android launcher icon (adaptive foreground and monochrome) and the
-# site's icons. Needs ImageMagick 7 (`magick`). Run from the repository's root:
+# Windows .ico, the Android launcher icon (adaptive foreground and monochrome), the
+# app's own picture and the site's icons. Needs ImageMagick 7 (`magick`). Run from the repository's root:
 #   packaging/icons/make-icons.sh [picture.png]
 # The site's link preview (website/static/og-image.png) is made by website/shots/derive.py
 # from the site's icon.
@@ -43,6 +43,9 @@ for d in mdpi:108 hdpi:162 xhdpi:216 xxhdpi:324 xxxhdpi:432; do
     magick "$tmp/mono.png" -filter Lanczos -resize "${px}x${px}" -quality 95 \
         "$res/mipmap-$dir/ic_launcher_monochrome.webp"
 done
+
+# Android, inside the app: the picture of «About» and of the empty list of databases.
+magick "$tmp/master.png" -filter Lanczos -resize 288x288 "$res/drawable-nodpi/penguin.png"
 
 # The site: tab icons, the header logo, the home screen icon of iOS (opaque, as iOS
 # fills a transparent one with black).

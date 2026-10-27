@@ -111,8 +111,7 @@
     <string name="about">Бағдарлама туралы</string>
     <string name="build_full">Stockfish кіріктірілген</string>
     <string name="build_light">Stockfish бағдарлама ішінде жүктеледі</string>
-    <string name="alpha">альфа</string>
-    <string name="about_text">Шахмат базаларын қарау құралы: PGN, ChessBase, мұрағаттар. Файлдар тек оқылады, ешқашан өзгертілмейді.</string>
+    <string name="about_text">Шахмат базалары, партияларды талдау және компьютермен ойын. Файлдарыңыз тек оқылады, ешқашан өзгертілмейді.</string>
     <string name="licenses">Лицензиялар мен авторлар</string>
     <string name="website">Сайт және бастапқы код</string>
 

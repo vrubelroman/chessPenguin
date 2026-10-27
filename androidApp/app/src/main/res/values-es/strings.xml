@@ -112,8 +112,7 @@
     <string name="about">Acerca de</string>
     <string name="build_full">Stockfish incluido</string>
     <string name="build_light">Stockfish se descarga en la aplicación</string>
-    <string name="alpha">alfa</string>
-    <string name="about_text">Un visor de bases de ajedrez: PGN, ChessBase, archivos comprimidos. Los archivos solo se leen, nunca se modifican.</string>
+    <string name="about_text">Bases de ajedrez, análisis de partidas y juego contra el ordenador. Tus archivos solo se leen, nunca se modifican.</string>
     <string name="licenses">Licencias y autores</string>
     <string name="website">Sitio web y código fuente</string>
 

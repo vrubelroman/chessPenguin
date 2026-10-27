@@ -112,8 +112,7 @@
     <string name="about">À propos</string>
     <string name="build_full">Stockfish intégré</string>
     <string name="build_light">Stockfish téléchargé dans l’application</string>
-    <string name="alpha">alpha</string>
-    <string name="about_text">Une visionneuse de bases d’échecs : PGN, ChessBase, archives. Les fichiers sont seulement lus, jamais modifiés.</string>
+    <string name="about_text">Bases d’échecs, analyse des parties et jeu contre l’ordinateur. Vos fichiers sont seulement lus, jamais modifiés.</string>
     <string name="licenses">Licences et auteurs</string>
     <string name="website">Site web et code source</string>
 

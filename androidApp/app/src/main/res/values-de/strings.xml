@@ -111,8 +111,7 @@
     <string name="about">Über</string>
     <string name="build_full">Stockfish eingebaut</string>
     <string name="build_light">Stockfish wird in der App geladen</string>
-    <string name="alpha">Alpha</string>
-    <string name="about_text">Ein Betrachter für Schachdatenbanken: PGN, ChessBase, Archive. Dateien werden nur gelesen, nie geändert.</string>
+    <string name="about_text">Schachdatenbanken, Partieanalyse und Spiel gegen den Computer. Ihre Dateien werden nur gelesen, nie geändert.</string>
     <string name="licenses">Lizenzen und Autoren</string>
     <string name="website">Website und Quellcode</string>
 
