@@ -113,6 +113,7 @@ import io.github.vrubelroman.chesspenguin.data.Written
 import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.EngineSession
 import io.github.vrubelroman.chesspenguin.data.NetState
+import io.github.vrubelroman.chesspenguin.data.Opponent
 import io.github.vrubelroman.chesspenguin.data.REVIEW_NODES
 import io.github.vrubelroman.chesspenguin.data.ReviewSession
 import io.github.vrubelroman.chesspenguin.data.enginePosition
@@ -451,7 +452,7 @@ fun GameScreen(
         edit?.undo()?.let { apply(it) }
     }
 
-    // ----- a game against Maia (§31) -----
+    // ----- a game against the computer (§31, android-rodent.md) -----
     val runOver = run?.over?.value
     val runOffer = run?.offer?.value == true
     val runThinking = run?.thinking?.value == true
@@ -465,6 +466,7 @@ fun GameScreen(
         val r = run ?: return
         val e = edit ?: return
         r.generation++
+        r.rodent?.forget()
         r.thinking.value = false
         r.offer.value = false
         e.setData(listOf(uniffi.mobile_api.Tag("Termination", "Normal")), over.result)
@@ -505,7 +507,8 @@ fun GameScreen(
         persist()
         edit?.ending(e.cursor)?.let { finishGame(overBy(it, r.meta.userWhite)) }
     }
-    // Maia's move when it is her turn: computed in the background, shown after her pause.
+    // The opponent's move when it is its turn: computed in the background, shown after its
+    // pause. Maia computes at once and waits; Rodent thinks for the pause (android-rodent.md §6.1).
     LaunchedEffect(run, g, runOver, runOffer, runFailure) {
         val r = run ?: return@LaunchedEffect
         val gg = g ?: return@LaunchedEffect
@@ -516,22 +519,53 @@ fun GameScreen(
         val gen = ++r.generation
         r.thinking.value = true
         try {
-            val player = r.player ?: withContext(Dispatchers.IO) { runCatching { uniffi.mobile_api.MaiaPlayer.load(app.maiaFiles.download.file.path) } }
-                .getOrElse { ex ->
-                    r.failure.value = ex.message ?: ""
-                    return@LaunchedEffect
-                }.also { r.player = it }
-            // Her resignation is judged by Stockfish, when it is there.
+            val started = System.currentTimeMillis()
+            val only = e.legalMoves(end.toUInt()).size == 1
+            val pause = uniffi.mobile_api.movePauseMs(depth(gg, end).toUInt(), only)
+            val rodentFiles = app.rodentFiles
+            val think: suspend () -> String? = if (r.meta.rival == Opponent.Rodent) {
+                // Rodent is in the APK: its personalities copied out, its books if the pack is
+                // whole (a game goes on without them, §1.7).
+                val rodent = r.rodent ?: (
+                    if (rodentFiles.prepare()) {
+                        uniffi.mobile_api.RodentPlayer.start(rodentFiles.executable, rodentFiles.home.path, r.meta.style, r.meta.strength.toUInt(), rodentFiles.books.installed())
+                    } else {
+                        r.failure.value = PlayFailure("no space for the personalities")
+                        return@LaunchedEffect
+                    }
+                    ).also { r.rodent = it }
+                suspend {
+                    // None: passed over by a newer request (a take-back), or Rodent failed.
+                    withContext(Dispatchers.IO) { rodent.choose(e, end.toUInt(), pause) }.also { m ->
+                        if (m == null) {
+                            rodent.failure()?.let { f ->
+                                r.failure.value = when (f) {
+                                    is uniffi.mobile_api.RodentFailure.DidNotStart -> PlayFailure(f.detail)
+                                    uniffi.mobile_api.RodentFailure.Stopped -> PlayFailure("", stopped = true)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                val player = r.player ?: withContext(Dispatchers.IO) { runCatching { uniffi.mobile_api.MaiaPlayer.load(app.maiaFiles.download.file.path) } }
+                    .getOrElse { ex ->
+                        r.failure.value = PlayFailure(ex.message ?: "")
+                        return@LaunchedEffect
+                    }.also { r.player = it }
+                suspend {
+                    withContext(Dispatchers.Default) {
+                        player.choose(e, end.toUInt(), r.meta.strength.toUInt(), null, kotlin.random.Random.nextFloat())
+                    }
+                }
+            }
+            // Its resignation is judged by Stockfish, when it is there.
             if (r.judge == null && files.state.value == NetState.Ready) {
                 r.judge = runCatching { uniffi.mobile_api.ResignJudge.start(files.executable, files.net.path) }.getOrNull()
             }
             r.judge?.ask(e, end.toUInt())
-            val started = System.currentTimeMillis()
-            val only = e.legalMoves(end.toUInt()).size == 1
-            val uci = withContext(Dispatchers.Default) {
-                player.choose(e, end.toUInt(), r.meta.strength.toUInt(), null, kotlin.random.Random.nextFloat())
-            } ?: return@LaunchedEffect
-            val wait = uniffi.mobile_api.maiaPauseMs(depth(gg, end).toUInt(), only).toLong() - (System.currentTimeMillis() - started)
+            val uci = think() ?: return@LaunchedEffect
+            val wait = pause.toLong() - (System.currentTimeMillis() - started)
             if (wait > 0) delay(wait)
             if (gen != r.generation) return@LaunchedEffect
             // The judge's answer, given up to two seconds more (a slow phone, an engine
@@ -562,10 +596,10 @@ fun GameScreen(
         }
     }
     var resigning by remember { mutableStateOf(false) }
-    val drawDeclined = stringResource(R.string.play_draw_declined)
-    val drawLater = stringResource(R.string.play_draw_later)
-    val drawNoEngine = stringResource(R.string.play_draw_no_engine)
-    // A draw offered (§31.3): Maia answers by her judge's scores of her last turns.
+    val drawDeclined = stringResource(run?.meta?.said(R.string.play_draw_declined, R.string.rodent_draw_declined) ?: R.string.play_draw_declined)
+    val drawLater = stringResource(run?.meta?.said(R.string.play_draw_later, R.string.rodent_draw_later) ?: R.string.play_draw_later)
+    val drawNoEngine = stringResource(run?.meta?.said(R.string.play_draw_no_engine, R.string.rodent_draw_no_engine) ?: R.string.play_draw_no_engine)
+    // A draw offered (§31.3): the opponent answers by its judge's scores of its last turns.
     fun offerDraw() {
         val r = run ?: return
         val j = r.judge
@@ -584,6 +618,7 @@ fun GameScreen(
     LaunchedEffect(g) {
         if (runOver != null && atEnd != null && g != null && lineEnd(g) != atEnd) resultClosed = true
     }
+    // Maia's file fetched again after she failed: she starts anew once it is there.
     var maiaRetry by remember { mutableStateOf(false) }
     val maiaState by app.maiaFiles.download.state.collectAsState()
     LaunchedEffect(maiaState, maiaRetry) {
@@ -595,13 +630,21 @@ fun GameScreen(
         }
     }
     val eventText = stringResource(R.string.play_event)
-    val noteText = stringResource(R.string.play_note_from, (run?.meta?.strength ?: 0).toString())
-    // The same strength again, colours swapped; from a position: the same one and colour.
+    val runStyle = run?.meta?.styleShown()
+    // A new game asked for when a rematch cannot start at once (Rodent's books removed
+    // meanwhile, android-rodent.md §1.6): the sheet, as for a new game.
+    var newGameSheet by remember { mutableStateOf(false) }
+    // The same opponent and strength again, colours swapped; from a position: the same one
+    // and colour.
     fun rematch() {
         val r = run ?: return
         val e = edit ?: return
         val gg = g ?: return
         val m = r.meta
+        if (m.rival == Opponent.Rodent && m.floor == 0 && !app.rodentFiles.books.installed()) {
+            newGameSheet = true
+            return
+        }
         val base = if (m.floor > 0) {
             var n = 0
             repeat(m.floor) { n = gg.nodes[n].children.firstOrNull()?.toInt() ?: n }
@@ -609,7 +652,8 @@ fun GameScreen(
         } else {
             GameSession.newGame("")
         }
-        beginMaiaGame(app, base, m.strength, if (m.floor > 0) m.userWhite else !m.userWhite, m.name, m.floor, eventText, noteText)
+        val next = m.copy(userWhite = if (m.floor > 0) m.userWhite else !m.userWhite, over = false)
+        beginComputerGame(app, base, next, eventText, playNote(resources, next, runStyle))
         base.close()
         // The report of the game before is not this one's.
         review.close()
@@ -622,12 +666,13 @@ fun GameScreen(
         val gg = g ?: return
         val e = edit ?: return
         val end = lineEnd(gg)
-        // While Maia thinks or offers to resign, the last move is the user's; else hers, and
-        // the user's before.
+        // While the opponent thinks or offers to resign, the last move is the user's; else
+        // its, and the user's before.
         val userLast = r.thinking.value || r.offer.value
         val from = if (userLast) end else gg.nodes[end].parent?.toInt() ?: return
         if (depth(gg, from) <= r.meta.floor) return
         r.generation++
+        r.rodent?.forget()
         r.thinking.value = false
         r.offer.value = false
         r.judge?.forget()
@@ -952,18 +997,28 @@ fun GameScreen(
             if (run != null) {
                 when {
                     runOffer -> OfferCard(
-                        onAccept = { finishGame(PlayOver(if (run.meta.userWhite) "1-0" else "0-1", R.string.play_won, R.string.end_maia_resigned)) },
+                        run.meta,
+                        onAccept = { finishGame(PlayOver(if (run.meta.userWhite) "1-0" else "0-1", R.string.play_won, run.meta.said(R.string.end_maia_resigned, R.string.end_rodent_resigned))) },
                         onPlayOn = {
                             run.playOn = true
                             run.offer.value = false
                         },
                     )
                     runFailure != null -> FailureCard(
+                        run.meta,
+                        runFailure,
                         onRetry = {
-                            // A missing or damaged file is fetched again, then she starts.
-                            app.maiaFiles.download.delete()
-                            app.maiaFiles.download.download()
-                            maiaRetry = true
+                            if (run.meta.rival == Opponent.Rodent) {
+                                // Rodent is in the APK: it is started again.
+                                run.rodent?.close()
+                                run.rodent = null
+                                run.failure.value = null
+                            } else {
+                                // A missing or damaged file is fetched again, then she starts.
+                                app.maiaFiles.download.delete()
+                                app.maiaFiles.download.download()
+                                maiaRetry = true
+                            }
                         },
                         onAbort = {
                             app.playerGames.keepUnfinished(app.maiaGames, prefs.recordGames, app.scope)
@@ -1035,8 +1090,9 @@ fun GameScreen(
                     // The event and year (else the site); the game's place and round. A tap
                     // shows the game's details.
                     // No event and no site: the database's name.
+                    // «Game against Rodent IV 1800» (android-rodent.md §6.1): a name, not a command.
                     val event = if (playGame && run != null) {
-                        stringResource(R.string.play_with_maia) + " " + run.meta.strength
+                        stringResource(R.string.play_adjourned_title, run.meta.label())
                     } else if (newGame && held.savedTo == null) {
                         stringResource(R.string.new_game)
                     } else {
@@ -1048,7 +1104,10 @@ fun GameScreen(
                     val yearInLine = if (joinKnown(tag("Event")).isEmpty()) year(tag("Date")) else ""
                     val round = tag("Round").trim().takeIf { it.isNotEmpty() && it != "?" && it != "-" }
                     val placeLine = if (playGame && run != null) {
-                        stringResource(R.string.play_adjourned_sub, stringResource(if (run.meta.userWhite) R.string.play_as_white else R.string.play_as_black), stringResource(R.string.play_untimed))
+                        listOfNotNull(
+                            runStyle,
+                            stringResource(R.string.play_adjourned_sub, stringResource(if (run.meta.userWhite) R.string.play_as_white else R.string.play_as_black), stringResource(R.string.play_untimed)),
+                        ).joinToString(" · ")
                     } else joinKnown(
                         if (total > 0 && held.savedTo == null) stringResource(R.string.game_of, place + 1, total) else "",
                         yearInLine,
@@ -1175,19 +1234,26 @@ fun GameScreen(
         // a title for White and no Black keeps both bars, so the board does not jump.
         val study = whiteName != null && blackName == null
         val result = g?.result ?: ""
-        // In a game: «thinking…» on Maia's bar while she computes (§31.3).
+        // In a game: «thinking…» on the opponent's bar while it computes (§31.3).
         val thinkingText = stringResource(R.string.play_thinking)
         val maiaThinks = { white: Boolean -> if (gameOn && runThinking && run?.meta?.userWhite != white) thinkingText else null }
-        // In a game against Maia: the user without a name is «You»; Maia's rating is in her name.
+        // In a game against the computer: the user without a name is «You»; the opponent is
+        // named with its strength and Rodent's character («Rodent IV 1800 · Tal»: the end
+        // goes first when it does not fit, never the strength, android-rodent.md §6.1).
         val youText = stringResource(R.string.play_you)
+        val rivalText = run?.meta?.let { m -> listOfNotNull(m.label(), runStyle).joinToString(" · ") }
         val playName = { white: Boolean ->
-            if (playGame && run?.meta?.userWhite == white && (if (white) whiteName else blackName) == null) youText else null
+            when {
+                !playGame || run == null -> null
+                run.meta.userWhite == white -> if ((if (white) whiteName else blackName) == null) youText else null
+                else -> rivalText
+            }
         }
         val whiteBar: @Composable () -> Unit = {
-            PlayerBar(playName(true) ?: whiteName ?: whiteLabel, if (playGame) "" else elo(tag("WhiteElo")), true, sideResult(result, true), known = whiteName != null || playGame, abbreviate = !study, status = maiaThinks(true))
+            PlayerBar(playName(true) ?: whiteName ?: whiteLabel, if (playGame) "" else elo(tag("WhiteElo")), true, sideResult(result, true), known = whiteName != null || playGame, abbreviate = !study && !playGame, status = maiaThinks(true))
         }
         val blackBar: @Composable () -> Unit = {
-            PlayerBar(playName(false) ?: blackName ?: blackLabel, if (playGame) "" else elo(tag("BlackElo")), false, sideResult(result, false), known = blackName != null || playGame, status = maiaThinks(false))
+            PlayerBar(playName(false) ?: blackName ?: blackLabel, if (playGame) "" else elo(tag("BlackElo")), false, sideResult(result, false), known = blackName != null || playGame, abbreviate = !playGame, status = maiaThinks(false))
         }
         val topBar = if (flipped) whiteBar else blackBar
         val bottomBar = if (flipped) blackBar else whiteBar
@@ -1321,12 +1387,14 @@ fun GameScreen(
         } else {
             val moveLabel = (if (n.white) "${n.moveNumber}." else "${n.moveNumber}…") + san(n.san).text
             val origin = listOfNotNull(whiteName, blackName).joinToString(" — ").takeIf { it.isNotEmpty() }
+            val styles = RODENT_TEXTS.mapValues { stringResource(it.value.first) }
             PlaySheet(
                 PlayFrom(n.fen, listOfNotNull(stringResource(R.string.play_from_label, moveLabel), origin).joinToString("\n"), whiteToMove(n.fen)),
-                onPlay = { strength, white, name ->
+                onPlay = { choice ->
                     playFrom = null
                     val s = runCatching { edit?.playFrom(fromMove.toUInt()) }.getOrNull() ?: return@PlaySheet
-                    beginMaiaGame(app, s, strength, white, name, depth(g, fromMove), eventText, resources.getString(R.string.play_note_from, strength.toString()))
+                    val meta = choice.meta(depth(g, fromMove))
+                    beginComputerGame(app, s, meta, eventText, playNote(resources, meta, styles[meta.style]))
                     s.close()
                     // On the play screen itself the game in hand is read anew.
                     held.key = null
@@ -1335,6 +1403,19 @@ fun GameScreen(
                 onDismiss = { playFrom = null },
             )
         }
+    }
+    if (newGameSheet) {
+        PlaySheet(null, onPlay = { choice ->
+            newGameSheet = false
+            val s = GameSession.newGame("")
+            beginComputerGame(app, s, choice.meta(0), eventText, null)
+            s.close()
+            // The report of the game before is not this one's.
+            review.close()
+            reviewHidden = true
+            held.key = null
+            held.reloads.intValue++
+        }, onDismiss = { newGameSheet = false })
     }
     val askAt = askFrom
     val adjournedMeta = app.maiaGames.current.collectAsState().value
@@ -1687,7 +1768,7 @@ private fun MoveSheet(
             if (inVariation) SheetAction(Icons.Rounded.VerticalAlignTop, stringResource(R.string.make_main), onClick = onMakeMain)
             SheetAction(Icons.Rounded.Close, stringResource(R.string.delete_move), onClick = onDelete)
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-            SheetAction(Icons.Rounded.SmartToy, stringResource(R.string.play_from_maia), enabled = canPlay, onClick = onPlay)
+            SheetAction(Icons.Rounded.SmartToy, stringResource(R.string.play_from_here), enabled = canPlay, onClick = onPlay)
             SheetAction(
                 Icons.Rounded.School,
                 stringResource(R.string.train_learn),

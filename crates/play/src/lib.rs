@@ -1,12 +1,20 @@
-//! A game against Maia (docs/design/play-mode.md, android-play.md §31): how it ends,
-//! how long Maia "thinks", and her resignation judged by an engine. Shared by the
-//! desktop and the Android apps; nothing here draws.
+//! A game against the computer (docs/design/play-mode.md, android-play.md §31): how it
+//! ends, how long the opponent "thinks", its resignation judged by an engine, and Rodent
+//! (`rodent`). Shared by the desktop and the Android apps; nothing here draws.
+
+pub mod rodent;
+mod rodent4_files;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use shakmaty::zobrist::Zobrist64;
 use shakmaty::{Chess, Color, EnPassantMode, Position};
+
+/// Maia's ratings: what her network was trained on (her own scale, not a person's Elo;
+/// decisions «Сила соперника — по шкале самого движка»).
+pub const MAIA_MIN: u32 = 600;
+pub const MAIA_MAX: u32 = 2600;
 
 // ----- the end of a game ---------------------------------------------------------------
 

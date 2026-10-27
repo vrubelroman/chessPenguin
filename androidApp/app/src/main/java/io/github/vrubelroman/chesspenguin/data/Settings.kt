@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class Theme { System, Light, Dark }
 
+/// Who plays against the user (android-rodent.md): kept by these names.
+enum class Opponent(val key: String) { Maia("maia"), Rodent("rodent4") }
+
 /// How moves are written on the screen (PGN keeps K Q R B N).
 enum class Notation { Latin, Figurines, Local }
 
@@ -29,14 +32,19 @@ data class Prefs(
     /// The engine's speed per thread measured by the last game analysis (0 = not yet),
     /// for the time estimate.
     val reviewNps: Long = 0,
-    /// The last choices of a game against Maia (android-play.md §31.1): her strength,
-    /// the user's colour (-1 Black, 0 at random, 1 White), the user's name.
+    /// The last choices of a game against the computer (android-play.md §31.1,
+    /// android-rodent.md §7.1): the opponent, each one's strength on its own scale,
+    /// Rodent's character ("" = never chosen), the user's colour (-1 Black, 0 at
+    /// random, 1 White), the user's name.
+    val opponent: Opponent = Opponent.Maia,
     val maiaStrength: Int = 1500,
-    val maiaColor: Int = 0,
+    val rodentStrength: Int = 1500,
+    val rodentPersonality: String = "",
+    val playColor: Int = 0,
     val yourName: String = "",
     /// Sounds of moves and of the end of a game (§33).
     val sound: Boolean = true,
-    /// Games against Maia go by themselves into the player's database (player-games.md).
+    /// Games against the computer go by themselves into the player's database (player-games.md).
     val recordGames: Boolean = true,
 )
 
@@ -74,8 +82,12 @@ class Settings(context: Context) {
             engineHashMb = store.getInt("engineHashMb", d.engineHashMb),
             reviewQuality = store.getInt("reviewQuality", d.reviewQuality).coerceIn(0, REVIEW_NODES.size - 1),
             reviewNps = store.getLong("reviewNps", d.reviewNps),
+            opponent = Opponent.entries.firstOrNull { it.key == store.getString("opponent", null) } ?: d.opponent,
             maiaStrength = store.getInt("maiaStrength", d.maiaStrength),
-            maiaColor = store.getInt("maiaColor", d.maiaColor).coerceIn(-1, 1),
+            rodentStrength = store.getInt("rodentStrength", d.rodentStrength),
+            rodentPersonality = store.getString("rodentPersonality", d.rodentPersonality) ?: d.rodentPersonality,
+            // Kept as `maiaColor` up to 1.7, when Maia was the only opponent.
+            playColor = store.getInt("playColor", store.getInt("maiaColor", d.playColor)).coerceIn(-1, 1),
             yourName = store.getString("yourName", d.yourName) ?: d.yourName,
             sound = store.getBoolean("sound", d.sound),
             recordGames = store.getBoolean("recordGames", d.recordGames),
@@ -99,8 +111,12 @@ class Settings(context: Context) {
             .putInt("engineHashMb", p.engineHashMb)
             .putInt("reviewQuality", p.reviewQuality)
             .putLong("reviewNps", p.reviewNps)
+            .putString("opponent", p.opponent.key)
             .putInt("maiaStrength", p.maiaStrength)
-            .putInt("maiaColor", p.maiaColor)
+            .putInt("rodentStrength", p.rodentStrength)
+            .putString("rodentPersonality", p.rodentPersonality)
+            .putInt("playColor", p.playColor)
+            .remove("maiaColor")
             .putString("yourName", p.yourName)
             .putBoolean("sound", p.sound)
             .putBoolean("recordGames", p.recordGames)

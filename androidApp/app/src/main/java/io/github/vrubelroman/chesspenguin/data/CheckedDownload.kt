@@ -33,7 +33,7 @@ sealed interface NetState {
 }
 
 /// A file of known size and SHA-256 fetched on request into the app's storage: the
-/// engine's network, Maia's weights.
+/// engine's network, Maia's weights, a book of Rodent IV.
 data class FileSpec(
     /// Folder in the app's files, and the file's name.
     val dir: String,
@@ -45,6 +45,9 @@ data class FileSpec(
     val title: String,
     /// The preferences that keep the system's download id (one file each).
     val prefs: String,
+    /// The folder is the file's own: other files there (of other versions) are removed.
+    /// Not for a folder of several files (Rodent's books: their pack sees to them).
+    val ownFolder: Boolean = true,
 )
 
 /// The download is the system's (DownloadManager): it goes on with the app closed,
@@ -65,7 +68,7 @@ class CheckedDownload(private val context: Context, private val scope: Coroutine
 
     init {
         // Files of other versions (kept before an update) are of no use to this one.
-        dir.listFiles()?.filter { it.name != file.name && it.name != part.name }?.forEach { it.delete() }
+        if (spec.ownFolder) dir.listFiles()?.filter { it.name != file.name && it.name != part.name }?.forEach { it.delete() }
         when {
             installed() -> _state.value = NetState.Ready
             downloadId() != NO_DOWNLOAD -> {

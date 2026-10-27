@@ -676,3 +676,25 @@ fn an_engine_can_run_below_the_app() {
     calm.quit();
     plain.quit();
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_engine_gets_the_variables_given() {
+    let engine = Engine::spawn_with(
+        EngineConfig {
+            env: vec![("CP_TEST_HOME".into(), "/some/where".into())],
+            ..config(&[])
+        },
+        Box::new(|| {}),
+    )
+    .expect("spawn");
+    let environ = std::fs::read(format!("/proc/{}/environ", engine.pid())).expect("environ");
+    assert!(
+        environ
+            .split(|&b| b == 0)
+            .any(|v| v == b"CP_TEST_HOME=/some/where")
+    );
+    // The app's own environment goes on as well.
+    assert!(environ.split(|&b| b == 0).any(|v| v.starts_with(b"PATH=")));
+    engine.quit();
+}

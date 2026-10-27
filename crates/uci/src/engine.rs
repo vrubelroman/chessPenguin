@@ -81,6 +81,9 @@ pub struct EngineConfig {
     /// Added to the engine's nice value on Unix (0 = as the app): a phone keeps its
     /// interface smooth while the engine thinks. Every thread of the engine has it.
     pub nice: i32,
+    /// Variables added to the engine's environment (Rodent IV on Android finds its
+    /// personalities and books by `RODENT4HOME`).
+    pub env: Vec<(OsString, OsString)>,
 }
 
 impl EngineConfig {
@@ -91,6 +94,7 @@ impl EngineConfig {
             working_dir: None,
             timeouts: Timeouts::default(),
             nice: 0,
+            env: Vec::new(),
         }
     }
 }
@@ -389,6 +393,7 @@ fn spawn_impl(cfg: EngineConfig, waker: Waker) -> Result<EngineHandle, EngineErr
     let mut command = Command::new(&path);
     command
         .args(&cfg.args)
+        .envs(cfg.env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

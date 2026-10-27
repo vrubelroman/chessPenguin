@@ -6,13 +6,22 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 
-/// A game against Maia: her strength, the user's colour and name; `floor`: the half-moves
-/// that came from another game ("Play on from here", not taken back); `over`: it ended.
-data class PlayMeta(val strength: Int, val userWhite: Boolean, val name: String, val floor: Int, val over: Boolean = false)
+/// A game against the computer: the opponent (Maia, or Rodent IV in the character
+/// `style`), its strength, the user's colour and name; `floor`: the half-moves that came
+/// from another game ("Play on from here", not taken back); `over`: it ended.
+data class PlayMeta(
+    val strength: Int,
+    val userWhite: Boolean,
+    val name: String,
+    val floor: Int,
+    val over: Boolean = false,
+    val rival: Opponent = Opponent.Maia,
+    val style: String = "",
+)
 
-/// The game against Maia being played (android-play.md §31.7): its PGN is written after
-/// every move, so that "back" puts it aside and it outlives the app being closed. One at
-/// a time.
+/// The game against the computer being played (android-play.md §31.7, android-rodent.md
+/// §6.5): its PGN is written after every move, so that "back" puts it aside and it
+/// outlives the app being closed. One at a time. (Named when Maia was the only opponent.)
 class MaiaGames(context: Context) {
     private val file = File(context.filesDir, "play/current.pgn")
     private val prefs = context.getSharedPreferences("play", Context.MODE_PRIVATE)
@@ -28,6 +37,9 @@ class MaiaGames(context: Context) {
             name = prefs.getString("name", "") ?: "",
             floor = prefs.getInt("floor", 0),
             over = prefs.getBoolean("over", false),
+            // A game put aside before Rodent came is a game against Maia.
+            rival = Opponent.entries.firstOrNull { it.key == prefs.getString("rival", null) } ?: Opponent.Maia,
+            style = prefs.getString("style", "") ?: "",
         )
     }
 
@@ -51,6 +63,8 @@ class MaiaGames(context: Context) {
             .putString("name", meta.name)
             .putInt("floor", meta.floor)
             .putBoolean("over", meta.over)
+            .putString("rival", meta.rival.key)
+            .putString("style", meta.style)
             .apply()
         _current.value = meta
     }

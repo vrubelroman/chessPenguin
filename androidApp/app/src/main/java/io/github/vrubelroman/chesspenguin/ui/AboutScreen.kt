@@ -51,6 +51,8 @@ private val NOTICES = listOf(
     "Board images" to "AGPLv3+ · the lila authors and pirouetti (Lichess)",
     "Sounds (SFX)" to "AGPLv3+ · Enigmahack (via Lichess)",
     "Sound of a wrong move" to "CC0-1.0 · Kenney, kenney.nl",
+    "Rodent IV 0.33" to "GPL-3.0 · Paweł Koziol, Bernhard C. Maerz (based on Sungorus by Pablo Vázquez) · github.com/nescitus/rodent-iv",
+    "Rodent IV opening books (downloaded from its authors on request)" to "Their authors' credits in the books' folders · github.com/nescitus/rodent-iv",
     "Maia-3 (downloaded from its authors on request)" to "CSSLab, University of Toronto · huggingface.co/UofTCSSLab",
     "Figurines, Noto Sans Math" to "SIL Open Font License 1.1",
     "Jetpack Compose, AndroidX, Kotlin" to "Apache-2.0 · Google, JetBrains",

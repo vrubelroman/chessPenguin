@@ -4,6 +4,11 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Android: Rodent IV joins Maia as an opponent. «Play» opens the sheet with the choice of
+  Maia or Rodent IV and, for Rodent, one of its 13 characters or 22 famous players (Tal,
+  Kasparov, Karpov…), each with its own strength scale (Rodent: 800–2800). The engine is
+  inside both APKs; its opening books are one download of 59 MB, removable in Settings,
+  and «No book» plays without them. Rematches and put-aside games keep the opponent.
 - A game against the computer can be put aside and continued later: «⏸ Put aside» in
   the game, the main answer of «The game is on», and closing the window put it aside;
   a card on the library's shelf continues it with the clocks as they were. A game a

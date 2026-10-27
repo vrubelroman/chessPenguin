@@ -1,6 +1,7 @@
-//! A game against Maia on the phone (docs/design/android-play.md §31): the small model
-//! (5M) chooses her moves at a strength on the Lichess blitz scale, by the same tables
-//! and rule as on the desktop (`maia::strength`). No clocks on the phone.
+//! A game against the computer on the phone (docs/design/android-play.md §31,
+//! android-rodent.md): Maia's small model (5M) chooses her moves at a strength of her
+//! own scale, by the same tables and rule as on the desktop (`maia::strength`); Rodent IV
+//! plays in a style, as on the desktop (`play::rodent`). No clocks on the phone.
 
 use std::sync::Arc;
 
@@ -55,20 +56,54 @@ impl GameSession {
     }
 }
 
-/// How long Maia "thinks" before her move `ply` of an untimed game (milliseconds):
-/// as a person would, quicker with one legal move.
+/// How long the computer "thinks" before its move `ply` of an untimed game
+/// (milliseconds): as a person would, quicker with one legal move.
 #[uniffi::export]
-pub fn maia_pause_ms(ply: u32, only_move: bool) -> u64 {
+pub fn move_pause_ms(ply: u32, only_move: bool) -> u64 {
     ::play::pause(None, ply as usize, only_move).as_millis() as u64
 }
 
-/// The tags of a game against Maia on the phone (no clocks): `event` in the app's
-/// language; the user plays White when `user_white`.
+/// Who plays against the user.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum Rival {
+    Maia,
+    /// Rodent IV in a style of its list (`iv_tal`…).
+    Rodent {
+        style_id: String,
+    },
+}
+
+/// The opponent as the game's record names it: «Maia 1500», «Rodent IV 1800 (Tal)».
 #[uniffi::export]
-pub fn maia_game_tags(
+pub fn rival_name(rival: Rival, strength: u32) -> String {
+    match rival {
+        Rival::Maia => format!("Maia {strength}"),
+        Rival::Rodent { style_id } => {
+            ::play::rodent::name(strength, ::play::rodent::iv_style(&style_id).id)
+        }
+    }
+}
+
+/// The opponent as the app shows it, without the style: «Maia 1500», «Rodent IV 1800».
+#[uniffi::export]
+pub fn rival_label(rival: Rival, strength: u32) -> String {
+    match rival {
+        Rival::Maia => format!("Maia {strength}"),
+        Rival::Rodent { style_id } => format!(
+            "{} {strength}",
+            ::play::rodent::iv_style(&style_id).rodent.name()
+        ),
+    }
+}
+
+/// The tags of a game against the computer on the phone (no clocks): `event` in the
+/// app's language; the user plays White when `user_white`.
+#[uniffi::export]
+pub fn computer_game_tags(
     event: String,
     user_white: bool,
     user_name: String,
+    rival: Rival,
     strength: u32,
 ) -> Vec<crate::Tag> {
     let user = if user_white {
@@ -81,7 +116,7 @@ pub fn maia_game_tags(
         user,
         &user_name,
         None,
-        &format!("Maia {strength}"),
+        &rival_name(rival, strength),
         "-",
     )
     .into_iter()
@@ -178,15 +213,10 @@ impl ResignJudge {
     }
 }
 
-/// Maia's own scale, as on the desktop (decisions «Сила соперника — по шкале самого
-/// движка»): the ratings her network was trained on, not a person's Elo.
-pub const PHONE_MIN: u32 = 600;
-pub const PHONE_MAX: u32 = 2600;
-
-/// The strengths the phone offers: (weakest, strongest).
+/// The strengths Maia plays on her own scale, as on the desktop: (weakest, strongest).
 #[uniffi::export]
 pub fn maia_range() -> Vec<u32> {
-    vec![PHONE_MIN, PHONE_MAX]
+    vec![::play::MAIA_MIN, ::play::MAIA_MAX]
 }
 
 /// Maia, loaded once for a game.
@@ -227,12 +257,163 @@ impl MaiaPlayer {
                     .collect(),
             )
         })?;
-        let strength = strength.clamp(PHONE_MIN, PHONE_MAX);
+        let strength = strength.clamp(::play::MAIA_MIN, ::play::MAIA_MAX);
         let p = self
             .maia
             .predict(&history, strength, opponent.unwrap_or(strength));
         choose(&p, 1.0, random).map(|m| m.to_uci(CastlingMode::Standard).to_string())
     }
+}
+
+// ----- Rodent IV ---------------------------------------------------------------------
+
+/// A character of Rodent IV: its id, its English name (for PGN), its title and what it
+/// does (English: the app shows its own translations), a great player or not.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RodentStyle {
+    pub id: String,
+    pub name: String,
+    pub title: String,
+    pub about: String,
+    pub player: bool,
+}
+
+/// Rodent IV's characters (the desktop's list; Rodent V is not on the phone).
+#[uniffi::export]
+pub fn rodent_styles() -> Vec<RodentStyle> {
+    use ::play::rodent::{Gen, STYLES};
+    STYLES
+        .iter()
+        .filter(|s| s.rodent == Gen::IV)
+        .map(|s| RodentStyle {
+            id: s.id.to_owned(),
+            name: s.name.to_owned(),
+            title: s.title().to_owned(),
+            about: s.about.to_owned(),
+            player: s.player,
+        })
+        .collect()
+}
+
+/// The strengths Rodent IV plays (its UCI_Elo): (weakest, strongest).
+#[uniffi::export]
+pub fn rodent_range() -> Vec<u32> {
+    let (lo, hi) = ::play::rodent::Gen::IV.range();
+    vec![lo, hi]
+}
+
+/// The version of Rodent IV's files (the authors' commit): the personalities copied out
+/// of the APK are copied again when it changes.
+#[uniffi::export]
+pub fn rodent_version() -> String {
+    ::play::rodent::COMMIT.to_owned()
+}
+
+/// A file of the book pack: where it comes from, where it goes (under the engine's
+/// home), its size and SHA-256.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RodentBook {
+    pub url: String,
+    pub local: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// The opening books Rodent IV's characters open, downloaded as one pack
+/// (android-rodent.md §5).
+#[uniffi::export]
+pub fn rodent_book_pack() -> Vec<RodentBook> {
+    ::play::rodent::book_pack()
+        .into_iter()
+        .map(|b| RodentBook {
+            url: ::play::rodent::file_url(b.file),
+            local: b.local,
+            size: b.size,
+            sha256: b.sha256.to_owned(),
+        })
+        .collect()
+}
+
+/// Rodent IV playing one game (a UCI child process, the shared crate's player).
+#[derive(uniffi::Object)]
+pub struct RodentPlayer {
+    player: ::play::rodent::RodentPlayer,
+}
+
+#[uniffi::export]
+impl RodentPlayer {
+    /// The engine at `exe` with its personalities and books in `home`, playing
+    /// `style_id` at `strength` (its UCI_Elo), with its opening book when `use_book`.
+    /// It starts in the background: a failure is told by [`RodentPlayer::failure`].
+    #[uniffi::constructor]
+    pub fn start(
+        exe: String,
+        home: String,
+        style_id: String,
+        strength: u32,
+        use_book: bool,
+    ) -> Arc<RodentPlayer> {
+        // Below the app (nice 10), as the analysis: the interface comes first. The
+        // engine finds its files by RODENT4HOME (packaging/rodent-iv/android.patch).
+        let config = uci::EngineConfig {
+            working_dir: Some(home.clone().into()),
+            nice: 10,
+            env: vec![("RODENT4HOME".into(), home.into())],
+            ..uci::EngineConfig::new(exe)
+        };
+        Arc::new(RodentPlayer {
+            player: ::play::rodent::RodentPlayer::start(
+                config,
+                ::play::rodent::iv_style(&style_id).id,
+                Some(strength),
+                use_book,
+                Box::new(|| {}),
+            ),
+        })
+    }
+
+    /// Rodent's move (UCI) in the position at place `at` of the game, given after
+    /// `pause_ms` (it thinks meanwhile). Blocks: called off the main thread. None when
+    /// the game is over there, a newer request or `forget` passed it over, or Rodent
+    /// failed.
+    pub fn choose(&self, game: Arc<GameSession>, at: u32, pause_ms: u64) -> Option<String> {
+        let (history, now) = game.read(|g| {
+            let id = crate::order(g).get(at as usize).copied()?;
+            Some((g.engine_history(id)?, g.position(id)?.clone()))
+        })?;
+        let pos = match history.start_fen {
+            None => uci::EnginePosition::startpos(history.moves),
+            Some(fen) => uci::EnginePosition::fen(fen, history.moves),
+        };
+        let generation = self
+            .player
+            .ask(pos, now, std::time::Duration::from_millis(pause_ms));
+        let (m, _) = self.player.wait(generation)?;
+        m.map(|m| m.to_uci(CastlingMode::Standard).to_string())
+    }
+
+    /// Drops the request in flight (its position is gone): its `choose` returns none.
+    pub fn forget(&self) {
+        self.player.forget();
+    }
+
+    /// Why Rodent does not play, if it does not.
+    pub fn failure(&self) -> Option<RodentFailure> {
+        use ::play::rodent::Failure;
+        self.player.failure().map(|f| match f {
+            Failure::Start(detail) => RodentFailure::DidNotStart { detail },
+            // A search not taken: the process is gone in the middle of the game.
+            Failure::Stopped | Failure::Search(_) => RodentFailure::Stopped,
+        })
+    }
+}
+
+/// Why Rodent does not play: it did not start (the engine's words), or it stopped
+/// during the game (android-rodent.md §6.6).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum RodentFailure {
+    DidNotStart { detail: String },
+    Stopped,
 }
 
 #[cfg(test)]
@@ -270,5 +451,54 @@ mod tests {
             .unwrap()
             .id;
         assert!(m.choose(mated, end, 1500, None, 0.3).is_none());
+    }
+
+    #[test]
+    fn rodent_is_named_and_listed_as_on_the_desktop() {
+        let tags = computer_game_tags(
+            "Game".into(),
+            true,
+            "Roman".into(),
+            Rival::Rodent {
+                style_id: "iv_tal".into(),
+            },
+            1800,
+        );
+        let black = tags.iter().find(|t| t.name == "Black").unwrap();
+        assert_eq!(black.value, "Rodent IV 1800 (Tal)");
+        assert_eq!(rival_name(Rival::Maia, 1500), "Maia 1500");
+        let tal = Rival::Rodent {
+            style_id: "iv_tal".into(),
+        };
+        assert_eq!(rival_label(tal, 1800), "Rodent IV 1800");
+        let styles = rodent_styles();
+        assert_eq!(styles.len(), 35);
+        assert_eq!(styles.iter().filter(|s| s.player).count(), 22);
+        assert_eq!(rodent_range(), vec![800, 2800]);
+        let pack = rodent_book_pack();
+        assert!(
+            pack.iter()
+                .all(|b| b.url.starts_with("https://raw.githubusercontent.com/")
+                    && b.local.starts_with("books/")
+                    && b.sha256.len() == 64)
+        );
+    }
+
+    /// Needs Rodent IV beside its files: `RODENT4=/path/rodent_iv cargo test -p mobile-api -- --ignored`.
+    #[test]
+    #[ignore = "needs Rodent IV (RODENT4)"]
+    fn rodent_answers_with_a_legal_move() {
+        let exe = std::env::var("RODENT4").expect("RODENT4");
+        let home = std::path::Path::new(&exe)
+            .parent()
+            .unwrap()
+            .display()
+            .to_string();
+        let r = RodentPlayer::start(exe, home, "iv_karpov".into(), 1600, false);
+        let s = GameSession::from_pgn("1. e4 *".into()).unwrap();
+        let e4 = s.data().nodes.iter().find(|n| n.san == "e4").unwrap().id;
+        let uci = r.choose(s.clone(), e4, 300).expect("a move");
+        assert!(s.legal_moves(e4).contains(&uci), "{uci}");
+        assert_eq!(r.failure(), None);
     }
 }

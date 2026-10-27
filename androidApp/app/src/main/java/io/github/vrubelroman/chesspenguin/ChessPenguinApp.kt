@@ -12,6 +12,7 @@ import io.github.vrubelroman.chesspenguin.data.EngineFiles
 import io.github.vrubelroman.chesspenguin.data.MaiaFiles
 import io.github.vrubelroman.chesspenguin.data.MaiaGames
 import io.github.vrubelroman.chesspenguin.data.PlayerGames
+import io.github.vrubelroman.chesspenguin.data.RodentFiles
 import io.github.vrubelroman.chesspenguin.data.Sounds
 import io.github.vrubelroman.chesspenguin.data.Library
 import io.github.vrubelroman.chesspenguin.data.OnlineDownloads
@@ -36,7 +37,9 @@ class ChessPenguinApp : Application() {
     val engineFiles by lazy { EngineFiles(this, scope) }
     /// Maia's weights, downloaded on request (android-play.md §31).
     val maiaFiles by lazy { MaiaFiles(this, scope) }
-    /// The game against Maia in hand (android-play.md §31.7).
+    /// Rodent IV's home and its book pack (android-rodent.md).
+    val rodentFiles by lazy { RodentFiles(this, scope) }
+    /// The game against the computer in hand (android-play.md §31.7).
     val maiaGames by lazy { MaiaGames(this) }
     /// The players' databases: games against Maia written by themselves (player-games.md).
     val playerGames by lazy { PlayerGames(this, library) }

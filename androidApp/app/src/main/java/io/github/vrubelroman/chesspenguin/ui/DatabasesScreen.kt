@@ -203,10 +203,10 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     }
     val eventText = stringResource(R.string.play_event)
     if (playing) {
-        PlaySheet(null, onPlay = { strength, white, name ->
+        PlaySheet(null, onPlay = { choice ->
             playing = false
             val s = uniffi.mobile_api.GameSession.newGame("")
-            beginMaiaGame(theApp, s, strength, white, name, 0, eventText, null)
+            beginComputerGame(theApp, s, choice.meta(0), eventText, null)
             s.close()
             onPlay()
         }, onDismiss = { playing = false })
@@ -273,15 +273,18 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
             ) {
                 // A newer version of the app (android-ui.md §25.2): the first item of the list.
                 update?.let { u -> item(key = "update") { UpdateCard(u, onDismissed = onUpdateDismissed, modifier = Modifier.animateItem()) } }
-                // A game against Maia put aside (§31.7): go on with it, or let it go.
+                // A game against the computer put aside (§31.7): go on with it, or let it go.
                 adjourned?.takeIf { !it.over }?.let { m ->
                     item(key = "adjourned") {
                         // The game's position on a small board, the side and the move, and
                         // «Continue» as the screen's main action while it waits (android-lists.md §5.4).
                         val shownAt = remember(m) { adjournedPosition(theApp.maiaGames.pgn()) }
                         val sideText = stringResource(if (m.userWhite) R.string.play_as_white else R.string.play_as_black)
-                        val sub = shownAt?.second?.let { sideText + " · " + stringResource(R.string.play_move_n, it) } ?: sideText
-                        val title = stringResource(R.string.play_adjourned_title, m.strength.toString())
+                        // «you play Black · move 2», Rodent's character first, as the game's header
+                        // says it (android-rodent.md §6.5): «Tal · you play Black · move 2».
+                        val played = shownAt?.second?.let { stringResource(R.string.play_adjourned_sub, sideText, stringResource(R.string.play_move_n, it)) } ?: sideText
+                        val sub = listOfNotNull(m.styleShown(), played).joinToString(" · ")
+                        val title = stringResource(R.string.play_adjourned_title, m.label())
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
                                 .clip(RoundedCornerShape(16.dp))
@@ -336,10 +339,17 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
                         contentColor = MaterialTheme.colorScheme.onSurface,
                     )
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        FilledTonalButton(onClick = { if (adjourned?.over == false) askingAdjourned = true else playing = true }, modifier = Modifier.weight(1f).heightIn(min = 56.dp), shape = RoundedCornerShape(16.dp), colors = quiet) {
+                        // «Play»: the opponent is chosen on the sheet (android-rodent.md, question 6).
+                        val playLabel = stringResource(R.string.play_button_cd)
+                        FilledTonalButton(
+                            onClick = { if (adjourned?.over == false) askingAdjourned = true else playing = true },
+                            modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics { contentDescription = playLabel },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = quiet,
+                        ) {
                             Icon(Icons.Rounded.SmartToy, null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.size(8.dp))
-                            Text(stringResource(R.string.play_with_maia))
+                            Text(stringResource(R.string.play_button))
                         }
                         FilledTonalButton(onClick = onNewGame, modifier = Modifier.weight(1f).heightIn(min = 56.dp), shape = RoundedCornerShape(16.dp), colors = quiet) {
                             Icon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.primary)

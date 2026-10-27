@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use crate::engine_download::{Asset, Download, Failure, Stage, disk, fetch};
-use crate::rodent4_files::{COMMIT, FILES};
+use ::play::rodent::{BOOK_NAMES, FILES, file_url};
 
 /// The release of our builds.
 const TAG: &str = "rodent-iv-0.33";
@@ -97,23 +97,6 @@ pub fn start(ctx: &egui::Context) -> Download {
     Download::spawn(ctx, total(), run)
 }
 
-/// Books three personalities name by a path not in the authors' files (a case or a dash
-/// off): a copy goes under that name, so that they open their book (the engine takes
-/// books only from the personality's file). (file in the repository, name it is read by)
-const BOOK_NAMES: &[(&str, &str)] = &[
-    ("books/guide/Strangler.bin", "books/guide/strangler.bin"),
-    (
-        "books/players/ph-spassky2.bin",
-        "books/players/ph_spassky2.bin",
-    ),
-    ("books/guide.bin", "books/guide/guide.bin"),
-];
-
-/// A path of the repository as it goes into a URL («#readme.txt» has a «#»).
-fn url_path(path: &str) -> String {
-    path.replace('#', "%23").replace(' ', "%20")
-}
-
 fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> {
     let bin = binary().ok_or(Failure::Unsupported)?;
     let dir = dir().ok_or_else(|| Failure::Disk("no data directory".into()))?;
@@ -154,11 +137,7 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
                 size,
                 zip: false,
             };
-            let url = format!(
-                "https://raw.githubusercontent.com/nescitus/rodent-iv/{COMMIT}/{}",
-                url_path(path)
-            );
-            fetch(&url, &dest, &asset, &step(base), cancel)?;
+            fetch(&file_url(path), &dest, &asset, &step(base), cancel)?;
             base += size;
         }
         report(Stage::Unpacking);
@@ -177,23 +156,4 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
         let _ = std::fs::remove_dir_all(&dir);
     }
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_file_is_where_the_engine_looks_for_it() {
-        assert_eq!(COMMIT.len(), 40);
-        assert!(FILES.iter().any(|f| f.0 == "personalities/basic.ini"));
-        assert!(FILES.iter().any(|f| f.0 == "personalities/tal.txt"));
-        assert!(FILES.iter().any(|f| f.0 == "books/rodent.bin"));
-        assert!(FILES.iter().all(|f| f.2.len() == 64 && !f.0.contains("..")));
-        assert_eq!(url_path("books/#readme.txt"), "books/%23readme.txt");
-        // The books copied under the names the personalities use are downloaded.
-        for (file, _) in BOOK_NAMES {
-            assert!(FILES.iter().any(|f| f.0 == *file), "{file}");
-        }
-    }
 }

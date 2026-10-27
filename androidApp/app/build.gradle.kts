@@ -68,6 +68,17 @@ val stockfish = tasks.register<Exec>("stockfish") {
     outputs.dir(stockfishOut)
 }
 
+/// Rodent IV for Android (scripts/rodent4.sh, docs/design/android-rodent.md): the executable
+/// and its personalities in both builds; its opening books are downloaded on request.
+val rodent4Out = layout.buildDirectory.dir("rodent4")
+val rodent4 = tasks.register<Exec>("rodent4") {
+    environment("ANDROID_NDK_HOME", ndkHome)
+    commandLine(File(rootDir, "scripts/rodent4.sh").path, rodent4Out.get().asFile.path)
+    inputs.file(File(rootDir, "scripts/rodent4.sh"))
+    inputs.dir(File(repo, "packaging/rodent-iv"))
+    outputs.dir(rodent4Out)
+}
+
 /// The sample games, the piece sets, the board images and sounds of the desktop app, as
 /// app assets.
 val bundleAssets = tasks.register<Copy>("bundleAssets") {
@@ -95,7 +106,14 @@ val bundleAssets = tasks.register<Copy>("bundleAssets") {
     from(stockfishOut.map { it.dir("source") }) {
         into("licenses/stockfish")
     }
-    dependsOn(stockfish)
+    // Rodent IV's personalities, copied into its home folder on the phone (RodentFiles).
+    from(rodent4Out.map { it.dir("home/personalities") }) {
+        into("rodent4/personalities")
+    }
+    from(rodent4Out.map { it.dir("source") }) {
+        into("licenses/rodent-iv")
+    }
+    dependsOn(stockfish, rodent4)
     into(bundled)
 }
 
@@ -183,6 +201,7 @@ android {
         getByName("main") {
             jniLibs.directories.add(rustLibs.get().asFile.path)
             jniLibs.directories.add(stockfishOut.get().dir("jniLibs").asFile.path)
+            jniLibs.directories.add(rodent4Out.get().dir("jniLibs").asFile.path)
             kotlin.directories.add(bindings.get().asFile.path)
             assets.directories.add(bundled.get().asFile.path)
         }
@@ -191,7 +210,8 @@ android {
         }
     }
     packaging {
-        // Unpacked at install: Stockfish runs from nativeLibraryDir as its own process.
+        // Unpacked at install: Stockfish and Rodent IV run from nativeLibraryDir as their
+        // own processes.
         jniLibs {
             useLegacyPackaging = true
         }
@@ -206,7 +226,7 @@ kotlin {
 }
 
 tasks.named("preBuild") {
-    dependsOn(uniffiBindings, bundleAssets, stockfish)
+    dependsOn(uniffiBindings, bundleAssets, stockfish, rodent4)
 }
 
 dependencies {

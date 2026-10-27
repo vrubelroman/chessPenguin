@@ -1,6 +1,6 @@
 [package]
 name = "play"
-description = "A game against Maia in ChessPenguin: how it ends, Maia's pause, her resignation judged by an engine (the desktop and Android apps share it)"
+description = "A game against the computer in ChessPenguin: how it ends, the pause, resignation judged by an engine, Rodent and its files (the desktop and Android apps share it)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

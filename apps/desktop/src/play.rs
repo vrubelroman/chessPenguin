@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::i18n::tr;
 use crate::maia_download::Published;
-pub use ::play::{Ending, HOPELESS_TURNS, Judge, ending, hopeless, pause, random_unit};
+pub use ::play::rodent::{Gen, STYLES, Style, style};
+pub use ::play::{
+    Ending, HOPELESS_TURNS, Judge, MAIA_MAX, MAIA_MIN, ending, hopeless, pause, random_unit,
+};
 use maia::strength::Model;
 
 // ----- time controls --------------------------------------------------------------------
@@ -153,75 +156,46 @@ pub enum Rival {
     Rodent,
 }
 
-/// Rodent's styles: its personality files, the personality's name (for PGN), what the
-/// style is called and does (in the app's language). The players' imitations come last
-/// (`player`).
-pub struct Style {
-    pub id: &'static str,
-    pub name: &'static str,
-    title: &'static str,
-    pub about: &'static str,
-    pub player: bool,
-    /// Which Rodent plays it: V (a personality file of its own) or IV (a personality of
-    /// its list, `personality`; docs/decisions.md «Rodent IV»).
-    pub rodent: Gen,
-    pub personality: &'static str,
+/// Downloading each Rodent (the engines' tables are the shared crate's, `play::rodent`).
+pub trait RodentFiles {
+    fn available(self) -> bool;
+    fn installed(self) -> Option<std::path::PathBuf>;
+    fn size_mb(self) -> u64;
+    fn start(self, ctx: &egui::Context) -> crate::engine_download::Download;
+    /// A file that does not start goes: the dialog offers the download again.
+    fn remove(self);
 }
 
-/// Rodent V or Rodent IV: each downloaded on its own, each on its own scale of strength.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Gen {
-    V,
-    IV,
-}
-
-impl Gen {
-    /// «Rodent V», «Rodent IV»: in the game's record and on the bar.
-    pub fn name(self) -> &'static str {
-        match self {
-            Gen::V => "Rodent V",
-            Gen::IV => "Rodent IV",
-        }
-    }
-
-    /// Its UCI_Elo.
-    pub fn range(self) -> (u32, u32) {
-        match self {
-            Gen::V => (RODENT_MIN, RODENT_MAX),
-            Gen::IV => (RODENT_MIN, RODENT_IV_MAX),
-        }
-    }
-
-    pub fn available(self) -> bool {
+impl RodentFiles for Gen {
+    fn available(self) -> bool {
         match self {
             Gen::V => crate::rodent_download::available(),
             Gen::IV => crate::rodent4_download::available(),
         }
     }
 
-    pub fn installed(self) -> Option<std::path::PathBuf> {
+    fn installed(self) -> Option<std::path::PathBuf> {
         match self {
             Gen::V => crate::rodent_download::installed(),
             Gen::IV => crate::rodent4_download::installed(),
         }
     }
 
-    pub fn size_mb(self) -> u64 {
+    fn size_mb(self) -> u64 {
         match self {
             Gen::V => crate::rodent_download::size_mb(),
             Gen::IV => crate::rodent4_download::size_mb(),
         }
     }
 
-    pub fn start(self, ctx: &egui::Context) -> crate::engine_download::Download {
+    fn start(self, ctx: &egui::Context) -> crate::engine_download::Download {
         match self {
             Gen::V => crate::rodent_download::start(ctx),
             Gen::IV => crate::rodent4_download::start(ctx),
         }
     }
 
-    /// A file that does not start goes: the dialog offers the download again.
-    pub fn remove(self) {
+    fn remove(self) {
         let _ = match self {
             Gen::V => crate::rodent_download::remove(),
             Gen::IV => crate::rodent4_download::remove(),
@@ -229,410 +203,16 @@ impl Gen {
     }
 }
 
-impl Style {
-    /// The style's name to translate («Attacking»).
-    pub fn title(&self) -> &'static str {
-        self.title
-    }
-}
-
-pub const STYLES: &[Style] = &[
-    Style {
-        id: "rodent",
-        name: "Rodent",
-        title: "Balanced",
-        about: "Even, all-round play with no bias.",
-        player: false,
-        rodent: Gen::V,
-        personality: "",
-    },
-    Style {
-        id: "ampere",
-        name: "Ampere",
-        title: "Attacking",
-        about: "Active pieces and attack, sound pawn structure.",
-        player: false,
-        rodent: Gen::V,
-        personality: "",
-    },
-    Style {
-        id: "chaotic",
-        name: "Chaotic",
-        title: "Chaotic",
-        about: "Aggressive, tricky openings, careless with pawns.",
-        player: false,
-        rodent: Gen::V,
-        personality: "",
-    },
-    Style {
-        id: "nimzoid",
-        name: "Nimzoid",
-        title: "Restricting",
-        about: "Closed positions, cramping the opponent, old openings.",
-        player: false,
-        rodent: Gen::V,
-        personality: "",
-    },
-    Style {
-        id: "hector",
-        name: "Hector",
-        title: "Classical",
-        about: "Hand-written evaluation, no neural network.",
-        player: false,
-        rodent: Gen::V,
-        personality: "",
-    },
-    Style {
-        id: "tal_hybrid",
-        name: "Tal",
-        title: "Tal",
-        about: "Attacking style tuned on Tal's games.",
-        player: true,
-        rodent: Gen::V,
-        personality: "",
-    },
-    Style {
-        id: "tal_nnue",
-        name: "Tal NNUE",
-        title: "Tal (network)",
-        about: "A neural network trained on Tal's games.",
-        player: true,
-        rodent: Gen::V,
-        personality: "",
-    },
-    // Rodent IV's characters, then the players it imitates (its personality list).
-    Style {
-        id: "iv_amanda",
-        name: "Amanda",
-        title: "Amanda",
-        about: "Attacks first, then plays for active pieces.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Amanda",
-    },
-    Style {
-        id: "iv_cloe",
-        name: "Cloe",
-        title: "Cloe",
-        about: "Likes closed positions.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Cloe",
-    },
-    Style {
-        id: "iv_deborah",
-        name: "Deborah",
-        title: "Deborah",
-        about: "Defends well and likes her bishops.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Deborah",
-    },
-    Style {
-        id: "iv_defender",
-        name: "Defender",
-        title: "Defender",
-        about: "Solid and careful; content with a draw.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Defender",
-    },
-    Style {
-        id: "iv_dynamic",
-        name: "Dynamic",
-        title: "Dynamic",
-        about: "Attacks, likes bishops, sacrifices now and then.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Dynamic",
-    },
-    Style {
-        id: "iv_grumpy",
-        name: "Grumpy",
-        title: "Grumpy",
-        about: "Attack and restraint; likes blocked positions, avoids draws.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Grumpy",
-    },
-    Style {
-        id: "iv_partisan",
-        name: "Partisan",
-        title: "Partisan",
-        about: "Attacks after quiet, stealthy openings.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Partisan",
-    },
-    Style {
-        id: "iv_pawnsacker",
-        name: "Pawnsacker",
-        title: "Pawnsacker",
-        about: "Balanced, but gives up pawns more readily.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Pawnsacker",
-    },
-    Style {
-        id: "iv_pedrita",
-        name: "Pedrita",
-        title: "Pedrita",
-        about: "Pawns, defence and restraint.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Pedrita",
-    },
-    Style {
-        id: "iv_preston",
-        name: "Preston",
-        title: "Preston",
-        about: "A materialistic, moderate attacker.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Preston",
-    },
-    Style {
-        id: "iv_simple",
-        name: "Simple",
-        title: "Simple",
-        about: "The most computer-like: plain, sound chess.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Simple",
-    },
-    Style {
-        id: "iv_spitfire",
-        name: "Spitfire",
-        title: "Spitfire",
-        about: "Sharp and aggressive.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Spitfire",
-    },
-    Style {
-        id: "iv_strangler",
-        name: "Strangler",
-        title: "Strangler",
-        about: "A boa constrictor: squeezes slowly, very human-like.",
-        player: false,
-        rodent: Gen::IV,
-        personality: "Strangler",
-    },
-    Style {
-        id: "iv_alekhine",
-        name: "Alekhine",
-        title: "Alekhine",
-        about: "Dynamic attacks and deep combinations.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Alekhine",
-    },
-    Style {
-        id: "iv_anand",
-        name: "Anand",
-        title: "Anand",
-        about: "Quick, universal play with sharp openings.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Anand",
-    },
-    Style {
-        id: "iv_anderssen",
-        name: "Anderssen",
-        title: "Anderssen",
-        about: "A romantic attacker of the 19th century: sacrifices.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Anderssen",
-    },
-    Style {
-        id: "iv_bosboom",
-        name: "Bosboom",
-        title: "Bosboom",
-        about: "Offbeat openings and creative blitz play.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Bosboom.txt",
-    },
-    Style {
-        id: "iv_botvinnik",
-        name: "Botvinnik",
-        title: "Botvinnik",
-        about: "Scientific, strategic play from deep preparation.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Botvinnik",
-    },
-    Style {
-        id: "iv_fischer",
-        name: "Fischer",
-        title: "Fischer",
-        about: "Clear, classical and precise.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Fischer",
-    },
-    Style {
-        id: "iv_karpov",
-        name: "Karpov",
-        title: "Karpov",
-        about: "Positional squeeze, prophylaxis and technique.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Karpov",
-    },
-    Style {
-        id: "iv_kasparov",
-        name: "Kasparov",
-        title: "Kasparov",
-        about: "Initiative and powerful attack.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Kasparov",
-    },
-    Style {
-        id: "iv_kortchnoi",
-        name: "Kortchnoi",
-        title: "Kortchnoi",
-        about: "A tenacious defender and counter-attacker.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Kortchnoi",
-    },
-    Style {
-        id: "iv_larsen",
-        name: "Larsen",
-        title: "Larsen",
-        about: "Original and risky, with offbeat openings.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Larsen",
-    },
-    Style {
-        id: "iv_lasker",
-        name: "Lasker",
-        title: "Lasker",
-        about: "A practical, psychological fighter.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Lasker",
-    },
-    Style {
-        id: "iv_marshall",
-        name: "Marshall",
-        title: "Marshall",
-        about: "A swashbuckling attacker with gambits.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Marshall",
-    },
-    Style {
-        id: "iv_morphy",
-        name: "Morphy",
-        title: "Morphy",
-        about: "Quick development and open lines.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Morphy",
-    },
-    Style {
-        id: "iv_nimzowitsch",
-        name: "Nimzowitsch",
-        title: "Nimzowitsch",
-        about: "Restraint, blockade and overprotection.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Nimzowitsch",
-    },
-    Style {
-        id: "iv_petrosian",
-        name: "Petrosian",
-        title: "Petrosian",
-        about: "Prophylaxis and safety first.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Petrosian",
-    },
-    Style {
-        id: "iv_reti",
-        name: "Reti",
-        title: "Reti",
-        about: "Hypermodern: controls the centre from afar.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Reti",
-    },
-    Style {
-        id: "iv_rubinstein",
-        name: "Rubinstein",
-        title: "Rubinstein",
-        about: "Classical positional play, great in endgames.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Rubinstein",
-    },
-    Style {
-        id: "iv_spassky",
-        name: "Spassky",
-        title: "Spassky",
-        about: "A universal player, at home in any position.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Spassky",
-    },
-    Style {
-        id: "iv_steinitz",
-        name: "Steinitz",
-        title: "Steinitz",
-        about: "The founder of positional play, a stubborn defender.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Steinitz",
-    },
-    Style {
-        id: "iv_tal",
-        name: "Tal",
-        title: "Tal (classic)",
-        about: "The magician from Riga: sacrifices and attack.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Tal",
-    },
-    Style {
-        id: "iv_tarrasch",
-        name: "Tarrasch",
-        title: "Tarrasch",
-        about: "Classical rules: space, development, active pieces.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Tarrasch",
-    },
-    Style {
-        id: "iv_topalov",
-        name: "Topalov",
-        title: "Topalov",
-        about: "Aggressive and dynamic, sacrifices the exchange.",
-        player: true,
-        rodent: Gen::IV,
-        personality: "Topalov",
-    },
-];
-
 /// «Attacking — Ampere»; «Balanced», «Tal»: no name twice.
 fn style_label(st: &Style) -> String {
     let title = tr(st.title());
     // The default one is Rodent himself, the players' are named by their title, and so
     // are Rodent IV's characters (their titles are their names, translated).
-    if st.player || st.id == "rodent" || st.title == st.name {
+    if st.player || st.id == "rodent" || st.title() == st.name {
         title.to_owned()
     } else {
         format!("{title} — {}", st.name)
     }
-}
-
-/// The style of this id (the default one for an unknown id).
-pub fn style(id: &str) -> &'static Style {
-    STYLES.iter().find(|s| s.id == id).unwrap_or(&STYLES[0])
 }
 
 impl Default for PlayPrefs {
@@ -654,16 +234,7 @@ impl Default for PlayPrefs {
 
 // Each engine on its own scale, as its authors give it (the owner's decision, after the
 // measurements of docs/research/maia-strength.md and rodent.md): these are not a
-// person's Elo, and the dialog says so.
-
-/// Maia's ratings: what her network was trained on.
-pub const MAIA_MIN: u32 = 600;
-pub const MAIA_MAX: u32 = 2600;
-/// Rodent's UCI_Elo.
-pub const RODENT_MIN: u32 = 800;
-pub const RODENT_MAX: u32 = 3000;
-/// Rodent IV's UCI_Elo goes to 2800 (and plays at full strength there).
-pub const RODENT_IV_MAX: u32 = 2800;
+// person's Elo, and the dialog says so. The scales are the shared crate's (`play`).
 
 /// The strengths `rival` plays (Rodent's by the engine of the style chosen).
 pub fn range(rival: Rival, style_id: &str) -> (u32, u32) {
@@ -874,9 +445,9 @@ pub fn clk_of(comment: &str) -> Option<Duration> {
     Some(Duration::from_secs(secs))
 }
 
-// ----- Maia's moves -------------------------------------------------------------------
+// ----- the opponent's moves -------------------------------------------------------------
 
-/// A request for a move: the positions up to now, the ratings, the pause.
+/// A request for Maia's move: the positions up to now, the ratings, the pause.
 struct Request {
     generation: u64,
     positions: Vec<Chess>,
@@ -884,18 +455,26 @@ struct Request {
     oppo_elo: u32,
     temperature: f32,
     pause: Duration,
-    /// The game for a UCI engine (Rodent): its start and moves.
-    engine_pos: Option<uci::EnginePosition>,
 }
 
-/// The engine in a thread of its own: loads Maia once, answers requests after a pause.
-/// An answer for an older generation (after a take-back, a resignation) is dropped.
+/// What computes the opponent's moves.
+enum Worker {
+    /// Maia in a thread of her own; her error, if loading failed.
+    Maia {
+        tx: Sender<Request>,
+        rx: Receiver<(u64, Option<Move>, Duration)>,
+        generation: u64,
+        error: Arc<Mutex<Option<String>>>,
+    },
+    /// Rodent, a UCI engine (the shared crate's player).
+    Rodent(::play::rodent::RodentPlayer),
+}
+
+/// The engine in a thread of its own: loads Maia once (or starts Rodent), answers
+/// requests after a pause. An answer for an older request (after a take-back, a
+/// resignation) is dropped.
 pub struct Opponent {
-    tx: Sender<Request>,
-    rx: Receiver<(u64, Option<Move>, Duration)>,
-    generation: u64,
-    /// Loading failed: why (shown to the user).
-    pub error: Arc<Mutex<Option<String>>>,
+    worker: Worker,
     pub thinking: bool,
 }
 
@@ -939,10 +518,12 @@ impl Opponent {
                 }
             });
         Opponent {
-            tx,
-            rx,
-            generation: 0,
-            error,
+            worker: Worker::Maia {
+                tx,
+                rx,
+                generation: 0,
+                error,
+            },
             thinking: false,
         }
     }
@@ -957,134 +538,59 @@ impl Opponent {
         oppo_elo: u32,
         pause: Duration,
     ) {
-        self.generation += 1;
         self.thinking = true;
-        let _ = self.tx.send(Request {
-            generation: self.generation,
-            positions,
-            self_elo,
-            oppo_elo,
-            temperature,
-            pause,
-            engine_pos,
-        });
+        match &mut self.worker {
+            Worker::Maia { tx, generation, .. } => {
+                *generation += 1;
+                let _ = tx.send(Request {
+                    generation: *generation,
+                    positions,
+                    self_elo,
+                    oppo_elo,
+                    temperature,
+                    pause,
+                });
+            }
+            Worker::Rodent(player) => {
+                if let (Some(pos), Some(now)) = (engine_pos, positions.last().cloned()) {
+                    player.ask(pos, now, pause);
+                }
+            }
+        }
     }
 
-    /// Rodent V (`exe` in its folder) playing in `style` at `uci_elo` (none: full
-    /// strength), with its opening book. It thinks during the pause (a game's own clock
-    /// is not its business: Maia's pause rule paces it), and answers after it.
+    /// Rodent (`exe` in its folder) playing in `style` at `uci_elo` (none: full
+    /// strength), with its opening book.
     pub fn start_rodent(
         exe: std::path::PathBuf,
         style: String,
         uci_elo: Option<u32>,
         ctx: &egui::Context,
     ) -> Opponent {
-        let (tx, req_rx) = channel::<Request>();
-        let (ans_tx, rx) = channel();
-        let error = Arc::new(Mutex::new(None));
-        let err = error.clone();
+        let config = uci::EngineConfig {
+            working_dir: exe.parent().map(|d| d.to_path_buf()),
+            ..uci::EngineConfig::new(&exe)
+        };
         let ctx = ctx.clone();
-        let _ = std::thread::Builder::new()
-            .name("rodent".into())
-            .spawn(move || {
-                let fail = |e: String| {
-                    if let Ok(mut g) = err.lock() {
-                        *g = Some(e);
-                    }
-                    ctx.request_repaint();
-                };
-                let config = uci::EngineConfig {
-                    working_dir: exe.parent().map(|d| d.to_path_buf()),
-                    ..uci::EngineConfig::new(&exe)
-                };
-                let engine = match uci::Engine::spawn_with(config, Box::new(|| {})) {
-                    Ok(e) => e,
-                    Err(e) => return fail(start_failure(&e.to_string())),
-                };
-                // V reads a personality file; IV picks one of its list (with its books).
-                let st = self::style(&style);
-                let mut setup = match st.rodent {
-                    Gen::V => vec![
-                        ("PersonalityFile", format!("personalities/{style}.txt")),
-                        ("OwnBook", "true".to_owned()),
-                    ],
-                    Gen::IV => vec![
-                        ("Personality", st.personality.to_owned()),
-                        ("UseBook", "true".to_owned()),
-                    ],
-                };
-                if let Some(elo) = uci_elo {
-                    setup.push(("UCI_LimitStrength", "true".to_owned()));
-                    setup.push(("UCI_Elo", elo.to_string()));
-                }
-                let ready = engine.set_threads(1).and_then(|()| engine.set_hash_mb(64));
-                if let Err(e) = ready {
-                    return fail(start_failure(&e.to_string()));
-                }
-                for (name, value) in &setup {
-                    if let Err(e) = engine.set_option(name, Some(value)) {
-                        return fail(start_failure(&e.to_string()));
-                    }
-                }
-                let _ = engine.new_game();
-                while let Ok(mut r) = req_rx.recv() {
-                    while let Ok(newer) = req_rx.try_recv() {
-                        r = newer;
-                    }
-                    let (Some(pos), Some(now)) =
-                        (r.engine_pos.clone(), r.positions.last().cloned())
-                    else {
-                        continue;
-                    };
-                    let started = Instant::now();
-                    let id = uci::SearchId(r.generation);
-                    // Its own limit (from UCI_Elo) ends the search early; at full strength
-                    // it thinks for the pause.
-                    let think = r.pause.max(Duration::from_millis(300));
-                    if let Err(e) = engine.search(pos, id, uci::SearchLimits::MoveTime(think)) {
-                        return fail(e.to_string());
-                    }
-                    let best = loop {
-                        match engine.recv_timeout(Duration::from_millis(200)) {
-                            Some(uci::EngineEvent::BestMove {
-                                search_id, best: b, ..
-                            }) if search_id == id => {
-                                break b;
-                            }
-                            Some(uci::EngineEvent::Terminated(_)) => {
-                                return fail(tr("it stopped while playing").to_owned());
-                            }
-                            _ if started.elapsed() > think + Duration::from_secs(20) => {
-                                let _ = engine.stop();
-                            }
-                            _ => {}
-                        }
-                    };
-                    let m = best
-                        .and_then(|b| b.parse::<shakmaty::uci::UciMove>().ok())
-                        .and_then(|u| u.to_move(&now).ok());
-                    std::thread::sleep(r.pause.saturating_sub(started.elapsed()));
-                    let spent = r.pause.max(started.elapsed());
-                    if ans_tx.send((r.generation, m, spent)).is_err() {
-                        engine.quit();
-                        return;
-                    }
-                    ctx.request_repaint();
-                }
-                engine.quit();
-            });
+        let player = ::play::rodent::RodentPlayer::start(
+            config,
+            &style,
+            uci_elo,
+            true,
+            Box::new(move || ctx.request_repaint()),
+        );
         Opponent {
-            tx,
-            rx,
-            generation: 0,
-            error,
+            worker: Worker::Rodent(player),
             thinking: false,
         }
     }
 
     /// Forgets what was asked (its answer will be dropped).
     pub fn forget(&mut self) {
-        self.generation += 1;
+        match &mut self.worker {
+            Worker::Maia { generation, .. } => *generation += 1,
+            Worker::Rodent(player) => player.forget(),
+        }
         self.thinking = false;
     }
 
@@ -1092,17 +598,35 @@ impl Opponent {
     /// the computing when longer).
     pub fn answer(&mut self) -> Option<(Move, Duration)> {
         let mut out = None;
-        while let Ok((g, m, pause)) = self.rx.try_recv() {
-            if g == self.generation {
-                self.thinking = false;
-                out = m.map(|m| (m, pause));
+        match &mut self.worker {
+            Worker::Maia { rx, generation, .. } => {
+                while let Ok((g, m, pause)) = rx.try_recv() {
+                    if g == *generation {
+                        self.thinking = false;
+                        out = m.map(|m| (m, pause));
+                    }
+                }
+            }
+            Worker::Rodent(player) => {
+                if let Some((m, pause)) = player.answer() {
+                    self.thinking = false;
+                    out = m.map(|m| (m, pause));
+                }
             }
         }
         out
     }
 
     pub fn failed(&self) -> Option<String> {
-        self.error.lock().ok().and_then(|g| g.clone())
+        use ::play::rodent::Failure;
+        match &self.worker {
+            Worker::Maia { error, .. } => error.lock().ok().and_then(|g| g.clone()),
+            Worker::Rodent(player) => player.failure().map(|f| match f {
+                Failure::Start(e) => start_failure(&e),
+                Failure::Stopped => tr("it stopped while playing").to_owned(),
+                Failure::Search(e) => e,
+            }),
+        }
     }
 }
 
@@ -1468,11 +992,9 @@ pub fn debug_rival() -> (Rival, String) {
 /// «Maia 1500», «Rodent V 2400», «Rodent V 2400 (Tal)», «Rodent IV 2000 (Petrosian)»
 /// (the default style unnamed).
 pub fn rival_name(rival: Rival, strength: u32, style_id: &str) -> String {
-    let st = style(style_id);
     match rival {
         Rival::Maia => format!("Maia {strength}"),
-        Rival::Rodent if style_id == STYLES[0].id => format!("{} {strength}", st.rodent.name()),
-        Rival::Rodent => format!("{} {strength} ({})", st.rodent.name(), st.name),
+        Rival::Rodent => ::play::rodent::name(strength, style_id),
     }
 }
 

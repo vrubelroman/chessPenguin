@@ -26,7 +26,9 @@ pub use online::{
     OnlineProblem, OnlineTarget, Site,
 };
 pub use play::{
-    GameEnding, MaiaPlayer, ResignJudge, hopeless_turns, maia_game_tags, maia_pause_ms, maia_range,
+    GameEnding, MaiaPlayer, ResignJudge, Rival, RodentBook, RodentFailure, RodentPlayer,
+    RodentStyle, computer_game_tags, hopeless_turns, maia_range, move_pause_ms, rival_label,
+    rival_name, rodent_book_pack, rodent_range, rodent_styles, rodent_version,
 };
 pub use review::{GameReview, MoveJudgement, ReviewMove, ReviewPoint, ReviewState, SideReview};
 pub use session::{Edited, GameSession, own_create, own_remove, own_save};

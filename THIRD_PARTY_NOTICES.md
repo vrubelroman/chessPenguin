@@ -108,15 +108,25 @@ personality), by `.github/workflows/rodent-iv.yml`, and published as the release
 `rodent-iv-0.33` of this repository. On the user's request the program downloads
 that build (SHA-256 pinned in `apps/desktop/src/rodent4_download.rs`) and the engine's
 personalities and opening books from the authors' repository at the same commit (each file's
-SHA-256 pinned in `apps/desktop/src/rodent4_files.rs`) into the user's data directory. It runs
+SHA-256 pinned in `crates/play/src/rodent4_files.rs`) into the user's data directory. It runs
 as a separate program through UCI.
+
+On Android the engine is built from the same commit with the same fix and two more,
+`packaging/rodent-iv/think-thread.patch` (the search thread read its position from a dead
+stack frame; clang builds searched garbage) and `packaging/rodent-iv/android.patch` (bionic has
+no `wordexp`), by `androidApp/scripts/rodent4.sh`; the executable and the personalities are in
+the APK (both builds), with the license, the authors' README and the credits of the books
+(`licenses/rodent-iv` among the APK's assets). The opening books the characters use are
+downloaded on the user's request from the authors' repository at the same commit, each file
+checked against its SHA-256.
 
 - License: GNU General Public License version 3 (https://github.com/nescitus/rodent-iv/blob/master/LICENSE);
   source: the commit above.
 - The opening books come as the authors publish them, with their own credits (`#readme.txt`
   in each folder of `books/`).
 - Three personalities (Strangler, Spassky, Deborah) name their book by a path not in the
-  authors' files; the program puts a copy of the book under that name.
+  authors' files; the program puts a copy of the book under that name (on Android the book is
+  saved under that name).
 
 ## Stockfish (engine)
 

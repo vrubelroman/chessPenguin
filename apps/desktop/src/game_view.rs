@@ -2601,7 +2601,7 @@ impl GameView {
                     "Maia did not start: {e}"
                 }
                 crate::play::Engine::Rodent(g) => {
-                    g.remove();
+                    crate::play::RodentFiles::remove(g);
                     "Rodent did not start: {e}"
                 }
             };

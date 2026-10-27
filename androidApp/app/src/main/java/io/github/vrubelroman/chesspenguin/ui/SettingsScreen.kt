@@ -5,6 +5,9 @@ import androidx.compose.material.icons.rounded.SdCard
 import androidx.compose.material.icons.rounded.DeveloperBoard
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Palette
@@ -63,11 +66,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import java.util.Locale
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.vrubelroman.chesspenguin.BuildConfig
 import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.LANGUAGES
 import io.github.vrubelroman.chesspenguin.data.Language
+import io.github.vrubelroman.chesspenguin.data.NetProblem
 import io.github.vrubelroman.chesspenguin.data.NetState
 import io.github.vrubelroman.chesspenguin.data.Notation
 import io.github.vrubelroman.chesspenguin.data.Theme
@@ -178,6 +184,8 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
                 // The same sheet as in a game: the size, mobile data, cancel (§9).
                 else -> Item(stringResource(R.string.engine_missing, size), null, icon = Icons.Rounded.Memory) { sheet = true }
             }
+            // Rodent IV's opening books (android-rodent.md §7.2): the engine itself is in the app.
+            RodentBooks(snackbar)
             Item(stringResource(R.string.lines), "${prefs.engineLines}", icon = Icons.AutoMirrored.Rounded.FormatListBulleted) {
                 choice = Choice(R.string.lines, listOf("1", "2", "3"), prefs.engineLines - 1) { i -> set { it.copy(engineLines = i + 1) } }
             }
@@ -264,6 +272,84 @@ fun SettingsScreen(onBack: () -> Unit, onAbout: () -> Unit, onBoardStyle: () -> 
             },
             dismissButton = { TextButton(onClick = { deleting = false }) { Text(stringResource(R.string.cancel)) } },
         )
+    }
+}
+
+/// «Rodent IV — opening books»: downloaded or not, with what is left to download;
+/// download, or delete (not while a game against Rodent goes on); the progress and ✕
+/// while downloading; why it failed, and «Try again».
+@Composable
+private fun RodentBooks(snackbar: androidx.compose.material3.SnackbarHostState) {
+    val app = app()
+    val books = app.rodentFiles.books
+    val state by books.state.collectAsState()
+    val game by app.maiaGames.current.collectAsState()
+    val playing = game?.let { !it.over && it.rival == io.github.vrubelroman.chesspenguin.data.Opponent.Rodent } == true
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val deletedText = stringResource(R.string.books_deleted)
+    val deleteText = stringResource(R.string.books_delete_cd)
+    fun mb(bytes: Long) = ((bytes + 999_999) / 1_000_000).toInt()
+    // The books checked so far stay: what is left is offered.
+    val left = remember(state) { books.remaining() }
+    Row(
+        Modifier.card().heightIn(min = 56.dp).padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ItemIcon(Icons.AutoMirrored.Rounded.MenuBook)
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.books_settings), style = MaterialTheme.typography.bodyLarge)
+            when (val s = state) {
+                is NetState.Loading -> {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { s.done.toFloat() / s.total.coerceAtLeast(1) },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    )
+                    Text(
+                        stringResource(R.string.downloaded_of, mb(s.done), mb(s.total)),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                is NetState.Failed -> Text(
+                    when (s.problem) {
+                        NetProblem.NoInternet -> stringResource(R.string.no_internet)
+                        NetProblem.Interrupted -> stringResource(R.string.interrupted)
+                        NetProblem.NoSpace -> stringResource(R.string.no_space, mb(left))
+                        NetProblem.Corrupt -> stringResource(R.string.corrupt)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                NetState.Ready -> Text(
+                    stringResource(R.string.books_downloaded_mb, mb(books.size)),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                NetState.Missing -> Text(
+                    stringResource(R.string.books_missing_mb, mb(left)),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        when (state) {
+            is NetState.Loading -> IconButton(onClick = { books.cancel() }) {
+                Icon(Icons.Rounded.Close, stringResource(R.string.cancel_download))
+            }
+            NetState.Ready -> TextButton(
+                enabled = !playing,
+                modifier = Modifier.semantics { contentDescription = deleteText },
+                onClick = {
+                    books.delete()
+                    scope.launch {
+                        snackbar.currentSnackbarData?.dismiss()
+                        snackbar.showSnackbar(deletedText)
+                    }
+                },
+            ) { Text(stringResource(R.string.delete)) }
+            is NetState.Failed -> TextButton(onClick = { books.download() }) { Text(stringResource(R.string.play_retry)) }
+            NetState.Missing -> TextButton(onClick = { books.download() }) { Text(stringResource(R.string.download)) }
+        }
     }
 }
 

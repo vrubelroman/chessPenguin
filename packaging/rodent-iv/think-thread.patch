@@ -1,0 +1,18 @@
+The search thread's lambda took the parameter p by reference, and StartThinkThread
+returns at once: the thread then read p from a dead stack frame. GCC builds happened
+to work; clang builds (the NDK's, AddressSanitizer: stack-use-after-return) searched
+garbage and answered illegal moves (bestmove a1b1 from the start). Take p by value.
+
+diff --git a/sources/src/rodent.h b/sources/src/rodent.h
+index 30ccf22..3e100a0 100755
+--- a/sources/src/rodent.h
++++ b/sources/src/rodent.h
+@@ -981,7 +981,7 @@ class cEngine {
+     std::thread mWorker;
+     void StartThinkThread(POS *p) {
+         mDpCompleted = 0;
+-        mWorker = std::thread([&] { Think(p); });
++        mWorker = std::thread([this, p] { Think(p); });
+     }
+ 
+     ~cEngine() { WaitThinkThread(); };  // should fix crash on windows on console closing

@@ -1,0 +1,41 @@
+Android (NDK, bionic): no wordexp.h. The authors' sources leave out the wordexp code only
+when ANDROID is defined, which also selects their /sdcard/Rodent4 home folder; NDK clang
+defines __ANDROID__, so leave it out for that too and keep the RODENT4HOME home folder.
+Only the RODENT4BOOKS/RODENT4PERSONALITIES overrides go (ChDirEnv is false), as in the
+authors' Android build.
+
+diff --git a/sources/src/rodent.h b/sources/src/rodent.h
+index 30ccf22..8580d86 100755
+--- a/sources/src/rodent.h
++++ b/sources/src/rodent.h
+@@ -1078,7 +1078,7 @@ extern const int ph_value[7];
+     #endif
+     void PrintOverrides();
+     // change dir and return true on success
+-    #ifndef ANDROID
++    #if !defined(ANDROID) && !defined(__ANDROID__)
+         bool ChDirEnv(const char *env_name);
+     #else
+         #define ChDirEnv(dummy) false
+diff --git a/sources/src/util.cpp b/sources/src/util.cpp
+index b0a028b..e32be00 100644
+--- a/sources/src/util.cpp
++++ b/sources/src/util.cpp
+@@ -28,7 +28,7 @@ If not, see <http://www.gnu.org/licenses/>.
+ #else
+     #include <unistd.h>
+     #include <sys/time.h>
+-    #ifndef ANDROID
++    #if !defined(ANDROID) && !defined(__ANDROID__) // bionic has no wordexp
+         #include <wordexp.h>
+     #endif
+ #endif
+@@ -330,7 +330,7 @@ void PrintOverrides() {
+     if (char *ptr = getenv("RODENT4PERSONALITIES"))
+         printfUciOut("info string override for personalities path: '%s'\n", ptr);
+ }
+-#ifndef ANDROID
++#if !defined(ANDROID) && !defined(__ANDROID__)
+ bool ChDirEnv(const char *env_name) {
+     char *env_path;
+     env_path = getenv(env_name);

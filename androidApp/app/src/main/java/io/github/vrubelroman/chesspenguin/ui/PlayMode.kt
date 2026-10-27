@@ -40,38 +40,72 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.vrubelroman.chesspenguin.R
+import io.github.vrubelroman.chesspenguin.data.Opponent
 import io.github.vrubelroman.chesspenguin.data.PlayMeta
 import uniffi.mobile_api.GameData
 import uniffi.mobile_api.GameEnding
 import uniffi.mobile_api.MaiaPlayer
 import uniffi.mobile_api.ResignJudge
+import uniffi.mobile_api.Rival
+import uniffi.mobile_api.RodentPlayer
 
-/// The key of the game against Maia in hand (a game screen without a database).
+/// The key of the game against the computer in hand (a game screen without a database).
 const val PLAY_GAME = "play"
 
-/// How a game against Maia ended: the result and what the strip says.
+/// How a game against the computer ended: the result and what the strip says.
 data class PlayOver(val result: String, val heading: Int, val detail: Int?)
 
-/// A game against Maia being played (android-play.md §31), kept while the phone turns.
+/// The opponent of a game for the core.
+fun PlayMeta.rivalOf(): Rival = when (rival) {
+    Opponent.Maia -> Rival.Maia
+    Opponent.Rodent -> Rival.Rodent(style)
+}
+
+/// «Maia 1500», «Rodent IV 1800» (android-rodent.md §6.1): the title, the card, the question.
+fun PlayMeta.label(): String = uniffi.mobile_api.rivalLabel(rivalOf(), strength.toUInt())
+
+/// A character's name in the app's language (the English one, should the app not know it).
+@Composable
+fun styleTitle(id: String): String =
+    RODENT_TEXTS[id]?.let { stringResource(it.first) }
+        ?: uniffi.mobile_api.rodentStyles().firstOrNull { it.id == id }?.title ?: id
+
+/// Rodent's character after its name (none for Maia): «Таль».
+@Composable
+fun PlayMeta.styleShown(): String? = if (rival == Opponent.Rodent) styleTitle(style) else null
+
+/// A text of either opponent: Maia's, or Rodent's (their own sentences: in Russian and
+/// other languages the words agree with her or him, rodent-opponent.md §7).
+fun PlayMeta.said(maia: Int, rodent: Int): Int = if (rival == Opponent.Rodent) rodent else maia
+
+/// Why the opponent does not play: it did not start (`detail`: the words of the error),
+/// or it stopped during the game (Rodent's process gone, android-rodent.md §6.6).
+data class PlayFailure(val detail: String, val stopped: Boolean = false)
+
+/// A game against the computer being played (android-play.md §31), kept while the phone
+/// turns: Maia (her network) or Rodent IV (its process).
 class PlayRun(val meta: PlayMeta) {
     var player: MaiaPlayer? = null
+    var rodent: RodentPlayer? = null
     var judge: ResignJudge? = null
     val thinking = mutableStateOf(false)
-    /// Maia offers to resign (her position hopeless two turns in a row).
+    /// The opponent offers to resign (its position hopeless two turns in a row).
     val offer = mutableStateOf(false)
     val over = mutableStateOf<PlayOver?>(null)
-    /// Maia failed to start: why.
-    val failure = mutableStateOf<String?>(null)
+    /// The opponent does not play: why.
+    val failure = mutableStateOf<PlayFailure?>(null)
     /// «Play to the end»: no more offers in this game.
     var playOn = false
     var hopeless = 0u
-    /// Bumped by a take-back: Maia's answer for the old position is dropped.
+    /// Bumped by a take-back: the answer for the old position is dropped.
     var generation = 0
 
     fun close() {
         player?.close()
+        rodent?.close()
         judge?.close()
         player = null
+        rodent = null
         judge = null
     }
 }
@@ -156,12 +190,12 @@ private fun LabeledButton(icon: androidx.compose.ui.graphics.vector.ImageVector,
     }
 }
 
-/// Maia offers to resign (§31.3): accept the win, or play on.
+/// The opponent offers to resign (§31.3): accept the win, or play on.
 @Composable
-fun OfferCard(onAccept: () -> Unit, onPlayOn: () -> Unit) {
+fun OfferCard(meta: PlayMeta, onAccept: () -> Unit, onPlayOn: () -> Unit) {
     Card {
-        Text(stringResource(R.string.play_maia_resigns), style = MaterialTheme.typography.titleMedium)
-        Text(stringResource(R.string.play_her_position_lost), style = MaterialTheme.typography.bodyMedium)
+        Text(stringResource(meta.said(R.string.play_maia_resigns, R.string.rodent_resigns)), style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(meta.said(R.string.play_her_position_lost, R.string.rodent_position_lost)), style = MaterialTheme.typography.bodyMedium)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onAccept, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_accept_win)) }
             OutlinedButton(onClick = onPlayOn, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_on_short)) }
@@ -234,40 +268,56 @@ private fun Card(content: @Composable () -> Unit) {
     ) { content() }
 }
 
-/// Puts a new game against Maia in hand (android-play.md §31): `session` holds its moves
-/// so far (none, or those of the game it goes on from: `floor` half-moves); its tags
-/// are set, and after the moves of another game a note says where it comes from.
-fun beginMaiaGame(
+/// Puts a new game against the computer in hand (android-play.md §31): `session` holds
+/// its moves so far (none, or those of the game it goes on from: `meta.floor`
+/// half-moves); its tags are set, and after the moves of another game a note says where
+/// it comes from.
+fun beginComputerGame(
     app: io.github.vrubelroman.chesspenguin.ChessPenguinApp,
     session: uniffi.mobile_api.GameSession,
-    strength: Int,
-    userWhite: Boolean,
-    name: String,
-    floor: Int,
+    meta: PlayMeta,
     event: String,
     note: String?,
 ) {
     val date = java.text.SimpleDateFormat("yyyy.MM.dd", java.util.Locale.ROOT).format(java.util.Date())
-    val tags = uniffi.mobile_api.maiaGameTags(event, userWhite, name, strength.toUInt()) + uniffi.mobile_api.Tag("Date", date)
+    val tags = uniffi.mobile_api.computerGameTags(event, meta.userWhite, meta.name, meta.rivalOf(), meta.strength.toUInt()) +
+        uniffi.mobile_api.Tag("Date", date)
     session.setData(tags, "*")
-    if (floor > 0 && note != null) {
+    if (meta.floor > 0 && note != null) {
         val data = session.data()
         runCatching { session.addComment(lineEnd(data).toUInt(), note) }
     }
     session.markSaved()
     // The game it replaces, if left unfinished, is kept in its player's database.
     app.playerGames.keepUnfinished(app.maiaGames, app.settings.prefs.value.recordGames, app.scope)
-    app.playerGames.remember(name)
-    app.maiaGames.begin(session.pgn(), PlayMeta(strength, userWhite, name, floor))
+    app.playerGames.remember(meta.name)
+    app.maiaGames.begin(session.pgn(), meta)
 }
 
-/// Maia did not start (§31.3): her file again, or leave the game.
+/// The note in a game played on from another one: «From here on, a game against Maia
+/// 1500.», «… Rodent IV 1800 · Tal.» (in the app's language).
+fun playNote(resources: android.content.res.Resources, meta: PlayMeta, style: String?): String =
+    if (meta.rival == Opponent.Rodent && style != null) {
+        resources.getString(R.string.play_note_from_rodent, meta.strength.toString(), style)
+    } else {
+        resources.getString(R.string.play_note_from, meta.strength.toString())
+    }
+
+/// The opponent did not start (§31.3, android-rodent.md §6.6): Maia's file again, or
+/// Rodent started again (it is in the APK: nothing to download); or leave the game.
 @Composable
-fun FailureCard(onRetry: () -> Unit, onAbort: () -> Unit) {
+fun FailureCard(meta: PlayMeta, failure: PlayFailure, onRetry: () -> Unit, onAbort: () -> Unit) {
+    val text = when {
+        meta.rival != Opponent.Rodent -> R.string.play_maia_stopped
+        failure.stopped -> R.string.rodent_stopped_playing
+        else -> R.string.rodent_stopped
+    }
     Card {
-        Text(stringResource(R.string.play_maia_stopped), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+        Text(stringResource(text), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onRetry, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_maia_reload), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Button(onClick = onRetry, modifier = Modifier.weight(1f)) {
+                Text(stringResource(meta.said(R.string.play_maia_reload, R.string.rodent_restart)), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             OutlinedButton(onClick = onAbort, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.play_abort), maxLines = 1) }
         }
     }
@@ -282,7 +332,7 @@ fun AdjournedQuestion(meta: PlayMeta, onContinue: () -> Unit, onNew: () -> Unit,
     val kept = remember { app.playerGames.wouldKeep(app.maiaGames, app.settings.prefs.value.recordGames) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.play_adjourned_q, meta.strength.toString())) },
+        title = { Text(stringResource(R.string.play_adjourned_q, meta.label())) },
         text = { Text(stringResource(if (kept) R.string.play_adjourned_new_text else R.string.play_adjourned_replaced)) },
         confirmButton = { androidx.compose.material3.TextButton(onClick = onContinue) { Text(stringResource(R.string.play_continue_it)) } },
         dismissButton = { androidx.compose.material3.TextButton(onClick = onNew) { Text(stringResource(R.string.play_start_new)) } },
