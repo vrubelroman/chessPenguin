@@ -534,7 +534,7 @@ fn symbol_row_sized(
             let mut text = RichText::new(*sym).size(if w < SYMBOL_W { 14.0 } else { 15.0 });
             if pressed {
                 text = text.strong().color(ui.visuals().selection.stroke.color);
-            } else if moves && let Some(c) = assessment_color(*nag) {
+            } else if moves && let Some(c) = assessment_text_color(*nag, ui.visuals().dark_mode) {
                 text = text.color(c);
             }
             let r = ui
@@ -579,7 +579,7 @@ fn paint_move_cell(
     let san = game.game_move(id).map(|m| m.san.as_str()).unwrap_or("?");
     let san = crate::san::show(san);
     let (mut sym, mut color) = node
-        .map(|n| move_glyph(n.nags()))
+        .map(|n| move_glyph(n.nags(), visuals.dark_mode))
         .unwrap_or((String::new(), None));
     // The engine's verdict right after the move, the move in its color (as on Lichess);
     // the author's own sign stands instead when there is one.
@@ -689,21 +689,39 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
         });
 }
 
-/// Colour of a move-assessment NAG ($1-$6), the Lichess palette.
+/// Colour of a move-assessment NAG ($1-$6): the owner's palette (chess.com's), bright,
+/// for badges and dark backgrounds.
 pub fn assessment_color(nag: Nag) -> Option<Color32> {
     Some(match nag.0 {
-        1 => Color32::from_rgb(0x62, 0x9c, 0x2e),
-        2 => Color32::from_rgb(0xe6, 0x8f, 0x00),
-        3 => Color32::from_rgb(0x22, 0xac, 0x9a),
-        4 => Color32::from_rgb(0xdf, 0x53, 0x53),
+        1 => Color32::from_rgb(0x81, 0xb6, 0x4c),
+        2 => Color32::from_rgb(0xff, 0xa4, 0x59),
+        3 => Color32::from_rgb(0x26, 0xc2, 0xa3),
+        4 => Color32::from_rgb(0xfa, 0x41, 0x2d),
         5 => Color32::from_rgb(0xea, 0x45, 0xd8),
-        6 => Color32::from_rgb(0x56, 0xb4, 0xe9),
+        6 => Color32::from_rgb(0xf7, 0xc6, 0x31),
+        _ => return None,
+    })
+}
+
+/// The same as text: on a light background darkened to stay readable (contrast at least
+/// 4.5:1), as on Android.
+pub fn assessment_text_color(nag: Nag, dark: bool) -> Option<Color32> {
+    if dark {
+        return assessment_color(nag);
+    }
+    Some(match nag.0 {
+        1 => Color32::from_rgb(0x5b, 0x81, 0x35),
+        2 => Color32::from_rgb(0xc2, 0x57, 0x00),
+        3 => Color32::from_rgb(0x1a, 0x84, 0x6f),
+        4 => Color32::from_rgb(0xd2, 0x30, 0x1c),
+        5 => Color32::from_rgb(0xb0, 0x25, 0x9f),
+        6 => Color32::from_rgb(0x93, 0x70, 0x06),
         _ => return None,
     })
 }
 
 /// Move-assessment glyph (`!`, `?`, …) with its color, plus position assessments.
-fn move_glyph(nags: &[Nag]) -> (String, Option<Color32>) {
+fn move_glyph(nags: &[Nag], dark: bool) -> (String, Option<Color32>) {
     let mut s = String::new();
     let mut color = None;
     for nag in nags {
@@ -712,7 +730,7 @@ fn move_glyph(nags: &[Nag]) -> (String, Option<Color32>) {
             continue;
         };
         if nag.is_move_assessment() {
-            let Some(c) = assessment_color(*nag) else {
+            let Some(c) = assessment_text_color(*nag, dark) else {
                 continue;
             };
             color = Some(c);
@@ -1153,7 +1171,7 @@ fn variation_block(
     out: &mut NotationResponse,
 ) {
     let mut tokens = Vec::new();
-    line_tokens(n, start, &mut tokens);
+    line_tokens(n, start, ui.visuals().dark_mode, &mut tokens);
     let editing = editor.as_ref().map(|e| e.slot);
     // The flow is cut where the editor stands: after the move for «after», before it
     // for «before»; a comment being edited is replaced by the editor.
@@ -1280,7 +1298,7 @@ fn flow(
 }
 
 /// The tokens of a line starting at `first` (a variation move), nested lines inside.
-fn line_tokens(n: &Notation, first: NodeId, tokens: &mut Vec<Token>) {
+fn line_tokens(n: &Notation, first: NodeId, dark: bool, tokens: &mut Vec<Token>) {
     let game = n.game;
     let mut node = first;
     let mut need_number = true;
@@ -1297,7 +1315,7 @@ fn line_tokens(n: &Notation, first: NodeId, tokens: &mut Vec<Token>) {
         let (num, color) = game.move_number(node).unwrap_or((0, Color::White));
         let san = game.game_move(node).map(|m| m.san.as_str()).unwrap_or("?");
         let san = crate::san::show(san);
-        let (sym, sym_color) = move_glyph(nd.nags());
+        let (sym, sym_color) = move_glyph(nd.nags(), dark);
         let label = match (color, need_number) {
             (Color::White, _) => format!("{num}.{san}{sym}"),
             (Color::Black, true) => format!("{num}…{san}{sym}"),
@@ -1332,7 +1350,7 @@ fn line_tokens(n: &Notation, first: NodeId, tokens: &mut Vec<Token>) {
         {
             for &v in game.variations(parent) {
                 tokens.push(Token::Open);
-                line_tokens(n, v, tokens);
+                line_tokens(n, v, dark, tokens);
                 tokens.push(Token::Close);
                 need_number = true;
             }

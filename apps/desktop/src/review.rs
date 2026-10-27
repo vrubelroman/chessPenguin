@@ -275,13 +275,7 @@ impl Review {
                     }
                     errors += 1;
                     if !authored {
-                        nags.push(match mark.judgement {
-                            Judgement::Inaccuracy => Nag::DUBIOUS_MOVE,
-                            Judgement::Mistake => Nag::MISTAKE,
-                            Judgement::Blunder => Nag::BLUNDER,
-                            Judgement::Great => Nag::GOOD_MOVE,
-                            Judgement::Brilliant => Nag::BRILLIANT_MOVE,
-                        });
+                        nags.push(judgement_nag(mark.judgement));
                     }
                     let name = judgement_name(mark.judgement);
                     let text = match &mark.best_label {
@@ -686,7 +680,7 @@ impl Review {
                     .enumerate()
                 {
                     if let Some(a) = s.phase_accuracy[i] {
-                        value_row(ui, percent(a), label, Some(accuracy_color(a)));
+                        value_row(ui, percent(a), label, Some(accuracy_color(a, ui.visuals().dark_mode)));
                     }
                 }
             });
@@ -859,29 +853,25 @@ fn strip_eval(c: &str) -> String {
     out.trim().to_string()
 }
 
+/// A judgement's color: the same as its sign's NAG (`notation::assessment_color`).
 pub fn judgement_color(j: Judgement) -> Color32 {
-    match j {
-        Judgement::Inaccuracy => Color32::from_rgb(0x56, 0xb4, 0xe9),
-        Judgement::Mistake => Color32::from_rgb(0xe6, 0x8f, 0x00),
-        Judgement::Blunder => Color32::from_rgb(0xdf, 0x53, 0x53),
-        // The colors of the signs ! and !! in the notation.
-        Judgement::Great => Color32::from_rgb(0x62, 0x9c, 0x2e),
-        Judgement::Brilliant => Color32::from_rgb(0x22, 0xac, 0x9a),
-    }
+    crate::notation::assessment_color(judgement_nag(j)).unwrap_or(Color32::GRAY)
 }
 
 /// The color of a judgement as text: on a light background darker than the bright one
 /// of the badges, as on Android.
 pub fn judgement_text_color(j: Judgement, dark: bool) -> Color32 {
-    if dark {
-        return judgement_color(j);
-    }
+    crate::notation::assessment_text_color(judgement_nag(j), dark).unwrap_or(Color32::GRAY)
+}
+
+/// The NAG of the same sign.
+pub fn judgement_nag(j: Judgement) -> Nag {
     match j {
-        Judgement::Inaccuracy => Color32::from_rgb(0x1f, 0x72, 0xa8),
-        Judgement::Mistake => Color32::from_rgb(0xa3, 0x5f, 0x00),
-        Judgement::Blunder => Color32::from_rgb(0xc2, 0x3b, 0x3b),
-        Judgement::Great => Color32::from_rgb(0x4e, 0x7f, 0x22),
-        Judgement::Brilliant => Color32::from_rgb(0x12, 0x80, 0x6f),
+        Judgement::Inaccuracy => Nag::DUBIOUS_MOVE,
+        Judgement::Mistake => Nag::MISTAKE,
+        Judgement::Blunder => Nag::BLUNDER,
+        Judgement::Great => Nag::GOOD_MOVE,
+        Judgement::Brilliant => Nag::BRILLIANT_MOVE,
     }
 }
 
@@ -915,16 +905,18 @@ fn judgement_plural(j: Judgement) -> &'static str {
     }
 }
 
-fn accuracy_color(a: f64) -> Color32 {
-    if a >= 85.0 {
-        Color32::from_rgb(0x62, 0x9c, 0x2e)
+/// Accuracy in the colors of the move marks: green, yellow, orange, red.
+fn accuracy_color(a: f64, dark: bool) -> Color32 {
+    let j = if a >= 85.0 {
+        Judgement::Great
     } else if a >= 70.0 {
-        Color32::from_rgb(0x56, 0xb4, 0xe9)
+        Judgement::Inaccuracy
     } else if a >= 50.0 {
-        Color32::from_rgb(0xe6, 0x8f, 0x00)
+        Judgement::Mistake
     } else {
-        Color32::from_rgb(0xdf, 0x53, 0x53)
-    }
+        Judgement::Blunder
+    };
+    judgement_text_color(j, dark)
 }
 
 fn percent(a: f64) -> String {

@@ -54,26 +54,26 @@ val DarkChess = LightChess.copy(
     comment = Color(0xFF9EC4E0),
 )
 
-/// Move assessments in the colors of Lichess (as on the desktop). On a light background
-/// they are darkened to stay readable (contrast at least 4.5:1).
+/// Move assessments in the owner's palette (chess.com's), as on the desktop. On a light
+/// background they are darkened to stay readable (contrast at least 4.5:1).
 fun nagColor(nag: Int, dark: Boolean): Color? = if (dark) {
     when (nag) {
-        1 -> Color(0xFF629C2E) // !
-        2 -> Color(0xFFE68F00) // ?
-        3 -> Color(0xFF22AC9A) // !!
-        4 -> Color(0xFFDF5353) // ??
+        1 -> Color(0xFF81B64C) // !
+        2 -> Color(0xFFFFA459) // ?
+        3 -> Color(0xFF26C2A3) // !!
+        4 -> Color(0xFFFA412D) // ??
         5 -> Color(0xFFEA45D8) // !?
-        6 -> Color(0xFF56B4E9) // ?!
+        6 -> Color(0xFFF7C631) // ?!
         else -> null
     }
 } else {
     when (nag) {
-        1 -> Color(0xFF4E7F22)
-        2 -> Color(0xFFA35F00)
-        3 -> Color(0xFF12806F)
-        4 -> Color(0xFFC23B3B)
+        1 -> Color(0xFF5B8135)
+        2 -> Color(0xFFC25700)
+        3 -> Color(0xFF1A846F)
+        4 -> Color(0xFFD2301C)
         5 -> Color(0xFFB0259F)
-        6 -> Color(0xFF1F72A8)
+        6 -> Color(0xFF937006)
         else -> null
     }
 }
