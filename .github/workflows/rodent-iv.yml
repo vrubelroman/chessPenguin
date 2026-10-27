@@ -40,7 +40,8 @@ jobs:
       - name: Sources at the pinned commit, with our two fixes
         shell: bash
         # packaging/rodent-iv/home-dir.patch: on Linux the engine now and then took a
-        # wrong home folder and played without its personality and books.
+        # wrong home folder and played without its personality and books; on macOS it
+        # had none, found no personality and did not offer the Personality option.
         # packaging/rodent-iv/think-thread.patch: the search thread read its parameter
         # after it was gone; clang builds (macOS) searched garbage out of the book.
         run: |
@@ -81,6 +82,14 @@ jobs:
           echo "bestmove: $best"
           legal=" a2a3 a2a4 b2b3 b2b4 c2c3 c2c4 d2d3 d2d4 e2e3 e2e4 f2f3 f2f4 g2g3 g2g4 h2h3 h2h4 b1a3 b1c3 g1f3 g1h3 "
           [[ -n "$best" && "$legal" == *" $best "* ]]
+      - name: It offers its personalities (its own folder, a space in it; started elsewhere)
+        shell: bash
+        # As ChessPenguin runs it: on macOS from ~/Library/Application Support/….
+        run: |
+          home="$PWD/engine home"
+          mkdir -p "$home" && cp "./${{ matrix.name }}" "$home/" && cp -r src/personalities "$home/"
+          out=$(cd "$RUNNER_TEMP" && printf 'uci\nquit\n' | "$home/${{ matrix.name }}")
+          printf '%s\n' "$out" | grep '^option name Personality ' | grep -Eq ' var Tal( |$)'
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
@@ -102,7 +111,7 @@ jobs:
           Rodent IV 0.33 by Paweł Koziol and Bernhard C. Maerz (GPL-3.0), built from the
           authors' sources at https://github.com/nescitus/rodent-iv/tree/${COMMIT}
           with two fixes (packaging/rodent-iv/home-dir.patch and think-thread.patch in
-          ChessPenguin's repository: the engine's home folder on Linux; the search
+          ChessPenguin's repository: the engine's home folder on Linux and macOS; the search
           thread's parameter, which clang builds read after it was gone) for
           ChessPenguin, which downloads it on request. Not a ChessPenguin release.
           EOF

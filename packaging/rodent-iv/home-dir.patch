@@ -1,8 +1,47 @@
 diff --git a/sources/src/rodenthome.cpp b/sources/src/rodenthome.cpp
-index 058cdaa..e8018b7 100755
+index 058cdaa..4bfcb2a 100755
 --- a/sources/src/rodenthome.cpp
 +++ b/sources/src/rodenthome.cpp
-@@ -199,7 +199,10 @@ void SetRodentHomeDir() {
+@@ -22,6 +22,11 @@ If not, see <http://www.gnu.org/licenses/>.
+     #include <sys/stat.h>
+     #include <unistd.h>
+ #endif
++#if defined (__APPLE__)
++    #include <limits.h>
++    #include <stdlib.h>
++    #include <mach-o/dyld.h>
++#endif
+ 
+ #include "rodent.h"
+ 
+@@ -174,9 +179,23 @@ void SetRodentHomeDir() {
+     }
+ 
+ #elif defined (__APPLE__)
+-    // #error something should be done here, look for _NSGetExecutablePath(path, &size)
+-    // RodentHomeDirWStr = ...
+-    
++    // As on Linux: the home is the executable's folder (an empty home made every
++    // folder relative to the one the engine changed into last, so no personality was
++    // found and the Personality option was not offered).
++    RodentHomeDirWStr = Str2WStr(GetEnv("RODENT4HOME"));
++    if (RodentHomeDirWStr != L"") {
++        PathEndSlash(RodentHomeDirWStr);
++        printf_debug("override for home path: '%s'\n", WStr2Str(RodentHomeDirWStr).c_str());
++    } else {
++        char exe_path[PATH_MAX];
++        char real_path[PATH_MAX];
++        uint32_t size = sizeof(exe_path);
++        if (_NSGetExecutablePath(exe_path, &size) == 0 && realpath(exe_path, real_path) != NULL) {
++            *(strrchr(real_path, '/') + 1) = '\0';
++            RodentHomeDirWStr = CStr2WStr(real_path);
++        }
++    }
++
+ #elif defined (ANDROID)
+     RodentHomeDirWStr = L"";
+ 
+@@ -199,7 +218,10 @@ void SetRodentHomeDir() {
      } else  {
          char exe_path[1024];
          // getting the current executable location ...
