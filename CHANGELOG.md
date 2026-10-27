@@ -13,6 +13,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 - The review's mark in the notation stands right after the move, the move in its color
   (Qg7?? in red), as on Lichess, instead of a colored pill at the edge of the cell; the
   author's own sign, when there is one, stands instead.
+- Desktop, a game against the computer: the draw offer is «½–½» on its button («Offer a
+  draw» in its tooltip), so that the game's buttons fit in a narrow panel.
 - Android: the board shows the move's mark in the corner of its square, as on the desktop:
   the review's ?!, ?, ??, !, !! or the author's own sign.
 

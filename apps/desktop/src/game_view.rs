@@ -3516,10 +3516,12 @@ impl GameView {
                         "Rodent accepts when its position is no better and has settled",
                     ),
                 };
+                // Short on the button (the row stays one line); the words in the tooltip.
+                let hint = format!("{}\n{hint}", tr("Offer a draw"));
                 if ui
-                    .add_enabled(may, word(tr("½ Offer a draw")))
-                    .on_hover_text(hint)
-                    .on_disabled_hover_text(hint)
+                    .add_enabled(may, word("½–½"))
+                    .on_hover_text(&hint)
+                    .on_disabled_hover_text(&hint)
                     .clicked()
                 {
                     let yes = self
