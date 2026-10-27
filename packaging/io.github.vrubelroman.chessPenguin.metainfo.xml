@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="1.8.0" date="2026-10-27">
+      <description>
+        <p>A game against the computer can be put aside and continued later, with the clocks as they were; a card on the shelf brings it back. The window no longer freezes when a network drive goes away. On macOS, Rodent IV is built with a fix of its search. On Android, Rodent IV joins Maia as an opponent, with its 13 characters and 22 famous players.</p>
+      </description>
+    </release>
     <release version="1.7.0" date="2026-10-26">
       <description>
         <p>Rodent gets Rodent IV's characters and 22 famous players, from Morphy to Kasparov, each with its opening books; on macOS too. On Android the lists are richer: dividers, results at a glance, the opening code, colours by kind of database; search finds by the opening code.</p>

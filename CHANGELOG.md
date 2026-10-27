@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-10-27
+
 - macOS: Rodent IV out of its opening book searched garbage (a bug of its sources that
   only builds by clang show) and is now built with the fix; an installed Rodent IV is
   offered for download again, and only the engine itself (250 KB) is fetched.
