@@ -10025,7 +10025,7 @@ const ROWS: &[[&str; 9]] = &[
     ],
     [
         "Great move",
-        "Отличный ход",
+        "Замечательный ход",
         "Excellent coup",
         "Starker Zug",
         "Gran jugada",
@@ -10047,7 +10047,7 @@ const ROWS: &[[&str; 9]] = &[
     ],
     [
         "Great moves",
-        "Отличные ходы",
+        "Замечательные ходы",
         "Excellents coups",
         "Starke Züge",
         "Grandes jugadas",

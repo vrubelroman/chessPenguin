@@ -8,6 +8,8 @@
 use chess_core::shakmaty::{Bitboard, Chess, Color, Position, Rank};
 use serde::{Deserialize, Serialize};
 
+use crate::Rules;
+
 /// Engine evaluation from White's point of view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Eval {
@@ -146,6 +148,12 @@ mod good {
     /// !: the position after the move is not lost, and the best other move did not win.
     pub const GREAT_AFTER: f64 = 40.0;
     pub const GREAT_ALT: f64 = 75.0;
+    /// [`Rules::Strict`]: lost below, won above; a great move changes which.
+    pub const LOST: f64 = 33.0;
+    pub const WON: f64 = 67.0;
+    /// [`Rules::Strict`]: an opponent's move losing this much (or judged a mistake or a
+    /// blunder) starts a new combination.
+    pub const OPPONENT_ERROR: f64 = 10.0;
     /// Below this the mover's position is too bad for either mark: no second search.
     /// (The lower of the two floors after the move, !'s, less the step from the best.)
     pub const SECOND_FROM: f64 = GREAT_AFTER - NEAR_BEST;
@@ -157,15 +165,27 @@ pub fn worth_second(eval: Eval, mover: Color) -> bool {
     eval.win_percent(mover) >= good::SECOND_FROM
 }
 
-/// Brilliant or great, from the evaluations around the move.
-fn note(before: Eval, after: Eval, ply: &Ply) -> Option<Judgement> {
+/// Lost, equal, won (0, 1, 2), for [`Rules::Strict`].
+fn outcome(win: f64) -> u8 {
+    if win < good::LOST {
+        0
+    } else if win > good::WON {
+        2
+    } else {
+        1
+    }
+}
+
+/// Brilliant or great, from the evaluations around the move (before the combination rule
+/// of [`Rules::Strict`]).
+fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement> {
     let f = ply.features?;
     let (wb, wa) = (before.win_percent(ply.mover), after.win_percent(ply.mover));
     let loss = wb - wa;
     let second = ply.second.map(|e| e.win_percent(ply.mover));
     // Without the move: the best other move, or the best move when another was played.
     let without = if ply.best { second } else { Some(wb) };
-    if f.brilliant_shape()
+    if f.brilliant_shape(rules)
         && (ply.best || loss <= good::NEAR_BEST)
         && wa >= good::SOUND_AFTER
         && without.is_some_and(|w| w < good::WON_ANYWAY)
@@ -173,10 +193,11 @@ fn note(before: Eval, after: Eval, ply: &Ply) -> Option<Judgement> {
         return Some(Judgement::Brilliant);
     }
     let w2 = second?;
-    (f.great_shape()
+    (f.great_shape(rules)
         && ply.best
         && loss <= good::NEAR_BEST
         && wb - w2 >= good::GAP
+        && (rules == Rules::ChessCom || outcome(wa) > outcome(w2))
         && wa >= good::GREAT_AFTER
         && w2 < good::GREAT_ALT)
         .then_some(Judgement::Great)
@@ -325,6 +346,16 @@ impl Report {
 
     /// `evals[i]` belongs to the position before ply `i`; `evals.len() == plies.len() + 1`.
     pub fn build(evals: &[Option<Eval>], plies: &[Ply], phases: Phases) -> Report {
+        Self::build_with(evals, plies, phases, Rules::default())
+    }
+
+    /// [`Report::build`] with these rules for !! and !.
+    pub fn build_with(
+        evals: &[Option<Eval>],
+        plies: &[Ply],
+        phases: Phases,
+        rules: Rules,
+    ) -> Report {
         let n = plies.len().min(evals.len().saturating_sub(1));
         let mut report = Report {
             judgements: vec![None; plies.len()],
@@ -333,6 +364,10 @@ impl Report {
             ..Report::default()
         };
         let mut losses: [Vec<i32>; 2] = [Vec::new(), Vec::new()];
+        // For the combination rule of [`Rules::Strict`]: the moves that passed !! or !,
+        // and each move's loss.
+        let mut noted = vec![false; n];
+        let mut lost = vec![0.0; n];
         for i in 0..n {
             let ply = plies[i];
             let (Some(before), Some(after)) = (evals[i], evals[i + 1]) else {
@@ -341,19 +376,30 @@ impl Report {
             if ply.null {
                 continue;
             }
+            lost[i] = before.win_percent(ply.mover) - after.win_percent(ply.mover);
             let error = if ply.best {
                 None
             } else {
                 judge(before, after, ply.mover)
             };
             let good = if error.is_none() {
-                note(before, after, &ply)
+                note(before, after, &ply, rules)
             } else {
                 None
             };
-            // Every move of a combination is marked on its own, as on chess.com
-            // (21.Qxd7+!! 22.Bf5+! 23.Bd7+! in the Evergreen game).
-            let j = error.or(good);
+            noted[i] = good.is_some();
+            // [`Rules::ChessCom`] marks every move of a combination on its own (21.Qxd7+!!
+            // 22.Bf5+! 23.Bd7+! in the Evergreen game); [`Rules::Strict`] the first one,
+            // unless the opponent erred in between.
+            let erred = |k: usize| {
+                lost[k] >= good::OPPONENT_ERROR
+                    || matches!(
+                        report.judgements[k],
+                        Some(Judgement::Mistake | Judgement::Blunder)
+                    )
+            };
+            let goes_on = rules == Rules::Strict && i >= 2 && noted[i - 2] && !erred(i - 1);
+            let j = error.or(good.filter(|_| !goes_on));
             report.judgements[i] = j;
             let stats = match ply.mover {
                 Color::White => &mut report.white,
@@ -736,5 +782,27 @@ mod tests {
         close.second = Some(Eval::Cp(250));
         let r = Report::build(&evals, &[close], Phases::default());
         assert_eq!(r.judgements[0], None);
+    }
+
+    #[test]
+    fn the_strict_rules_want_a_turn_of_the_game_and_one_mark_a_combination() {
+        let (w, b) = (Color::White, Color::Black);
+        // The only good move of an equal position: great by chess.com, not by the first rules.
+        let equal = [Some(Eval::Cp(0)), Some(Eval::Cp(0))];
+        let only = || noted(w, false, Some(Eval::Cp(-150)));
+        let r = Report::build_with(&equal, &[only()], Phases::default(), Rules::ChessCom);
+        assert_eq!(r.judgements[0], Some(Judgement::Great));
+        let r = Report::build_with(&equal, &[only()], Phases::default(), Rules::Strict);
+        assert_eq!(r.judgements[0], None);
+        // A combination: marked once by the first rules.
+        let great = || noted(w, false, Some(Eval::Cp(-300)));
+        let evals = [Some(Eval::Cp(300)); 4];
+        let r = Report::build_with(
+            &evals,
+            &[great(), ply(b), great()],
+            Phases::default(),
+            Rules::Strict,
+        );
+        assert_eq!(r.judgements, vec![Some(Judgement::Great), None, None]);
     }
 }

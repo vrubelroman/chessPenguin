@@ -21,6 +21,24 @@ pub struct MoveFeatures {
     pub sacrifice: bool,
     /// A capture that wins two points or more.
     pub winning_capture: bool,
+    /// The first rules' sacrifice ([`Rules::Strict`]): any piece the opponent can win
+    /// after the move, also one that hung before it.
+    pub sacrifice_any: bool,
+    /// A piece (not the king) under attack moves away without loss.
+    pub escape: bool,
+}
+
+/// Which rules decide !! and !. Both stay, to compare them and to go back.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rules {
+    /// The first rules (docs/research/brilliant-moves.md §3–4): any piece left to be won
+    /// is a sacrifice; the move must change the outcome to be great; a piece saving
+    /// itself is never great; one mark a combination.
+    Strict,
+    /// Calibrated on chess.com's marks (2026-10-28): only what the move gives up is a
+    /// sacrifice; the only good move is great; every move of a combination counts.
+    #[default]
+    ChessCom,
 }
 
 impl MoveFeatures {
@@ -40,13 +58,19 @@ impl MoveFeatures {
             .iter()
             .filter(|t| t.2 == m.to() || pseudo_threat(before.board(), t.2, mover.other()) < t.0)
             .collect();
-        let threat = given.iter().map(|t| t.0).max().unwrap_or(0);
-        let offered = given
-            .iter()
-            .filter(|t| t.0 == threat)
-            .map(|t| t.1)
-            .max()
-            .unwrap_or(0);
+        // The heaviest loss among `pieces` and the value of the piece lost there.
+        let worst = |pieces: &[&(i32, i32, Square)]| {
+            let threat = pieces.iter().map(|t| t.0).max().unwrap_or(0);
+            let offered = pieces
+                .iter()
+                .filter(|t| t.0 == threat)
+                .map(|t| t.1)
+                .max()
+                .unwrap_or(0);
+            (threat, offered)
+        };
+        let (threat, offered) = worst(&given);
+        let (threat_any, offered_any) = worst(&threats.iter().collect::<Vec<_>>());
         // The moved piece was hanging where it stood: losing it is no sacrifice.
         let from_threat = m
             .from()
@@ -62,23 +86,37 @@ impl MoveFeatures {
             recapture: m.is_capture() && prev.is_some_and(|p| p.is_capture() && p.to() == m.to()),
             sacrifice: offered >= 3 && taken - threat <= -2 && !lost_anyway,
             winning_capture: m.is_capture() && gain >= 2,
+            sacrifice_any: offered_any >= 3 && taken - threat_any <= -2 && !lost_anyway,
+            escape: lost_anyway && from_threat < 900 && gain >= 0,
         }
     }
 
     /// Could be brilliant: a sacrifice by choice.
-    pub fn brilliant_shape(&self) -> bool {
-        self.sacrifice && self.legal > 1 && !self.check && !self.promotion
+    pub fn brilliant_shape(&self, rules: Rules) -> bool {
+        let sacrifice = match rules {
+            Rules::Strict => self.sacrifice_any,
+            Rules::ChessCom => self.sacrifice,
+        };
+        sacrifice && self.legal > 1 && !self.check && !self.promotion
     }
 
-    /// Could be great: not a forced, obvious or finishing move. A piece saving itself on
-    /// the only good square can be (chess.com: 13.Qa4 of the Evergreen game).
-    pub fn great_shape(&self) -> bool {
-        self.legal > 1 && !self.mates && !self.recapture && !self.winning_capture
+    /// Could be great: not a forced, obvious or finishing move. With [`Rules::ChessCom`]
+    /// a piece saving itself on the only good square can be (13.Qa4 of the Evergreen
+    /// game).
+    pub fn great_shape(&self, rules: Rules) -> bool {
+        self.legal > 1
+            && !self.mates
+            && !self.recapture
+            && !self.winning_capture
+            && !(rules == Rules::Strict && self.escape)
     }
 
     /// Worth asking the engine for the best other move.
+    /// (Under either rules: one analysis serves both.)
     pub fn candidate(&self) -> bool {
-        self.brilliant_shape() || self.great_shape()
+        [Rules::Strict, Rules::ChessCom]
+            .into_iter()
+            .any(|r| self.brilliant_shape(r) || self.great_shape(r))
     }
 }
 
@@ -202,11 +240,11 @@ mod tests {
     #[test]
     fn a_queen_offered_for_mate_is_a_sacrifice() {
         let f = last(Chess::default(), OPERA);
-        assert!(f.sacrifice && f.brilliant_shape(), "{f:?}");
+        assert!(f.sacrifice && f.brilliant_shape(Rules::ChessCom), "{f:?}");
         assert!(!f.mates && f.candidate());
         // 15.Bxd7+ Nxd7: taken back, not a move of note.
         let f = last(Chess::default(), &OPERA[..OPERA.find(" 16.").unwrap()]);
-        assert!(f.recapture && !f.great_shape(), "{f:?}");
+        assert!(f.recapture && !f.great_shape(Rules::ChessCom), "{f:?}");
     }
 
     #[test]
@@ -219,7 +257,7 @@ mod tests {
         // A free knight taken: a winning capture, never !.
         let f = features("4k3/8/8/3n4/8/8/8/3QK3 w - - 0 1", "Qxd5");
         assert!(
-            f.winning_capture && !f.great_shape() && !f.sacrifice,
+            f.winning_capture && !f.great_shape(Rules::ChessCom) && !f.sacrifice,
             "{f:?}"
         );
     }
@@ -229,7 +267,7 @@ mod tests {
         // The bishop on c4 attacked by the pawn on d5: Bb3 saves it, which can be the only
         // good move (great), never a sacrifice.
         let f = features("4k3/8/8/3p4/2B5/8/8/4K3 w - - 0 1", "Bb3");
-        assert!(f.great_shape() && !f.sacrifice, "{f:?}");
+        assert!(f.great_shape(Rules::ChessCom) && !f.sacrifice, "{f:?}");
         // Taking the pawn instead, into the knight: it was lost anyway (desperado).
         let f = features("4k3/8/5n2/3p4/2B5/8/8/4K3 w - - 0 1", "Bxd5");
         assert!(!f.sacrifice, "{f:?}");
@@ -251,7 +289,7 @@ mod tests {
         let f = features("4k3/3r4/8/8/B7/2N5/8/4K3 w - - 0 1", "Nd5");
         assert!(!f.sacrifice, "{f:?}");
         let f = features("4k3/3r4/8/8/8/2N5/8/4K3 w - - 0 1", "Nd5");
-        assert!(f.sacrifice && f.brilliant_shape(), "{f:?}");
+        assert!(f.sacrifice && f.brilliant_shape(Rules::ChessCom), "{f:?}");
     }
 
     #[test]

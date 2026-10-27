@@ -21,7 +21,7 @@ mod features;
 mod job;
 pub mod report;
 
-pub use features::MoveFeatures;
+pub use features::{MoveFeatures, Rules};
 pub use job::{JobEvent, JobFailure, JobSettings, Target, run};
 pub use report::{Eval, Judgement, Phase, Phases, Ply, Report, SideStats};
 
@@ -100,6 +100,8 @@ pub struct GameAnalysis {
     played: Vec<Option<String>>,
     pub report: Report,
     pub marks: HashMap<NodeId, Mark>,
+    /// The rules of !! and ! the report follows.
+    rules: Rules,
 }
 
 impl GameAnalysis {
@@ -121,6 +123,7 @@ impl GameAnalysis {
             played: Vec::new(),
             report: Report::default(),
             marks: HashMap::new(),
+            rules: Rules::default(),
         };
         a.rebuild(game);
         if cache_dir.is_some_and(|d| a.load_cache(d)) || a.load_pgn_evals(game) {
@@ -175,6 +178,15 @@ impl GameAnalysis {
             .filter(|f| f.candidate())
             .count();
         self.positions() + candidates / 2
+    }
+
+    /// Follows `rules` for !! and ! from the next [`Self::refresh`] on (the evaluations
+    /// serve both).
+    pub fn set_rules(&mut self, rules: Rules) {
+        if self.rules != rules {
+            self.rules = rules;
+            self.dirty = true;
+        }
     }
 
     /// Re-derives the report when the game or the evaluations changed. Cheap otherwise.
@@ -346,7 +358,8 @@ impl GameAnalysis {
             });
         }
         self.movers = plies.iter().map(|p| p.mover).collect();
-        self.report = Report::build(&self.values, &plies, Phases::divide(&positions));
+        self.report =
+            Report::build_with(&self.values, &plies, Phases::divide(&positions), self.rules);
         self.marks.clear();
         for (i, j) in self.report.judgements.iter().enumerate() {
             let Some(judgement) = *j else { continue };
