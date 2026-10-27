@@ -4,6 +4,9 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Desktop: a move can be taken back only in a blitz game against the computer; in rapid,
+  classical and games without a clock «↶ Take back» (and Ctrl+Z) is gone.
+
 ## [1.8.0] — 2026-10-27
 
 - macOS: Rodent IV out of its opening book searched garbage (a bug of its sources that

@@ -2918,8 +2918,20 @@ impl GameView {
         }
     }
 
+    /// Whether a move can be taken back in this game: in a blitz only (the owner's
+    /// choice, docs/decisions.md «Ход назад — только в блице»).
+    fn take_back_offered(&self) -> bool {
+        self.play
+            .as_ref()
+            .and_then(|s| s.clock.as_ref())
+            .is_some_and(|c| c.control.speed() == crate::play::Speed::Blitz)
+    }
+
     /// Takes back the user's last move and Maia's answer to it (no variation is left).
     fn take_back(&mut self) {
+        if !self.take_back_offered() {
+            return;
+        }
         self.board.clear_premove();
         self.close_resign_offer();
         let Some(s) = self.play.as_mut() else { return };
@@ -3341,7 +3353,8 @@ impl GameView {
         ui.add_space(4.0);
     }
 
-    /// ⏮ ◀ ▶ ⏭ · 🔃 · ↶ Take back · 🏳 Resign (✕ Abort before the first moves).
+    /// ⏮ ◀ ▶ ⏭ · 🔃 · ↶ Take back (a blitz only) · 🏳 Resign (✕ Abort before the first
+    /// moves).
     fn play_toolbar(&mut self, ui: &mut Ui, actions: &mut Vec<GameAction>) {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
@@ -3373,10 +3386,11 @@ impl GameView {
             ui.separator();
             let user = self.play.as_ref().map_or(Color::White, |s| s.user);
             let user_moved = self.user_moved(user);
-            if ui
-                .add_enabled(user_moved, word(tr("↶ Take back")))
-                .on_hover_text(tr("Take back a move (Ctrl+Z)"))
-                .clicked()
+            if self.take_back_offered()
+                && ui
+                    .add_enabled(user_moved, word(tr("↶ Take back")))
+                    .on_hover_text(tr("Take back a move (Ctrl+Z)"))
+                    .clicked()
             {
                 self.take_back();
             }
