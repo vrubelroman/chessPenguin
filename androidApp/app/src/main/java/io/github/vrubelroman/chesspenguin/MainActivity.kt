@@ -1,6 +1,7 @@
 package io.github.vrubelroman.chesspenguin
 
 import android.content.Context
+import android.app.UiModeManager
 import android.content.Intent
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -19,6 +20,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import io.github.vrubelroman.chesspenguin.data.Language
@@ -59,6 +61,18 @@ class MainActivity : ComponentActivity() {
                 Theme.System -> isSystemInDarkTheme()
                 Theme.Light -> false
                 Theme.Dark -> true
+            }
+            // Android keeps the app's own day or night (Android 12+): the window and the
+            // splash screen before Compose draws then match the theme chosen, not the
+            // system's (no white flash before a dark app).
+            LaunchedEffect(prefs.theme) {
+                getSystemService(UiModeManager::class.java)?.setApplicationNightMode(
+                    when (prefs.theme) {
+                        Theme.System -> UiModeManager.MODE_NIGHT_AUTO
+                        Theme.Light -> UiModeManager.MODE_NIGHT_NO
+                        Theme.Dark -> UiModeManager.MODE_NIGHT_YES
+                    },
+                )
             }
             // The system bars follow the theme chosen in the app, not the system's: light
             // icons over a dark app even when the phone itself is light, and back.

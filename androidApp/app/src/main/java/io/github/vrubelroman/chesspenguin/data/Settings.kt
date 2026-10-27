@@ -15,7 +15,7 @@ enum class Notation { Latin, Figurines, Local }
 
 /// The user's choices (android-ui.md §9), applied at once and kept across starts.
 data class Prefs(
-    val theme: Theme = Theme.System,
+    val theme: Theme = Theme.Dark,
     val notation: Notation = Notation.Latin,
     val board: BoardTheme = BoardTheme.Green,
     val pieces: PieceSet = PieceSet.Merida,

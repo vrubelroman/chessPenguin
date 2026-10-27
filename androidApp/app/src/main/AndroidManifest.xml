@@ -24,6 +24,7 @@
         <!-- One task: a file opened from another app comes to the app already open. -->
         <activity
             android:name=".MainActivity"
+            android:configChanges="uiMode"
             android:exported="true"
             android:launchMode="singleTask">
             <intent-filter>
