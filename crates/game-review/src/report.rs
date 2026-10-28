@@ -226,8 +226,7 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
     // The engine's own best move loses nothing: a drop to the next position is the noise
     // of two searches (9.Nf5! of the Immortal game, −0.51 then −0.82 at 3M nodes); the
     // first rules still count it.
-    (f.great_shape(rules)
-        && ply.best
+    let only_move = ply.best
         && (rules == Rules::ChessCom || loss <= good::NEAR_BEST)
         && wb - w2 >= good::GAP
         && (rules == Rules::ChessCom || outcome(wa) > outcome(w2))
@@ -236,8 +235,11 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
             < match rules {
                 Rules::Strict => good::GREAT_ALT,
                 Rules::ChessCom => good::GREAT_ALT_CHESSCOM,
-            })
-        .then_some(Judgement::Great)
+            };
+    // Tried and dropped (2026-10-28): a pawn offered as the only good move brilliant too —
+    // finds 33.c3+!! of Kasparov — Topalov, but also marks 17.d5 of Steinitz — von
+    // Bardeleben, which chess.com leaves unmarked.
+    (only_move && f.great_shape(rules)).then_some(Judgement::Great)
 }
 
 /// `after` (the move played) mates `mover`'s opponent in fewer moves than `other` (the

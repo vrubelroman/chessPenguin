@@ -89,7 +89,7 @@ impl MoveFeatures {
         let taking_loses = given
             .iter()
             .filter(|t| t.0 == threat && t.1 == offered)
-            .any(|t| taking_loses(&after, t.2, threat));
+            .any(|t| taking_loses(before.board(), &after, t.2, threat));
         let (threat_any, offered_any) = worst(&threats.iter().collect::<Vec<_>>());
         // The moved piece was hanging where it stood: losing it is no sacrifice.
         let from_threat = m
@@ -236,11 +236,13 @@ fn threats(pos: &Chess) -> Vec<(i32, i32, Square)> {
 }
 
 /// In `pos` (the opponent to move), taking on `sq` with the cheapest piece lets the
-/// mover win at least `threat` elsewhere at once, with a threat the move itself made
-/// (already there before the capture). One the capture opens is the point of a real
-/// sacrifice: 22.Rxe7+!! of Steinitz — von Bardeleben, 22…Qxe7 23.Rxc8+ (the queen
-/// left d7); chess.com marks it.
-fn taking_loses(pos: &Chess, sq: Square, threat: i32) -> bool {
+/// mover win at least `threat` elsewhere at once, with a threat the move itself made:
+/// there after the move (before the capture), not before it (`before`: the board before
+/// the move). One the capture opens is the point of a real sacrifice: 22.Rxe7+!! of
+/// Steinitz — von Bardeleben, 22…Qxe7 23.Rxc8+ (the queen left d7); one standing
+/// already is too: 37.Rd7!! of Kasparov — Topalov (the queen on c4 under the bishop since
+/// 36.Bf1). chess.com marks both.
+fn taking_loses(before: &Board, pos: &Chess, sq: Square, threat: i32) -> bool {
     let Some(take) = pos
         .legal_moves()
         .into_iter()
@@ -254,7 +256,12 @@ fn taking_loses(pos: &Chess, sq: Square, threat: i32) -> bool {
     let mover = after.turn();
     threats(&after)
         .iter()
-        .any(|t| t.2 != sq && t.0 >= threat && pseudo_threat(pos.board(), t.2, mover) >= threat)
+        .any(|t| {
+            t.2 != sq
+                && t.0 >= threat
+                && pseudo_threat(pos.board(), t.2, mover) >= threat
+                && pseudo_threat(before, t.2, mover) < threat
+        })
 }
 
 /// What `by` would win taking on `sq`, whoever is to move (a piece already hanging).
