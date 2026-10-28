@@ -195,7 +195,10 @@ fn threats(pos: &Chess) -> Vec<(i32, i32, Square)> {
 }
 
 /// In `pos` (the opponent to move), taking on `sq` with the cheapest piece lets the
-/// mover win at least `threat` elsewhere at once.
+/// mover win at least `threat` elsewhere at once, with a threat the move itself made
+/// (already there before the capture). One the capture opens is the point of a real
+/// sacrifice: 22.Rxe7+!! of Steinitz — von Bardeleben, 22…Qxe7 23.Rxc8+ (the queen
+/// left d7); chess.com marks it.
 fn taking_loses(pos: &Chess, sq: Square, threat: i32) -> bool {
     let Some(take) = pos
         .legal_moves()
@@ -207,9 +210,10 @@ fn taking_loses(pos: &Chess, sq: Square, threat: i32) -> bool {
     };
     let mut after = pos.clone();
     after.play_unchecked(take);
+    let mover = after.turn();
     threats(&after)
         .iter()
-        .any(|t| t.2 != sq && t.0 >= threat)
+        .any(|t| t.2 != sq && t.0 >= threat && pseudo_threat(pos.board(), t.2, mover) >= threat)
 }
 
 /// What `by` would win taking on `sq`, whoever is to move (a piece already hanging).
@@ -321,6 +325,20 @@ mod tests {
         );
         assert!(!f.sacrifice && !f.brilliant_shape(Rules::ChessCom), "{f:?}");
         assert!(f.sacrifice_any, "the first rules stay as they were: {f:?}");
+    }
+
+    #[test]
+    fn a_threat_the_capture_opens_keeps_the_sacrifice() {
+        // 22.Rxe7+!! (Steinitz — von Bardeleben): 22…Qxe7 23.Rxc8+ wins back, but only
+        // because the queen left d7. chess.com: !!.
+        let f = last(
+            Chess::default(),
+            "1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. c3 Nf6 5. d4 exd4 6. cxd4 Bb4+ 7. Nc3 d5 \
+             8. exd5 Nxd5 9. O-O Be6 10. Bg5 Be7 11. Bxd5 Bxd5 12. Nxd5 Qxd5 13. Bxe7 Nxe7 \
+             14. Re1 f6 15. Qe2 Qd7 16. Rac1 c6 17. d5 cxd5 18. Nd4 Kf7 19. Ne6 Rhc8 \
+             20. Qg4 g6 21. Ng5+ Ke8 22. Rxe7+",
+        );
+        assert!(f.sacrifice && f.brilliant_shape(Rules::ChessCom), "{f:?}");
     }
 
     #[test]
