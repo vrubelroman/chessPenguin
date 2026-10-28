@@ -114,7 +114,7 @@ fn move_accuracy(before: f64, after: f64) -> f64 {
     (raw + 1.0).clamp(0.0, 100.0)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Judgement {
     Inaccuracy,
     Mistake,
@@ -203,8 +203,10 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
         .then_some(Judgement::Great)
 }
 
-/// Judgement of a move from the evaluations before and after it.
-fn judge(before: Eval, after: Eval, mover: Color) -> Option<Judgement> {
+/// Judgement of a move from the evaluations before and after it: an inaccuracy, a
+/// mistake or a blunder by the drop of the mover's winning chances (never for the
+/// engine's own best move: the caller rules that out).
+pub fn judge(before: Eval, after: Eval, mover: Color) -> Option<Judgement> {
     use Judgement::*;
     let (mb, ma) = (before.mate_for(mover), after.mate_for(mover));
     if ma == Some(false) && mb != Some(false) {

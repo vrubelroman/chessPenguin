@@ -214,10 +214,11 @@ pub fn fold(s: &str) -> String {
     out
 }
 
-/// Folded words of a search query; commas separate words too ("Carlsen, M").
+/// Folded words of a search query; commas separate words too ("Carlsen, M"), and so
+/// does the full stop of an initial ("Carlsen, M." finds "Carlsen, Magnus").
 pub(crate) fn words(query: &str) -> Vec<String> {
     fold(query)
-        .split(|c: char| c.is_whitespace() || c == ',')
+        .split(|c: char| c.is_whitespace() || c == ',' || c == '.')
         .filter(|w| !w.is_empty())
         .map(str::to_owned)
         .collect()
@@ -954,6 +955,39 @@ impl Base {
         }
     }
 
+    /// The first `max_plies` moves of the main line of game `index`, decoded without
+    /// building the move tree (see [`moves::main_line`]). `None` for a text, a deleted
+    /// record or unreadable moves.
+    pub fn main_line(&self, index: usize, max_plies: usize) -> Option<crate::MainLine> {
+        let Record::Game(h) = self.header(index)? else {
+            return None;
+        };
+        let bytes = self.read_moves(h.moves_offset)?;
+        let walk = |fast: bool| -> Result<crate::MainLine, moves::WalkError> {
+            let mut line = crate::MainLine::default();
+            let mut first = true;
+            moves::main_line(&bytes, 0, fast, |pos, step| {
+                if std::mem::take(&mut first) {
+                    line.standard_start = crate::position::same_position(pos, &shakmaty::Chess::default());
+                    if !line.standard_start {
+                        return false;
+                    }
+                }
+                match step {
+                    moves::Step::Move(m) => {
+                        line.moves.push(*m);
+                        line.moves.len() < max_plies
+                    }
+                    // A null move or the end: the opening line stops here.
+                    moves::Step::Null | moves::Step::End => false,
+                }
+            })?;
+            Ok(line)
+        };
+        // The fast decoder trusts the data: a damaged game is read again carefully.
+        walk(true).or_else(|_| walk(false)).ok()
+    }
+
     /// The `.cbg` record at `offset` (its size is in bytes 1-3).
     fn read_moves(&self, offset: u32) -> Option<Vec<u8>> {
         let mut f = self.cbg.lock().ok()?;
@@ -1407,6 +1441,9 @@ mod tests {
         assert_eq!(fold("Hübner, Robert"), "hubner, robert");
         assert_eq!(fold("Łukasz Ćwikła"), "lukasz cwikla");
         assert_eq!(words("  Carlsen,Magnus "), vec!["carlsen", "magnus"]);
+        // An initial with its full stop finds the full name.
+        assert_eq!(words("Вафин, Р."), vec!["вафин", "р"]);
+        assert_eq!(words("J.R. Capablanca"), vec!["j", "r", "capablanca"]);
         let names = Names::new(vec![
             "Carlsen, Magnus".into(),
             "Carlsen, Henrik".into(),
@@ -1416,6 +1453,9 @@ mod tests {
         assert_eq!(names.matching("hubner"), vec![false, false, true]);
         let (list, total) = names.suggest("carl", 1);
         assert_eq!((list.len(), total), (1, 2));
+        let (list, total) = names.suggest("Carlsen, M.", 5);
+        assert_eq!((list.len(), total), (1, 1));
+        assert_eq!(list[0].name, "Carlsen, Magnus");
     }
 
     #[test]

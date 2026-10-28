@@ -171,6 +171,14 @@ impl std::ops::Deref for PgnDb {
     }
 }
 
+/// The beginning of a game's main line (see [`Database::main_line`]).
+#[derive(Clone, Debug, Default)]
+pub struct MainLine {
+    /// The game starts from the usual position; otherwise `moves` is empty.
+    pub standard_start: bool,
+    pub moves: Vec<chess_core::shakmaty::Move>,
+}
+
 /// An opened database.
 pub enum Database {
     Pgn(PgnDb),
@@ -210,6 +218,34 @@ impl Database {
                 }
                 Some(parsed)
             }
+        }
+    }
+
+    /// The first `max_plies` moves of the main line of record `index`, for passes
+    /// over the openings of many games: a ChessBase game is decoded without its tree
+    /// (microseconds), a PGN game is parsed. The line stops at a teaching null move.
+    /// `None` for a text, a deleted record or unreadable moves.
+    pub fn main_line(&self, index: usize, max_plies: usize) -> Option<MainLine> {
+        match self {
+            Database::Pgn(db) => {
+                let parsed = db.load_game(index)?;
+                let game = &parsed.game;
+                let mut line = MainLine {
+                    standard_start: game.start().is_standard(),
+                    moves: Vec::new(),
+                };
+                if !line.standard_start {
+                    return Some(line);
+                }
+                for id in game.mainline().into_iter().take(max_plies) {
+                    match game.game_move(id).map(|m| &m.kind) {
+                        Some(chess_core::MoveKind::Normal(m)) => line.moves.push(*m),
+                        _ => break,
+                    }
+                }
+                Some(line)
+            }
+            Database::ChessBase(b) => b.main_line(index, max_plies),
         }
     }
 
@@ -334,6 +370,14 @@ impl Database {
         match self {
             Database::Pgn(db) => db.catalog().suggest_players(query, limit),
             Database::ChessBase(b) => b.suggest_players(query, limit),
+        }
+    }
+
+    /// The name of player `id` (from a suggestion), as the game list shows it.
+    pub fn player_name(&self, id: u32) -> &str {
+        match self {
+            Database::Pgn(db) => db.catalog().player_name(id),
+            Database::ChessBase(b) => b.player_name(id),
         }
     }
 
