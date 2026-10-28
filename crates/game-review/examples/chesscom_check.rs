@@ -31,6 +31,8 @@ fn main() {
     files.sort();
 
     let (mut agree, mut differ) = (0, 0);
+    // Per mark ("!!", "!"): chess.com's, found by us, ours chess.com has not.
+    let mut tally = [Tally::default(), Tally::default()];
     for file in files {
         let text = std::fs::read_to_string(&file).expect("pgn");
         let game = chess_core::parse_str(&text).game;
@@ -62,6 +64,12 @@ fn main() {
             if theirs.is_empty() && ours_compared.is_empty() {
                 continue;
             }
+            for (k, mark) in ["!!", "!"].into_iter().enumerate() {
+                let t = &mut tally[k];
+                t.theirs += u32::from(theirs == mark);
+                t.found += u32::from(theirs == mark && ours_compared == mark);
+                t.extra += u32::from(ours_compared == mark && theirs != mark);
+            }
             let label = game.move_label(node).unwrap_or_default();
             if theirs == ours_compared {
                 agree += 1;
@@ -77,6 +85,17 @@ fn main() {
         }
     }
     println!("\nagree {agree}, differ {differ}");
+    for (t, mark) in tally.iter().zip(["!!", "!"]) {
+        println!(
+            "{mark:<2}  chess.com {:>3}  found {:>3} ({})  ours not chess.com's {:>3}  (ours {}, {} of them chess.com's)",
+            t.theirs,
+            t.found,
+            percent(t.found, t.theirs),
+            t.extra,
+            t.found + t.extra,
+            percent(t.found, t.found + t.extra),
+        );
+    }
     if differ > 0 {
         std::process::exit(1);
     }
@@ -116,6 +135,21 @@ fn mark_of_nags(nags: &[Nag]) -> &'static str {
         "!"
     } else {
         ""
+    }
+}
+
+#[derive(Default)]
+struct Tally {
+    theirs: u32,
+    found: u32,
+    extra: u32,
+}
+
+fn percent(part: u32, whole: u32) -> String {
+    if whole == 0 {
+        "—".into()
+    } else {
+        format!("{:.0} %", 100.0 * f64::from(part) / f64::from(whole))
     }
 }
 
