@@ -185,22 +185,47 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
     let second = ply.second.map(|e| e.win_percent(ply.mover));
     // Without the move: the best other move, or the best move when another was played.
     let without = if ply.best { second } else { Some(wb) };
+    // With [`Rules::ChessCom`] a sacrifice that mates sooner than any other move was not
+    // won anyway: 22.Qf6+!! of the Immortal game mates in 2, 22.Qf7 only in 4 (chess.com
+    // marks it; win % cannot tell the two apart).
+    let mates_sooner = rules == Rules::ChessCom
+        && ply.best
+        && ply
+            .second
+            .is_some_and(|s| mates_sooner(after, s, ply.mover));
     if f.brilliant_shape(rules)
         && (ply.best || loss <= good::NEAR_BEST)
         && wa >= good::SOUND_AFTER
-        && without.is_some_and(|w| w < good::WON_ANYWAY)
+        && (without.is_some_and(|w| w < good::WON_ANYWAY) || mates_sooner)
     {
         return Some(Judgement::Brilliant);
     }
     let w2 = second?;
+    // The engine's own best move loses nothing: a drop to the next position is the noise
+    // of two searches (9.Nf5! of the Immortal game, −0.51 then −0.82 at 3M nodes); the
+    // first rules still count it.
     (f.great_shape(rules)
         && ply.best
-        && loss <= good::NEAR_BEST
+        && (rules == Rules::ChessCom || loss <= good::NEAR_BEST)
         && wb - w2 >= good::GAP
         && (rules == Rules::ChessCom || outcome(wa) > outcome(w2))
         && wa >= good::GREAT_AFTER
         && w2 < good::GREAT_ALT)
         .then_some(Judgement::Great)
+}
+
+/// `after` (the move played) mates `mover`'s opponent in fewer moves than `other` (the
+/// best other move), or `other` does not mate at all.
+fn mates_sooner(after: Eval, other: Eval, mover: Color) -> bool {
+    let mine = |e: Eval| match e {
+        Eval::Mate { white, moves } if white == (mover == Color::White) => Some(moves),
+        _ => None,
+    };
+    match (mine(after), mine(other)) {
+        (Some(a), Some(o)) => a < o,
+        (Some(_), None) => true,
+        _ => false,
+    }
 }
 
 /// Judgement of a move from the evaluations before and after it: an inaccuracy, a
