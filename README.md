@@ -5,8 +5,9 @@
 <h1 align="center">ChessPenguin</h1>
 
 <p align="center">
-  A native chess database for Linux: open PGN collections, read annotated games,
-  enter your own and analyse them with Stockfish or any UCI engine.
+  A chess database for Linux, Windows, macOS and Android: open PGN and ChessBase collections,
+  read annotated games, enter your own, analyse them with Stockfish, prepare against an
+  opponent and play against the computer.
 </p>
 
 <p align="center">
@@ -14,7 +15,7 @@
   <a href="README.ru.md">Русский</a>
 </p>
 
-![Analysis](docs/screenshots/analysis.png)
+![A game with its review](docs/screenshots/game.png)
 
 ## Features
 
@@ -28,11 +29,24 @@
 - **Notation** — main line as a two-column table, comments and variations as blocks,
   mouse and keyboard navigation.
 - **Stockfish included** — analysis works right after installation; other UCI engines can be added.
+- **Reference** — the moves played from the current position in a database of your shelf
+  (a big one for theory) with their statistics, how long the game stays in it, the
+  strongest games that reached it.
+- **Search by position** — set up moves on a board and filter a database of millions of
+  games by the position, next to filters by player, years, rating, opening and result.
 - **Engine analysis** — any UCI engine, up to 5 lines, best-move arrows, evaluation bar;
   search time, threads and memory are set right in the analysis panel.
-- **Game analysis** — evaluate the whole game in the background: evaluation graph under the board,
+- **Game review** — evaluate the whole game in the background: evaluation graph under the board,
   accuracy, inaccuracies, mistakes and blunders per player and per game phase (Lichess method),
-  better moves in the notation; write it into the game as NAGs, comments and `[%eval]` (undoable).
+  **brilliant (!!) and great (!) moves** calibrated on chess.com's marks of famous games, better
+  moves in the notation and marks on the board; write it into the game as NAGs, comments and
+  `[%eval]` (undoable). The review always runs the same engine search, so a game gets the same
+  marks on every computer and phone.
+- **Preparing against an opponent** — pick a player of a database and see their opening
+  repertoire for each colour: a tree of their moves with opening names, games, score and the
+  last game, a table of openings and variations with their first moves, where they leave
+  theory; on request the engine finds their opening mistakes, by opening, with the ones they
+  repeat. Every table sorts by its columns.
 - **Engine lines on the board** — step through a line without touching the game, add it as a
   variation with one click (undoable).
 - **Editing** — enter moves and variations, promote or delete lines, undo/redo,
@@ -61,16 +75,24 @@
   player's database. Maia (316 MB) and Rodent (48 and 70 MB) are downloaded on request.
 - **Looks** — 17 piece sets, 37 boards (flat colours and textures), 7 sound sets,
   dark and light themes.
-- **Online games** — download anyone's games from Lichess and Chess.com by nickname (yours, a pupil's, an opponent's; no login) into a database, both sites merged or one per site, and fetch the new ones with one click.
+- **Online games** — download anyone's games from Lichess and Chess.com by nickname (yours, a pupil's, an opponent's; no login) into a database, both sites merged or one per site; new games arrive by themselves.
+- **100 classic games** built in — from Anderssen and Morphy to Carlsen, the famous ones
+  with short introductions; the sample databases update with the program.
+- **Android app** — databases and games in the same formats, moves on the board, your own
+  databases, game review with !! and !, play against Maia, learning an opening.
 - **Languages** — English, Русский, Français, Deutsch, Español, Italiano, Português, Oʻzbekcha, Қазақша.
 
-| Game analysis: graph and report | Engine marks and better lines |
+| Preparing against an opponent | Game review: report, !! and ! |
 | --- | --- |
-| ![Game analysis](docs/screenshots/review.png) | ![Engine marks](docs/screenshots/marks.png) |
-| **Engine settings in the analysis panel** | **Library** |
-| ![Engine settings](docs/screenshots/engine.png) | ![Library](docs/screenshots/library.png) |
-| **Boards and pieces** | |
-| ![Settings](docs/screenshots/settings.png) | |
+| ![Preparing against an opponent](docs/screenshots/prep-openings.jpg) | ![Game review](docs/screenshots/review.png) |
+| **Engine analysis** | **Reference: what was played here** |
+| ![Engine analysis](docs/screenshots/engine.jpg) | ![Reference](docs/screenshots/reference.jpg) |
+| **Library with filters** | **Search by position** |
+| ![Library](docs/screenshots/library.png) | ![Search by position](docs/screenshots/position-search.jpg) |
+| **Play against the computer** | **Android** |
+| ![Play](docs/screenshots/play.jpg) | ![Android](docs/screenshots/android.jpg) |
+| **Boards, pieces and a light theme** | |
+| ![Looks](docs/screenshots/looks.jpg) | |
 
 ## Install
 
@@ -85,7 +107,7 @@ Packages for every release are on the [Releases](https://github.com/vrubelroman/
 | Flatpak | `flatpak install --user ChessPenguin-<version>-x86_64.flatpak` |
 | Windows | unzip `ChessPenguin-<version>-windows-x86_64.zip`, run `ChessPenguin.exe` |
 | macOS (Apple Silicon) | open `ChessPenguin-<version>-macos-arm64.dmg`, drag ChessPenguin to Applications |
-| Android 12+ (alpha) | open `ChessPenguin-<version>-android.apk` (Stockfish built in) or `…-android-noengine.apk` (Stockfish downloaded in the app) on the phone |
+| Android 12+ | open `ChessPenguin-<version>-android.apk` (Stockfish built in) or `…-android-noengine.apk` (Stockfish downloaded in the app) on the phone |
 
 On macOS the app is not signed by Apple yet: the first time, right-click ChessPenguin in
 Applications and choose **Open** (on macOS 15: System Settings → Privacy & Security → Open Anyway).
@@ -95,10 +117,10 @@ official Stockfish 19 (about 80 MB, checked before use, installed for your accou
 button is also in **Settings → Engines**. A `stockfish` installed on the system is found
 automatically, any other UCI engine can be added from a file. The Flatpak includes Stockfish.
 
-The **Android app** (alpha) opens databases and games (the same formats), with the notation under
-the board and Stockfish. Moves are made on the board (variations, undo); your own databases live on
-the phone; play against Maia (the small model, no clocks; games kept in the player's database) and learn an opening up to a move. The two
-APKs install over each other; databases and settings are kept.
+The **Android app** opens databases and games (the same formats), with the notation under the
+board and Stockfish. Moves are made on the board (variations, undo); your own databases live on
+the phone; game review with !! and !; play against Maia and Rodent IV; learn an opening up to a
+move. The two APKs install over each other; databases and settings are kept.
 
 ### Build from source
 
