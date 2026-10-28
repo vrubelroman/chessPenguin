@@ -815,6 +815,8 @@ private fun pastedName(db: Database, dated: String): String {
 fun finishedText(res: android.content.res.Resources, f: Finished): String? {
     val s = f.view.state
     val games = res.getQuantityString(R.plurals.games_count, f.games, groupDigits(f.games))
+    // An update of its own speaks only of new games.
+    if (f.quiet && (s.failure != null || s.added == 0UL)) return null
     s.failure?.let { return res.getString(R.string.online_snack_failed, f.name, problemShort(res, it)) }
     return when {
         s.cancelled || f.games == 0 -> null

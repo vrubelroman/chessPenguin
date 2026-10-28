@@ -4,17 +4,21 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-28
+
+- The databases downloaded from Lichess and Chess.com get the games played since on their
+  own: at the start of the program and when one comes back to it after ten minutes or
+  more, one database after another, on the desktop and on Android. Only new games are
+  told («+N»); no message when there are none or the network is off.
 - Desktop: the notation no longer jumps on every move with the engine on. Between two
   positions the old lines go at once and the new ones come a frame later; the engine
   panel now keeps their room, so what is below it stays still.
-
 - The moves of the notation and the signs after them are bold (Ubuntu Bold on the desktop,
-  the bold system font on Android), and so are the marks in the circles on the board. In Russian the report's rows read «Блестящий» and «Замечательный».
-
+  the bold system font on Android), and so are the marks in the circles on the board. In
+  Russian the report's rows read «Блестящий» and «Замечательный».
 - Android: the dark theme by default (it was the system's); a theme chosen before stays.
   Android is told the app's own theme, so the window and the splash screen before the
   app draws match it (no white flash before a dark app on a light phone).
-
 - Game review marks brilliant moves (!!, a sound piece sacrifice) and great moves (!, the
   only good move that turns the game), next to inaccuracies, mistakes and blunders: in the
   report, the notation, the graph and on the board; written to the game as $3 and $1. The

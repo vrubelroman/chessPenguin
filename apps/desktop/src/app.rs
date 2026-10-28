@@ -181,6 +181,9 @@ pub enum CloseIntent {
     ReturnToPrevious,
 }
 
+/// The online databases are updated on their own at most this often (s).
+const ONLINE_EVERY: f64 = 600.0;
+
 pub struct App {
     settings: Settings,
     settings_dirty: bool,
@@ -219,6 +222,10 @@ pub struct App {
     offer_hook_done: bool,
     /// Lichess / Chess.com: which answered at start, and the download window.
     online_probe: crate::online::Probe,
+    /// When the online databases were last updated on their own (egui time, s), and
+    /// whether the window had the focus in the last frame.
+    online_updated_at: f64,
+    was_focused: bool,
     online: crate::online_ui::OnlineDialog,
     /// Translating comments: the setup and consent windows, the ChatGPT sign-in.
     translation: crate::translate_ui::Hub,
@@ -357,6 +364,12 @@ impl App {
         if !args.is_empty() {
             let _ = settings.save();
         }
+        let online_dbs: Vec<PathBuf> = settings
+            .databases
+            .iter()
+            .filter(|p| crate::online::is_online(p))
+            .cloned()
+            .collect();
         let (tx, rx) = channel();
         let mut library = Library::new(ctx);
         // Read in the background: a missing file says so there (a lost network drive
@@ -400,7 +413,14 @@ impl App {
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
             online_probe: crate::online::Probe::start(ctx),
-            online: crate::online_ui::OnlineDialog::from_env(),
+            online_updated_at: 0.0,
+            was_focused: true,
+            online: {
+                // Every downloaded database gets the games played since, at each start.
+                let mut d = crate::online_ui::OnlineDialog::from_env();
+                d.update_quietly(online_dbs);
+                d
+            },
             translation: Default::default(),
             allow_quit: false,
             applied_dark: None,
@@ -2976,6 +2996,21 @@ impl eframe::App for App {
             }
         }
 
+        // Back to the window after a while: the downloaded databases get the games
+        // played since (at the start they did already).
+        let now = ctx.input(|i| i.time);
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+        if focused && !self.was_focused && now - self.online_updated_at > ONLINE_EVERY {
+            self.online_updated_at = now;
+            self.online.update_quietly(
+                self.settings
+                    .databases
+                    .iter()
+                    .filter(|p| crate::online::is_online(p))
+                    .cloned(),
+            );
+        }
+        self.was_focused = focused;
         let events = self.online.show(&ctx, &self.online_probe);
         for e in events {
             match e {

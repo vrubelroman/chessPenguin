@@ -38,6 +38,9 @@ struct Job {
     /// When Stop was pressed: a download that does not stop soon (a stalled
     /// connection) leaves the list; its database stays claimed until it ends.
     stopped: Option<std::time::Instant>,
+    /// Started on its own at the program's start: says something only when it added
+    /// games (no "no new games" on every start, no error over a network that is off).
+    quiet: bool,
 }
 
 /// A finished download.
@@ -71,6 +74,9 @@ pub struct OnlineDialog {
     auto_download: bool,
     /// Put the cursor into the nickname field (the window was just opened).
     focus: bool,
+    /// Online databases to update on their own (at the start), one after another: the
+    /// sites ask for one export at a time.
+    queued: std::collections::VecDeque<PathBuf>,
 }
 
 /// Where the found accounts go (see [`online_games::targets`]).
@@ -208,6 +214,32 @@ impl OnlineDialog {
         self.start(state.accounts(), path.to_owned(), true, ctx);
     }
 
+    /// Updates these online databases on their own, one after another, once a site
+    /// answers (the program's start: every downloaded database gets its new games).
+    pub fn update_quietly(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        for p in paths {
+            if !self.queued.contains(&p) {
+                self.queued.push_back(p);
+            }
+        }
+    }
+
+    /// The next queued update, when nothing else is being downloaded.
+    fn next_queued(&mut self, probe: &Probe, ctx: &egui::Context) {
+        if !self.jobs.is_empty() || !probe.any() {
+            return;
+        }
+        while let Some(path) = self.queued.pop_front() {
+            if let Some(state) = online::State::load(&path) {
+                self.start(state.accounts(), path, true, ctx);
+                if let Some(j) = self.jobs.last_mut() {
+                    j.quiet = true;
+                }
+                return;
+            }
+        }
+    }
+
     fn start(&mut self, accounts: Vec<Account>, path: PathBuf, update: bool, ctx: &egui::Context) {
         if self.jobs.iter().any(|j| j.path == path) {
             return;
@@ -229,6 +261,7 @@ impl OnlineDialog {
                 status,
                 work,
                 stopped: None,
+                quiet: false,
             });
         }
     }
@@ -281,10 +314,14 @@ impl OnlineDialog {
                     platform,
                     result,
                 };
-                if !self.open {
-                    events.push(OnlineEvent::Message(outcome_text(&outcome)));
+                // An update of its own speaks only of new games.
+                let worth = !job.quiet || outcome.result.as_ref().is_ok_and(|d| d.added > 0);
+                if worth {
+                    if !self.open {
+                        events.push(OnlineEvent::Message(outcome_text(&outcome)));
+                    }
+                    self.results.push(outcome);
                 }
-                self.results.push(outcome);
             } else if self.jobs[i]
                 .stopped
                 .is_some_and(|t| t.elapsed() > std::time::Duration::from_secs(10))
@@ -294,7 +331,8 @@ impl OnlineDialog {
                 i += 1;
             }
         }
-        if !self.jobs.is_empty() || self.lookup.is_some() {
+        self.next_queued(probe, ctx);
+        if !self.jobs.is_empty() || self.lookup.is_some() || !self.queued.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         if !self.open {

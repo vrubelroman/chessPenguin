@@ -111,6 +111,8 @@ class MainActivity : ComponentActivity() {
         val updates = (application as ChessPenguinApp).updates
         updates.foreground = true
         updates.checkIfDue()
+        // The downloaded databases get their new games (at most every ten minutes).
+        (application as ChessPenguinApp).downloads.updateAllQuietly()
     }
 
     override fun onResume() {
