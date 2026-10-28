@@ -225,15 +225,10 @@
     <string name="review_menu">Partieanalyse</string>
     <string name="review_report_menu">Partiebericht</string>
     <string name="review_text">Die Engine bewertet jede Stellung der Hauptvariante. Die Partie selbst wird nicht verändert.</string>
-    <string name="review_quality">Qualität</string>
-    <string name="review_fast">Schnell</string>
-    <string name="review_normal">Normal</string>
-    <string name="review_deep">Gründlich</string>
     <string name="review_seconds">%d s</string>
     <string name="review_minutes">%d Min.</string>
     <string name="review_start">Analysieren</string>
     <string name="review_fill">Ergänzen</string>
-    <string name="review_again">Erneut analysieren</string>
     <string name="review_partial">%1$d von %2$d Stellungen sind schon bewertet.</string>
     <string name="review_progress">Partieanalyse · %1$d von %2$d</string>
     <string name="review_stop">Analyse anhalten</string>
@@ -262,13 +257,15 @@
     <string name="review_source_pgn" formatted="false">Bewertungen aus der PGN ([%eval])</string>
     <string name="review_no_notes">!! und ! braucht die Engine: die PGN enthält nur Bewertungen</string>
     <string name="review_no_seconds">In dieser Analyse wurde noch nicht nach !! und ! gesucht</string>
+    <string name="review_stale">Analyse mit anderen Engine-Einstellungen gemacht</string>
+    <string name="review_update">Aktualisieren</string>
+    <string name="review_engine">Mit der Engine analysieren</string>
     <string name="review_hide">Analyse ausblenden</string>
     <string name="review_graph">Bewertungsgrafik</string>
     <string name="review_engine_paused">Pausiert: Partie wird analysiert</string>
     <string name="review_best_preview">Bessere Variante · Zug %1$d von %2$d</string>
     <string name="review_next">Zum nächsten solchen Zug</string>
     <string name="review_show_best">Die bessere Variante auf dem Brett zeigen</string>
-    <string name="review_restart">Von vorn</string>
     <string name="review_graph_state">%1$s, Bewertung %2$s</string>
     <string name="review_start_position">Ausgangsstellung</string>
     <plurals name="review_estimate">

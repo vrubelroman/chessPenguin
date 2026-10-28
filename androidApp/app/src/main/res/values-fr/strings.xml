@@ -229,15 +229,10 @@
     <string name="review_menu">Analyse de la partie</string>
     <string name="review_report_menu">Rapport de la partie</string>
     <string name="review_text">Le moteur évalue chaque position de la ligne principale. La partie elle-même n\'est pas modifiée.</string>
-    <string name="review_quality">Qualité</string>
-    <string name="review_fast">Rapide</string>
-    <string name="review_normal">Normal</string>
-    <string name="review_deep">Approfondi</string>
     <string name="review_seconds">%d s</string>
     <string name="review_minutes">%d min</string>
     <string name="review_start">Analyser</string>
     <string name="review_fill">Compléter</string>
-    <string name="review_again">Analyser de nouveau</string>
     <string name="review_partial">%1$d positions sur %2$d sont déjà évaluées.</string>
     <string name="review_progress">Analyse · %1$d sur %2$d</string>
     <string name="review_stop">Arrêter l\'analyse</string>
@@ -266,13 +261,15 @@
     <string name="review_source_pgn" formatted="false">Évaluations issues du PGN ([%eval])</string>
     <string name="review_no_notes">!! et ! demandent le moteur : le PGN ne contient que des évaluations</string>
     <string name="review_no_seconds">Cette analyse n’a pas encore cherché les !! et !</string>
+    <string name="review_stale">Analyse faite avec d’autres réglages du moteur</string>
+    <string name="review_update">Mettre à jour</string>
+    <string name="review_engine">Analyser avec le moteur</string>
     <string name="review_hide">Masquer l\'analyse</string>
     <string name="review_graph">Graphique d\'évaluation</string>
     <string name="review_engine_paused">En pause : analyse de la partie en cours</string>
     <string name="review_best_preview">Meilleure ligne · coup %1$d sur %2$d</string>
     <string name="review_next">Aller au coup suivant de ce type</string>
     <string name="review_show_best">Afficher la meilleure ligne sur l\'échiquier</string>
-    <string name="review_restart">Recommencer</string>
     <string name="review_graph_state">%1$s, évaluation %2$s</string>
     <string name="review_start_position">Position de départ</string>
     <plurals name="review_estimate">

@@ -229,15 +229,10 @@
     <string name="review_menu">Análise da partida</string>
     <string name="review_report_menu">Relatório da partida</string>
     <string name="review_text">O motor avalia cada posição da linha principal. A partida em si não é alterada.</string>
-    <string name="review_quality">Qualidade</string>
-    <string name="review_fast">Rápida</string>
-    <string name="review_normal">Normal</string>
-    <string name="review_deep">Profunda</string>
     <string name="review_seconds">%d s</string>
     <string name="review_minutes">%d min</string>
     <string name="review_start">Analisar</string>
     <string name="review_fill">Completar</string>
-    <string name="review_again">Analisar de novo</string>
     <string name="review_partial">%1$d de %2$d posições já estão avaliadas.</string>
     <string name="review_progress">Análise da partida · %1$d de %2$d</string>
     <string name="review_stop">Parar a análise</string>
@@ -266,13 +261,15 @@
     <string name="review_source_pgn" formatted="false">Avaliações do PGN ([%eval])</string>
     <string name="review_no_notes">!! e ! exigem o motor: o PGN traz só avaliações</string>
     <string name="review_no_seconds">Esta análise ainda não procurou !! e !</string>
+    <string name="review_stale">Análise feita com outras definições do motor</string>
+    <string name="review_update">Atualizar</string>
+    <string name="review_engine">Analisar com o motor</string>
     <string name="review_hide">Ocultar análise</string>
     <string name="review_graph">Gráfico de avaliação</string>
     <string name="review_engine_paused">Em pausa: a partida está sendo analisada</string>
     <string name="review_best_preview">Linha melhor · lance %1$d de %2$d</string>
     <string name="review_next">Ir para o próximo lance assim</string>
     <string name="review_show_best">Mostrar a linha melhor no tabuleiro</string>
-    <string name="review_restart">Recomeçar</string>
     <string name="review_graph_state">%1$s, avaliação %2$s</string>
     <string name="review_start_position">Posição inicial</string>
     <plurals name="review_estimate">

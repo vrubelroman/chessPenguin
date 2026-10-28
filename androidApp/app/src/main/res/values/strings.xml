@@ -228,15 +228,10 @@
     <string name="review_menu">Game analysis</string>
     <string name="review_report_menu">Game report</string>
     <string name="review_text">The engine evaluates every position of the main line. The game itself is not changed.</string>
-    <string name="review_quality">Quality</string>
-    <string name="review_fast">Fast</string>
-    <string name="review_normal">Normal</string>
-    <string name="review_deep">Deep</string>
     <string name="review_seconds">%d s</string>
     <string name="review_minutes">%d min</string>
     <string name="review_start">Analyse</string>
     <string name="review_fill">Fill in</string>
-    <string name="review_again">Analyse again</string>
     <string name="review_partial">%1$d of %2$d positions are evaluated already.</string>
     <string name="review_progress">Game analysis · %1$d of %2$d</string>
     <string name="review_stop">Stop the analysis</string>
@@ -265,13 +260,15 @@
     <string name="review_source_pgn" formatted="false">Evaluations from the PGN ([%eval])</string>
     <string name="review_no_notes">!! and ! need the engine: the PGN has evaluations only</string>
     <string name="review_no_seconds">!! and ! were not looked for in this analysis</string>
+    <string name="review_stale">This analysis was made with other engine settings</string>
+    <string name="review_update">Update</string>
+    <string name="review_engine">Analyse with the engine</string>
     <string name="review_hide">Hide analysis</string>
     <string name="review_graph">Evaluation graph</string>
     <string name="review_engine_paused">Paused: the game is being analysed</string>
     <string name="review_best_preview">Better line · move %1$d of %2$d</string>
     <string name="review_next">Go to the next such move</string>
     <string name="review_show_best">Show the better line on the board</string>
-    <string name="review_restart">Start over</string>
     <string name="review_graph_state">%1$s, evaluation %2$s</string>
     <string name="review_start_position">Start position</string>
     <plurals name="review_estimate">

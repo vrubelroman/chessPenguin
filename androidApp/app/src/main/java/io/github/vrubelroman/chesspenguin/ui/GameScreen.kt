@@ -114,7 +114,6 @@ import io.github.vrubelroman.chesspenguin.R
 import io.github.vrubelroman.chesspenguin.data.EngineSession
 import io.github.vrubelroman.chesspenguin.data.NetState
 import io.github.vrubelroman.chesspenguin.data.Opponent
-import io.github.vrubelroman.chesspenguin.data.REVIEW_NODES
 import io.github.vrubelroman.chesspenguin.data.ReviewSession
 import io.github.vrubelroman.chesspenguin.data.enginePosition
 import io.github.vrubelroman.chesspenguin.theme.LocalChessColors
@@ -384,9 +383,8 @@ fun GameScreen(
         }
         wantReview = null
         reviewHidden = false
-        val p = app.settings.prefs.value
-        review.start(files.executable, files.net.path, p.engineThreads, p.engineHashMb, REVIEW_NODES[p.reviewQuality], full) { s ->
-            if (s.npsPerThread > 0UL) app.settings.update { it.copy(reviewNps = s.npsPerThread.toLong()) }
+        review.start(files.executable, files.net.path, full) { s ->
+            if (s.npsPerProcess > 0UL) app.settings.update { it.copy(reviewNps = s.npsPerProcess.toLong()) }
         }
     }
     // The engine became ready for an analysis that was asked for.
@@ -1533,10 +1531,7 @@ fun GameScreen(
     if (reviewStart) {
         ReviewStartSheet(
             state = rs,
-            quality = prefs.reviewQuality,
-            threads = prefs.engineThreads,
-            npsPerThread = prefs.reviewNps,
-            onQuality = { q -> app.settings.update { it.copy(reviewQuality = q) } },
+            npsPerProcess = prefs.reviewNps,
             onStart = { full ->
                 reviewStart = false
                 startReview(full)

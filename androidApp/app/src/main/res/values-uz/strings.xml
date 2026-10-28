@@ -225,15 +225,10 @@
     <string name="review_menu">Partiya tahlili</string>
     <string name="review_report_menu">Partiya hisoboti</string>
     <string name="review_text">Dvigatel asosiy liniyaning har bir pozitsiyasini baholaydi. Partiyaning oʻzi oʻzgarmaydi.</string>
-    <string name="review_quality">Sifat</string>
-    <string name="review_fast">Tez</string>
-    <string name="review_normal">Oddiy</string>
-    <string name="review_deep">Chuqur</string>
     <string name="review_seconds">%d s</string>
     <string name="review_minutes">%d daq.</string>
     <string name="review_start">Tahlil qilish</string>
     <string name="review_fill">Toʻldirish</string>
-    <string name="review_again">Qayta tahlil qilish</string>
     <string name="review_partial">%2$d ta pozitsiyadan %1$d tasi allaqachon baholangan.</string>
     <string name="review_progress">Partiya tahlili · %1$d / %2$d</string>
     <string name="review_stop">Tahlilni toʻxtatish</string>
@@ -262,13 +257,15 @@
     <string name="review_source_pgn" formatted="false">PGNdagi baholar ([%eval])</string>
     <string name="review_no_notes">!! va ! faqat dvigatel bilan: PGNda faqat baholar bor</string>
     <string name="review_no_seconds">Bu tahlilda !! va ! hali qidirilmagan</string>
+    <string name="review_stale">Tahlil dvigatelning boshqa sozlamalari bilan qilingan</string>
+    <string name="review_update">Yangilash</string>
+    <string name="review_engine">Dvigatel bilan tahlil qilish</string>
     <string name="review_hide">Tahlilni yashirish</string>
     <string name="review_graph">Baho grafigi</string>
     <string name="review_engine_paused">Pauza: partiya tahlil qilinmoqda</string>
     <string name="review_best_preview">Yaxshiroq liniya · yurish %1$d / %2$d</string>
     <string name="review_next">Keyingi shunday yurishga oʻtish</string>
     <string name="review_show_best">Yaxshiroq liniyani taxtada koʻrsatish</string>
-    <string name="review_restart">Qaytadan boshlash</string>
     <string name="review_graph_state">%1$s, baho %2$s</string>
     <string name="review_start_position">Boshlangʻich pozitsiya</string>
     <plurals name="review_estimate">

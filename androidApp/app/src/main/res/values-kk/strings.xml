@@ -225,15 +225,10 @@
     <string name="review_menu">Партияны талдау</string>
     <string name="review_report_menu">Партия есебі</string>
     <string name="review_text">Қозғалтқыш негізгі варианттың әр позициясын бағалайды. Партияның өзі өзгермейді.</string>
-    <string name="review_quality">Сапа</string>
-    <string name="review_fast">Жылдам</string>
-    <string name="review_normal">Қалыпты</string>
-    <string name="review_deep">Терең</string>
     <string name="review_seconds">%d с</string>
     <string name="review_minutes">%d мин</string>
     <string name="review_start">Талдау</string>
     <string name="review_fill">Толықтыру</string>
-    <string name="review_again">Қайта талдау</string>
     <string name="review_partial">%2$d позицияның %1$d бағаланып қойған.</string>
     <string name="review_progress">Партияны талдау · %1$d / %2$d</string>
     <string name="review_stop">Талдауды тоқтату</string>
@@ -262,13 +257,15 @@
     <string name="review_source_pgn" formatted="false">PGN-дағы бағалар ([%eval])</string>
     <string name="review_no_notes">!! және ! тек қозғалтқышпен: PGN-да тек бағалар бар</string>
     <string name="review_no_seconds">Бұл талдауда !! мен ! әлі ізделмеген</string>
+    <string name="review_stale">Талдау қозғалтқыштың басқа баптауларымен жасалған</string>
+    <string name="review_update">Жаңарту</string>
+    <string name="review_engine">Қозғалтқышпен талдау</string>
     <string name="review_hide">Талдауды жасыру</string>
     <string name="review_graph">Бағалау графигі</string>
     <string name="review_engine_paused">Кідіртілді: партия талдануда</string>
     <string name="review_best_preview">Жақсырақ вариант · жүріс %1$d / %2$d</string>
     <string name="review_next">Келесі осындай жүріске өту</string>
     <string name="review_show_best">Жақсырақ вариантты тақтада көрсету</string>
-    <string name="review_restart">Басынан бастау</string>
     <string name="review_graph_state">%1$s, баға %2$s</string>
     <string name="review_start_position">Бастапқы позиция</string>
     <plurals name="review_estimate">

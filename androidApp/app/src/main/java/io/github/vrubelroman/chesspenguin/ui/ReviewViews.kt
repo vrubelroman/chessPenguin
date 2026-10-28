@@ -35,9 +35,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -70,8 +67,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.vrubelroman.chesspenguin.R
-import io.github.vrubelroman.chesspenguin.data.GUESS_NPS_PER_THREAD
-import io.github.vrubelroman.chesspenguin.data.REVIEW_NODES
+import io.github.vrubelroman.chesspenguin.data.GUESS_NPS
 import io.github.vrubelroman.chesspenguin.theme.LocalChessColors
 import io.github.vrubelroman.chesspenguin.theme.Tabular
 import io.github.vrubelroman.chesspenguin.theme.nagColor
@@ -80,7 +76,6 @@ import uniffi.mobile_api.MoveJudgement
 import uniffi.mobile_api.ReviewMove
 import uniffi.mobile_api.ReviewState
 import uniffi.mobile_api.SideReview
-import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /// The NAG of the same sign: $3 !!, $1 !, $6 ?!, $2 ?, $4 ??.
@@ -225,6 +220,19 @@ fun ReviewPanel(
                 state.failure != null -> {
                     Text(stringResource(R.string.review_failed), style = textStyle, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
                     TextButton(onClick = onResume) { Text(stringResource(R.string.review_resume)) }
+                    report()
+                }
+                // Made with other engine settings (before the fixed search): made again.
+                state.stale -> {
+                    Text(
+                        stringResource(R.string.review_stale),
+                        style = textStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onResume) { Text(stringResource(R.string.review_update)) }
                     report()
                 }
                 state.missing > 0u || state.secondsMissing > 0u -> {
@@ -411,15 +419,13 @@ fun EvalGraph(state: ReviewState, cursor: Int?, cursorLabel: String?, onIndex: (
     }
 }
 
-/// The sheet that starts the analysis (§21.2).
+/// The sheet that starts the analysis (§21.2): what it does and how long it takes. The
+/// engine search is fixed, the same on every phone and computer: nothing to choose.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReviewStartSheet(
     state: ReviewState?,
-    quality: Int,
-    threads: Int,
-    npsPerThread: Long,
-    onQuality: (Int) -> Unit,
+    npsPerProcess: Long,
     onStart: (full: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -428,31 +434,17 @@ fun ReviewStartSheet(
             Text(stringResource(R.string.review_menu), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(12.dp))
             Text(stringResource(R.string.review_text), style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.review_quality), style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(8.dp))
-            val names = listOf(R.string.review_fast, R.string.review_normal, R.string.review_deep)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                names.forEachIndexed { i, res ->
-                    SegmentedButton(
-                        selected = quality == i,
-                        onClick = { onQuality(i) },
-                        shape = SegmentedButtonDefaults.itemShape(i, names.size),
-                    ) { Text(stringResource(res), maxLines = 1) }
-                }
-            }
             Spacer(Modifier.height(12.dp))
             val total = state?.positions?.toInt() ?: 0
             val missing = state?.missing?.toInt() ?: total
-            // Some positions already have an engine evaluation: fill in, or start over.
-            val partial = state != null && state.hasData && state.nodes > 0UL && missing in 1 until total
+            // Evaluations from the PGN: the engine makes its own, all of them.
+            val pgn = state != null && state.hasData && state.nodes == 0UL
+            // Some positions already have an engine evaluation of today's search: filled in.
+            val partial = state != null && state.hasData && !pgn && !state.stale && missing in 1 until total
             val positions = if (partial) missing else total
-            // "Fill in" keeps the quality of the first run; the choice is for starting over.
-            val nodes = (if (partial) state.nodes else REVIEW_NODES[quality.coerceIn(0, REVIEW_NODES.size - 1)]).toDouble()
-            val nps = (if (npsPerThread > 0) npsPerThread else GUESS_NPS_PER_THREAD).toDouble() * threads.coerceAtLeast(1)
             // A full run also searches again for moves that could be !! or ! (about a third more).
             val searches = if (partial) positions else (state?.searches?.toInt() ?: positions)
-            val secs = ceil(searches * nodes / nps).toInt().coerceAtLeast(1)
+            val secs = uniffi.mobile_api.reviewEstimateSecs(searches.toUInt(), (if (npsPerProcess > 0) npsPerProcess else GUESS_NPS).toULong()).toInt().coerceAtLeast(1)
             val time = if (secs < 60) stringResource(R.string.review_seconds, secs) else stringResource(R.string.review_minutes, (secs + 59) / 60)
             Text(
                 pluralStringResource(R.plurals.review_estimate, positions, positions, time),
@@ -469,14 +461,10 @@ fun ReviewStartSheet(
             }
             Spacer(Modifier.height(24.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                if (partial) {
-                    TextButton(onClick = { onStart(true) }) { Text(stringResource(R.string.review_restart)) }
-                    Button(onClick = { onStart(false) }) { Text(stringResource(R.string.review_fill)) }
-                } else {
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
-                    // Everything evaluated already: analysing again starts over.
-                    Button(onClick = { onStart(state?.hasData == true) }) { Text(stringResource(R.string.review_start)) }
-                }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+                // The same search again would give the same evaluations: only the missing
+                // ones are made, or all of them over the PGN's (or a stale analysis).
+                Button(onClick = { onStart(pgn) }) { Text(stringResource(if (partial) R.string.review_fill else R.string.review_start)) }
             }
         }
     }
@@ -602,11 +590,18 @@ fun ReviewSheet(
             if (state.nodes == 0UL) {
                 Text(stringResource(R.string.review_no_notes), style = MaterialTheme.typography.bodySmall, color = variant)
             }
+            if (state.stale) {
+                Text(stringResource(R.string.review_stale), style = MaterialTheme.typography.bodySmall, color = variant)
+            }
             Spacer(Modifier.height(20.dp))
             // With a large font the two buttons go on two lines instead of breaking words.
             FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                 TextButton(onClick = onHide) { Text(stringResource(R.string.review_hide)) }
-                OutlinedButton(onClick = onAgain, enabled = !state.running) { Text(stringResource(R.string.review_again)) }
+                // Over evaluations of the PGN the engine can make its own; an engine
+                // analysis made again would only repeat itself.
+                if (state.nodes == 0UL) {
+                    OutlinedButton(onClick = onAgain, enabled = !state.running) { Text(stringResource(R.string.review_engine)) }
+                }
             }
         }
     }

@@ -124,8 +124,6 @@ pub struct ReviewState {
     pub searches: u32,
     /// The speed of one engine process in the last run (0 when unknown).
     pub nps_per_process: u64,
-    /// Engine processes a run uses on this phone (for the time estimate).
-    pub processes: u32,
     /// The start position and the position after every main-line move.
     pub points: Vec<ReviewPoint>,
     /// Where the middlegame and the endgame begin, as indices of `points`.
@@ -268,18 +266,6 @@ impl GameReview {
         analysis.refresh(game);
         snapshot(&st)
     }
-
-    /// Seconds a full analysis takes at `nps_per_process` nodes per second of one
-    /// engine process (measured before, or a guess), in this phone's processes.
-    pub fn estimate_secs(&self, nps_per_process: u64) -> u32 {
-        let st = lock(&self.inner);
-        game_review::estimate_secs(
-            st.analysis.searches(),
-            nps_per_process as f64,
-            phone_processes(),
-        )
-        .ceil() as u32
-    }
 }
 
 impl Drop for GameReview {
@@ -328,6 +314,15 @@ fn drain(st: &mut Inner) {
     } else if got && st.saved.elapsed() >= SAVE_EVERY {
         save(st);
     }
+}
+
+/// Seconds `searches` engine searches of the game analysis take at `nps_per_process`
+/// nodes per second of one engine process (measured before, or a guess), in this
+/// phone's engine processes.
+#[uniffi::export]
+pub fn review_estimate_secs(searches: u32, nps_per_process: u64) -> u32 {
+    game_review::estimate_secs(searches as usize, nps_per_process as f64, phone_processes()).ceil()
+        as u32
 }
 
 /// Engine processes of a game analysis on a phone: one per core, at most
@@ -444,7 +439,6 @@ fn snapshot(st: &Inner) -> ReviewState {
         positions: a.positions() as u32,
         searches: a.searches() as u32,
         nps_per_process: st.nps_per_process,
-        processes: phone_processes() as u32,
         points,
         middlegame: a.report.phases.middlegame.map(|i| i as u32),
         endgame: a.report.phases.endgame.map(|i| i as u32),

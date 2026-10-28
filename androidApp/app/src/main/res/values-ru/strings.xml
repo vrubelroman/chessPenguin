@@ -233,15 +233,10 @@
     <string name="review_menu">Анализ партии</string>
     <string name="review_report_menu">Отчёт по партии</string>
     <string name="review_text">Движок оценит каждую позицию основной линии. Сама партия не изменится.</string>
-    <string name="review_quality">Качество</string>
-    <string name="review_fast">Быстро</string>
-    <string name="review_normal">Обычно</string>
-    <string name="review_deep">Глубоко</string>
     <string name="review_seconds">%d с</string>
     <string name="review_minutes">%d мин</string>
     <string name="review_start">Анализировать</string>
     <string name="review_fill">Дополнить</string>
-    <string name="review_again">Анализировать заново</string>
     <string name="review_partial">Уже оценено позиций: %1$d из %2$d.</string>
     <string name="review_progress">Анализ партии · %1$d из %2$d</string>
     <string name="review_stop">Остановить анализ</string>
@@ -270,13 +265,15 @@
     <string name="review_source_pgn" formatted="false">Оценки из PGN ([%eval])</string>
     <string name="review_no_notes">!! и ! ставит только движок: в PGN есть лишь оценки</string>
     <string name="review_no_seconds">В этом анализе !! и ! ещё не искали</string>
+    <string name="review_stale">Анализ сделан с прежними настройками движка</string>
+    <string name="review_update">Обновить</string>
+    <string name="review_engine">Проанализировать движком</string>
     <string name="review_hide">Скрыть анализ</string>
     <string name="review_graph">График оценки</string>
     <string name="review_engine_paused">Пауза: идёт анализ партии</string>
     <string name="review_best_preview">Лучшая линия · ход %1$d из %2$d</string>
     <string name="review_next">Перейти к следующему такому ходу</string>
     <string name="review_show_best">Показать лучшую линию на доске</string>
-    <string name="review_restart">Заново</string>
     <string name="review_graph_state">%1$s, оценка %2$s</string>
     <string name="review_start_position">Начальная позиция</string>
     <plurals name="review_estimate">

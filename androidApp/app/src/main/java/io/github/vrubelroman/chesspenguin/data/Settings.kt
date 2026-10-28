@@ -27,10 +27,8 @@ data class Prefs(
     val engineSeconds: Int = 20,
     val engineThreads: Int = defaultThreads(),
     val engineHashMb: Int = 64,
-    /// The game report's quality, an index into REVIEW_NODES (§21.2).
-    val reviewQuality: Int = 1,
-    /// The engine's speed per thread measured by the last game analysis (0 = not yet),
-    /// for the time estimate.
+    /// The speed of one engine process (one thread) measured by the last game analysis
+    /// (0 = not yet), for the time estimate.
     val reviewNps: Long = 0,
     /// The last choices of a game against the computer (android-play.md §31.1,
     /// android-rodent.md §7.1): the opponent, each one's strength on its own scale,
@@ -80,7 +78,6 @@ class Settings(context: Context) {
             engineSeconds = store.getInt("engineSeconds", d.engineSeconds),
             engineThreads = store.getInt("engineThreads", d.engineThreads),
             engineHashMb = store.getInt("engineHashMb", d.engineHashMb),
-            reviewQuality = store.getInt("reviewQuality", d.reviewQuality).coerceIn(0, REVIEW_NODES.size - 1),
             reviewNps = store.getLong("reviewNps", d.reviewNps),
             opponent = Opponent.entries.firstOrNull { it.key == store.getString("opponent", null) } ?: d.opponent,
             maiaStrength = store.getInt("maiaStrength", d.maiaStrength),
@@ -109,7 +106,6 @@ class Settings(context: Context) {
             .putInt("engineSeconds", p.engineSeconds)
             .putInt("engineThreads", p.engineThreads)
             .putInt("engineHashMb", p.engineHashMb)
-            .putInt("reviewQuality", p.reviewQuality)
             .putLong("reviewNps", p.reviewNps)
             .putString("opponent", p.opponent.key)
             .putInt("maiaStrength", p.maiaStrength)
