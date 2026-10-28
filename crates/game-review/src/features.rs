@@ -17,7 +17,9 @@ pub struct MoveFeatures {
     /// Takes back on the square where the opponent has just taken.
     pub recapture: bool,
     /// After the move the opponent can win a piece (a knight or more) for at least two
-    /// points more than the move took; a piece that was lost anyway does not count.
+    /// points more than the move took; a piece that was lost anyway does not count, nor
+    /// one whose capture loses as much back at once (the move uncovered an attack on a
+    /// bigger piece: taking is no answer to it).
     pub sacrifice: bool,
     /// A capture that wins two points or more.
     pub winning_capture: bool,
@@ -70,6 +72,12 @@ impl MoveFeatures {
             (threat, offered)
         };
         let (threat, offered) = worst(&given);
+        // Taking the offered piece loses at least as much straight away: 18.Bxa7 opening
+        // the d-file on the queen (18…Rxa7 19.Rxd8) offers nothing — chess.com gives no !!.
+        let taking_loses = given
+            .iter()
+            .filter(|t| t.0 == threat && t.1 == offered)
+            .any(|t| taking_loses(&after, t.2, threat));
         let (threat_any, offered_any) = worst(&threats.iter().collect::<Vec<_>>());
         // The moved piece was hanging where it stood: losing it is no sacrifice.
         let from_threat = m
@@ -84,7 +92,7 @@ impl MoveFeatures {
             promotion: m.is_promotion(),
             mates: after.is_checkmate(),
             recapture: m.is_capture() && prev.is_some_and(|p| p.is_capture() && p.to() == m.to()),
-            sacrifice: offered >= 3 && taken - threat <= -2 && !lost_anyway,
+            sacrifice: offered >= 3 && taken - threat <= -2 && !lost_anyway && !taking_loses,
             winning_capture: m.is_capture() && gain >= 2,
             sacrifice_any: offered_any >= 3 && taken - threat_any <= -2 && !lost_anyway,
             escape: lost_anyway && from_threat < 900 && gain >= 0,
@@ -186,6 +194,24 @@ fn threats(pos: &Chess) -> Vec<(i32, i32, Square)> {
     out
 }
 
+/// In `pos` (the opponent to move), taking on `sq` with the cheapest piece lets the
+/// mover win at least `threat` elsewhere at once.
+fn taking_loses(pos: &Chess, sq: Square, threat: i32) -> bool {
+    let Some(take) = pos
+        .legal_moves()
+        .into_iter()
+        .filter(|m| m.to() == sq && m.is_capture())
+        .min_by_key(|m| value(m.role()))
+    else {
+        return false;
+    };
+    let mut after = pos.clone();
+    after.play_unchecked(take);
+    threats(&after)
+        .iter()
+        .any(|t| t.2 != sq && t.0 >= threat)
+}
+
 /// What `by` would win taking on `sq`, whoever is to move (a piece already hanging).
 fn pseudo_threat(board: &Board, sq: Square, by: Color) -> i32 {
     let first = board
@@ -281,6 +307,20 @@ mod tests {
         // The rook on e1 guards it; Ra1 takes the guard away: the knight is given up.
         let f = features("4k3/8/3p4/4N3/8/8/8/4RK2 w - - 0 1", "Ra1");
         assert!(f.sacrifice, "{f:?}");
+    }
+
+    #[test]
+    fn a_piece_whose_capture_loses_more_is_not_offered() {
+        // 18.Bxa7 (a game against Rodent, 2026-10-27): the bishop under the rook on a8, but
+        // the move opens the d-file on the queen: 18…Rxa7 19.Rxd8. chess.com: no !!.
+        let f = last(
+            Chess::default(),
+            "1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 g6 5. Nc3 Bg7 6. Be3 Nf6 7. Bc4 Qa5 \
+             8. O-O O-O 9. Bb3 d6 10. f3 Bd7 11. Qe1 Nxd4 12. Bxd4 Bc6 13. Nd5 Qd8 \
+             14. Nxf6+ exf6 15. Qc3 d5 16. Rad1 dxe4 17. fxe4 Bxe4 18. Bxa7",
+        );
+        assert!(!f.sacrifice && !f.brilliant_shape(Rules::ChessCom), "{f:?}");
+        assert!(f.sacrifice_any, "the first rules stay as they were: {f:?}");
     }
 
     #[test]
