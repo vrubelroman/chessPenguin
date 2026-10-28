@@ -1,0 +1,17 @@
+[package]
+name = "prep"
+description = "Preparing against an opponent: a player's opening repertoire in a database, the names of the openings, where the games leave the book, and the opening errors the engine finds (the desktop and Android apps share it)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+chess-core.workspace = true
+chess-import.workspace = true
+game-review.workspace = true
+uci.workspace = true
+serde.workspace = true
+serde_json.workspace = true

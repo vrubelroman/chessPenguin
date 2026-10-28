@@ -11,6 +11,7 @@ members = [
     "crates/maia",
     "crates/trainer",
     "crates/play",
+    "crates/prep",
     "apps/desktop",
 ]
 
@@ -47,6 +48,7 @@ online-games = { path = "crates/online-games" }
 releases = { path = "crates/releases" }
 trainer = { path = "crates/trainer" }
 play = { path = "crates/play" }
+prep = { path = "crates/prep" }
 
 [profile.dev.package."*"]
 opt-level = 2
