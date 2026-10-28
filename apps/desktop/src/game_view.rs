@@ -17,7 +17,7 @@ use crate::board::{self, Arrow, BoardState, BoardView};
 use crate::notation::{
     CommentEditor, EditorOutcome, MOVE_NAGS, Notation, NotationCommand, Slot, toggle_nag,
 };
-use crate::review::{DialogAction, ReportAction, Review};
+use crate::review::{ReportAction, Review};
 use crate::settings::Settings;
 
 /// Where an opened game came from (to return to the same library row, to save into).
@@ -706,7 +706,7 @@ impl GameView {
             self.review.note_live_speed(analysis.nps, e.threads);
         }
         self.play_tick(ui.ctx(), &mut actions);
-        if input_enabled && !self.review.dialog_open && self.play_leave.is_none() {
+        if input_enabled && self.play_leave.is_none() {
             self.editor_keys(ui, &mut actions);
             self.keyboard(ui, &mut actions);
         }
@@ -783,26 +783,15 @@ impl GameView {
         });
         self.sync_analysis(analysis);
 
-        // «Analyse»: at once with the options chosen before, else the dialog first.
+        // «Analyse»: at once — the search is the same for everyone, nothing to choose.
         if std::mem::take(&mut self.review_asked) {
             if self.engine_busy {
                 actions.push(GameAction::Toast(
                     tr("Opening errors are being searched — wait or stop it in the report").to_owned(),
                 ));
-            } else if settings.review.chosen {
-                self.start_review(settings, true, ui.ctx(), &mut actions);
             } else {
-                self.review.dialog_open = true;
+                self.start_review(false, ui.ctx(), &mut actions);
             }
-        }
-        match self.review.dialog(ui.ctx(), settings) {
-            Some(DialogAction::Start) => {
-                settings.review.chosen = true;
-                self.start_review(settings, true, ui.ctx(), &mut actions);
-            }
-            Some(DialogAction::EngineSwitch) => actions.push(GameAction::EngineSwitch),
-            Some(DialogAction::OpenEngines) => actions.push(GameAction::OpenEngineSettings),
-            None => {}
         }
 
         // A line from the clipboard: pasted, or asked about.
@@ -848,26 +837,14 @@ impl GameView {
         actions
     }
 
-    fn start_review(
-        &mut self,
-        settings: &Settings,
-        full: bool,
-        ctx: &egui::Context,
-        actions: &mut Vec<GameAction>,
-    ) {
-        if !crate::engine_offer::EngineOffer::engine_ready(settings) {
-            self.review.dialog_open = false;
+    /// Starts the game analysis with ChessPenguin's Stockfish; without it, the offer to
+    /// download it comes first.
+    fn start_review(&mut self, full: bool, ctx: &egui::Context, actions: &mut Vec<GameAction>) {
+        let Some(path) = crate::engines::own_stockfish() else {
             actions.push(GameAction::NeedEngine);
             return;
-        }
-        let Some(engine) = settings.active_engine().cloned() else {
-            self.review.dialog_open = true;
-            return;
         };
-        if self
-            .review
-            .start(&self.game, &engine, &settings.review, full, ctx)
-        {
+        if self.review.start(&self.game, &path, full, ctx) {
             actions.push(GameAction::PauseLive);
             self.side_tab = SideTab::Report;
         } else if let Some(e) = &self.review.error {
@@ -903,8 +880,10 @@ impl GameView {
                 ));
         } else if ui
             .add_enabled(!self.engine_busy, egui::Button::new(big("📈")))
-            .on_hover_text(tr(
-                "Analyse game: accuracy, inaccuracies, mistakes, blunders (Shift+A)",
+            .on_hover_text(format!(
+                "{}\n{}",
+                tr("Analyse game: accuracy, inaccuracies, mistakes, blunders (Shift+A)"),
+                self.review.estimate()
             ))
             .on_disabled_hover_text(tr(
                 "Opening errors are being searched — wait or stop it in the report",
@@ -1481,10 +1460,8 @@ impl GameView {
                             &[("n", &n)],
                         )));
                     }
-                    Some(ReportAction::Update) => {
-                        self.start_review(settings, false, ui.ctx(), actions)
-                    }
-                    Some(ReportAction::Reanalyse) => self.review.dialog_open = true,
+                    Some(ReportAction::Update) => self.start_review(false, ui.ctx(), actions),
+                    Some(ReportAction::Analyse) => self.start_review(true, ui.ctx(), actions),
                     None => {}
                 }
                 return;
@@ -2083,23 +2060,18 @@ impl GameView {
         }
     }
 
-    /// `how`: "dialog" opens the dialog, "ask" presses «Analyse», else the analysis starts.
-    pub fn debug_review(&mut self, settings: &Settings, ctx: &egui::Context, how: &str) {
+    /// `how`: "ask" presses «Analyse», else the analysis starts.
+    pub fn debug_review(&mut self, ctx: &egui::Context, how: &str) {
         match how {
-            "dialog" => self.review.dialog_open = true,
             "ask" => self.review_asked = true,
-            _ => self.start_review(settings, false, ctx, &mut Vec::new()),
+            _ => self.start_review(false, ctx, &mut Vec::new()),
         }
     }
 
     /// Starts the game analysis right away (after an engine was installed for it).
-    pub fn start_review_now(
-        &mut self,
-        settings: &Settings,
-        ctx: &egui::Context,
-    ) -> Vec<GameAction> {
+    pub fn start_review_now(&mut self, ctx: &egui::Context) -> Vec<GameAction> {
         let mut actions = Vec::new();
-        self.start_review(settings, true, ctx, &mut actions);
+        self.start_review(false, ctx, &mut actions);
         actions
     }
 

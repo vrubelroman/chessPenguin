@@ -22,7 +22,10 @@ mod job;
 pub mod report;
 
 pub use features::{MoveFeatures, Rules};
-pub use job::{JobEvent, JobFailure, JobSettings, Target, run};
+pub use job::{
+    JobEvent, JobFailure, JobSettings, MAX_PROCESSES, PHONE_PROCESSES, SEARCH_HASH_MB, SEARCH_NODES,
+    SEARCH_VERSION, Target, estimate_secs, processes, run,
+};
 pub use report::{Eval, Judgement, Phase, Phases, Ply, Report, SideStats, judge};
 
 /// Engine result for one position of the main line.
@@ -54,6 +57,28 @@ pub struct ReviewMeta {
     pub engine: String,
     /// Nodes per position; 0 = read from `[%eval]` comments of the PGN.
     pub nodes: u64,
+    /// The version of the fixed search the engine made ([`SEARCH_VERSION`]); 0 for an
+    /// analysis from before it, whose user-chosen engine settings gave other results.
+    #[serde(default)]
+    pub search: u32,
+}
+
+impl ReviewMeta {
+    /// Evaluations of the fixed search of today (see [`run`]); the engine's name comes
+    /// with the job's [`JobEvent::Engine`].
+    pub fn fixed_search() -> ReviewMeta {
+        ReviewMeta {
+            engine: String::new(),
+            nodes: SEARCH_NODES,
+            search: SEARCH_VERSION,
+        }
+    }
+
+    /// Engine evaluations of another search than today's: shown, but never completed
+    /// with new ones — an update makes them all again.
+    pub fn is_stale(&self) -> bool {
+        self.nodes > 0 && self.search != SEARCH_VERSION
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -136,6 +161,12 @@ impl GameAnalysis {
         !self.evals.is_empty()
     }
 
+    /// The evaluations come from another engine search than today's fixed one (an
+    /// analysis made before it): shown as they are until an update makes them again.
+    pub fn stale(&self) -> bool {
+        self.has_data() && self.meta.as_ref().is_some_and(ReviewMeta::is_stale)
+    }
+
     /// Root and main-line nodes, in order: index `i` of [`Self::values`] belongs here.
     pub fn line(&self) -> &[NodeId] {
         &self.line
@@ -196,19 +227,23 @@ impl GameAnalysis {
         }
     }
 
-    /// Prepares an engine run: `full` drops the earlier results. Returns the positions
-    /// without an evaluation, for [`run`]. Filling in an engine analysis keeps its
-    /// nodes per position, so that one report never mixes two qualities: the run must use
-    /// `self.meta`'s nodes, not the asked ones.
-    pub fn begin(&mut self, game: &Game, meta: ReviewMeta, full: bool) -> Vec<Target> {
-        if full {
+    /// Prepares an engine run of the fixed search: `full` drops the earlier results, and
+    /// so does an analysis of another search ([`Self::stale`]), so that one report never
+    /// mixes two. Returns the positions without an evaluation, for [`run`].
+    pub fn begin(&mut self, game: &Game, full: bool) -> Vec<Target> {
+        if full || self.stale() {
             self.evals.clear();
         }
-        let nodes = match &self.meta {
-            Some(old) if !full && old.nodes > 0 && self.has_data() => old.nodes,
-            _ => meta.nodes,
-        };
-        self.meta = Some(ReviewMeta { nodes, ..meta });
+        let engine = self
+            .meta
+            .take()
+            .filter(|m| !m.is_stale() && m.nodes > 0)
+            .map(|m| m.engine)
+            .unwrap_or_default();
+        self.meta = Some(ReviewMeta {
+            engine,
+            ..ReviewMeta::fixed_search()
+        });
         self.rebuild(game);
         (0..self.line.len())
             .filter_map(|i| {
@@ -275,7 +310,7 @@ impl GameAnalysis {
     /// !! and ! ("Update" fills them in without evaluating anything again). None for
     /// evaluations from the PGN, which have no engine lines.
     pub fn seconds_missing(&self) -> usize {
-        if self.meta.as_ref().is_none_or(|m| m.nodes == 0) {
+        if self.meta.as_ref().is_none_or(|m| m.nodes == 0 || m.is_stale()) {
             return 0;
         }
         (0..self.played.len())
@@ -541,6 +576,7 @@ impl GameAnalysis {
         self.meta = Some(ReviewMeta {
             engine: "PGN".into(),
             nodes: 0,
+            search: 0,
         });
         true
     }
@@ -640,19 +676,8 @@ mod tests {
         assert_eq!(s.values()[1], Some(Eval::Cp(0)));
     }
 
-    #[test]
-    fn engine_results_are_cached_per_main_line() {
-        let dir = std::env::temp_dir().join(format!("game-review-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let g = game("1. e4 e5 2. Nf3 *");
-        let mut a = GameAnalysis::new(&g, Some(&dir));
-        assert!(!a.has_data());
-        let meta = ReviewMeta {
-            engine: "Fake".into(),
-            nodes: 1000,
-        };
-        let targets = a.begin(&g, meta.clone(), false);
-        assert_eq!(targets.len(), 4);
+    /// Fake engine results for `targets`: the evaluations fall by 3 pawns a move.
+    fn fake_results(a: &mut GameAnalysis, targets: Vec<Target>) {
         for (i, t) in targets.into_iter().enumerate() {
             a.apply(JobEvent::Eval {
                 key: t.key,
@@ -665,55 +690,48 @@ mod tests {
                 nps: 0,
             });
         }
+    }
+
+    #[test]
+    fn engine_results_are_cached_per_main_line() {
+        let dir = std::env::temp_dir().join(format!("game-review-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let g = game("1. e4 e5 2. Nf3 *");
+        let mut a = GameAnalysis::new(&g, Some(&dir));
+        assert!(!a.has_data());
+        let targets = a.begin(&g, false);
+        assert_eq!(targets.len(), 4);
+        a.apply(JobEvent::Engine("Fake".into()));
+        fake_results(&mut a, targets);
         a.refresh(&g);
         assert_eq!(a.missing(), 0);
         a.save_cache(&dir).expect("saved");
         let b = GameAnalysis::new(&g, Some(&dir));
-        assert_eq!(b.meta, Some(meta));
+        let fixed = ReviewMeta {
+            engine: "Fake".into(),
+            ..ReviewMeta::fixed_search()
+        };
+        assert_eq!(b.meta, Some(fixed.clone()));
+        assert!(!b.stale());
         assert_eq!(b.values(), a.values());
         // 1.e4 was the engine's own move: never an error, whatever the evaluations say.
         assert!(!b.marks.contains_key(&g.mainline()[0]));
         // Another main line has its own file.
         assert!(!GameAnalysis::new(&game("1. d4 *"), Some(&dir)).has_data());
-        // Filling in keeps the quality of the first run.
-        let mut c = GameAnalysis::new(&g, Some(&dir));
-        let fast = ReviewMeta {
-            engine: "Fake".into(),
-            nodes: 250,
-        };
         // Nothing left to evaluate; 1.e4, the engine's best, still wants the best other
-        // move (an analysis from before !! and !).
+        // move (an analysis from before !! and !): filling in searches only that.
+        let mut c = GameAnalysis::new(&g, Some(&dir));
         assert_eq!(c.seconds_missing(), 1);
-        let left = c.begin(&g, fast.clone(), false);
+        let left = c.begin(&g, false);
         assert_eq!(left.len(), 1);
         assert!(left[0].known.is_some() && left[0].played.as_deref() == Some("e2e4"));
         assert!(!left[0].others.is_empty() && !left[0].others.contains(&"e2e4".to_string()));
-        assert_eq!(c.meta.as_ref().map(|m| m.nodes), Some(1000));
-        c.begin(&g, fast, true);
-        assert_eq!(c.meta.as_ref().map(|m| m.nodes), Some(250));
+        assert_eq!(c.meta, Some(fixed));
         // A game without moves is never cached.
         let empty = game("*");
         let mut e = GameAnalysis::new(&empty, Some(&dir));
-        let t = e.begin(
-            &empty,
-            ReviewMeta {
-                engine: "Fake".into(),
-                nodes: 1000,
-            },
-            false,
-        );
-        for t in t {
-            e.apply(JobEvent::Eval {
-                key: t.key,
-                eval: PosEval {
-                    eval: Eval::Cp(20),
-                    pv: vec![],
-                    depth: 1,
-                    second: None,
-                },
-                nps: 0,
-            });
-        }
+        let t = e.begin(&empty, false);
+        fake_results(&mut e, t);
         e.save_cache(&dir).expect("nothing to save is fine");
         assert!(
             !GameAnalysis::new(
@@ -723,6 +741,45 @@ mod tests {
             .has_data()
         );
         assert!(!GameAnalysis::new(&empty, Some(&dir)).has_data());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An analysis cached before the fixed search (its meta without `search`, the nodes
+    /// the user chose) is shown, but stale: an update makes every evaluation again.
+    #[test]
+    fn an_analysis_of_another_search_is_stale() {
+        let dir = std::env::temp_dir().join(format!("game-review-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let g = game("1. e4 e5 2. Nf3 *");
+        let mut a = GameAnalysis::new(&g, None);
+        let targets = a.begin(&g, false);
+        fake_results(&mut a, targets);
+        a.refresh(&g);
+        let path = a.cache_path(&dir);
+        a.save_cache(&dir).expect("saved");
+        // The file as 1.x wrote it: no `search` in the meta, 3M nodes.
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("cache")).expect("json");
+        let meta = json["meta"].as_object_mut().expect("meta");
+        meta.remove("search");
+        meta.insert("nodes".into(), 3_000_000.into());
+        meta.insert("engine".into(), "Stockfish 17".into());
+        std::fs::write(&path, serde_json::to_vec(&json).expect("json")).expect("written");
+
+        let mut old = GameAnalysis::new(&g, Some(&dir));
+        assert!(old.has_data() && old.stale());
+        assert_eq!(old.meta.as_ref().map(|m| m.search), Some(0));
+        assert_eq!(old.missing(), 0);
+        assert!(old.report.complete, "the old report is still shown");
+        assert_eq!(old.seconds_missing(), 0, "not filled in: made again");
+        let targets = old.begin(&g, false);
+        assert_eq!(targets.len(), 4, "every position again");
+        assert!(targets.iter().all(|t| t.known.is_none()));
+        assert!(!old.has_data() && !old.stale());
+        assert_eq!(old.meta, Some(ReviewMeta::fixed_search()));
+        // Evaluations of the PGN are not an engine search: never stale.
+        let pgn = game("1. e4 {[%eval 0.3]} e5 {[%eval 0.32]} *");
+        assert!(!GameAnalysis::new(&pgn, None).stale());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

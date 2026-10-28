@@ -1,13 +1,15 @@
 //! Whole-game analysis on the desktop: the background engine job over the main line,
-//! the evaluation graph under the board, the report tab and the launch dialog. The
+//! the evaluation graph under the board and the report tab. The
 //! evaluations, judgements, cache and the job itself are the `game-review` crate's,
 //! shared with the Android app.
 //!
-//! The job uses its own engine process and never touches the game; writing the results
-//! into the game is a separate, undoable action ([`Review::write_to_game`]).
+//! The job uses engine processes of its own — ChessPenguin's Stockfish 19 with the fixed
+//! search of `game_review::run`, the same on every computer, not the user's engine — and
+//! never touches the game; writing the results into the game is a separate, undoable
+//! action ([`Review::write_to_game`]).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
@@ -15,24 +17,20 @@ use std::sync::mpsc::{Receiver, channel};
 use chess_core::shakmaty::{Color, Move};
 use chess_core::{Game, Nag, NodeId};
 use egui::{Color32, RichText, Sense, Stroke, Ui, pos2, vec2};
-use game_review::{Eval, GameAnalysis, JobEvent, JobFailure, JobSettings, Judgement, ReviewMeta};
+use game_review::{Eval, GameAnalysis, JobEvent, JobFailure, JobSettings, Judgement};
 
 pub use game_review::Mark;
 
 use crate::i18n::{tr, trf};
-use crate::settings::{EngineConfig, REVIEW_QUALITY, ReviewSettings, Settings};
+use crate::settings::Settings;
 
 pub enum ReportAction {
     Goto(NodeId),
     Write,
+    /// Evaluate what is missing (all of it for a stale analysis).
     Update,
-    Reanalyse,
-}
-
-pub enum DialogAction {
-    Start,
-    EngineSwitch,
-    OpenEngines,
+    /// The engine over evaluations read from the PGN.
+    Analyse,
 }
 
 enum JobMsg {
@@ -46,7 +44,6 @@ struct Job {
     cancel: Arc<AtomicBool>,
     total: usize,
     done: usize,
-    threads: u32,
 }
 
 impl Drop for Job {
@@ -62,8 +59,7 @@ pub struct Review {
     pub error: Option<String>,
     /// Graph and report tab are shown.
     pub visible: bool,
-    pub dialog_open: bool,
-    /// Measured engine speed per thread, for time estimates.
+    /// Measured speed of one engine thread, for time estimates.
     nps_per_thread: Option<f64>,
     /// Report tab: index of the last visited error per side and kind.
     cycle: HashMap<(Color, Judgement), usize>,
@@ -82,7 +78,6 @@ impl Review {
             analysis,
             job: None,
             error: None,
-            dialog_open: false,
             nps_per_thread: None,
             cycle: HashMap::new(),
         }
@@ -110,48 +105,27 @@ impl Review {
         self.analysis.refresh(game);
     }
 
-    /// Starts the engine job. `full` discards earlier results; otherwise only positions
-    /// without an evaluation are analysed. Returns false if there is nothing to do.
-    pub fn start(
-        &mut self,
-        game: &Game,
-        engine: &EngineConfig,
-        rs: &ReviewSettings,
-        full: bool,
-        ctx: &egui::Context,
-    ) -> bool {
+    /// Starts the engine job with the engine at `path` (ChessPenguin's Stockfish). `full`
+    /// discards earlier results; otherwise only positions without an evaluation are
+    /// analysed (all of them for a stale analysis). Returns false if there is nothing to do.
+    pub fn start(&mut self, game: &Game, path: &Path, full: bool, ctx: &egui::Context) -> bool {
         self.job = None;
         self.error = None;
-        let Some(path) = engine.executable() else {
-            self.error = Some(tr("The built-in engine is not part of this build").into());
-            return false;
-        };
-        let meta = ReviewMeta {
-            engine: engine.name.clone(),
-            nodes: rs.nodes(),
-        };
-        let targets = self.analysis.begin(game, meta, full);
+        let targets = self.analysis.begin(game, full);
         if targets.is_empty() {
             return false;
         }
         let (tx, rx) = channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let total = targets.len();
-        // Filling in keeps the quality of the earlier run (see `GameAnalysis::begin`).
-        let nodes = self.analysis.meta.as_ref().map_or(rs.nodes(), |m| m.nodes);
-        let settings = JobSettings {
-            threads: rs.threads.max(1),
-            hash_mb: rs.hash_mb,
-            nodes,
-            eval_file: None,
-        };
-        let threads = settings.threads;
+        let settings = JobSettings::new(processes(), None);
+        let config = engine_config(path);
         let (cancel_w, ctx_w) = (cancel.clone(), ctx.clone());
         let spawned = std::thread::Builder::new()
             .name("game-review".into())
             .spawn(move || {
                 let result = game_review::run(
-                    uci::EngineConfig::new(&path),
+                    config,
                     &settings,
                     targets,
                     &cancel_w,
@@ -179,7 +153,6 @@ impl Review {
             cancel,
             total,
             done: 0,
-            threads,
         });
         self.visible = true;
         true
@@ -202,8 +175,9 @@ impl Review {
                 JobMsg::Event(e) => {
                     if let JobEvent::Eval { nps, .. } = &e {
                         job.done += 1;
+                        // One engine thread per process.
                         if *nps > 0 {
-                            self.nps_per_thread = Some(*nps as f64 / f64::from(job.threads));
+                            self.nps_per_thread = Some(*nps as f64);
                         }
                     }
                     self.analysis.apply(e);
@@ -227,6 +201,22 @@ impl Review {
         if self.nps_per_thread.is_none() && nps > 0 {
             self.nps_per_thread = Some(nps as f64 / f64::from(threads.max(1)));
         }
+    }
+
+    /// "64 positions, about 20 s": what a full analysis of the game takes.
+    pub fn estimate(&self) -> String {
+        let secs = game_review::estimate_secs(
+            self.analysis.searches(),
+            self.nps_per_thread.unwrap_or(DEFAULT_NPS),
+            processes(),
+        );
+        trf(
+            "{n} positions, about {time}",
+            &[
+                ("n", &self.analysis.positions()),
+                ("time", &format_duration(secs)),
+            ],
+        )
     }
 
     /// After an inaccuracy, mistake or blunder: how the opponent punishes it and how
@@ -536,17 +526,29 @@ impl Review {
         let missing = self.missing();
         // An analysis from before !! and !: "Update" looks for them, nothing else.
         let seconds = self.analysis.seconds_missing();
-        if (missing > 0 || seconds > 0) && !self.running() {
+        // An analysis of another search: "Update" makes it again.
+        let stale = self.analysis.stale();
+        if (stale || missing > 0 || seconds > 0) && !self.running() {
             ui.horizontal_wrapped(|ui| {
-                let text = if missing > 0 {
+                let text = if stale {
+                    tr("This analysis was made with other engine settings").to_string()
+                } else if missing > 0 {
                     trf("Positions without evaluation: {n}", &[("n", &missing)])
                 } else {
                     tr("!! and ! were not looked for in this analysis").to_string()
                 };
                 ui.label(RichText::new(text).color(ui.visuals().warn_fg_color));
                 let can_update = self.analysis.meta.as_ref().is_some_and(|m| m.nodes > 0);
-                if can_update && ui.button(tr("Update")).clicked() {
-                    action = Some(ReportAction::Update);
+                if can_update {
+                    let mut button = ui.button(tr("Update"));
+                    if stale {
+                        button = button.on_hover_text(tr(
+                            "Every position is analysed again, the same way on every computer",
+                        ));
+                    }
+                    if button.clicked() {
+                        action = Some(ReportAction::Update);
+                    }
                 }
             });
         }
@@ -564,11 +566,16 @@ impl Review {
             {
                 action = Some(ReportAction::Write);
             }
-            if ui
-                .add_enabled(!self.running(), egui::Button::new(tr("Analyse again…")))
-                .clicked()
+            // Evaluations of the PGN: the engine can make its own (an engine analysis
+            // made again would only repeat itself).
+            let pgn_only = self.analysis.meta.as_ref().is_some_and(|m| m.nodes == 0);
+            if pgn_only
+                && ui
+                    .add_enabled(!self.running(), egui::Button::new(tr("Analyse with the engine")))
+                    .on_hover_text(self.estimate())
+                    .clicked()
             {
-                action = Some(ReportAction::Reanalyse);
+                action = Some(ReportAction::Analyse);
             }
         });
         action
@@ -702,83 +709,6 @@ impl Review {
         *k = k.wrapping_add(1) % hits.len();
         Some(hits[*k])
     }
-
-    /// Launch dialog (engine, quality, threads, memory, time estimate).
-    pub fn dialog(&mut self, ctx: &egui::Context, settings: &mut Settings) -> Option<DialogAction> {
-        if !self.dialog_open {
-            return None;
-        }
-        let mut action = None;
-        let modal = egui::Modal::new(egui::Id::new("review_dialog")).show(ctx, |ui| {
-            ui.set_width(440.0);
-            ui.heading(tr("Game analysis"));
-            ui.label(
-                RichText::new(tr(
-                    "The engine evaluates every position of the main line. The game itself is not changed.",
-                ))
-                .weak(),
-            );
-            ui.add_space(8.0);
-            if let Some(a) = engine_picker(ui, settings, "review_engine") {
-                action = Some(a);
-            }
-            ui.add_space(4.0);
-            let rs = &mut settings.review;
-            let mut quality = rs.quality;
-            options_grid(
-                ui,
-                "review_grid",
-                &mut quality,
-                &mut rs.threads,
-                &mut rs.hash_mb,
-                None,
-            );
-            rs.quality = quality;
-            ui.add_space(6.0);
-            let positions = self.analysis.positions();
-            let per_thread = self.nps_per_thread.unwrap_or(DEFAULT_NPS);
-            let searches = self.analysis.searches();
-            let secs = estimate_secs(searches, rs.nodes(), per_thread, rs.threads);
-            ui.label(trf(
-                "{n} positions, about {time}",
-                &[("n", &positions), ("time", &format_duration(secs))],
-            ));
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let ready = settings.active_engine().is_some();
-                    if ui
-                        .add_enabled(
-                            ready,
-                            egui::Button::new(RichText::new(tr("Analyse")).strong().size(16.0)),
-                        )
-                        .clicked()
-                    {
-                        action = Some(DialogAction::Start);
-                    }
-                    if ui.button(tr("Cancel")).clicked() {
-                        self.dialog_open = false;
-                    }
-                    if !ready {
-                        ui.label(
-                            RichText::new(tr("Add an engine first"))
-                                .color(ui.visuals().warn_fg_color),
-                        );
-                    }
-                });
-            });
-        });
-        if modal.should_close() {
-            self.dialog_open = false;
-        }
-        if matches!(
-            action,
-            Some(DialogAction::Start | DialogAction::OpenEngines)
-        ) {
-            self.dialog_open = false;
-        }
-        action
-    }
 }
 
 impl Drop for Review {
@@ -788,100 +718,22 @@ impl Drop for Review {
     }
 }
 
-/// Nodes per second and thread assumed until an engine was measured.
+/// Nodes per second of one engine thread assumed until an engine was measured.
 pub const DEFAULT_NPS: f64 = 700_000.0;
 
-/// Seconds `searches` of `nodes` take at `per_thread` nodes per second on `threads`.
-pub fn estimate_secs(searches: usize, nodes: u64, per_thread: f64, threads: u32) -> f64 {
-    searches as f64 * nodes as f64 / (per_thread * f64::from(threads.max(1)))
+/// Engine processes of a game analysis on this computer: one per logical CPU, at most
+/// `game_review::MAX_PROCESSES` and what the free memory holds.
+pub fn processes() -> usize {
+    game_review::processes(game_review::MAX_PROCESSES)
 }
 
-/// The «Engine» row of a launch dialog: the active engine, the others to switch to,
-/// «Add or edit engines…».
-pub fn engine_picker(ui: &mut Ui, settings: &mut Settings, id: &str) -> Option<DialogAction> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        ui.label(tr("Engine"));
-        let current = settings
-            .active_engine()
-            .map(|e| e.name.clone())
-            .unwrap_or_else(|| tr("not selected").into());
-        egui::ComboBox::from_id_salt(id)
-            .selected_text(current)
-            .width(ui.available_width() - 8.0)
-            .show_ui(ui, |ui| {
-                for i in 0..settings.engines.len() {
-                    let selected = settings.active_engine == Some(i);
-                    if ui
-                        .selectable_label(selected, &settings.engines[i].name)
-                        .clicked()
-                        && !selected
-                    {
-                        settings.active_engine = Some(i);
-                        action = Some(DialogAction::EngineSwitch);
-                    }
-                }
-                ui.separator();
-                if ui.button(tr("Add or edit engines…")).clicked() {
-                    action = Some(DialogAction::OpenEngines);
-                }
-            });
-    });
-    action
-}
-
-/// The «Quality · Threads · Memory» grid of a launch dialog; `quality` indexes
-/// [`REVIEW_QUALITY`]. `quality_hint`: a tooltip on the quality slider.
-pub fn options_grid(
-    ui: &mut Ui,
-    id: &str,
-    quality: &mut usize,
-    threads: &mut u32,
-    hash_mb: &mut u32,
-    quality_hint: Option<&str>,
-) {
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(1);
-    let hash_steps = crate::game_view::hash_steps();
-    ui.spacing_mut().slider_width = 200.0;
-    egui::Grid::new(id)
-        .num_columns(3)
-        .spacing(vec2(12.0, 8.0))
-        .show(ui, |ui| {
-            ui.label(tr("Quality"));
-            let mut q = (*quality).min(REVIEW_QUALITY.len() - 1);
-            crate::game_view::index_slider(ui, &mut q, REVIEW_QUALITY.len());
-            *quality = q;
-            let label = ui.label(trf(
-                "{quality} · {nodes} nodes",
-                &[
-                    ("quality", &tr(REVIEW_QUALITY[q].0)),
-                    ("nodes", &format_count(REVIEW_QUALITY[q].1)),
-                ],
-            ));
-            if let Some(hint) = quality_hint {
-                label.on_hover_text(hint);
-            }
-            ui.end_row();
-
-            ui.label(tr("Threads"));
-            let mut th = (*threads).clamp(1, cores) as usize - 1;
-            crate::game_view::index_slider(ui, &mut th, cores as usize);
-            *threads = th as u32 + 1;
-            ui.label(format!("{} / {cores}", *threads));
-            ui.end_row();
-
-            ui.label(tr("Memory"));
-            let mut h = hash_steps
-                .iter()
-                .position(|m| *m >= *hash_mb)
-                .unwrap_or(hash_steps.len() - 1);
-            crate::game_view::index_slider(ui, &mut h, hash_steps.len());
-            *hash_mb = hash_steps[h];
-            ui.label(crate::game_view::format_mb(*hash_mb));
-            ui.end_row();
-        });
+/// ChessPenguin's Stockfish at `path` for an analysis job: below the program (nice 10),
+/// so that the program stays smooth while every CPU works.
+pub fn engine_config(path: &Path) -> uci::EngineConfig {
+    uci::EngineConfig {
+        nice: 10,
+        ..uci::EngineConfig::new(path)
+    }
 }
 
 /// Removes `[%eval …]` commands from a comment.

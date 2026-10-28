@@ -29,8 +29,8 @@ use crate::board_search::{Background, PREVIEW_ARROW};
 use crate::i18n::{tr, trf};
 use crate::large_db::grouped;
 use crate::reference::RefDb;
-use crate::review::{self, DialogAction};
-use crate::settings::{REVIEW_QUALITY, Settings};
+use crate::review;
+use crate::settings::Settings;
 
 /// «Prepare against…» as the library asks it: the name typed or picked and the colour
 /// of the filter (§2.1).
@@ -863,8 +863,6 @@ pub enum PrepAction {
     EngineStarted,
     EngineEnded,
     NeedEngine,
-    EngineSwitch,
-    OpenEngines,
     Toast(String),
     CopyText(String, &'static str),
     /// The line as a new game (no database).
@@ -928,8 +926,8 @@ struct EngineJob {
     cancel: Arc<AtomicBool>,
     total: usize,
     done: usize,
-    threads: u32,
-    nodes: u64,
+    /// Engine processes of the run.
+    processes: usize,
     /// Evaluations since the cache was saved.
     unsaved: usize,
 }
@@ -1393,7 +1391,7 @@ impl PrepScreen {
             .as_deref()
             .and_then(|d| PrepReport::load(d, &screen.db, &screen.player, &options));
         match cached {
-            Some(r) => screen.take_report(r, settings),
+            Some(r) => screen.take_report(r),
             None => screen.rebuild(ctx),
         }
         screen
@@ -1416,9 +1414,9 @@ impl PrepScreen {
     }
 
     /// The engine run after an engine was installed for it.
-    pub fn start_after_engine(&mut self, settings: &Settings, ctx: &egui::Context) -> Vec<PrepAction> {
+    pub fn start_after_engine(&mut self, ctx: &egui::Context) -> Vec<PrepAction> {
         let mut actions = Vec::new();
-        self.start_engine(settings, ctx, &mut actions);
+        self.start_engine(ctx, &mut actions);
         actions
     }
 
@@ -1445,8 +1443,8 @@ impl PrepScreen {
 
     /// A report arrived (built or from the cache): the rows of the games list, the
     /// cached evaluations, the default expansion.
-    fn take_report(&mut self, mut report: PrepReport, settings: &Settings) {
-        let taken = report.take_cached(&self.cache, settings.prep.nodes());
+    fn take_report(&mut self, mut report: PrepReport) {
+        let taken = report.take_cached(&self.cache);
         self.dirty |= taken > 0;
         self.rows = report
             .games
@@ -1523,7 +1521,7 @@ impl PrepScreen {
             .as_deref()
             .and_then(|d| PrepReport::load(d, &self.db, &self.player, &options));
         match cached {
-            Some(r) => self.take_report(r, settings),
+            Some(r) => self.take_report(r),
             None => self.rebuild(ctx),
         }
     }
@@ -1552,7 +1550,7 @@ impl PrepScreen {
     }
 
     /// The engine run for the colour(s) shown.
-    fn engine_state(&self, settings: &Settings) -> EngineState {
+    fn engine_state(&self) -> EngineState {
         if self.job.is_some() {
             return EngineState::Running;
         }
@@ -1564,7 +1562,7 @@ impl PrepScreen {
         }
         let side = self.color.side();
         let total = report.distinct_positions_for(side);
-        let missing = report.missing_for(settings.prep.nodes(), side);
+        let missing = report.missing_for(side);
         if missing == 0 {
             EngineState::Complete { total }
         } else {
@@ -1670,7 +1668,7 @@ impl PrepScreen {
         {
             self.build = None;
             match r {
-                Some(report) => self.take_report(report, settings),
+                Some(report) => self.take_report(report),
                 None => self.error = Some(tr("The games could not be read").to_owned()),
             }
         }
@@ -1704,7 +1702,7 @@ impl PrepScreen {
         self.start_book(ctx, actions);
         if self.auto_engine && self.report.is_some() && self.build.is_none() {
             self.auto_engine = false;
-            self.start_engine(settings, ctx, actions);
+            self.start_engine(ctx, actions);
         }
         if self.build.is_some() || self.book_job.is_some() || self.job.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -1777,47 +1775,48 @@ impl PrepScreen {
     // ----- the engine ----------------------------------------------------------------
 
     /// Positions the next run has to evaluate, and how long it takes.
-    fn estimate(&self, settings: &Settings) -> (usize, f64) {
+    fn estimate(&self) -> (usize, f64) {
         let Some(report) = &self.report else {
             return (0, 0.0);
         };
-        let nodes = settings.prep.nodes();
-        let missing = report.missing_for(nodes, self.color.side());
-        let per_thread = self.nps_per_thread.unwrap_or(review::DEFAULT_NPS);
-        (missing, review::estimate_secs(missing, nodes, per_thread, settings.review.threads))
+        let missing = report.missing_for(self.color.side());
+        (missing, self.secs_for(missing, review::processes()))
     }
 
-    /// The button: the dialog the first time, at once with the options chosen before.
+    /// Seconds `positions` take in `processes` engine processes.
+    fn secs_for(&self, positions: usize, processes: usize) -> f64 {
+        let nps = self.nps_per_thread.unwrap_or(review::DEFAULT_NPS);
+        game_review::estimate_secs(positions, nps, processes)
+    }
+
+    /// The button: the dialog the first time, at once with the colour chosen before.
     fn engine_asked(&mut self, settings: &Settings, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
-        if !crate::engine_offer::EngineOffer::engine_ready(settings) {
+        if crate::engines::own_stockfish().is_none() {
             actions.push(PrepAction::NeedEngine);
             return;
         }
         if settings.prep.chosen {
-            self.start_engine(settings, ctx, actions);
+            self.start_engine(ctx, actions);
         } else {
             self.dialog_open = true;
         }
     }
 
-    fn start_engine(&mut self, settings: &Settings, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
+    /// Starts the search for opening errors: ChessPenguin's Stockfish with the fixed
+    /// search of the game analysis (`game_review::run`), the same on every computer.
+    fn start_engine(&mut self, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
         self.error = None;
-        let Some(engine) = settings.active_engine().cloned() else {
-            self.dialog_open = true;
-            return;
-        };
-        let Some(path) = engine.executable() else {
+        let Some(path) = crate::engines::own_stockfish() else {
             actions.push(PrepAction::NeedEngine);
             return;
         };
-        let nodes = settings.prep.nodes();
         let cache = std::mem::take(&mut self.cache);
         let mut taken = 0;
-        self.rejudge(|r| taken = r.take_cached(&cache, nodes));
+        self.rejudge(|r| taken = r.take_cached(&cache));
         self.cache = cache;
         self.dirty |= taken > 0;
         let Some(report) = self.report.as_ref() else { return };
-        let targets = report.targets_for(nodes, self.color.side());
+        let targets = report.targets_for(self.color.side());
         if targets.is_empty() {
             actions.push(PrepAction::Toast(tr("Every position is already evaluated").to_owned()));
             self.tab = Tab::Errors;
@@ -1826,19 +1825,14 @@ impl PrepScreen {
         let (tx, rx) = channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let total = targets.len();
-        let job_settings = JobSettings {
-            threads: settings.review.threads.max(1),
-            hash_mb: settings.review.hash_mb,
-            nodes,
-            eval_file: None,
-        };
-        let threads = job_settings.threads;
+        let job_settings = JobSettings::new(review::processes(), None);
+        let processes = job_settings.processes;
         let (cancel_w, ctx_w) = (cancel.clone(), ctx.clone());
         let spawned = std::thread::Builder::new()
             .name("prep-engine".into())
             .spawn(move || {
                 let result = game_review::run(
-                    uci::EngineConfig::new(&path),
+                    review::engine_config(&path),
                     &job_settings,
                     targets,
                     &cancel_w,
@@ -1866,8 +1860,7 @@ impl PrepScreen {
             cancel,
             total,
             done: 0,
-            threads,
-            nodes,
+            processes,
             unsaved: 0,
         });
         self.tab = Tab::Errors;
@@ -1884,11 +1877,12 @@ impl PrepScreen {
                 JobMsg::Event(e) => {
                     if let JobEvent::Eval { nps, .. } = &e {
                         job.done += 1;
+                        // One engine thread per process.
                         if *nps > 0 {
-                            self.nps_per_thread = Some(*nps as f64 / f64::from(job.threads));
+                            self.nps_per_thread = Some(*nps as f64);
                         }
                     }
-                    if let Some((k, eval)) = report.apply(&e, job.nodes) {
+                    if let Some((k, eval)) = report.apply(&e) {
                         self.cache.insert(k, eval);
                         job.unsaved += 1;
                         got = true;
@@ -1960,7 +1954,7 @@ impl PrepScreen {
         if !self.dialog_open {
             return;
         }
-        let mut action = None;
+        let mut start = false;
         let moves = self.plies.div_ceil(2);
         let (white_n, black_n) = self
             .report
@@ -1982,10 +1976,6 @@ impl PrepScreen {
                 .max_height((screen.height() - 160.0).max(100.0))
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    if let Some(a) = review::engine_picker(ui, settings, "prep_engine") {
-                        action = Some(a);
-                    }
-                    ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.label(tr("Colour"));
                         for (choice, n) in [
@@ -1997,24 +1987,8 @@ impl PrepScreen {
                             ui.radio_value(&mut self.color, choice, label);
                         }
                     });
-                    ui.add_space(4.0);
-                    let mut quality = settings.prep.quality;
-                    let (mut threads, mut hash) = (settings.review.threads, settings.review.hash_mb);
-                    review::options_grid(
-                        ui,
-                        "prep_grid",
-                        &mut quality,
-                        &mut threads,
-                        &mut hash,
-                        Some(tr(
-                            "For opening errors “Fast” is usually enough. “Normal” is for adult databases and takes 4 times longer.",
-                        )),
-                    );
-                    settings.prep.quality = quality;
-                    settings.review.threads = threads;
-                    settings.review.hash_mb = hash;
                     ui.add_space(6.0);
-                    let (missing, secs) = self.estimate(settings);
+                    let (missing, secs) = self.estimate();
                     let all = self
                         .report
                         .as_ref()
@@ -2036,46 +2010,28 @@ impl PrepScreen {
                 });
             ui.add_space(10.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let ready = settings.active_engine().is_some();
                 if ui
-                    .add_enabled(
-                        ready,
-                        egui::Button::new(RichText::new(tr("Find errors")).strong().size(16.0)),
-                    )
+                    .button(RichText::new(tr("Find errors")).strong().size(16.0))
                     .clicked()
                 {
-                    action = Some(DialogAction::Start);
+                    start = true;
                 }
                 if ui.button(tr("Cancel")).clicked() {
                     self.dialog_open = false;
-                }
-                if !ready {
-                    ui.label(RichText::new(tr("Add an engine first")).color(ui.visuals().warn_fg_color));
                 }
             });
         });
         if modal.should_close() {
             self.dialog_open = false;
         }
-        if action.is_none()
-            && settings.active_engine().is_some()
-            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
-        {
-            action = Some(DialogAction::Start);
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+            start = true;
         }
-        match action {
-            Some(DialogAction::Start) => {
-                self.dialog_open = false;
-                settings.prep.chosen = true;
-                actions.push(PrepAction::SettingsChanged);
-                self.start_engine(settings, ctx, actions);
-            }
-            Some(DialogAction::EngineSwitch) => actions.push(PrepAction::EngineSwitch),
-            Some(DialogAction::OpenEngines) => {
-                self.dialog_open = false;
-                actions.push(PrepAction::OpenEngines);
-            }
-            None => {}
+        if start {
+            self.dialog_open = false;
+            settings.prep.chosen = true;
+            actions.push(PrepAction::SettingsChanged);
+            self.engine_asked(settings, ctx, actions);
         }
     }
 
@@ -2450,9 +2406,9 @@ impl PrepScreen {
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
         let pad = 2.0 * ui.spacing().button_padding.x;
-        let state = self.engine_state(settings);
+        let state = self.engine_state();
         // The engine part on the right is measured first: the rest gets what it leaves.
-        let engine = self.engine_texts(settings, state, width);
+        let engine = self.engine_texts(state, width);
         let engine_w = match &engine {
             EngineTexts::Running => (width * 0.35).clamp(90.0, 360.0) + text_width(ui, tr("Stop"), egui::TextStyle::Button) + pad + 2.0 * gap,
             EngineTexts::Button { label, note } | EngineTexts::Done { label, note } => {
@@ -2534,8 +2490,8 @@ impl PrepScreen {
     }
 
     /// What the engine part of the controls says, by the room there is.
-    fn engine_texts(&self, settings: &Settings, state: EngineState, width: f32) -> EngineTexts {
-        let (missing, secs) = self.estimate(settings);
+    fn engine_texts(&self, state: EngineState, width: f32) -> EngineTexts {
+        let (missing, secs) = self.estimate();
         let time = review::format_duration(secs);
         match state {
             EngineState::Running => EngineTexts::Running,
@@ -2591,9 +2547,7 @@ impl PrepScreen {
                 self.stop_engine(actions);
                 return;
             }
-            let left = total.saturating_sub(done);
-            let per_thread = self.nps_per_thread.unwrap_or(review::DEFAULT_NPS);
-            let secs = review::estimate_secs(left, job.nodes, per_thread, job.threads);
+            let secs = self.secs_for(total.saturating_sub(done), job.processes);
             let text = if width < 760.0 {
                 format!("{}/{}", grouped(done), grouped(total))
             } else {
@@ -2610,7 +2564,7 @@ impl PrepScreen {
             return;
         }
         let Some(report) = &self.report else { return };
-        let hint = self.engine_status(settings).unwrap_or_else(|| {
+        let hint = self.engine_status().unwrap_or_else(|| {
             tr("The engine finds the opening errors in his games (Shift+A)").to_owned()
         });
         let _ = report;
@@ -2634,27 +2588,19 @@ impl PrepScreen {
         }
     }
 
-    /// «Errors found · Stockfish 19 · Fast · 2 947 positions», once evaluated.
-    fn engine_status(&self, settings: &Settings) -> Option<String> {
+    /// «Errors found · Stockfish 19 · 2 947 positions», once evaluated.
+    fn engine_status(&self) -> Option<String> {
         let report = self.report.as_ref()?;
         if !report.evaluated() {
             return None;
         }
-        let nodes = report.engine.as_ref().map_or(settings.prep.nodes(), |e| e.nodes);
-        let quality = REVIEW_QUALITY
-            .iter()
-            .find(|q| q.1 == nodes)
-            .map_or_else(|| review::format_count(nodes), |q| tr(q.0).to_owned());
         let n = grouped(report.distinct_positions_for(self.color.side()));
         Some(match report.engine.as_ref().filter(|e| !e.name.is_empty()) {
             Some(e) => trf(
-                "Errors found · {engine} · {quality} · {n} positions",
-                &[("engine", &e.name), ("quality", &quality), ("n", &n)],
+                "Errors found · {engine} · {n} positions",
+                &[("engine", &e.name), ("n", &n)],
             ),
-            None => trf(
-                "Errors found · {quality} · {n} positions",
-                &[("quality", &quality), ("n", &n)],
-            ),
+            None => trf("Errors found · {n} positions", &[("n", &n)]),
         })
     }
 
@@ -3882,10 +3828,10 @@ impl PrepScreen {
     fn errors_tab(&mut self, ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<PrepAction>) {
         let Some(report) = self.report.as_ref() else { return };
         let moves = self.plies.div_ceil(2);
-        let state = self.engine_state(settings);
+        let state = self.engine_state();
         if state == EngineState::NotRun {
             // The invitation (§5).
-            let (positions, secs) = self.estimate(settings);
+            let (positions, secs) = self.estimate();
             let games: usize = self.color.colours().iter().map(|&w| report.color(w).games.len()).sum();
             let colour = match self.color {
                 ColorChoice::White => tr("as White"),
@@ -3912,16 +3858,14 @@ impl PrepScreen {
             });
             return;
         }
-        let (mut ask_engine, mut open_dialog) = (false, false);
+        let mut ask_engine = false;
         let mut inaccuracies = settings.prep.inaccuracies;
         // The state line: how far the engine got; the switch of the inaccuracies.
         ui.horizontal_wrapped(|ui| {
             match state {
                 EngineState::Running => {
                     if let Some(job) = &self.job {
-                        let left = job.total.saturating_sub(job.done);
-                        let per_thread = self.nps_per_thread.unwrap_or(review::DEFAULT_NPS);
-                        let secs = review::estimate_secs(left, job.nodes, per_thread, job.threads);
+                        let secs = self.secs_for(job.total.saturating_sub(job.done), job.processes);
                         ui.label(
                             RichText::new(trf(
                                 "Checked {done} of {total} positions",
@@ -3933,7 +3877,7 @@ impl PrepScreen {
                     }
                 }
                 EngineState::Partial { done, total } => {
-                    let (_, secs) = self.estimate(settings);
+                    let (_, secs) = self.estimate();
                     ui.label(
                         RichText::new(trf(
                             "Checked {done} of {total} positions",
@@ -3951,18 +3895,8 @@ impl PrepScreen {
                     }
                 }
                 EngineState::Complete { .. } => {
-                    if let Some(status) = self.engine_status(settings) {
+                    if let Some(status) = self.engine_status() {
                         ui.label(RichText::new(status).weak());
-                    }
-                    if settings.prep.quality == 0 {
-                        ui.label(RichText::new("·").weak());
-                        if ui
-                            .link(tr("More precisely…"))
-                            .on_hover_text(tr("The same positions at «Normal» quality"))
-                            .clicked()
-                        {
-                            open_dialog = true;
-                        }
                     }
                 }
                 EngineState::NotRun => {}
@@ -3981,9 +3915,6 @@ impl PrepScreen {
         if ask_engine {
             self.engine_asked(settings, ui.ctx(), actions);
             return;
-        }
-        if open_dialog {
-            self.dialog_open = true;
         }
         let Some(report) = self.report.as_ref() else { return };
         // The lines per colour: in the stack only (beside the board the summary has them).

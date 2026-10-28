@@ -14,9 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chess_core::{Game, NodeId};
-use game_review::{
-    Eval, GameAnalysis, JobEvent, JobFailure, JobSettings, Judgement, ReviewMeta, SideStats,
-};
+use game_review::{Eval, GameAnalysis, JobEvent, JobFailure, JobSettings, Judgement, SideStats};
 use shakmaty::Color;
 
 use crate::EngineLine;
@@ -111,6 +109,9 @@ pub struct ReviewState {
     pub engine: String,
     /// Nodes per position; 0 for evaluations from the PGN.
     pub nodes: u64,
+    /// The evaluations come from another engine search than today's fixed one (an
+    /// analysis made before it): shown, but "update" makes them all again.
+    pub stale: bool,
     /// Positions of the main line without an evaluation.
     pub missing: u32,
     /// Evaluated positions still waiting for the second search of !! and ! (an analysis
@@ -121,8 +122,10 @@ pub struct ReviewState {
     /// Engine searches a full analysis is expected to make (for the time estimate: a
     /// second search for moves that could be brilliant or great).
     pub searches: u32,
-    /// The engine's speed in the last run, per thread (0 when unknown).
-    pub nps_per_thread: u64,
+    /// The speed of one engine process in the last run (0 when unknown).
+    pub nps_per_process: u64,
+    /// Engine processes a run uses on this phone (for the time estimate).
+    pub processes: u32,
     /// The start position and the position after every main-line move.
     pub points: Vec<ReviewPoint>,
     /// Where the middlegame and the endgame begin, as indices of `points`.
@@ -143,7 +146,6 @@ enum Msg {
 struct Job {
     rx: Receiver<Msg>,
     cancel: Arc<AtomicBool>,
-    threads: u32,
 }
 
 impl Drop for Job {
@@ -162,7 +164,7 @@ struct Inner {
     done: u32,
     total: u32,
     failure: Option<String>,
-    nps_per_thread: u64,
+    nps_per_process: u64,
     /// When the cache was last written: a long run is kept now and then, so that a
     /// crash or a killed app loses little of it.
     saved: Instant,
@@ -196,7 +198,7 @@ impl GameReview {
                 done: 0,
                 total: 0,
                 failure: None,
-                nps_per_thread: 0,
+                nps_per_process: 0,
                 saved: Instant::now(),
             }),
         })
@@ -206,37 +208,23 @@ impl GameReview {
 #[uniffi::export]
 impl GameReview {
     /// Starts the engine at `path` (with its network `eval_file`, if not empty) on the
-    /// positions without an evaluation, or on all of them when `full`. Returns false when
-    /// there is nothing to analyse. Returns at once: the engine starts on its own thread.
-    pub fn start(
-        &self,
-        path: String,
-        eval_file: String,
-        threads: u32,
-        hash_mb: u32,
-        nodes: u64,
-        full: bool,
-    ) -> bool {
+    /// positions without an evaluation, or on all of them when `full` (or when the
+    /// analysis is stale). The search is the fixed one of every game analysis, the same
+    /// as on the desktop. Returns false when there is nothing to analyse. Returns at
+    /// once: the engine starts on its own thread.
+    pub fn start(&self, path: String, eval_file: String, full: bool) -> bool {
         let mut st = lock(&self.inner);
         stop(&mut st);
         st.failure = None;
-        let meta = ReviewMeta {
-            engine: "Stockfish".into(),
-            nodes,
-        };
         let Inner { game, analysis, .. } = &mut *st;
-        let targets = analysis.begin(game, meta, full);
+        let targets = analysis.begin(game, full);
         if targets.is_empty() {
             return false;
         }
-        // Filling in keeps the quality of the earlier run (see `GameAnalysis::begin`).
-        let nodes = analysis.meta.as_ref().map_or(nodes, |m| m.nodes);
-        let settings = JobSettings {
-            threads: threads.max(1),
-            hash_mb: hash_mb.max(1),
-            nodes,
-            eval_file: (!eval_file.is_empty()).then_some(eval_file),
-        };
+        let settings = JobSettings::new(
+            phone_processes(),
+            (!eval_file.is_empty()).then_some(eval_file),
+        );
         // Below the app (nice 10), as the live engine: the phone stays smooth.
         let config = uci::EngineConfig {
             nice: 10,
@@ -247,7 +235,6 @@ impl GameReview {
         let stop = cancel.clone();
         st.total = targets.len() as u32;
         st.done = 0;
-        let threads = settings.threads;
         let spawned = std::thread::Builder::new()
             .name("game-review".into())
             .spawn(move || {
@@ -264,11 +251,7 @@ impl GameReview {
             st.failure = Some(e.to_string());
             return false;
         }
-        st.job = Some(Job {
-            rx,
-            cancel,
-            threads,
-        });
+        st.job = Some(Job { rx, cancel });
         true
     }
 
@@ -284,6 +267,18 @@ impl GameReview {
         let Inner { game, analysis, .. } = &mut *st;
         analysis.refresh(game);
         snapshot(&st)
+    }
+
+    /// Seconds a full analysis takes at `nps_per_process` nodes per second of one
+    /// engine process (measured before, or a guess), in this phone's processes.
+    pub fn estimate_secs(&self, nps_per_process: u64) -> u32 {
+        let st = lock(&self.inner);
+        game_review::estimate_secs(
+            st.analysis.searches(),
+            nps_per_process as f64,
+            phone_processes(),
+        )
+        .ceil() as u32
     }
 }
 
@@ -316,13 +311,12 @@ fn drain(st: &mut Inner) {
             Msg::Failed(e) => ended = Some(Some(e)),
         }
     }
-    let threads = u64::from(job.threads.max(1));
     let got = !events.is_empty();
     for e in events {
         if let JobEvent::Eval { nps, .. } = &e {
             st.done += 1;
             if *nps > 0 {
-                st.nps_per_thread = nps / threads;
+                st.nps_per_process = *nps;
             }
         }
         st.analysis.apply(e);
@@ -334,6 +328,13 @@ fn drain(st: &mut Inner) {
     } else if got && st.saved.elapsed() >= SAVE_EVERY {
         save(st);
     }
+}
+
+/// Engine processes of a game analysis on a phone: one per core, at most
+/// [`game_review::PHONE_PROCESSES`] and what the free memory holds; all below the app
+/// (nice 10).
+fn phone_processes() -> usize {
+    game_review::processes(game_review::PHONE_PROCESSES)
 }
 
 fn save(st: &mut Inner) {
@@ -437,11 +438,13 @@ fn snapshot(st: &Inner) -> ReviewState {
         has_data: a.has_data(),
         engine: meta.engine,
         nodes: meta.nodes,
+        stale: a.stale(),
         missing: a.missing() as u32,
         seconds_missing: a.seconds_missing() as u32,
         positions: a.positions() as u32,
         searches: a.searches() as u32,
-        nps_per_thread: st.nps_per_thread,
+        nps_per_process: st.nps_per_process,
+        processes: phone_processes() as u32,
         points,
         middlegame: a.report.phases.middlegame.map(|i| i as u32),
         endgame: a.report.phases.endgame.map(|i| i as u32),
@@ -478,7 +481,7 @@ mod tests {
         assert!(ke7.best.is_none() && ke7.reply_from.is_none());
         assert!(s.white.accuracy.is_some());
         // Nothing to analyse: every position has an evaluation.
-        assert!(!review.start("/nonexistent".into(), String::new(), 1, 16, 1000, false));
+        assert!(!review.start("/nonexistent".into(), String::new(), false));
     }
 
     /// With the fake engine of the `uci` crate (`cargo build -p uci --bin fake_uci`).
@@ -495,7 +498,7 @@ mod tests {
         let db = open_bytes("t.pgn".into(), b"1. e4 e5 2. Nf3 Nc6 *\n".to_vec()).unwrap();
         let review = db.review(0, cache.clone()).unwrap();
         assert!(!review.state().has_data);
-        assert!(review.start(fake.into(), String::new(), 1, 16, 1000, false));
+        assert!(review.start(fake.into(), String::new(), false));
         let mut s = review.state();
         for _ in 0..200 {
             if !s.running {
@@ -511,7 +514,8 @@ mod tests {
         drop(review);
         // The next time the game opens, the results are there without the engine.
         let again = db.review(0, cache).unwrap().state();
-        assert!(again.has_data && again.missing == 0 && again.nodes == 1000);
+        assert!(again.has_data && again.missing == 0 && !again.stale);
+        assert_eq!(again.nodes, game_review::SEARCH_NODES);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -519,14 +523,7 @@ mod tests {
     fn a_failing_engine_is_reported() {
         let db = open_bytes("t.pgn".into(), b"1. e4 e5 *\n".to_vec()).unwrap();
         let review = db.review(0, String::new()).unwrap();
-        assert!(review.start(
-            "/nonexistent/engine".into(),
-            String::new(),
-            1,
-            16,
-            1000,
-            false
-        ));
+        assert!(review.start("/nonexistent/engine".into(), String::new(), false));
         let mut s = review.state();
         for _ in 0..200 {
             if !s.running {

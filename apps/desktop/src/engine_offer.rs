@@ -41,6 +41,9 @@ enum Mode {
     System(PathBuf),
     /// The downloaded engine was deleted from the disk.
     Missing,
+    /// The game analysis or the opening errors, which need ChessPenguin's Stockfish 19
+    /// itself (their search is the same on every computer): only its download helps.
+    Own,
 }
 
 pub struct EngineOffer {
@@ -79,7 +82,9 @@ impl EngineOffer {
     pub fn ask(&mut self, pending: Pending, settings: &Settings) {
         self.pending = Some(pending);
         self.failure = None;
-        self.mode = if settings.active_engine().is_some_and(|e| e.builtin) {
+        self.mode = if pending != Pending::LiveAnalysis {
+            Mode::Own
+        } else if settings.active_engine().is_some_and(|e| e.builtin) {
             Mode::Missing
         } else if settings.engines.is_empty()
             && let Some(p) = crate::engines::system_stockfish()
@@ -222,6 +227,12 @@ impl EngineOffer {
                 tr("Stockfish not found"),
                 tr("The Stockfish file is missing from the disk. Download it again?"),
             ),
+            Mode::Own => (
+                tr("Analysis needs Stockfish 19"),
+                tr(
+                    "Game analysis and the search for opening errors always use ChessPenguin's Stockfish 19, so that their marks are the same on every computer. Download it? The analysis will start as soon as the download finishes.",
+                ),
+            ),
         };
         ui.heading(title);
         ui.add_space(6.0);
@@ -283,13 +294,16 @@ impl EngineOffer {
                         }
                     }
                 }
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    if ui.button(tr("Choose engine file…")).clicked() {
-                        events.push(OfferEvent::ChooseFile);
-                        self.open = false;
-                        self.pending = None;
-                    }
-                });
+                // Another engine does not do for the game analysis.
+                if self.mode != Mode::Own {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if ui.button(tr("Choose engine file…")).clicked() {
+                            events.push(OfferEvent::ChooseFile);
+                            self.open = false;
+                            self.pending = None;
+                        }
+                    });
+                }
             });
         });
     }
@@ -366,7 +380,7 @@ impl EngineOffer {
                     ui.label(RichText::new(d).small().weak());
                 });
         }
-        if matches!(f, Failure::Network(_)) && cfg!(target_os = "linux") {
+        if matches!(f, Failure::Network(_)) && cfg!(target_os = "linux") && self.mode != Mode::Own {
             ui.label(
                 RichText::new(tr(
                     "A stockfish package of your distribution is found by ChessPenguin too.",
@@ -388,14 +402,16 @@ impl EngineOffer {
                     self.failure = None;
                     self.pending = None;
                 }
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    if ui.button(tr("Choose engine file…")).clicked() {
-                        events.push(OfferEvent::ChooseFile);
-                        self.open = false;
-                        self.failure = None;
-                        self.pending = None;
-                    }
-                });
+                if self.mode != Mode::Own {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if ui.button(tr("Choose engine file…")).clicked() {
+                            events.push(OfferEvent::ChooseFile);
+                            self.open = false;
+                            self.failure = None;
+                            self.pending = None;
+                        }
+                    });
+                }
             });
         });
     }

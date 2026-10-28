@@ -5,8 +5,8 @@
 //!
 //! ```text
 //! cargo run --release -p prep --example prep_report -- <database> "<player>" \
-//!     [--engine <path>] [--book <path>] [--plies 20] [--nodes 250000] \
-//!     [--threads N] [--min-games 3] [--no-cache]
+//!     [--engine <path>] [--book <path>] [--plies 20] [--processes N] \
+//!     [--min-games 3] [--no-cache]
 //! ```
 //!
 //! The report and the evaluations are cached under `~/.cache/chesspenguin/prep/`
@@ -26,8 +26,7 @@ struct Args {
     engine: Option<PathBuf>,
     book: Option<PathBuf>,
     plies: usize,
-    nodes: u64,
-    threads: u32,
+    processes: usize,
     min_games: u32,
     cache: bool,
 }
@@ -40,10 +39,7 @@ fn args() -> Args {
         engine: None,
         book: None,
         plies: prep::DEFAULT_PLIES,
-        nodes: 250_000,
-        threads: std::thread::available_parallelism()
-            .map(|n| (n.get() as u32 / 2).max(1))
-            .unwrap_or(1),
+        processes: game_review::processes(game_review::MAX_PROCESSES),
         min_games: 3,
         cache: true,
     };
@@ -53,8 +49,9 @@ fn args() -> Args {
             "--engine" => a.engine = it.next().map(PathBuf::from),
             "--book" => a.book = it.next().map(PathBuf::from),
             "--plies" => a.plies = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.plies),
-            "--nodes" => a.nodes = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.nodes),
-            "--threads" => a.threads = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.threads),
+            "--processes" => {
+                a.processes = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.processes)
+            }
             "--min-games" => {
                 a.min_games = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.min_games)
             }
@@ -324,12 +321,7 @@ fn main() {
             report.distinct_positions(),
             cache.len()
         );
-        let settings = game_review::JobSettings {
-            threads: a.threads,
-            hash_mb: 256,
-            nodes: a.nodes,
-            eval_file: None,
-        };
+        let settings = game_review::JobSettings::new(a.processes, None);
         let t = Instant::now();
         let mut last_shown = Instant::now();
         let mut first = true;
@@ -342,7 +334,10 @@ fn main() {
             &never,
             &mut |p| {
                 if first {
-                    println!("[engine] {} positions to evaluate at {} nodes, {} threads", p.total, a.nodes, a.threads);
+                    println!(
+                        "[engine] {} positions to evaluate, {} engine processes",
+                        p.total, a.processes
+                    );
                     first = false;
                 }
                 if last_shown.elapsed().as_secs_f64() >= 5.0 {

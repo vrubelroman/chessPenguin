@@ -24,6 +24,8 @@
 //!   --exit-after-go N      on the N-th `go`, print one info and exit(1)
 //!   --mate                 multipv 1 = mate 3, multipv 2 = mate -2
 //!   --ignore-quit          ignore `quit` (must be killed)
+//!   --hash-memory          scores depend on the position and on the searches made
+//!                          since the last `ucinewgame` (as a hash kept between them)
 //!
 //! Protocol violations by the GUI (`position`/`go`/`setoption`/`ucinewgame`
 //! during a search) are reported as `info string ERROR ...`.
@@ -51,6 +53,7 @@ struct Cfg {
     exit_after_go: Option<u32>,
     mate: bool,
     ignore_quit: bool,
+    hash_memory: bool,
 }
 
 fn parse_args() -> Cfg {
@@ -79,6 +82,7 @@ fn parse_args() -> Cfg {
             "--exit-after-go" => c.exit_after_go = Some(num(args.next()) as u32),
             "--mate" => c.mate = true,
             "--ignore-quit" => c.ignore_quit = true,
+            "--hash-memory" => c.hash_memory = true,
             other => {
                 eprintln!("fake_uci: unknown flag {other}");
                 std::process::exit(2);
@@ -92,6 +96,8 @@ struct Search {
     marker: String,
     depth: u32,
     max_depth: Option<u32>,
+    /// Added to every score (`--hash-memory`).
+    bias: i32,
 }
 
 fn out(line: &str) {
@@ -100,14 +106,14 @@ fn out(line: &str) {
     let _ = o.flush();
 }
 
-fn info_lines(cfg: &Cfg, marker: &str, depth: u32, multipv: u32) {
+fn info_lines(cfg: &Cfg, marker: &str, depth: u32, multipv: u32, bias: i32) {
     for k in 1..=multipv {
         let score = if cfg.mate && k == 1 {
             "mate 3".to_string()
         } else if cfg.mate && k == 2 {
             "mate -2".to_string()
         } else {
-            format!("cp {}", 50 - 10 * k as i32)
+            format!("cp {}", 50 - 10 * k as i32 + bias)
         };
         out(&format!(
             "info depth {depth} seldepth {} multipv {k} score {score} nodes {} nps 100000 \
@@ -159,6 +165,8 @@ fn main() {
     let mut marker = "startpos".to_string();
     let mut search: Option<Search> = None;
     let mut gos = 0u32;
+    // Searches since the last `ucinewgame` (`--hash-memory`).
+    let mut since_new_game = 0i32;
     let mut hung = false;
     let interval = Duration::from_millis(cfg.info_interval.max(1));
 
@@ -179,7 +187,7 @@ fn main() {
             // Search tick.
             if let Some(s) = search.as_mut() {
                 s.depth += 1;
-                info_lines(&cfg, &s.marker, s.depth, multipv);
+                info_lines(&cfg, &s.marker, s.depth, multipv, s.bias);
                 if s.max_depth.is_some_and(|m| s.depth >= m) {
                     out(&format!("bestmove {} ponder e7e5", bm(&s.marker)));
                     search = None;
@@ -242,6 +250,7 @@ fn main() {
                 if search.is_some() {
                     out("info string ERROR ucinewgame during search");
                 }
+                since_new_game = 0;
             }
             Some("position") => {
                 if search.is_some() {
@@ -261,7 +270,7 @@ fn main() {
                 }
                 gos += 1;
                 if cfg.exit_after_go == Some(gos) {
-                    info_lines(&cfg, &marker, 1, multipv);
+                    info_lines(&cfg, &marker, 1, multipv, 0);
                     std::process::exit(1);
                 }
                 let max_depth = toks
@@ -271,10 +280,18 @@ fn main() {
                     .and_then(|v| v.parse().ok())
                     // `go nodes N`: a short search that ends by itself, like a real one.
                     .or_else(|| toks.contains(&"nodes").then_some(3));
+                since_new_game += 1;
+                let bias = if cfg.hash_memory {
+                    let of_position = marker.bytes().map(i32::from).sum::<i32>() % 97;
+                    of_position + 1000 * since_new_game
+                } else {
+                    0
+                };
                 search = Some(Search {
                     marker: marker.clone(),
                     depth: 0,
                     max_depth,
+                    bias,
                 });
             }
             Some("stop") => {
@@ -284,12 +301,12 @@ fn main() {
                     continue;
                 }
                 for i in 0..cfg.stale_after_stop {
-                    info_lines(&cfg, &s.marker, s.depth + 1 + i, multipv);
+                    info_lines(&cfg, &s.marker, s.depth + 1 + i, multipv, s.bias);
                 }
                 std::thread::sleep(Duration::from_millis(cfg.bestmove_delay));
                 out(&format!("bestmove {} ponder e7e5", bm(&s.marker)));
                 for i in 0..cfg.info_after_bestmove {
-                    info_lines(&cfg, &s.marker, s.depth + 100 + i, multipv);
+                    info_lines(&cfg, &s.marker, s.depth + 100 + i, multipv, s.bias);
                 }
             }
             Some("quit") if !cfg.ignore_quit => return,

@@ -741,10 +741,9 @@ impl App {
             if let Some(k) = std::env::var("CP_BEST").ok().and_then(|v| v.parse().ok()) {
                 g.debug_best_line(k);
             }
-            // CP_REVIEW=dialog opens the game-analysis dialog, =ask presses «Analyse», any
-            // other value starts the analysis.
+            // CP_REVIEW=ask presses «Analyse», any other value starts the analysis.
             if let Ok(v) = std::env::var("CP_REVIEW") {
-                g.debug_review(&self.settings, ctx, &v);
+                g.debug_review(ctx, &v);
             }
         }
         if let Some(start) = self.debug.play_from.take() {
@@ -907,11 +906,7 @@ impl App {
                 PrepAction::NeedEngine => self
                     .engine_offer
                     .ask(crate::engine_offer::Pending::OpeningErrors, &self.settings),
-                PrepAction::EngineSwitch | PrepAction::SettingsChanged => self.settings_dirty = true,
-                PrepAction::OpenEngines => {
-                    self.settings_ui.open = true;
-                    self.settings_ui.tab = Tab::Engines;
-                }
+                PrepAction::SettingsChanged => self.settings_dirty = true,
                 PrepAction::Toast(m) => self.toast(ctx, m),
                 PrepAction::CopyText(text, msg) => {
                     ctx.copy_text(text);
@@ -2626,7 +2621,9 @@ impl App {
     }
 
     /// Makes ChessPenguin's Stockfish (just downloaded) or a found engine the active
-    /// one, then runs what the user was doing.
+    /// one, then runs what the user was doing. The game analysis and the opening errors
+    /// use ChessPenguin's Stockfish whatever the active engine: downloaded for them, it
+    /// becomes the active one only when there was none.
     fn engine_arrived(
         &mut self,
         ctx: &egui::Context,
@@ -2640,7 +2637,16 @@ impl App {
             self.settings.engines.push(cfg);
             self.settings.engines.len() - 1
         });
-        self.settings.active_engine = Some(index);
+        let own_search = matches!(
+            pending,
+            Some(
+                crate::engine_offer::Pending::GameAnalysis
+                    | crate::engine_offer::Pending::OpeningErrors
+            )
+        );
+        if !own_search || self.settings.active_engine().is_none() {
+            self.settings.active_engine = Some(index);
+        }
         self.settings_dirty = true;
         match pending {
             Some(crate::engine_offer::Pending::LiveAnalysis) => {
@@ -2650,7 +2656,7 @@ impl App {
             }
             Some(crate::engine_offer::Pending::GameAnalysis) => {
                 let actions = match self.game.as_mut() {
-                    Some(g) => g.start_review_now(&self.settings, ctx),
+                    Some(g) => g.start_review_now(ctx),
                     None => Vec::new(),
                 };
                 for a in actions {
@@ -2666,7 +2672,7 @@ impl App {
             }
             Some(crate::engine_offer::Pending::OpeningErrors) => {
                 let actions = match self.prep.as_mut() {
-                    Some(p) => p.start_after_engine(&self.settings, ctx),
+                    Some(p) => p.start_after_engine(ctx),
                     None => Vec::new(),
                 };
                 self.prep_actions(ctx, actions);
@@ -2966,7 +2972,6 @@ impl eframe::App for App {
             if let Some(p) = self.prep.as_mut() {
                 p.poll_quietly(&ctx, &self.settings);
             }
-            let review = self.settings.review.clone();
             let actions = game.show(
                 ui,
                 &mut self.settings,
@@ -2975,8 +2980,6 @@ impl eframe::App for App {
                 &mut self.translation,
                 input_enabled,
             );
-            // The analysis options (its dialog) are kept.
-            self.settings_dirty |= self.settings.review != review;
             self.reference_tab = game.reference_tab();
             let game_back_previous = game.previous_prep && game.previous.is_some();
             // Before the actions: leaving may take the game away.

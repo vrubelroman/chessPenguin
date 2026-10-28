@@ -1,27 +1,40 @@
 //! Our !! and ! against chess.com's on every game of `chesscom/` (see its README): run it
 //! after each change of the rules, to see that a fix for one game broke no other.
 //!
-//! `cargo run --release -p game-review --example chesscom_check -- <engine> [nodes] [threads]`
+//! `cargo run --release -p game-review --example chesscom_check -- <engine>`
+//!
+//! The engine searches as in the program: the fixed search of the game analysis
+//! (`game_review::SEARCH_NODES` nodes, one thread, a clear hash), in one engine process
+//! per CPU. `<engine>` is ChessPenguin's Stockfish 19.
+//!
+//! `CP_REVIEW_NODES=N` searches N nodes instead, for choosing the program's nodes (the
+//! program itself never does): its evaluations are cached apart.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use chess_core::shakmaty::Color;
 use chess_core::{Game, Nag};
-use game_review::{GameAnalysis, JobSettings, Judgement, ReviewMeta};
+use game_review::{GameAnalysis, JobSettings, Judgement, SEARCH_NODES, SEARCH_VERSION};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let Some(engine) = args.get(1) else {
-        eprintln!("usage: chesscom_check <engine> [nodes = 3000000] [threads = 8]");
+    let (Some(engine), 2) = (args.get(1), args.len()) else {
+        eprintln!("usage: chesscom_check <engine>");
         std::process::exit(2);
     };
-    let nodes: u64 = args.get(2).map_or(3_000_000, |n| n.parse().expect("nodes"));
-    let threads: u32 = args.get(3).map_or(8, |n| n.parse().expect("threads"));
+    let nodes: u64 = std::env::var("CP_REVIEW_NODES")
+        .map_or(SEARCH_NODES, |n| n.parse().expect("CP_REVIEW_NODES: a number"));
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cache = root
-        .join("../../target/chesscom-check")
-        .join(nodes.to_string());
+    // Evaluations of one version of the fixed search are the same on every machine;
+    // those of other nodes go apart.
+    let folder = if nodes == SEARCH_NODES {
+        format!("v{SEARCH_VERSION}")
+    } else {
+        format!("v{SEARCH_VERSION}-{nodes}")
+    };
+    let cache = root.join("../../target/chesscom-check").join(folder);
+    println!("{nodes} nodes per search");
     std::fs::create_dir_all(&cache).expect("cache folder");
 
     let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("chesscom"))
@@ -38,7 +51,7 @@ fn main() {
         let text = std::fs::read_to_string(&file).expect("pgn");
         let game = chess_core::parse_str(&text).game;
         let mut a = GameAnalysis::new(&game, Some(&cache));
-        review(&mut a, &game, engine, nodes, threads);
+        review(&mut a, &game, engine, nodes);
         a.save_cache(&cache).expect("cache");
         let compared = game.tag("ChessComMarks").unwrap_or("!! !").to_owned();
         println!(
@@ -131,18 +144,15 @@ fn main() {
 }
 
 /// Fills in what the cache lacks (all of it the first time) at `nodes`.
-fn review(a: &mut GameAnalysis, game: &Game, engine: &str, nodes: u64, threads: u32) {
-    let meta = ReviewMeta {
-        engine: "check".into(),
-        nodes,
-    };
-    let targets = a.begin(game, meta, false);
+fn review(a: &mut GameAnalysis, game: &Game, engine: &str, nodes: u64) {
+    let targets = a.begin(game, false);
+    if let Some(m) = &mut a.meta {
+        m.nodes = nodes;
+    }
     if !targets.is_empty() {
         let settings = JobSettings {
-            threads,
-            hash_mb: 256,
             nodes,
-            eval_file: None,
+            ..JobSettings::new(game_review::processes(game_review::MAX_PROCESSES), None)
         };
         let cancel = AtomicBool::new(false);
         game_review::run(

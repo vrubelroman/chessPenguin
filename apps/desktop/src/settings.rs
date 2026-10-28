@@ -118,8 +118,6 @@ pub struct Settings {
     pub show_best_arrow: bool,
     /// Recently opened PGN files, most recent first.
     pub databases: Vec<PathBuf>,
-    /// Whole-game analysis options.
-    pub review: ReviewSettings,
     /// The first-start engine discovery has run (see `engines::first_run_setup`).
     pub engines_discovered: bool,
     /// The sample databases were put on the shelf (see `examples::first_run_setup`).
@@ -153,19 +151,17 @@ pub struct Settings {
     pub prep: PrepSettings,
 }
 
-/// Options of the opponent preparation; threads and memory are the game analysis's.
+/// Options of the opponent preparation; its engine search is the game analysis's.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PrepSettings {
-    /// Index into [`REVIEW_QUALITY`]; «Fast» is enough for opening errors.
-    pub quality: usize,
     /// The book (`None`: the largest database on the shelf; `Some("")`: no book).
     pub book: Option<PathBuf>,
     /// Plies of the opening the report looks at.
     pub plies: usize,
     /// Moves with fewer games fold into «other moves».
     pub branches_from: u32,
-    /// The engine was started from the dialog once: the button starts it at once.
+    /// The colour was chosen in the dialog once: the button starts the engine at once.
     pub chosen: bool,
     /// Inaccuracies (?!) are shown with the mistakes and blunders.
     pub inaccuracies: bool,
@@ -176,7 +172,6 @@ pub struct PrepSettings {
 impl Default for PrepSettings {
     fn default() -> Self {
         Self {
-            quality: 0,
             book: None,
             plies: 20,
             branches_from: 3,
@@ -184,60 +179,6 @@ impl Default for PrepSettings {
             inaccuracies: true,
             sorts: Default::default(),
         }
-    }
-}
-
-impl PrepSettings {
-    pub fn nodes(&self) -> u64 {
-        REVIEW_QUALITY[self.quality.min(REVIEW_QUALITY.len() - 1)].1
-    }
-}
-
-/// Options of the whole-game analysis (the engine is the active one).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ReviewSettings {
-    /// Index into [`REVIEW_QUALITY`].
-    pub quality: usize,
-    pub threads: u32,
-    pub hash_mb: u32,
-    /// An analysis was started from the dialog once: «Analyse» starts the next one with
-    /// these options at once (the dialog stays for «Analyse again…»).
-    pub chosen: bool,
-}
-
-impl Default for ReviewSettings {
-    fn default() -> Self {
-        Self {
-            quality: 1,
-            threads: default_threads(),
-            hash_mb: default_hash(),
-            chosen: false,
-        }
-    }
-}
-
-/// Search effort per position: (label, nodes).
-pub const REVIEW_QUALITY: [(&str, u64); 3] = [
-    ("Fast", 250_000),
-    ("Normal", 1_000_000),
-    ("Deep", 3_000_000),
-];
-
-impl ReviewSettings {
-    /// Options other than the defaults were chosen in the dialog (before `chosen` was
-    /// kept, 1.5): they count as chosen.
-    pub fn note_earlier_choice(&mut self) {
-        let default = ReviewSettings::default();
-        if (self.quality, self.threads, self.hash_mb)
-            != (default.quality, default.threads, default.hash_mb)
-        {
-            self.chosen = true;
-        }
-    }
-
-    pub fn nodes(&self) -> u64 {
-        REVIEW_QUALITY[self.quality.min(REVIEW_QUALITY.len() - 1)].1
     }
 }
 
@@ -260,7 +201,6 @@ impl Default for Settings {
             active_engine: None,
             show_best_arrow: true,
             databases: Vec::new(),
-            review: ReviewSettings::default(),
             engines_discovered: false,
             examples_added: false,
             check_updates: true,
@@ -303,15 +243,13 @@ impl Settings {
         migrate_legacy_config(&path);
         match std::fs::read(&path) {
             Ok(bytes) => {
-                let mut s: Settings = serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+                serde_json::from_slice(&bytes).unwrap_or_else(|e| {
                     eprintln!(
                         "settings: cannot parse {}: {e}; using defaults",
                         path.display()
                     );
                     Self::default()
-                });
-                s.review.note_earlier_choice();
-                s
+                })
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::first_start(),
             Err(_) => Self::default(),
@@ -375,13 +313,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    /// The settings of 1.x kept the engine options of the game analysis and the
+    /// quality of the preparation: they are read without them now.
     #[test]
-    fn options_chosen_before_count_as_chosen() {
-        let mut r = ReviewSettings::default();
-        r.note_earlier_choice();
-        assert!(!r.chosen, "the defaults: never chosen");
-        r.quality = 2;
-        r.note_earlier_choice();
-        assert!(r.chosen);
+    fn settings_with_the_old_analysis_options_are_read() {
+        let old = r#"{
+            "language": "Ru",
+            "review": {"quality": 2, "threads": 12, "hash_mb": 1024, "chosen": true},
+            "prep": {"quality": 1, "plies": 16, "chosen": true}
+        }"#;
+        let s: Settings = serde_json::from_str(old).expect("read");
+        assert_eq!(s.language, Lang::Ru);
+        assert_eq!(s.prep.plies, 16);
+        assert!(s.prep.chosen);
+        let json = serde_json::to_string(&s).expect("written");
+        assert!(!json.contains("\"review\"") && !json.contains("quality"));
     }
 }

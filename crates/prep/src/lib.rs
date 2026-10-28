@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::SystemTime;
 
 use chess_import::Database;
-use game_review::{JobEvent, JobFailure, JobSettings, Target};
+use game_review::{JobEvent, JobFailure, JobSettings, SEARCH_NODES, SEARCH_VERSION, Target};
 use serde::{Deserialize, Serialize};
 use uci::EnginePosition;
 
@@ -125,7 +125,7 @@ impl ColorReport {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EngineInfo {
     pub name: String,
-    /// Nodes per position asked for (an evaluation from the cache may have more).
+    /// Nodes per position.
     pub nodes: u64,
 }
 
@@ -167,6 +167,10 @@ pub struct PrepReport {
     pub engine: Option<EngineInfo>,
     /// Engine evaluations by position key.
     pub evals: HashMap<u64, PositionEval>,
+    /// The version of the fixed search of the game analysis the evaluations come from
+    /// ([`SEARCH_VERSION`]; 0: from before it, made with the user's engine settings).
+    #[serde(default)]
+    pub search: u32,
 }
 
 /// Identity of a database for the report cache: the content of a PGN file, the
@@ -270,6 +274,7 @@ pub fn build(
         book_counts: HashMap::new(),
         engine: None,
         evals,
+        search: SEARCH_VERSION,
     };
     report.refresh();
     Some(report)
@@ -416,29 +421,28 @@ impl PrepReport {
         self.positions_for(side).len()
     }
 
-    /// Positions without an evaluation of at least `nodes`.
-    pub fn missing(&self, nodes: u64) -> usize {
-        self.missing_for(nodes, Side::Any)
+    /// Positions without an evaluation.
+    pub fn missing(&self) -> usize {
+        self.missing_for(Side::Any)
     }
 
     /// [`PrepReport::missing`] among the games the player had `side` in.
-    pub fn missing_for(&self, nodes: u64, side: Side) -> usize {
+    pub fn missing_for(&self, side: Side) -> usize {
         self.positions_for(side)
             .iter()
-            .filter(|(k, _, _)| !self.evals.get(k).is_some_and(|e| e.nodes >= nodes))
+            .filter(|(k, _, _)| !self.evals.contains_key(k))
             .count()
     }
 
-    /// Takes from `cache` the evaluations of at least `nodes` the report lacks;
-    /// returns how many.
-    pub fn take_cached(&mut self, cache: &PositionCache, nodes: u64) -> usize {
+    /// Takes from `cache` the evaluations the report lacks; returns how many.
+    pub fn take_cached(&mut self, cache: &PositionCache) -> usize {
         let keys: Vec<u64> = self.positions().iter().map(|(k, _, _)| *k).collect();
         let mut taken = 0;
         for k in keys {
-            if self.evals.get(&k).is_some_and(|e| e.nodes >= nodes) {
+            if self.evals.contains_key(&k) {
                 continue;
             }
-            if let Some(e) = cache.get(k).filter(|e| e.nodes >= nodes) {
+            if let Some(e) = cache.get(k) {
                 self.evals.insert(k, e.clone());
                 taken += 1;
             }
@@ -449,19 +453,19 @@ impl PrepReport {
         taken
     }
 
-    /// The positions still to evaluate at `nodes`, for [`game_review::run`] (one
-    /// search each, no second search for !! and !). Their keys are the position keys
-    /// in hexadecimal, as [`PrepReport::apply`] reads them.
-    pub fn targets(&self, nodes: u64) -> Vec<Target> {
-        self.targets_for(nodes, Side::Any)
+    /// The positions still to evaluate, for [`game_review::run`] (one search each, no
+    /// second search for !! and !). Their keys are the position keys in hexadecimal, as
+    /// [`PrepReport::apply`] reads them.
+    pub fn targets(&self) -> Vec<Target> {
+        self.targets_for(Side::Any)
     }
 
     /// [`PrepReport::targets`] of the games the player had `side` in (the dialog's
     /// «Black — 133 games» halves the work).
-    pub fn targets_for(&self, nodes: u64, side: Side) -> Vec<Target> {
+    pub fn targets_for(&self, side: Side) -> Vec<Target> {
         self.positions_for(side)
             .into_iter()
-            .filter(|(k, _, _)| !self.evals.get(k).is_some_and(|e| e.nodes >= nodes))
+            .filter(|(k, _, _)| !self.evals.contains_key(k))
             .map(|(k, g, i)| Target {
                 key: format!("{k:016x}"),
                 pos: EnginePosition::startpos(g.ucis[..i].iter().cloned()),
@@ -477,10 +481,10 @@ impl PrepReport {
             .collect()
     }
 
-    /// Takes in what the engine job reported for a run at `nodes`; the evaluation
-    /// it carried (to cache), if any. The errors are re-judged on the next
-    /// [`PrepReport::refresh`].
-    pub fn apply(&mut self, event: &JobEvent, nodes: u64) -> Option<(u64, PositionEval)> {
+    /// Takes in what the engine job reported; the evaluation it carried (to cache), if
+    /// any. The errors are re-judged on the next [`PrepReport::refresh`].
+    pub fn apply(&mut self, event: &JobEvent) -> Option<(u64, PositionEval)> {
+        let nodes = SEARCH_NODES;
         match event {
             JobEvent::Engine(name) => {
                 self.engine = Some(EngineInfo {
@@ -561,13 +565,24 @@ impl PrepReport {
     pub fn load(dir: &Path, db: &Database, player: &Player, options: &Options) -> Option<PrepReport> {
         let fp = fingerprint(db);
         let bytes = std::fs::read(Self::cache_path(dir, fp, player, options)).ok()?;
-        let report: PrepReport = serde_json::from_slice(&bytes).ok()?;
-        (report.version == REPORT_VERSION
+        let mut report: PrepReport = serde_json::from_slice(&bytes).ok()?;
+        let same = report.version == REPORT_VERSION
             && report.fingerprint == fp
             && report.player == *player
             && report.plies == options.plies
-            && report.side() == options.side)
-            .then_some(report)
+            && report.side() == options.side;
+        if !same {
+            return None;
+        }
+        // Evaluations of another search are not mixed with today's: the errors are
+        // found again.
+        if report.search != SEARCH_VERSION {
+            report.evals.retain(|_, e| e.nodes == EXACT);
+            report.engine = None;
+            report.search = SEARCH_VERSION;
+            report.refresh();
+        }
+        Some(report)
     }
 
     /// Keeps the report in `dir` (atomically).
@@ -593,7 +608,7 @@ pub struct Progress {
     pub nps: u64,
 }
 
-/// Runs the engine over the positions `report` lacks at `settings.nodes` (the cache
+/// Runs the engine over the positions `report` lacks (the cache
 /// is consulted first and fed as results come; `cache_dir` saves it every few
 /// hundred positions and at the end), updating the report as results come in.
 /// Returns when done, or soon after `cancel` is set (what was evaluated stays).
@@ -606,9 +621,8 @@ pub fn analyse(
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<(), JobFailure> {
-    let nodes = settings.nodes;
-    report.take_cached(cache, nodes);
-    let targets = report.targets(nodes);
+    report.take_cached(cache);
+    let targets = report.targets();
     let total = targets.len();
     let mut progress = Progress {
         done: 0,
@@ -625,7 +639,7 @@ pub fn analyse(
             progress.done += 1;
             progress.nps = *nps;
         }
-        if let Some((key, eval)) = report.apply(&event, nodes) {
+        if let Some((key, eval)) = report.apply(&event) {
             cache.insert(key, eval);
             since_save += 1;
             if since_save >= 200
@@ -860,14 +874,14 @@ mod tests {
         // 9 + 11 + 7 positions; the start and 1.e4 c5 2.Nf3 shared by three games,
         // 2...Nc6 3.Bb5 by two.
         assert_eq!(total, 27 - 10);
-        let targets = report.targets(1000);
+        let targets = report.targets();
         assert_eq!(targets.len(), total);
         // One colour: the positions of its games only (the start position is in both).
-        let black = report.targets_for(1000, Side::Black);
+        let black = report.targets_for(Side::Black);
         assert_eq!(black.len(), report.games[1].keys.len());
         assert_eq!(report.distinct_positions_for(Side::Black), black.len());
         assert!(report.distinct_positions_for(Side::White) < total);
-        assert_eq!(report.missing_for(1000, Side::Black), black.len());
+        assert_eq!(report.missing_for(Side::Black), black.len());
         assert_eq!(targets[0].key, format!("{:016x}", report.games[0].keys[0]));
         assert!(targets[0].pos.moves.is_empty());
         assert_eq!(targets[3].pos.moves, vec!["e2e4", "c7c5", "g1f3"]);
@@ -891,14 +905,13 @@ mod tests {
                 },
                 nps: 0,
             };
-            let (k, e) = report.apply(&event, 1000).expect("an evaluation");
+            let (k, e) = report.apply(&event).expect("an evaluation");
             cache.insert(k, e);
         }
-        assert_eq!(report.missing(1000), 0);
-        assert_eq!(report.missing(2000), total);
+        assert_eq!(report.missing(), 0);
         assert!(report.evaluated());
         report.refresh();
-        assert_eq!(report.engine.as_ref().map(|e| e.nodes), Some(1000));
+        assert_eq!(report.engine.as_ref().map(|e| e.nodes), Some(SEARCH_NODES));
         let w = &report.white;
         assert_eq!(w.counts.blunders, 2);
         assert_eq!(w.errors.len(), 2);
@@ -929,10 +942,21 @@ mod tests {
         let mut fresh = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
             .expect("report");
         assert!(!fresh.evaluated());
-        assert_eq!(fresh.take_cached(&cache, 1000), total);
+        assert_eq!(fresh.take_cached(&cache), total);
         assert!(fresh.evaluated(), "evaluations from the cache judge the errors too");
         assert_eq!(fresh.white.repeated, report.white.repeated);
-        assert_eq!(fresh.take_cached(&cache, 1000), 0);
+        assert_eq!(fresh.take_cached(&cache), 0);
+        // A report of another search (from before the fixed one) keeps its games but
+        // not its evaluations.
+        let path = PrepReport::cache_path(&dir, report.fingerprint, &player, &Options::default());
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("report")).expect("json");
+        json.as_object_mut().expect("report").remove("search");
+        std::fs::write(&path, serde_json::to_vec(&json).expect("json")).expect("written");
+        let old = PrepReport::load(&dir, &db, &player, &Options::default()).expect("still read");
+        assert!(!old.evaluated() && old.white.errors.is_empty());
+        assert_eq!(old.missing(), total);
+        assert_eq!(old.search, SEARCH_VERSION);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -951,12 +975,7 @@ mod tests {
         let mut report = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
             .expect("report");
         let total = report.distinct_positions();
-        let settings = JobSettings {
-            threads: 1,
-            hash_mb: 16,
-            nodes: 1000,
-            eval_file: None,
-        };
+        let settings = JobSettings::new(2, None);
         let mut cache = PositionCache::default();
         let mut last = Progress::default();
         analyse(
@@ -970,7 +989,7 @@ mod tests {
         )
         .expect("the job runs");
         assert_eq!((last.done, last.total), (total, total));
-        assert_eq!(report.missing(1000), 0);
+        assert_eq!(report.missing(), 0);
         assert_eq!(cache.len(), total);
         assert_eq!(report.engine.as_ref().map(|e| e.name.as_str()), Some("Fake UCI"));
         // A second run has nothing to do; a cancelled one ends at once.
@@ -988,7 +1007,7 @@ mod tests {
             &mut |_| calls += 1,
         )
         .expect("nothing to do");
-        assert_eq!(again.missing(1000), 0, "all from the cache");
+        assert_eq!(again.missing(), 0, "all from the cache");
         assert_eq!(calls, 1);
     }
 }

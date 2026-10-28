@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use chess_core::shakmaty::san::SanPlus;
 use chess_core::shakmaty::uci::UciMove;
 use chess_core::shakmaty::{Chess, Color, Position};
-use game_review::{Eval, Judgement, PosEval};
+use game_review::{Eval, Judgement, PosEval, SEARCH_VERSION};
 use serde::{Deserialize, Serialize};
 
 use crate::games::{GameInfo, Tally};
@@ -220,6 +220,10 @@ const CACHE_LIMIT: usize = 1_000_000;
 #[derive(Serialize, Deserialize)]
 struct CacheFile {
     version: u32,
+    /// The version of the fixed search the evaluations come from ([`SEARCH_VERSION`];
+    /// 0: from before it). Those of another one are not used.
+    #[serde(default)]
+    search: u32,
     positions: Vec<(u64, PositionEval)>,
 }
 
@@ -241,7 +245,7 @@ impl PositionCache {
         let entries = std::fs::read(Self::path(dir))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<CacheFile>(&bytes).ok())
-            .filter(|f| f.version == CACHE_VERSION)
+            .filter(|f| f.version == CACHE_VERSION && f.search == SEARCH_VERSION)
             .map(|f| f.positions.into_iter().collect())
             .unwrap_or_default();
         PositionCache {
@@ -292,6 +296,7 @@ impl PositionCache {
         }
         let file = CacheFile {
             version: CACHE_VERSION,
+            search: SEARCH_VERSION,
             positions,
         };
         let bytes = serde_json::to_vec(&file).map_err(std::io::Error::other)?;
@@ -386,6 +391,13 @@ mod tests {
         assert_eq!(d.get(1), c.get(1));
         assert_eq!(d.get(2).map(|e| e.nodes), Some(EXACT));
         assert_eq!(d.get(3), None);
+        // A cache from before the fixed search of the game analysis is not used.
+        let path = PositionCache::path(&dir);
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("cache")).expect("json");
+        json.as_object_mut().expect("cache").remove("search");
+        std::fs::write(&path, serde_json::to_vec(&json).expect("json")).expect("written");
+        assert!(PositionCache::load(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
