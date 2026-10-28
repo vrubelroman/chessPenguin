@@ -217,6 +217,12 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
         return Some(Judgement::Brilliant);
     }
     let w2 = second?;
+    // [`Rules::ChessCom`]: a capture is the natural move; great only when every other move
+    // loses (20.Rxe7+! of the Evergreen game, 18.fxe6! of Pillsbury — Lasker), not when
+    // another keeps the game (12…Nxc3, 13…Nxe4 of Byrne — Fischer).
+    if rules == Rules::ChessCom && f.capture && w2 >= good::LOST {
+        return None;
+    }
     // The engine's own best move loses nothing: a drop to the next position is the noise
     // of two searches (9.Nf5! of the Immortal game, −0.51 then −0.82 at 3M nodes); the
     // first rules still count it.
@@ -416,7 +422,16 @@ impl Report {
         let mut noted = vec![false; n];
         let mut lost = vec![0.0; n];
         for i in 0..n {
-            let ply = plies[i];
+            let mut ply = plies[i];
+            // Winning back after the opponent took the mover's sacrifice goes on with the
+            // combination: no trade (18…Bxc4+ of Byrne — Fischer after 17…Be6 18.Bxb6).
+            if let (Some(f), Some(own)) = (
+                ply.features.as_mut(),
+                i.checked_sub(2).and_then(|k| plies[k].features),
+            ) && own.sacrifice
+            {
+                f.takes_back = false;
+            }
             let (Some(before), Some(after)) = (evals[i], evals[i + 1]) else {
                 continue;
             };

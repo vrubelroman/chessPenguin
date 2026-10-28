@@ -26,6 +26,7 @@ pub struct MoveFeatures {
     /// A pawn moved (not taking) to a square where the opponent wins it: offered, but
     /// brilliant only for a quicker mate (29…b5+!! of Pillsbury — Lasker).
     pub pawn_offered: bool,
+    pub capture: bool,
     /// A capture that wins two points or more.
     pub winning_capture: bool,
     /// The capture only wins back what the opponent has just taken, elsewhere (18.fxe6!
@@ -108,6 +109,7 @@ impl MoveFeatures {
             pawn_offered: m.role() == Role::Pawn
                 && !m.is_capture()
                 && pseudo_threat(after.board(), m.to(), mover.other()) > 0,
+            capture: m.is_capture(),
             winning_capture: m.is_capture() && gain >= 2,
             takes_back: m.is_capture()
                 && prev.is_some_and(|p| {
@@ -347,6 +349,8 @@ mod tests {
     #[test]
     fn only_what_the_move_gives_up_is_offered() {
         // The knight on e5 hangs to the pawn on d6 before and after Ra2: not given by it.
+        // (Counting a piece left hanging as given would mark 17…Be6!! of Byrne — Fischer,
+        // but also 11.Rg1, 19.e5 of the Immortal game and more that chess.com does not.)
         let f = features("4k3/8/3p4/4N3/8/8/8/R3K3 w - - 0 1", "Ra2");
         assert!(!f.sacrifice, "{f:?}");
         // The rook on e1 guards it; Ra1 takes the guard away: the knight is given up.
