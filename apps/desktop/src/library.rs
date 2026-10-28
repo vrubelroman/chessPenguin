@@ -73,6 +73,11 @@ pub enum LibraryAction {
         path: PathBuf,
         index: usize,
     },
+    /// «Prepare against…» for a player of this database (opponent-prep.md §2).
+    PrepareAgainst {
+        path: PathBuf,
+        entry: crate::prep_ui::PrepEntry,
+    },
 }
 
 /// How a database was imported, and what is worth knowing about it.
@@ -630,8 +635,24 @@ impl Library {
         {
             ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         }
+        if let Some(path) = self.selected_db.clone()
+            && let Some(view) = self.large.get_mut(&path)
+            && let Some(entry) = view.prepare.take()
+        {
+            actions.push(LibraryAction::PrepareAgainst { path, entry });
+        }
         self.notes_window(ui.ctx());
         actions
+    }
+
+    /// Ctrl+Shift+P: the chosen database (when it is read) and the player of its
+    /// filter, if one is set.
+    pub fn prep_entry(&self) -> Option<(PathBuf, Option<crate::prep_ui::PrepEntry>)> {
+        let path = self.selected_db.clone()?;
+        if !matches!(self.slots.get(&path), Some(Slot::Ready(_))) {
+            return None;
+        }
+        Some((path.clone(), self.large.get(&path).and_then(|v| v.prep_entry())))
     }
 
     fn notes_window(&mut self, ctx: &egui::Context) {

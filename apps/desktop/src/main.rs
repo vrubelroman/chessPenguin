@@ -26,6 +26,7 @@ mod online_ui;
 mod own_db;
 mod play;
 mod player_games;
+mod prep_ui;
 mod reference;
 mod review;
 mod rodent4_download;

@@ -15,7 +15,9 @@ use std::sync::atomic::AtomicBool;
 
 use chess_core::{Game, NodeId};
 use chess_import::Database;
-use chess_import::position::{Match, MoveStat, PositionOutcome, PositionQuery, Tally};
+use chess_import::position::{
+    Match, MoveStat, PositionOutcome, PositionQuery, Tally, theory_end,
+};
 use egui::{RichText, Sense, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
 use shakmaty::uci::UciMove;
@@ -147,8 +149,6 @@ const MOVES_WITH_GAMES: usize = 12;
 const PGN_TREE_MATCHES: usize = 5_000;
 /// Results bigger than the cache kept apart (the start position, 1.e4).
 const BIG_KEPT: usize = 2;
-/// Plies of the theory checked one by one before it is found by halving.
-const BOOK_LINEAR: usize = 12;
 
 /// Sort of the games table.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -654,62 +654,12 @@ fn book_end(
         )
     };
     // The first plies one by one (the opening index answers them at once), then by
-    // doubling and halving: a position is nearly always in the database when a later
-    // one of the same line is.
-    // `from`: the plies before it are known already (the game grew past a theory that
-    // reached its end).
-    let total = nodes.len();
-    let from = from.min(total);
-    let linear_end = if from > 0 {
-        from
-    } else {
-        total.min(BOOK_LINEAR)
-    };
-    let mut last_known: Option<usize> = from.checked_sub(1);
-    let mut first_unknown = None;
-    for ply in from..linear_end {
-        if known(ply)? {
-            last_known = Some(ply);
-        } else {
-            first_unknown = Some(ply);
-            break;
-        }
-    }
-    if first_unknown.is_none() && total > linear_end {
-        let mut lo = linear_end - 1;
-        let mut step = 2;
-        let mut hi = total;
-        while lo + step < total {
-            if known(lo + step)? {
-                lo += step;
-                step *= 2;
-            } else {
-                hi = lo + step;
-                break;
-            }
-        }
-        if hi == total && lo + 1 < total {
-            // Past the last doubling: the end of the line itself.
-            if known(total - 1)? {
-                lo = total - 1;
-            }
-        }
-        while hi - lo > 1 {
-            let mid = (lo + hi) / 2;
-            if known(mid)? {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        last_known = Some(lo);
-        if hi < total {
-            first_unknown = Some(hi);
-        }
-    }
+    // doubling and halving (`theory_end`). `from`: the plies before it are known
+    // already (the game grew past a theory that reached its end).
+    let end = theory_end(nodes.len(), from, known)?;
     Some(BookEnd {
-        last: last_known.map(|p| nodes[p]),
-        to_the_end: total > 1 && first_unknown.is_none(),
+        last: end.last_known.map(|p| nodes[p]),
+        to_the_end: nodes.len() > 1 && end.first_unknown.is_none(),
         copies,
     })
 }

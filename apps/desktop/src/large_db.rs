@@ -22,6 +22,7 @@ use shakmaty::uci::UciMove;
 use crate::board_search::{self, Background, BoardEvent, SearchBoard};
 use crate::i18n::{tr, trf};
 use crate::library::LibraryAction;
+use crate::prep_ui::PrepEntry;
 use crate::settings::Settings;
 use crate::viewed::{self, Viewed};
 
@@ -335,6 +336,9 @@ pub struct LargeView {
     drawer_top: f32,
     /// The quick search has the keyboard (arrows and Enter go to the table).
     search_focused: bool,
+    /// «Prepare against…» was asked (the panel's button, a row's menu): the library
+    /// takes it (docs/design/opponent-prep.md §2.1).
+    pub prepare: Option<PrepEntry>,
 }
 
 impl LargeView {
@@ -419,6 +423,7 @@ impl LargeView {
             drawer_open: drawer,
             drawer_asked: false,
             drawer_top: 0.0,
+            prepare: None,
         }
     }
 
@@ -1297,7 +1302,34 @@ impl LargeView {
             .response
             .on_disabled_hover_text(tr("Enter a player first"));
         });
+        // Preparing against the player: with the name picked from the list, else the
+        // dialog offers the names that match the text (opponent-prep.md §2.1).
+        if player_set {
+            let label = match self.form.player.exact {
+                Some(_) => trf("♟ Prepare against {name}…", &[("name", &self.form.player.text)]),
+                None => tr("♟ Prepare against an opponent…").to_owned(),
+            };
+            if ui
+                .add(egui::Button::new(label).truncate())
+                .on_hover_text(tr(
+                    "The player's openings by colour, with names, and the opening errors the engine finds (Ctrl+Shift+P)",
+                ))
+                .clicked()
+            {
+                self.prepare = self.prep_entry();
+            }
+        }
         self.name_field(ui, db, NameField::Opponent, tr("Opponent"));
+    }
+
+    /// «Prepare against…» for the player of the filter: the name picked from the list
+    /// (or the text typed) and the colour of the filter.
+    pub fn prep_entry(&self) -> Option<PrepEntry> {
+        self.form.player.is_set().then(|| PrepEntry {
+            query: self.form.player.text.trim().to_owned(),
+            exact: self.form.player.exact,
+            side: self.form.side,
+        })
     }
 
     fn event_group(&mut self, ui: &mut Ui, db: &Arc<Database>) {
@@ -2094,16 +2126,8 @@ impl LargeView {
             .header(26.0, |mut header| {
                 for (label, key, _) in &columns {
                     header.col(|ui| {
-                        let arrow = match key {
-                            Some(k) if sort.0 == *k => {
-                                if sort.1 { " ⏶" } else { " ⏷" }
-                            }
-                            _ => "",
-                        };
-                        let r = ui.add(
-                            egui::Button::new(RichText::new(format!("{label}{arrow}")).strong())
-                                .frame(false),
-                        );
+                        let active = key.filter(|k| sort.0 == *k).map(|_| sort.1);
+                        let r = crate::widgets::sort_header(ui, label, active);
                         if let Some(k) = key
                             && r.clicked()
                         {
@@ -2215,6 +2239,25 @@ impl LargeView {
                         if ui.button(tr("Open")).clicked() {
                             opened = Some(index);
                             ui.close();
+                        }
+                        // One item per player of the game (the same name once).
+                        let mut players: Vec<&str> = vec![r.white.as_str(), r.black.as_str()];
+                        players.dedup();
+                        for name in players {
+                            if name.trim().is_empty() || name == "?" {
+                                continue;
+                            }
+                            if ui
+                                .button(trf("♟ Prepare against {name}…", &[("name", &name)]))
+                                .clicked()
+                            {
+                                self.prepare = Some(PrepEntry {
+                                    query: name.to_owned(),
+                                    exact: None,
+                                    side: Side::Any,
+                                });
+                                ui.close();
+                            }
                         }
                         if ui.button(tr("Game data… (F2)")).clicked() {
                             actions.push(LibraryAction::EditGameData { path: path.to_path_buf(), index });

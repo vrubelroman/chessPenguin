@@ -23,7 +23,7 @@ pub mod report;
 
 pub use features::{MoveFeatures, Rules};
 pub use job::{JobEvent, JobFailure, JobSettings, Target, run};
-pub use report::{Eval, Judgement, Phase, Phases, Ply, Report, SideStats};
+pub use report::{Eval, Judgement, Phase, Phases, Ply, Report, SideStats, judge};
 
 /// Engine result for one position of the main line.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -560,8 +560,9 @@ fn position_key(game: &Game, id: NodeId) -> Option<(String, EnginePosition)> {
     Some((key, pos))
 }
 
-/// Evaluation of a position without legal moves.
-fn terminal_eval(pos: &Chess) -> Option<Eval> {
+/// Evaluation of a position without legal moves (checkmate or stalemate): no engine
+/// is needed for it.
+pub fn terminal_eval(pos: &Chess) -> Option<Eval> {
     if pos.is_checkmate() {
         Some(Eval::Mate {
             white: pos.turn() == Color::Black,

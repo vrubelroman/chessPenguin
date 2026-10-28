@@ -13,6 +13,7 @@ license.workspace = true
 chess-core.workspace = true
 maia.workspace = true
 game-review.workspace = true
+prep.workspace = true
 chess-import.workspace = true
 shakmaty.workspace = true
 uci.workspace = true

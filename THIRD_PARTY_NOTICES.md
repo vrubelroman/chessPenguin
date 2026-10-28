@@ -149,6 +149,22 @@ platform into the user's data directory and checks its SHA-256 (pinned in
   Open Database License (ODbL).
 - ChessPenguin runs Stockfish as a separate process over the UCI protocol.
 
+## Opening names (preparing against an opponent)
+
+`crates/prep/data/a.tsv` … `e.tsv` are the five files of the Lichess opening table
+https://github.com/lichess-org/chess-openings (the lichess.org contributors), downloaded
+unmodified at revision `f06a50d5c7c140e50b068049fa31d289e2c3d347` (2026-10-27) on 2026-10-28 and
+embedded in the program. Its README: "As a collection of facts, this data set is in the public
+domain … released under the CC0 Public Domain Dedication" (CC0 1.0). SHA-256 of the files:
+
+| File | SHA-256 |
+| --- | --- |
+| `a.tsv` | `3282e4c9155289a29224f9a85fba0decb46efa35c2fa5e39662d2ac48fb0f793` |
+| `b.tsv` | `4bf2269a8e7571a00a7b346bae4fa86a241a6e7e86beab01783c81acb1622b63` |
+| `c.tsv` | `45e843c7b7e79a0d04d5bda879c9bd23f5a10974488bd8615e4f4c5d0749986f` |
+| `d.tsv` | `1cf4057a8aece94f27bb3f278ad410ee2844831a642364eeceaafa091dbcceda` |
+| `e.tsv` | `48c6f6645b031a5937c8386839debab0e2e48837251687ba1afb6369677f8546` |
+
 ## ChessBase formats
 
 - `crates/chess-import/src/cbv.rs` reads ChessBase archives following uncbv

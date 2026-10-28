@@ -95,6 +95,11 @@ pub struct GameView {
     side_tab: SideTab,
     /// The game this one was opened from (reference tab): the title for "← back to".
     pub previous: Option<String>,
+    /// The game was opened from the opponent preparation: «⬅ Back to preparation».
+    pub previous_prep: bool,
+    /// The engine is busy with the opponent preparation: no game analysis meanwhile
+    /// (one engine job for the whole program, opponent-prep.md §4.3).
+    pub engine_busy: bool,
     /// The game's data were asked once (on its first add); not again.
     pub data_asked: bool,
     /// A newer version to offer (its number), next to Settings.
@@ -115,6 +120,8 @@ enum SideTab {
 
 pub enum GameAction {
     Back,
+    /// Ctrl+W: back to what the game was opened from, else to the library.
+    BackKey,
     /// Back to the library with this database chosen (the game's own).
     OpenDatabase(PathBuf),
     /// «Play on from here»: the play dialog for this position.
@@ -204,6 +211,8 @@ impl GameView {
                 SideTab::Notation
             },
             previous: None,
+            previous_prep: false,
+            engine_busy: false,
             data_asked: false,
             target: None,
             update: None,
@@ -776,7 +785,11 @@ impl GameView {
 
         // «Analyse»: at once with the options chosen before, else the dialog first.
         if std::mem::take(&mut self.review_asked) {
-            if settings.review.chosen {
+            if self.engine_busy {
+                actions.push(GameAction::Toast(
+                    tr("Opening errors are being searched — wait or stop it in the report").to_owned(),
+                ));
+            } else if settings.review.chosen {
                 self.start_review(settings, true, ui.ctx(), &mut actions);
             } else {
                 self.review.dialog_open = true;
@@ -889,9 +902,12 @@ impl GameView {
                     "Report: show or hide the evaluation graph and the report (Shift+A)",
                 ));
         } else if ui
-            .button(big("📈"))
+            .add_enabled(!self.engine_busy, egui::Button::new(big("📈")))
             .on_hover_text(tr(
                 "Analyse game: accuracy, inaccuracies, mistakes, blunders (Shift+A)",
+            ))
+            .on_disabled_hover_text(tr(
+                "Opening errors are being searched — wait or stop it in the report",
             ))
             .clicked()
         {
@@ -935,10 +951,13 @@ impl GameView {
                 RichText::new(format!("ℹ {}", self.diagnostics.len())).weak()
             }
         });
-        let back_to = self
-            .previous
-            .as_ref()
-            .map(|t| trf("⬅ Back to {game}", &[("game", t)]));
+        let back_to = self.previous.as_ref().map(|t| {
+            if self.previous_prep {
+                tr("⬅ Back to preparation").to_owned()
+            } else {
+                trf("⬅ Back to {game}", &[("game", t)])
+            }
+        });
         // The buttons are measured first: the title gets what they leave (shortened with
         // "…"; the result always shows). When it would get under 160 pt, the buttons
         // around it give up their words for their icons (the words go to the tooltips).
@@ -999,7 +1018,9 @@ impl GameView {
         ui.horizontal(|ui| {
             if ui
                 .button(if compact { "⬅" } else { tr("⬅ Library") })
-                .on_hover_text(if self.previous.is_some() {
+                .on_hover_text(if self.previous_prep {
+                    tr("Back to the game list")
+                } else if self.previous.is_some() {
                     tr("Back to the game list (Ctrl+W)")
                 } else {
                     tr("Back to the game list (Esc, Ctrl+W)")
@@ -1011,13 +1032,13 @@ impl GameView {
             if let Some(b) = &back_to
                 && ui
                     .button(if compact { "⬅" } else { b.as_str() })
-                    .on_hover_text(if compact {
-                        format!(
-                            "{b}\n{}",
+                    .on_hover_text({
+                        let hint = if self.previous_prep {
+                            tr("The preparation this game was opened from, as you left it (Esc, Ctrl+W)")
+                        } else {
                             tr("The game this one was opened from, as you left it (Esc)")
-                        )
-                    } else {
-                        tr("The game this one was opened from, as you left it (Esc)").to_owned()
+                        };
+                        if compact { format!("{b}\n{hint}") } else { hint.to_owned() }
                     })
                     .clicked()
             {
@@ -2123,6 +2144,19 @@ impl GameView {
     pub fn search_line(&self) -> Option<(Chess, Vec<shakmaty::Move>, bool)> {
         let (start, line) = crate::board_search::line_to(&self.game, self.cursor)?;
         Some((start, line, self.flipped))
+    }
+
+    /// The cursor on move `ply` of the main line (0: the start; past the end: the
+    /// last move).
+    pub fn goto_ply(&mut self, ply: usize) {
+        let mut at = self.game.root();
+        for _ in 0..ply {
+            match self.game.main_child(at) {
+                Some(n) => at = n,
+                None => break,
+            }
+        }
+        self.goto(at);
     }
 
     pub fn debug_advance(&mut self, plies: usize) {
@@ -4796,7 +4830,7 @@ impl GameView {
                 }
                 "add_to_db" => actions.push(GameAction::AddToDatabase),
                 "game_data" => actions.push(GameAction::EditGameData),
-                "back" => actions.push(GameAction::Back),
+                "back" => actions.push(GameAction::BackKey),
                 "find" if self.search_line().is_some() => {
                     actions.push(GameAction::FindPosition(None))
                 }

@@ -149,6 +149,48 @@ pub struct Settings {
     pub record_games: bool,
     /// Who played on this computer, the last first (`player_games.rs`).
     pub players: Vec<crate::player_games::Player>,
+    /// Preparing against an opponent (docs/design/opponent-prep.md).
+    pub prep: PrepSettings,
+}
+
+/// Options of the opponent preparation; threads and memory are the game analysis's.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrepSettings {
+    /// Index into [`REVIEW_QUALITY`]; «Fast» is enough for opening errors.
+    pub quality: usize,
+    /// The book (`None`: the largest database on the shelf; `Some("")`: no book).
+    pub book: Option<PathBuf>,
+    /// Plies of the opening the report looks at.
+    pub plies: usize,
+    /// Moves with fewer games fold into «other moves».
+    pub branches_from: u32,
+    /// The engine was started from the dialog once: the button starts it at once.
+    pub chosen: bool,
+    /// Inaccuracies (?!) are shown with the mistakes and blunders.
+    pub inaccuracies: bool,
+    /// The order of each table of the screen.
+    pub sorts: crate::prep_ui::PrepSorts,
+}
+
+impl Default for PrepSettings {
+    fn default() -> Self {
+        Self {
+            quality: 0,
+            book: None,
+            plies: 20,
+            branches_from: 3,
+            chosen: false,
+            inaccuracies: true,
+            sorts: Default::default(),
+        }
+    }
+}
+
+impl PrepSettings {
+    pub fn nodes(&self) -> u64 {
+        REVIEW_QUALITY[self.quality.min(REVIEW_QUALITY.len() - 1)].1
+    }
 }
 
 /// Options of the whole-game analysis (the engine is the active one).
@@ -233,6 +275,7 @@ impl Default for Settings {
             players: Vec::new(),
             rating: None,
             play: Default::default(),
+            prep: PrepSettings::default(),
         }
     }
 }

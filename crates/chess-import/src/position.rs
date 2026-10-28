@@ -281,6 +281,85 @@ pub fn uci(m: &Move) -> UciMove {
     m.to_uci(shakmaty::CastlingMode::Standard)
 }
 
+/// Plies of a line checked one by one by [`theory_end`] before the end of the theory is
+/// found by halving (an opening index answers the first plies at once).
+pub const THEORY_LINEAR: usize = 12;
+
+/// Where a line of `total` positions leaves the "theory" of a database, as
+/// [`theory_end`] finds it: indices into the line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TheoryEnd {
+    /// The last position still known to the database.
+    pub last_known: Option<usize>,
+    /// The first position it does not know; `None` when the whole line is known.
+    pub first_unknown: Option<usize>,
+}
+
+/// Finds how far a line of `total` positions is known to a database, with as few
+/// searches as possible: `known(i)` says whether position `i` is (`None`: cancelled,
+/// the search stops too). A position is nearly always known when a later one of the
+/// same line is, so the first plies are checked one by one, then the end is found by
+/// doubling and halving. `from`: the positions before it are known already (a game
+/// that grew past a theory reaching its end checks only the new moves).
+pub fn theory_end(
+    total: usize,
+    from: usize,
+    mut known: impl FnMut(usize) -> Option<bool>,
+) -> Option<TheoryEnd> {
+    let from = from.min(total);
+    let linear_end = if from > 0 {
+        from
+    } else {
+        total.min(THEORY_LINEAR)
+    };
+    let mut last_known: Option<usize> = from.checked_sub(1);
+    let mut first_unknown = None;
+    for ply in from..linear_end {
+        if known(ply)? {
+            last_known = Some(ply);
+        } else {
+            first_unknown = Some(ply);
+            break;
+        }
+    }
+    if first_unknown.is_none() && total > linear_end {
+        let mut lo = linear_end - 1;
+        let mut step = 2;
+        let mut hi = total;
+        while lo + step < total {
+            if known(lo + step)? {
+                lo += step;
+                step *= 2;
+            } else {
+                hi = lo + step;
+                break;
+            }
+        }
+        if hi == total && lo + 1 < total {
+            // Past the last doubling: the end of the line itself.
+            if known(total - 1)? {
+                lo = total - 1;
+            }
+        }
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2;
+            if known(mid)? {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        last_known = Some(lo);
+        if hi < total {
+            first_unknown = Some(hi);
+        }
+    }
+    Some(TheoryEnd {
+        last_known,
+        first_unknown,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +381,36 @@ mod tests {
         assert!(same_position(&a, &b));
         assert_eq!(key(&a), key(&b));
         assert!(!same_position(&a, &play(&["d4", "d5"])));
+    }
+
+    #[test]
+    fn theory_end_finds_the_boundary_with_few_searches() {
+        for total in [1usize, 5, 12, 13, 20, 40, 100] {
+            for boundary in 0..=total {
+                // Positions before `boundary` are known.
+                let mut asked = 0;
+                let end = theory_end(total, 0, |i| {
+                    asked += 1;
+                    Some(i < boundary)
+                })
+                .expect("not cancelled");
+                let expect_last = boundary.checked_sub(1);
+                let expect_first = (boundary < total).then_some(boundary);
+                assert_eq!(
+                    (end.last_known, end.first_unknown),
+                    (expect_last, expect_first),
+                    "total {total}, boundary {boundary}"
+                );
+                assert!(asked <= THEORY_LINEAR + 2 * 8, "{asked} searches");
+            }
+        }
+        // Cancelled: no answer.
+        assert_eq!(theory_end(10, 0, |_| None), None);
+        // Continuing from a known prefix.
+        let end = theory_end(10, 4, |i| Some(i < 7)).expect("end");
+        assert_eq!(end, TheoryEnd { last_known: Some(6), first_unknown: Some(7) });
+        let end = theory_end(10, 4, |_| Some(true)).expect("end");
+        assert_eq!(end, TheoryEnd { last_known: Some(9), first_unknown: None });
     }
 
     #[test]
