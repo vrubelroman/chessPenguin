@@ -145,6 +145,9 @@ mod good {
     pub const WON_ANYWAY: f64 = 90.0;
     /// !: every other move loses at least this much.
     pub const GAP: f64 = 10.0;
+    /// [`Rules::ChessCom`]: stricter — the owner wants few ! and right ones (2026-10-28):
+    /// with 25 the check set's ! are chess.com's 87 % of the time (54 % of theirs found).
+    pub const GAP_CHESSCOM: f64 = 25.0;
     /// !: the position after the move is not lost, and the best other move did not win.
     pub const GREAT_AFTER: f64 = 40.0;
     pub const GREAT_ALT: f64 = 75.0;
@@ -217,10 +220,10 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
         return Some(Judgement::Brilliant);
     }
     let w2 = second?;
-    // [`Rules::ChessCom`]: a capture is the natural move; great only when every other move
-    // loses (20.Rxe7+! of the Evergreen game, 18.fxe6! of Pillsbury — Lasker), not when
-    // another keeps the game (12…Nxc3, 13…Nxe4 of Byrne — Fischer).
-    if rules == Rules::ChessCom && f.capture && w2 >= good::LOST {
+    // [`Rules::ChessCom`]: a capture is the natural move, never great (12…Nxc3, 13…Nxe4 of
+    // Byrne — Fischer, 22…Nbxd5, 26.Qxd4+ of Kasparov — Topalov are not chess.com's !; the
+    // few captures it marks — 20.Rxe7+, 18.fxe6 — are given up for fewer wrong ones).
+    if rules == Rules::ChessCom && f.capture {
         return None;
     }
     // The engine's own best move loses nothing: a drop to the next position is the noise
@@ -228,7 +231,11 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
     // first rules still count it.
     let only_move = ply.best
         && (rules == Rules::ChessCom || loss <= good::NEAR_BEST)
-        && wb - w2 >= good::GAP
+        && wb - w2
+            >= match rules {
+                Rules::Strict => good::GAP,
+                Rules::ChessCom => good::GAP_CHESSCOM,
+            }
         && (rules == Rules::ChessCom || outcome(wa) > outcome(w2))
         && wa >= good::GREAT_AFTER
         && w2
@@ -864,9 +871,14 @@ mod tests {
         let (w, b) = (Color::White, Color::Black);
         // The only good move of an equal position: great by chess.com, not by the first rules.
         let equal = [Some(Eval::Cp(0)), Some(Eval::Cp(0))];
-        let only = || noted(w, false, Some(Eval::Cp(-150)));
+        let only = || noted(w, false, Some(Eval::Cp(-400)));
         let r = Report::build_with(&equal, &[only()], Phases::default(), Rules::ChessCom);
         assert_eq!(r.judgements[0], Some(Judgement::Great));
+        // Others still equal-ish (−1.5): no turn of the game for the first rules, and
+        // short of the stricter gap of chess.com's rules.
+        let only = || noted(w, false, Some(Eval::Cp(-150)));
+        let r = Report::build_with(&equal, &[only()], Phases::default(), Rules::ChessCom);
+        assert_eq!(r.judgements[0], None);
         let r = Report::build_with(&equal, &[only()], Phases::default(), Rules::Strict);
         assert_eq!(r.judgements[0], None);
         // A combination: marked once by the first rules.
