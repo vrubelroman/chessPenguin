@@ -60,6 +60,8 @@ pub struct GameView {
     flipped: bool,
     preview: Option<Preview>,
     scroll_to_cursor: bool,
+    /// Height of one engine line in the panel (its room is kept while lines come).
+    pv_row_height: f32,
     /// The comment being written (user-comments.md).
     editor: Option<CommentEditor>,
     /// A game against Maia in progress (play-mode.md).
@@ -179,6 +181,7 @@ impl GameView {
             flipped,
             preview: None,
             scroll_to_cursor: true,
+            pv_row_height: 0.0,
             editor: None,
             play: None,
             play_end: None,
@@ -1602,6 +1605,10 @@ impl GameView {
                                 .strong()
                                 .size(20.0),
                         );
+                    } else if analysis.is_on() {
+                        // As tall as the evaluation that is coming: the row keeps its
+                        // height between two positions.
+                        ui.label(RichText::new("…").strong().size(20.0).weak());
                     }
                 }
             }
@@ -1703,7 +1710,7 @@ impl GameView {
                     .preview
                     .as_ref()
                     .is_some_and(|p| p.base == base && p.san == line.san);
-                ui.horizontal(|ui| {
+                let row = ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
                     // The line being stepped through on the board: added from here.
                     if previewed
@@ -1769,6 +1776,19 @@ impl GameView {
                             });
                         });
                 });
+                self.pv_row_height = row.response.rect.height();
+            }
+            // Room for the lines still to come: between two positions the old lines are
+            // gone at once (never shown for the new one) and the new ones come a moment
+            // later; without it the notation below jumped up and back on every move.
+            let missing = analysis.line_count().saturating_sub(lines.len());
+            if missing > 0 {
+                let row = if self.pv_row_height > 0.0 {
+                    self.pv_row_height
+                } else {
+                    ui.spacing().interact_size.y
+                };
+                ui.add_space(missing as f32 * (row + ui.spacing().item_spacing.y));
             }
             if insert {
                 self.insert_preview(actions);

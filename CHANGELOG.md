@@ -4,6 +4,10 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Desktop: the notation no longer jumps on every move with the engine on. Between two
+  positions the old lines go at once and the new ones come a frame later; the engine
+  panel now keeps their room, so what is below it stays still.
+
 - The moves of the notation and the signs after them are bold (Ubuntu Bold on the desktop,
   the bold system font on Android), and so are the marks in the circles on the board. In Russian the report's rows read «Блестящий» and «Замечательный».
 

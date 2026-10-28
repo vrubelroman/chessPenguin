@@ -60,6 +60,13 @@ pub struct Analysis {
 }
 
 impl Analysis {
+    /// Lines the engine is asked for (the panel keeps their room while they come).
+    pub fn line_count(&self) -> usize {
+        self.multipv.max(1) as usize
+    }
+}
+
+impl Analysis {
     pub fn new() -> Self {
         Self {
             engine: None,
