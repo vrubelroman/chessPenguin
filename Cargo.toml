@@ -4,6 +4,7 @@ members = [
     "crates/chess-core",
     "crates/chess-import",
     "crates/uci",
+    "crates/openings",
     "crates/game-review",
     "crates/online-games",
     "crates/releases",
@@ -44,6 +45,7 @@ chess-import = { path = "crates/chess-import" }
 uci = { path = "crates/uci" }
 maia = { path = "crates/maia" }
 game-review = { path = "crates/game-review" }
+chess-openings = { path = "crates/openings" }
 online-games = { path = "crates/online-games" }
 releases = { path = "crates/releases" }
 trainer = { path = "crates/trainer" }

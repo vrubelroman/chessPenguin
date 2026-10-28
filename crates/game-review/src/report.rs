@@ -148,6 +148,10 @@ mod good {
     /// !: the position after the move is not lost, and the best other move did not win.
     pub const GREAT_AFTER: f64 = 40.0;
     pub const GREAT_ALT: f64 = 75.0;
+    /// [`Rules::ChessCom`]: nor keep a clear edge. chess.com's ! in the check set
+    /// (`chesscom/`, 2026-10-28) all have the best other move at 59 % or less; above it
+    /// it gives none (18.Nd4, 23.Rf7+, 25.Rxh7+ of Steinitz — von Bardeleben).
+    pub const GREAT_ALT_CHESSCOM: f64 = 60.0;
     /// [`Rules::Strict`]: lost below, won above; a great move changes which.
     pub const LOST: f64 = 33.0;
     pub const WON: f64 = 67.0;
@@ -210,7 +214,11 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
         && wb - w2 >= good::GAP
         && (rules == Rules::ChessCom || outcome(wa) > outcome(w2))
         && wa >= good::GREAT_AFTER
-        && w2 < good::GREAT_ALT)
+        && w2
+            < match rules {
+                Rules::Strict => good::GREAT_ALT,
+                Rules::ChessCom => good::GREAT_ALT_CHESSCOM,
+            })
         .then_some(Judgement::Great)
 }
 

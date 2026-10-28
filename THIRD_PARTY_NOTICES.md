@@ -151,7 +151,7 @@ platform into the user's data directory and checks its SHA-256 (pinned in
 
 ## Opening names (preparing against an opponent)
 
-`crates/prep/data/a.tsv` … `e.tsv` are the five files of the Lichess opening table
+`crates/openings/data/a.tsv` … `e.tsv` are the five files of the Lichess opening table
 https://github.com/lichess-org/chess-openings (the lichess.org contributors), downloaded
 unmodified at revision `f06a50d5c7c140e50b068049fa31d289e2c3d347` (2026-10-27) on 2026-10-28 and
 embedded in the program. Its README: "As a collection of facts, this data set is in the public

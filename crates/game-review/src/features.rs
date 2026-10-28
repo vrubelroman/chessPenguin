@@ -28,6 +28,8 @@ pub struct MoveFeatures {
     pub sacrifice_any: bool,
     /// A piece (not the king) under attack moves away without loss.
     pub escape: bool,
+    /// The move goes into a position of the opening table (chess.com's «book»).
+    pub book: bool,
 }
 
 /// Which rules decide !! and !. Both stay, to compare them and to go back.
@@ -96,6 +98,7 @@ impl MoveFeatures {
             winning_capture: m.is_capture() && gain >= 2,
             sacrifice_any: offered_any >= 3 && taken - threat_any <= -2 && !lost_anyway,
             escape: lost_anyway && from_threat < 900 && gain >= 0,
+            book: chess_openings::in_book(chess_openings::key(&after)),
         }
     }
 
@@ -105,14 +108,19 @@ impl MoveFeatures {
             Rules::Strict => self.sacrifice_any,
             Rules::ChessCom => self.sacrifice,
         };
-        sacrifice && self.legal > 1 && !self.check && !self.promotion
+        sacrifice
+            && self.legal > 1
+            && !self.check
+            && !self.promotion
+            && !(rules == Rules::ChessCom && self.book)
     }
 
     /// Could be great: not a forced, obvious or finishing move. With [`Rules::ChessCom`]
     /// a piece saving itself on the only good square can be (13.Qa4 of the Evergreen
-    /// game).
+    /// game), a book move cannot (6…Bb4+ of Steinitz — von Bardeleben).
     pub fn great_shape(&self, rules: Rules) -> bool {
         self.legal > 1
+            && !(rules == Rules::ChessCom && self.book)
             && !self.mates
             && !self.recapture
             && !self.winning_capture

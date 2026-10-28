@@ -12,5 +12,6 @@ publish = false
 chess-core.workspace = true
 shakmaty.workspace = true
 uci.workspace = true
+chess-openings.workspace = true
 serde.workspace = true
 serde_json.workspace = true

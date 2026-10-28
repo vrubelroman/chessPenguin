@@ -1,0 +1,16 @@
+[package]
+name = "chess-openings"
+description = "Opening names of ChessPenguin: the Lichess chess-openings table (CC0), looked up by position; also tells a book move"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+shakmaty.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+chess-import.workspace = true

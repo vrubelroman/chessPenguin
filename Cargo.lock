@@ -790,6 +790,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chess-openings"
+version = "2.0.0"
+dependencies = [
+ "chess-import",
+ "serde",
+ "shakmaty",
+]
+
+[[package]]
 name = "chesspenguin"
 version = "2.0.0"
 dependencies = [
@@ -1672,6 +1681,7 @@ name = "game-review"
 version = "2.0.0"
 dependencies = [
  "chess-core",
+ "chess-openings",
  "serde",
  "serde_json",
  "shakmaty",
@@ -3434,6 +3444,7 @@ version = "2.0.0"
 dependencies = [
  "chess-core",
  "chess-import",
+ "chess-openings",
  "game-review",
  "serde",
  "serde_json",
