@@ -602,7 +602,7 @@ fn paint_move_cell(
             cell.left_center() + vec2(10.0, 0.0),
             Align2::LEFT_CENTER,
             format!("{san}{sym}"),
-            crate::assets::medium(16.0),
+            crate::assets::bold(16.0),
             text_color,
         )
         .right()

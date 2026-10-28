@@ -170,8 +170,8 @@ Three evaluation signs (⩲ ⩱ ⌓) come from Noto Sans Math (Copyright 2022 Go
 cut down to those glyphs: `apps/desktop/assets/fonts/NotoSansMath-nag.ttf`, licence beside it.
 The figurines of the move notation (♔♕♖♗♘) are the five chess glyphs of egui's
 emoji-icon-font (MIT), cut out to `apps/desktop/assets/fonts/figurines.ttf`.
-The moves of the notation and the move marks on the board are in Ubuntu Medium and Ubuntu
-Bold (Ubuntu Font Family 0.83, © 2010–2011 Canonical Ltd., Ubuntu Font Licence 1.0), from
+The moves of the notation and the move marks on the board are in Ubuntu Bold (Ubuntu Font
+Family 0.83, © 2010–2011 Canonical Ltd., Ubuntu Font Licence 1.0), from
 the official release `https://assets.ubuntu.com/v1/fad7939b-ubuntu-font-family-0.83.zip`
 (SHA-256 456d7d42…05b42, as in Arch Linux's `ttf-ubuntu-font-family`):
-`apps/desktop/assets/fonts/Ubuntu-M.ttf`, `Ubuntu-B.ttf`, licence `UFL.txt` beside them.
+`apps/desktop/assets/fonts/Ubuntu-B.ttf`, licence `UFL.txt` beside it.

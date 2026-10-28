@@ -412,7 +412,7 @@ private fun MoveCell(
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
                     val markColor = mark?.takeIf { !selected }?.let { judgementColor(it, chess.dark) }
-                    Text(san(n.san), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = markColor ?: MaterialTheme.colorScheme.onSurface)
+                    Text(san(n.san), fontSize = 17.sp, fontWeight = FontWeight.Bold, color = markColor ?: MaterialTheme.colorScheme.onSurface)
                     if (mark != null) {
                         Text(judgementSymbol(mark), fontSize = 17.sp, fontWeight = FontWeight.Bold, color = markColor ?: MaterialTheme.colorScheme.onSurface)
                     }

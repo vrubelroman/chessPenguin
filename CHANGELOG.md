@@ -4,9 +4,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
-- The moves of the notation and the signs after them are bolder (Ubuntu Medium on the
-  desktop, a heavier weight on Android), and so are the marks in the circles on the board
-  (Ubuntu Bold). In Russian the report's rows read «Блестящий» and «Замечательный».
+- The moves of the notation and the signs after them are bold (Ubuntu Bold on the desktop,
+  the bold system font on Android), and so are the marks in the circles on the board. In Russian the report's rows read «Блестящий» and «Замечательный».
 
 - Android: the dark theme by default (it was the system's); a theme chosen before stays.
   Android is told the app's own theme, so the window and the splash screen before the
