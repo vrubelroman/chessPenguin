@@ -249,6 +249,9 @@ pub struct App {
     /// between the library and the game (opponent-prep.md §3.1).
     prep_dialog: Option<PrepDialog>,
     prep: Option<PrepScreen>,
+    /// Quitting while the opening errors are searched: asked first; «Quit» answered.
+    prep_quit_ask: bool,
+    prep_quit_ok: bool,
     allow_quit: bool,
     applied_dark: Option<bool>,
     debug: DebugStartup,
@@ -421,6 +424,8 @@ impl App {
             reference: Default::default(),
             prep_dialog: None,
             prep: None,
+            prep_quit_ask: false,
+            prep_quit_ok: false,
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
             online_probe: crate::online::Probe::start(ctx),
@@ -668,7 +673,7 @@ impl App {
                 exact: None,
                 side,
             };
-            self.prep_dialog = Some(PrepDialog::new(path, entry, &self.settings));
+            self.prep_dialog = Some(PrepDialog::new(path, entry));
         }
         let Some(index) = self.debug.open else { return };
         let Some(path) = self.settings.databases.first().cloned() else {
@@ -793,13 +798,52 @@ impl App {
         if let Some(p) = self.prep.as_mut()
             && p.matches(&start.path, &start.player)
         {
-            p.shown = true;
+            // The report as it was, with the colour and the book of the dialog.
+            p.reopen(start.side, start.book);
             return;
         }
         if let Some(mut old) = self.prep.take() {
             old.save();
         }
         self.prep = Some(PrepScreen::new(start, db, &self.settings, ctx));
+    }
+
+    /// «Opening errors are being searched. Quit and stop?»
+    fn prep_quit_question(&mut self, ctx: &egui::Context) {
+        if !self.prep_quit_ask {
+            return;
+        }
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("prep_quit")).show(ctx, |ui| {
+            ui.set_width(400.0);
+            ui.label(tr("Opening errors are being searched. Quit and stop?"));
+            ui.label(RichText::new(tr("What was found is kept.")).weak());
+            ui.add_space(8.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tr("Cancel")).clicked() {
+                    choice = Some(false);
+                }
+                if crate::widgets::primary(ui, tr("Quit")).clicked() {
+                    choice = Some(true);
+                }
+            });
+        });
+        if choice.is_none() && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            choice = Some(false);
+        }
+        match choice {
+            Some(true) => {
+                self.prep_quit_ask = false;
+                self.prep_quit_ok = true;
+                if let Some(p) = self.prep.as_mut() {
+                    p.stop();
+                }
+                // The usual way out from here (unsaved games are asked about).
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Some(false) => self.prep_quit_ask = false,
+            None => {}
+        }
     }
 
     /// The preparation's dialog, when it is open.
@@ -2808,9 +2852,21 @@ impl eframe::App for App {
             });
             self.applied_dark = Some(self.settings.dark_mode);
         }
+        // Quitting while the opening errors are searched: asked first (what was found
+        // is kept either way).
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.allow_quit
+            && !self.prep_quit_ok
+            && self.prep.as_ref().is_some_and(|p| p.running())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.prep_quit_ask = true;
+        }
+        let quitting = !self.prep_quit_ask;
         // Quitting: a comment being written goes into the game first, so the question
         // about unsaved changes counts it.
-        if ctx.input(|i| i.viewport().close_requested())
+        if quitting
+            && ctx.input(|i| i.viewport().close_requested())
             && !self.allow_quit
             && let Some(g) = self.game.as_mut()
         {
@@ -2829,7 +2885,8 @@ impl eframe::App for App {
         }
         // Quitting with a modified game left for another (reference tab): show that one,
         // so the question "save?" is about the game that has the changes.
-        if ctx.input(|i| i.viewport().close_requested())
+        if quitting
+            && ctx.input(|i| i.viewport().close_requested())
             && !self.allow_quit
             && !self.game.as_ref().is_some_and(|g| g.game.is_modified())
             && let Some(k) = self
@@ -2841,7 +2898,8 @@ impl eframe::App for App {
             self.game = self.previous_games.pop();
         }
         // (A game against Maia in progress has asked «The game is on» instead.)
-        if ctx.input(|i| i.viewport().close_requested())
+        if quitting
+            && ctx.input(|i| i.viewport().close_requested())
             && !self.allow_quit
             && self
                 .game
@@ -2920,6 +2978,7 @@ impl eframe::App for App {
             // The analysis options (its dialog) are kept.
             self.settings_dirty |= self.settings.review != review;
             self.reference_tab = game.reference_tab();
+            let game_back_previous = game.previous_prep && game.previous.is_some();
             // Before the actions: leaving may take the game away.
             if let Some(res) = game.record_news.take() {
                 let name = game.player_name();
@@ -2928,6 +2987,16 @@ impl eframe::App for App {
             for a in actions {
                 match a {
                     GameAction::Back => self.request_close(&ctx, CloseIntent::BackToLibrary),
+                    GameAction::BackKey => {
+                        // Ctrl+W: back where the game was opened from (the report, a
+                        // game), else to the library.
+                        let intent = if game_back_previous {
+                            CloseIntent::ReturnToPrevious
+                        } else {
+                            CloseIntent::BackToLibrary
+                        };
+                        self.request_close(&ctx, intent);
+                    }
                     // The game's database in the library, the game's row shown (its row is
                     // revealed as the game closes).
                     GameAction::OpenDatabase(path) => {
@@ -3114,11 +3183,7 @@ impl eframe::App for App {
             }) && self.prep_dialog.is_none()
                 && let Some((path, entry)) = self.library.prep_entry()
             {
-                self.prep_dialog = Some(PrepDialog::new(
-                    path,
-                    entry.unwrap_or_default(),
-                    &self.settings,
-                ));
+                self.prep_dialog = Some(PrepDialog::new(path, entry.unwrap_or_default()));
             }
             self.online_probe.poll();
             self.library.online = self.online_probe.any();
@@ -3188,7 +3253,7 @@ impl eframe::App for App {
                         self.edit_game_data();
                     }
                     LibraryAction::PrepareAgainst { path, entry } => {
-                        self.prep_dialog = Some(PrepDialog::new(path, entry, &self.settings));
+                        self.prep_dialog = Some(PrepDialog::new(path, entry));
                     }
                 }
             }
@@ -3331,6 +3396,7 @@ impl eframe::App for App {
         self.confirm_dialog(&ctx);
         self.own_dialogs(&ctx);
         self.prep_dialog(&ctx);
+        self.prep_quit_question(&ctx);
         // Whether the database the dialog names is there, as last found.
         if let Some(d) = self.play_dialog.as_mut() {
             d.target_there = d

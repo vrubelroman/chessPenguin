@@ -120,6 +120,8 @@ enum SideTab {
 
 pub enum GameAction {
     Back,
+    /// Ctrl+W: back to what the game was opened from, else to the library.
+    BackKey,
     /// Back to the library with this database chosen (the game's own).
     OpenDatabase(PathBuf),
     /// «Play on from here»: the play dialog for this position.
@@ -1016,7 +1018,9 @@ impl GameView {
         ui.horizontal(|ui| {
             if ui
                 .button(if compact { "⬅" } else { tr("⬅ Library") })
-                .on_hover_text(if self.previous.is_some() {
+                .on_hover_text(if self.previous_prep {
+                    tr("Back to the game list")
+                } else if self.previous.is_some() {
                     tr("Back to the game list (Ctrl+W)")
                 } else {
                     tr("Back to the game list (Esc, Ctrl+W)")
@@ -1028,13 +1032,13 @@ impl GameView {
             if let Some(b) = &back_to
                 && ui
                     .button(if compact { "⬅" } else { b.as_str() })
-                    .on_hover_text(if compact {
-                        format!(
-                            "{b}\n{}",
+                    .on_hover_text({
+                        let hint = if self.previous_prep {
+                            tr("The preparation this game was opened from, as you left it (Esc, Ctrl+W)")
+                        } else {
                             tr("The game this one was opened from, as you left it (Esc)")
-                        )
-                    } else {
-                        tr("The game this one was opened from, as you left it (Esc)").to_owned()
+                        };
+                        if compact { format!("{b}\n{hint}") } else { hint.to_owned() }
                     })
                     .clicked()
             {
@@ -4826,7 +4830,7 @@ impl GameView {
                 }
                 "add_to_db" => actions.push(GameAction::AddToDatabase),
                 "game_data" => actions.push(GameAction::EditGameData),
-                "back" => actions.push(GameAction::Back),
+                "back" => actions.push(GameAction::BackKey),
                 "find" if self.search_line().is_some() => {
                     actions.push(GameAction::FindPosition(None))
                 }

@@ -122,13 +122,34 @@ pub fn get(id: usize) -> &'static Opening {
     &table().entries[id]
 }
 
-/// The deepest named position among `keys` (the positions of a line, in order): its
-/// index in `keys` and its entry.
+/// The name of a line (the positions `keys`, in order): its deepest named position,
+/// its index in `keys` and its entry — but a deeper position whose name is only a
+/// more general one ("Sicilian Defense" after 3.d4 in the "Modern Variations") does
+/// not take the name back: the most precise name met stays.
 pub fn deepest(keys: &[u64]) -> Option<(usize, usize)> {
-    keys.iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, k)| by_position(*k).map(|id| (i, id)))
+    let mut out: Option<(usize, usize)> = None;
+    for (i, k) in keys.iter().enumerate() {
+        if let Some(id) = by_position(*k)
+            && out.is_none_or(|(_, cur)| !more_general(id, cur))
+        {
+            out = Some((i, id));
+        }
+    }
+    out
+}
+
+/// Entry `a`'s name is a more general form of entry `b`'s ("Sicilian Defense" of
+/// "Sicilian Defense: Modern Variations"; "…: Najdorf Variation" of "…: Najdorf
+/// Variation, English Attack").
+pub fn more_general(a: usize, b: usize) -> bool {
+    is_prefix_name(&get(a).name, &get(b).name)
+}
+
+/// `general` names a family or a variation `precise` is part of.
+pub fn is_prefix_name(general: &str, precise: &str) -> bool {
+    precise.len() > general.len()
+        && precise.starts_with(general)
+        && matches!(precise[general.len()..].chars().next(), Some(':' | ','))
 }
 
 /// The openings a report refers to, each once, in the order they were first met.
@@ -198,6 +219,17 @@ mod tests {
         assert_eq!(o.variation(), None);
         // Nothing before the first move.
         assert_eq!(deepest(&keys(&[])), None);
+        // A deeper position with a more general name keeps the precise one: the
+        // table names 1.e4 c5 2.Nf3 d6 3.d4 just «Sicilian Defense».
+        let line = keys(&["e4", "c5", "Nf3", "d6", "d4"]);
+        let after_d4 = by_position(line[5]).map(|id| get(id).name.clone());
+        assert_eq!(after_d4.as_deref(), Some("Sicilian Defense"));
+        let (at, id) = deepest(&line).expect("named");
+        assert_eq!((at, get(id).name.as_str()), (4, "Sicilian Defense: Modern Variations"));
+        assert!(is_prefix_name("Sicilian Defense", "Sicilian Defense: Modern Variations"));
+        assert!(is_prefix_name("A: B", "A: B, C"));
+        assert!(!is_prefix_name("Sicilian Defense", "Sicilian Defense"));
+        assert!(!is_prefix_name("English", "English Opening"));
     }
 
     #[test]

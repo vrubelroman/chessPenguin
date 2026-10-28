@@ -96,7 +96,14 @@ impl Tree {
                     Some(&c) => c as usize,
                     None => {
                         let key = game.keys[i + 1];
-                        let named = openings::by_position(key);
+                        // A more general name than the path's keeps the path's
+                        // (see `openings::deepest`).
+                        let parent = tree.nodes[at].opening.map(|o| openings.list[o].name.clone());
+                        let named = openings::by_position(key).filter(|&id| {
+                            parent
+                                .as_deref()
+                                .is_none_or(|p| !openings::is_prefix_name(&openings::get(id).name, p))
+                        });
                         let opening = named
                             .map(|id| openings.intern(id))
                             .or(tree.nodes[at].opening);
@@ -139,7 +146,50 @@ impl Tree {
         for n in &mut tree.nodes {
             n.transposition = seen.get(&n.key).is_some_and(|c| *c > 1);
         }
+        // One position, one name: the most precise of its move orders' names; a node
+        // is «named» where its name differs from its parent's.
+        let mut best: HashMap<u64, usize> = HashMap::new();
+        for n in tree.nodes.iter().filter(|n| n.transposition) {
+            if let Some(o) = n.opening {
+                let e = best.entry(n.key).or_insert(o);
+                if openings::is_prefix_name(&openings.list[*e].name, &openings.list[o].name) {
+                    *e = o;
+                }
+            }
+        }
+        for i in 0..tree.nodes.len() {
+            if let Some(&o) = best.get(&tree.nodes[i].key) {
+                tree.nodes[i].opening = Some(o);
+            }
+            let parent = tree.nodes[i].parent.and_then(|p| tree.nodes[p as usize].opening);
+            let name = |o: Option<usize>| o.map(|o| openings.list[o].name.as_str());
+            tree.nodes[i].named = tree.nodes[i].opening.is_some() && name(tree.nodes[i].opening) != name(parent);
+        }
         tree
+    }
+
+    /// The games through the position `key` by any move order (indices into
+    /// [`crate::PrepReport::games`], in order).
+    pub fn position_games(&self, key: u64) -> Vec<u32> {
+        let mut out: Vec<u32> = self
+            .nodes
+            .iter()
+            .filter(|n| n.key == key)
+            .flat_map(|n| n.games.iter().copied())
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// The latest date among the games through the position `key`.
+    pub fn position_last_date(&self, key: u64) -> &str {
+        self.nodes
+            .iter()
+            .filter(|n| n.key == key)
+            .map(|n| n.last_date.as_str())
+            .max_by_key(|d| chess_import::pgn_catalog::date_number(d))
+            .unwrap_or("")
     }
 
     fn count(&mut self, node: usize, g: u32, game: &GameInfo) {
@@ -244,6 +294,8 @@ pub(crate) mod tests {
         let after_d4 = tree.nodes.iter().find(|n| n.ply == 3 && n.san == "d4").unwrap();
         assert_eq!(after_nf3.key, after_d4.key);
         assert_eq!(tree.position_tally(after_nf3.key).games, 2);
+        assert_eq!(tree.position_games(after_nf3.key), vec![0, 1]);
+        assert_eq!(tree.position_last_date(after_nf3.key), "2026.03.01");
         assert!(!tree.nodes.iter().find(|n| n.san == "c4").unwrap().transposition);
         assert_eq!(tree.path(after_d4.parent.unwrap() as usize), vec!["Nf3", "d5"]);
         // Names: 1.d4 d5 2.Nf3 is named in the table, 2...Nf6 is too (Zukertort);

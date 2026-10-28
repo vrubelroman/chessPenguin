@@ -167,6 +167,8 @@ pub struct PrepSettings {
     pub branches_from: u32,
     /// The engine was started from the dialog once: the button starts it at once.
     pub chosen: bool,
+    /// Inaccuracies (?!) are shown with the mistakes and blunders.
+    pub inaccuracies: bool,
 }
 
 impl Default for PrepSettings {
@@ -177,6 +179,7 @@ impl Default for PrepSettings {
             plies: 20,
             branches_from: 3,
             chosen: false,
+            inaccuracies: true,
         }
     }
 }

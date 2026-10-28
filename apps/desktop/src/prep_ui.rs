@@ -24,8 +24,9 @@ use shakmaty::uci::UciMove;
 use shakmaty::{Chess, Color, Move, Position, Square};
 
 use crate::board::{Arrow, BoardState, BoardView};
-use crate::board_search::{self, Background, PREVIEW_ARROW};
+use crate::board_search::{Background, PREVIEW_ARROW};
 use crate::i18n::{tr, trf};
+use crate::large_db::grouped;
 use crate::reference::RefDb;
 use crate::review::{self, DialogAction};
 use crate::settings::{REVIEW_QUALITY, Settings};
@@ -142,13 +143,22 @@ fn book_picker(
     id: &str,
     current: &BookChoice,
     own: &Path,
-    own_name: &str,
     dbs: &[RefDb],
     width: f32,
+    with_caption: bool,
 ) -> Option<BookChoice> {
     let mut picked = None;
+    let own_name = base_name(own);
+    let own_name = own_name.as_str();
+    let label = current.label(own_name, dbs);
+    // Without its caption beside it, «None» alone would say nothing.
+    let shown = if with_caption {
+        trf("Book: {name}", &[("name", &label)])
+    } else {
+        label
+    };
     egui::ComboBox::from_id_salt(id)
-        .selected_text(current.label(own_name, dbs))
+        .selected_text(shown)
         .width(width)
         .truncate()
         .show_ui(ui, |ui| {
@@ -260,7 +270,8 @@ pub struct PrepDialog {
     /// The name the dialog was opened with (ticked by itself when found).
     wanted: Option<u32>,
     side: ColorChoice,
-    book: BookChoice,
+    /// The book; `None` until the shelf is known (the setting names a database of it).
+    book: Option<BookChoice>,
     /// Games of the ticked names by colour, and the job counting them.
     counts: Option<(Vec<u32>, (u32, u32))>,
     count_job: Option<(Vec<u32>, CountJob)>,
@@ -271,9 +282,9 @@ pub struct PrepDialog {
 }
 
 impl PrepDialog {
-    pub fn new(path: PathBuf, entry: PrepEntry, settings: &Settings) -> Self {
+    pub fn new(path: PathBuf, entry: PrepEntry) -> Self {
         PrepDialog {
-            book: BookChoice::from_setting(settings.prep.book.as_deref(), &path, &[]),
+            book: None,
             path,
             dbs: Vec::new(),
             query: entry.query,
@@ -386,10 +397,12 @@ impl PrepDialog {
             self.poll(ctx, db);
         }
         let own_name = base_name(&self.path);
-        if self.book == BookChoice::None && settings.prep.book.is_none() && !self.dbs.is_empty() {
-            // The default book: the largest database on the shelf (once the shelf is known).
-            self.book = BookChoice::from_setting(None, &self.path, &self.dbs);
+        if self.book.is_none() && !self.dbs.is_empty() {
+            // The book chosen last time, else the largest database on the shelf: once
+            // the shelf is known.
+            self.book = Some(BookChoice::from_setting(settings.prep.book.as_deref(), &self.path, &self.dbs));
         }
+        let book = self.book.clone().unwrap_or(BookChoice::None);
         let mut outcome = None;
         let ready = db.is_some() && !self.ticked.is_empty();
         let ticked_names: Vec<String> = self
@@ -454,11 +467,11 @@ impl PrepDialog {
                             self.ticked.clear();
                             self.counts = None;
                             self.count_job = None;
-                            self.book = BookChoice::from_setting(
+                            self.book = Some(BookChoice::from_setting(
                                 settings.prep.book.as_deref(),
                                 &self.path,
                                 &self.dbs,
-                            );
+                            ));
                         }
                     });
                     ui.horizontal(|ui| {
@@ -524,7 +537,6 @@ impl PrepDialog {
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.add_sized([label_w, 20.0], egui::Label::new(tr("Colour")));
-                        ui.radio_value(&mut self.side, ColorChoice::Both, tr("Both"));
                         let (w, b) = match counts {
                             Some((w, b)) => (w.to_string(), b.to_string()),
                             None if self.ticked.is_empty() => ("—".to_owned(), "—".to_owned()),
@@ -540,13 +552,14 @@ impl PrepDialog {
                             ColorChoice::Black,
                             trf("Black — {n}", &[("n", &b)]),
                         );
+                        ui.radio_value(&mut self.side, ColorChoice::Both, tr("Both"));
                     });
                     ui.horizontal(|ui| {
                         ui.add_sized([label_w, 20.0], egui::Label::new(tr("Book")));
                         let width = ui.available_width() - 8.0;
-                        if let Some(b) = book_picker(ui, "prep_dialog_book", &self.book, &self.path, &own_name, &self.dbs, width) {
-                            self.book = b;
-                            settings.prep.book = Some(self.book.setting(&self.path));
+                        if let Some(b) = book_picker(ui, "prep_dialog_book", &book, &self.path, &self.dbs, width, false) {
+                            settings.prep.book = Some(b.setting(&self.path));
+                            self.book = Some(b);
                         }
                     });
                     ui.label(
@@ -591,7 +604,7 @@ impl PrepDialog {
             path: self.path.clone(),
             player: Player::new(self.ticked.iter().copied()),
             side: self.side,
-            book: self.book.clone(),
+            book: self.book.clone().unwrap_or(BookChoice::None),
         }
     }
 
@@ -815,6 +828,46 @@ enum TreeRow {
     Others { white: bool, parent: u32, depth: usize, count: usize },
 }
 
+/// A row of the errors tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ErrRow {
+    /// «Repeated errors — …» / «By opening».
+    RepeatedTitle,
+    OpeningsTitle,
+    /// A repeated error (colour, index into `repeated`) and one of its games.
+    Repeated { white: bool, index: usize },
+    RepeatedGame { white: bool, index: usize, game: u32 },
+    /// A variation with errors (colour, family, variation) and one of its errors.
+    Variation { white: bool, family: usize, variation: usize },
+    Error { white: bool, index: usize },
+}
+
+impl ErrRow {
+    fn is_title(self) -> bool {
+        matches!(self, ErrRow::RepeatedTitle | ErrRow::OpeningsTitle)
+    }
+}
+
+/// The engine part of the controls.
+enum EngineTexts {
+    Running,
+    /// A button to start or go on, and a note beside it.
+    Button { label: String, note: Option<String> },
+    /// Done: a quiet label.
+    Done { label: String, note: Option<String> },
+}
+
+/// Where the engine run stands for the colour(s) shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EngineState {
+    Running,
+    /// No evaluation yet.
+    NotRun,
+    /// Some positions evaluated (a run stopped, a new depth, new games).
+    Partial { done: usize, total: usize },
+    Complete { total: usize },
+}
+
 /// The default expansion: nodes with at least this many games, this deep.
 const EXPAND_GAMES: u32 = 5;
 const EXPAND_PLIES: u8 = 6;
@@ -868,6 +921,18 @@ pub struct PrepScreen {
     others_open: HashSet<(bool, u32)>,
     open_families: HashSet<(bool, usize)>,
     open_repeated: HashSet<(bool, usize)>,
+    open_variations: HashSet<(bool, usize, usize)>,
+    /// The row of the errors tab the keyboard is on.
+    err_cursor: Option<ErrRow>,
+    /// The fingerprint of the chosen book, once it is open (`None`: no book), and the
+    /// book and its database it was taken from.
+    book_fp: Option<u64>,
+    book_fp_of: Option<(BookChoice, usize)>,
+    /// Inaccuracies shown (`settings.prep.inaccuracies`, read every frame).
+    show_inaccuracies: bool,
+    /// The board stands over the lists (a narrow or low window); the window is low.
+    stacked: bool,
+    low_window: bool,
     selection: Selection,
     shown_pos: Option<Shown>,
     /// The user turned the board (else it is the player's colour).
@@ -927,17 +992,54 @@ fn line_text(sans: &[String]) -> String {
     crate::san::show_line(&out)
 }
 
-/// "…" in the middle when the text is longer than `max` characters: the first and
-/// the last moves of a line matter more than the middle.
-fn shorten_middle(s: &str, max: usize) -> String {
-    let n = s.chars().count();
-    if n <= max {
-        return s.to_owned();
+/// The table's line ("1. e4 c5 2. Nf3") as the program writes lines: moves with
+/// their numbers joined ("1.e4", "c5", "2.Nf3").
+fn table_line(line: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut number: Option<&str> = None;
+    for tok in line.split_whitespace() {
+        if tok.ends_with('.') && tok.trim_end_matches('.').chars().all(|c| c.is_ascii_digit()) {
+            number = Some(tok);
+        } else {
+            out.push(match number.take() {
+                Some(n) if n.ends_with("...") => format!("{}…{tok}", n.trim_end_matches('.')),
+                Some(n) => format!("{n}{tok}"),
+                None => tok.to_owned(),
+            });
+        }
     }
-    let keep = max.saturating_sub(1) / 2;
-    let head: String = s.chars().take(keep).collect();
-    let tail: String = s.chars().skip(n - keep).collect();
-    format!("{head}…{tail}")
+    out
+}
+
+/// The moves in `width`: whole moves, the first and the last kept, «…» for the middle
+/// ones that do not fit (they matter less).
+fn fit_line(ui: &Ui, tokens: &[String], width: f32) -> String {
+    let fits = |t: &str| text_width(ui, t, egui::TextStyle::Body) <= width;
+    let full = crate::san::show_line(&tokens.join(" "));
+    if fits(&full) || tokens.len() < 3 {
+        return full;
+    }
+    // Drop moves from the middle until the rest fits.
+    let mut head = tokens.len().div_ceil(2);
+    let mut tail = tokens.len() - head;
+    loop {
+        if head > 1 && head >= tail {
+            head -= 1;
+        } else if tail > 1 {
+            tail -= 1;
+        } else {
+            return crate::san::show_line(&format!("{} … {}", tokens[0], tokens[tokens.len() - 1]));
+        }
+        let text = format!(
+            "{} … {}",
+            tokens[..head].join(" "),
+            tokens[tokens.len() - tail..].join(" ")
+        );
+        let text = crate::san::show_line(&text);
+        if fits(&text) {
+            return text;
+        }
+    }
 }
 
 /// "01.2026 – 10.2026" from the games' dates (empty without dates).
@@ -962,15 +1064,45 @@ fn period(games: &[GameInfo]) -> String {
     }
 }
 
-/// The player's tally as the result bar wants it (White's wins · draws · Black's wins).
-fn bar_tally(t: &Tally, white: bool) -> chess_import::position::Tally {
+/// The results as a bar, by lightness (White's wins light, draws grey, Black's wins
+/// dark, as on the search board) with no numbers in it: the score beside it is the
+/// player's, the percentages are in its tooltip. Faint over few games.
+fn score_bar(ui: &mut Ui, t: &Tally, white: bool, few: bool) {
+    let (rect, resp) = ui.allocate_exact_size(vec2(56.0, 12.0), Sense::hover());
     let (white_wins, black_wins) = if white { (t.wins, t.losses) } else { (t.losses, t.wins) };
-    chess_import::position::Tally {
-        games: t.games,
-        white_wins,
-        draws: t.draws,
-        black_wins,
-        ..Default::default()
+    let decided = white_wins + t.draws + black_wins;
+    let fade = |c: Color32| if few { c.gamma_multiply(0.45) } else { c };
+    let painter = ui.painter();
+    let outline = if ui.visuals().dark_mode {
+        Color32::from_gray(0x70)
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    if decided > 0 {
+        let mut x = rect.left();
+        for (n, fill) in [
+            (white_wins, Color32::from_gray(0xe8)),
+            (t.draws, Color32::from_gray(0x8c)),
+            (black_wins, Color32::from_gray(0x2b)),
+        ] {
+            let w = rect.width() * n as f32 / decided as f32;
+            if w > 0.0 {
+                painter.rect_filled(
+                    egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w, rect.bottom())),
+                    0.0,
+                    fade(fill),
+                );
+            }
+            x += w;
+        }
+    }
+    painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, fade(outline)), egui::StrokeKind::Inside);
+    if decided > 0 {
+        let pct = |n: u32| 100 * n / decided;
+        resp.on_hover_text(trf(
+            "White wins {w} % · draws {d} % · Black wins {b} %",
+            &[("w", &pct(white_wins)), ("d", &pct(t.draws)), ("b", &pct(black_wins))],
+        ));
     }
 }
 
@@ -1006,6 +1138,20 @@ fn pill(ui: &mut Ui, j: Judgement) -> egui::Response {
         Color32::WHITE,
     );
     resp
+}
+
+/// The width of [`counts_text`].
+fn errors_text_width(ui: &Ui, c: &ErrorCounts) -> f32 {
+    let parts: Vec<String> = [
+        (c.inaccuracies, Judgement::Inaccuracy),
+        (c.mistakes, Judgement::Mistake),
+        (c.blunders, Judgement::Blunder),
+    ]
+    .iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, j)| format!("{n} {}", review::judgement_symbol(*j)))
+    .collect();
+    text_width(ui, &parts.join(" · "), egui::TextStyle::Body) + 8.0 * parts.len() as f32
 }
 
 /// "3 ? · 1 ??" in the colours of the signs (nothing when there are none).
@@ -1078,6 +1224,13 @@ impl PrepScreen {
             others_open: HashSet::new(),
             open_families: HashSet::new(),
             open_repeated: HashSet::new(),
+            open_variations: HashSet::new(),
+            err_cursor: None,
+            book_fp: None,
+            book_fp_of: None,
+            show_inaccuracies: settings.prep.inaccuracies,
+            stacked: false,
+            low_window: false,
             selection: Selection::None,
             shown_pos: None,
             flipped: None,
@@ -1174,11 +1327,174 @@ impl PrepScreen {
                 }
             }
         }
+        // A book step of the report this one replaces is not this report's.
+        self.book_job = None;
         self.report = Some(report);
         self.rebuild_marks();
         self.selection = Selection::None;
         self.shown_pos = None;
         self.games_cursor = None;
+        self.err_cursor = None;
+    }
+
+    /// The same player asked for again from the dialog: its colour and book.
+    pub fn reopen(&mut self, side: ColorChoice, book: BookChoice) {
+        self.shown = true;
+        self.set_color(side);
+        if book != self.book {
+            self.book = book;
+            self.book_failed = None;
+            self.book_asked = None;
+        }
+    }
+
+    fn set_color(&mut self, color: ColorChoice) {
+        self.color = color;
+        // A selection of a colour no longer shown is dropped.
+        let keep = match &self.selection {
+            Selection::None => true,
+            Selection::Node { white, .. }
+            | Selection::Opening { white, .. }
+            | Selection::Repeated { white, .. }
+            | Selection::Error { white, .. } => color.colours().contains(white),
+        };
+        if !keep {
+            self.select(Selection::None);
+        }
+    }
+
+    /// Another depth: the report of that depth from the cache, else built anew.
+    fn set_plies(&mut self, plies: usize, settings: &mut Settings, ctx: &egui::Context) {
+        if plies == self.plies {
+            return;
+        }
+        self.stop_engine(&mut Vec::new());
+        self.save();
+        self.plies = plies;
+        settings.prep.plies = plies;
+        self.report = None;
+        let options = Options {
+            plies,
+            side: Side::Any,
+        };
+        let cached = cache_dir()
+            .as_deref()
+            .and_then(|d| PrepReport::load(d, &self.db, &self.player, &options));
+        match cached {
+            Some(r) => self.take_report(r, settings),
+            None => self.rebuild(ctx),
+        }
+    }
+
+    /// The report's book is the one chosen (else its column and line are not shown).
+    fn book_ok(&self) -> bool {
+        let Some(report) = &self.report else {
+            return false;
+        };
+        self.book_fp.is_some()
+            && report.book.as_ref().map(|b| b.fingerprint) == self.book_fp
+    }
+
+    /// The judgement is shown (inaccuracies can be hidden).
+    fn visible(&self, j: Judgement) -> bool {
+        self.show_inaccuracies || j != Judgement::Inaccuracy
+    }
+
+    /// The counts as shown.
+    fn shown_counts(&self, c: &ErrorCounts) -> ErrorCounts {
+        let mut c = *c;
+        if !self.show_inaccuracies {
+            c.inaccuracies = 0;
+        }
+        c
+    }
+
+    /// The engine run for the colour(s) shown.
+    fn engine_state(&self, settings: &Settings) -> EngineState {
+        if self.job.is_some() {
+            return EngineState::Running;
+        }
+        let Some(report) = &self.report else {
+            return EngineState::NotRun;
+        };
+        if !report.evaluated() {
+            return EngineState::NotRun;
+        }
+        let side = self.color.side();
+        let total = report.distinct_positions_for(side);
+        let missing = report.missing_for(settings.prep.nodes(), side);
+        if missing == 0 {
+            EngineState::Complete { total }
+        } else {
+            EngineState::Partial {
+                done: total - missing,
+                total,
+            }
+        }
+    }
+
+    /// Judges the errors anew (`f` changes the evaluations): the lists of errors are
+    /// rebuilt, so a chosen error is found again in them by what it is, not by its
+    /// place (else the choice is dropped).
+    fn rejudge(&mut self, f: impl FnOnce(&mut PrepReport)) {
+        let Some(report) = self.report.as_mut() else { return };
+        // What the selection and the errors tab's row are, by content.
+        let error_id = |r: &PrepReport, white: bool, i: usize| {
+            r.color(white).errors.get(i).map(|e| (e.game, e.ply))
+        };
+        let repeated_id = |r: &PrepReport, white: bool, i: usize| {
+            r.color(white).repeated.get(i).map(|x| (x.key, x.uci.clone()))
+        };
+        let sel = match &self.selection {
+            Selection::Error { white, index } => error_id(report, *white, *index).map(|id| (*white, Ok(id))),
+            Selection::Repeated { white, index } => repeated_id(report, *white, *index).map(|id| (*white, Err(id))),
+            _ => None,
+        };
+        let cursor = match self.err_cursor {
+            Some(ErrRow::Error { white, index }) => error_id(report, white, index).map(|id| (white, Ok(id))),
+            Some(ErrRow::Repeated { white, index }) => repeated_id(report, white, index).map(|id| (white, Err(id))),
+            _ => None,
+        };
+        let open: Vec<(bool, (u64, String))> = self
+            .open_repeated
+            .iter()
+            .filter_map(|&(w, i)| repeated_id(report, w, i).map(|id| (w, id)))
+            .collect();
+        f(report);
+        let find = |r: &PrepReport, white: bool, id: &Result<(u32, u32), (u64, String)>| -> Option<usize> {
+            match id {
+                Ok((game, ply)) => r.color(white).errors.iter().position(|e| e.game == *game && e.ply == *ply),
+                Err((key, uci)) => r.color(white).repeated.iter().position(|x| x.key == *key && x.uci == *uci),
+            }
+        };
+        if let Some((white, id)) = &sel {
+            let found = find(report, *white, id);
+            self.selection = match (found, id) {
+                (Some(index), Ok(_)) => Selection::Error { white: *white, index },
+                (Some(index), Err(_)) => Selection::Repeated { white: *white, index },
+                (None, _) => Selection::None,
+            };
+            if found.is_none() {
+                self.shown_pos = None;
+            }
+        }
+        if let Some((white, id)) = &cursor {
+            self.err_cursor = match (find(report, *white, id), id) {
+                (Some(index), Ok(_)) => Some(ErrRow::Error { white: *white, index }),
+                (Some(index), Err(_)) => Some(ErrRow::Repeated { white: *white, index }),
+                (None, _) => None,
+            };
+        } else if matches!(self.err_cursor, Some(ErrRow::RepeatedGame { .. })) {
+            self.err_cursor = None;
+        }
+        self.open_repeated = open
+            .into_iter()
+            .filter_map(|(w, (key, uci))| {
+                let i = report.color(w).repeated.iter().position(|x| x.key == key && x.uci == uci)?;
+                Some((w, i))
+            })
+            .collect();
+        self.rebuild_marks();
     }
 
     /// The errors by node, for the tree and the hover texts.
@@ -1216,6 +1532,7 @@ impl PrepScreen {
                 None => self.error = Some(tr("The games could not be read").to_owned()),
             }
         }
+        self.show_inaccuracies = settings.prep.inaccuracies;
         if let Some((fp, job)) = &self.book_job
             && let Some(r) = job.poll()
         {
@@ -1258,26 +1575,35 @@ impl PrepScreen {
         if self.book_job.is_some() || self.build.is_some() {
             return;
         }
-        let (book_db, same) = match &self.book {
-            BookChoice::None => return,
-            BookChoice::Same => (self.db.clone(), true),
-            BookChoice::Database(p) => {
-                let Some(d) = self.dbs.iter().find(|d| d.path == *p) else {
-                    return;
-                };
-                match &d.db {
-                    Some(db) => (db.clone(), false),
+        let book = match &self.book {
+            BookChoice::None => None,
+            BookChoice::Same => Some((self.db.clone(), true)),
+            BookChoice::Database(p) => match self.dbs.iter().find(|d| d.path == *p) {
+                Some(d) => match &d.db {
+                    Some(db) => Some((db.clone(), false)),
                     None => {
                         if d.failed.is_none() && self.book_asked.as_ref() != Some(p) {
                             self.book_asked = Some(p.clone());
                             actions.push(PrepAction::LoadDb(p.clone()));
                         }
-                        return;
+                        None
                     }
-                }
-            }
+                },
+                None => None,
+            },
         };
-        let fp = prep::fingerprint(&book_db);
+        let Some((book_db, same)) = book else {
+            self.book_fp = None;
+            self.book_fp_of = None;
+            return;
+        };
+        // The fingerprint reads the file's data: once per book and database read.
+        let of = (self.book.clone(), Arc::as_ptr(&book_db) as usize);
+        if self.book_fp_of.as_ref() != Some(&of) {
+            self.book_fp = Some(prep::fingerprint(&book_db));
+            self.book_fp_of = Some(of);
+        }
+        let Some(fp) = self.book_fp else { return };
         if report.book.as_ref().is_some_and(|b| b.fingerprint == fp)
             || self.book_failed.as_ref().is_some_and(|(f, _)| *f == fp)
         {
@@ -1300,9 +1626,10 @@ impl PrepScreen {
 
     /// The book's count in a position, when the book step looked at it.
     fn book_count(&self, key: u64) -> Option<u32> {
-        let report = self.report.as_ref()?;
-        report.book.as_ref()?;
-        report.book_counts.get(&key).copied()
+        if !self.book_ok() {
+            return None;
+        }
+        self.report.as_ref()?.book_counts.get(&key).copied()
     }
 
     // ----- the engine ----------------------------------------------------------------
@@ -1341,11 +1668,13 @@ impl PrepScreen {
             actions.push(PrepAction::NeedEngine);
             return;
         };
-        let Some(report) = self.report.as_mut() else { return };
         let nodes = settings.prep.nodes();
-        if report.take_cached(&self.cache, nodes) > 0 {
-            self.dirty = true;
-        }
+        let cache = std::mem::take(&mut self.cache);
+        let mut taken = 0;
+        self.rejudge(|r| taken = r.take_cached(&cache, nodes));
+        self.cache = cache;
+        self.dirty |= taken > 0;
+        let Some(report) = self.report.as_ref() else { return };
         let targets = report.targets_for(nodes, self.color.side());
         if targets.is_empty() {
             actions.push(PrepAction::Toast(tr("Every position is already evaluated").to_owned()));
@@ -1442,10 +1771,9 @@ impl PrepScreen {
         }
         let now = ctx.input(|i| i.time);
         if self.pending_refresh && (ended || now - self.last_refresh > 1.0) {
-            report.refresh();
             self.pending_refresh = false;
             self.last_refresh = now;
-            self.rebuild_marks();
+            self.rejudge(PrepReport::refresh);
         }
         if ended {
             self.job = None;
@@ -1454,13 +1782,15 @@ impl PrepScreen {
         }
     }
 
+    /// Stops the engine run (quitting): what was evaluated is kept.
+    pub fn stop(&mut self) {
+        self.stop_engine(&mut Vec::new());
+    }
+
     /// «Stop»: what was evaluated stays.
     fn stop_engine(&mut self, actions: &mut Vec<PrepAction>) {
         if self.job.take().is_some() {
-            if let Some(r) = self.report.as_mut() {
-                r.refresh();
-            }
-            self.rebuild_marks();
+            self.rejudge(PrepReport::refresh);
             self.pending_refresh = false;
             self.save();
             actions.push(PrepAction::EngineEnded);
@@ -1549,13 +1879,13 @@ impl PrepScreen {
                         .map_or(0, |r| r.distinct_positions_for(self.color.side()));
                     ui.label(trf(
                         "{n} positions, about {time}",
-                        &[("n", &missing), ("time", &review::format_duration(secs))],
+                        &[("n", &grouped(missing)), ("time", &review::format_duration(secs))],
                     ));
                     let cached = all.saturating_sub(missing);
                     let note = if cached > 0 {
                         trf(
                             "identical positions are counted once; {n} already evaluated earlier",
-                            &[("n", &cached)],
+                            &[("n", &grouped(cached))],
                         )
                     } else {
                         tr("identical positions are counted once").to_owned()
@@ -1736,13 +2066,14 @@ impl PrepScreen {
                 .iter()
                 .flat_map(|&w| report.color(w).games.iter().copied())
                 .collect(),
-            Selection::Node { white, node } => report
-                .color(*white)
-                .tree
-                .nodes
-                .get(*node as usize)
-                .map(|n| n.games.clone())
-                .unwrap_or_default(),
+            // The games of the position, by any move order.
+            Selection::Node { white, node } => {
+                let tree = &report.color(*white).tree;
+                tree.nodes
+                    .get(*node as usize)
+                    .map(|n| tree.position_games(n.key))
+                    .unwrap_or_default()
+            }
             Selection::Opening {
                 white,
                 family,
@@ -1780,6 +2111,24 @@ impl PrepScreen {
         self.shown_pos.as_ref().map_or(0, |s| s.ucis.len())
     }
 
+    /// Where game `gi` reaches the chosen position: a node's position may come by
+    /// another move order (another ply) in some of its games.
+    fn game_ply(&self, gi: u32) -> usize {
+        if let (Selection::Node { white, node }, Some(report)) = (&self.selection, &self.report)
+            && let Some(n) = report.color(*white).tree.nodes.get(*node as usize)
+            && let Some(p) = report.games[gi as usize].keys.iter().position(|k| *k == n.key)
+        {
+            return p;
+        }
+        self.selection_ply()
+    }
+
+    /// The move to open game `gi` at: the chosen position, or after the error.
+    fn open_ply(&self, gi: u32) -> usize {
+        let after = matches!(self.selection, Selection::Error { .. } | Selection::Repeated { .. });
+        self.game_ply(gi) + usize::from(after)
+    }
+
     /// The player's colour the board is seen from.
     fn board_white(&self) -> bool {
         let base = self
@@ -1812,6 +2161,8 @@ impl PrepScreen {
         let (w, h) = (content.width(), content.height() - 44.0);
         let stacked = w < BOARD_MIN + 24.0 + RIGHT_MIN || h < 600.0;
         let low = stacked && h < 720.0;
+        self.stacked = stacked;
+        self.low_window = h < 600.0;
         egui::Panel::top("prep_controls").show(ui, |ui| {
             ui.add_space(4.0);
             self.controls(ui, settings, low, &mut actions);
@@ -1827,7 +2178,10 @@ impl PrepScreen {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.allocate_ui(vec2(240.0, 240.0), |ui| self.board(ui, settings, 240.0));
-                        ui.vertical(|ui| self.board_info(ui, &mut actions));
+                        ui.vertical(|ui| {
+                            self.board_caption(ui);
+                            self.board_info(ui, &mut actions);
+                        });
                     });
                     ui.add_space(4.0);
                 });
@@ -1925,29 +2279,33 @@ impl PrepScreen {
     /// The colour switch, the book, the depth and the engine button or its progress.
     fn controls(&mut self, ui: &mut Ui, settings: &mut Settings, low: bool, actions: &mut Vec<PrepAction>) {
         let width = ui.available_width();
+        let gap = ui.spacing().item_spacing.x;
+        let pad = 2.0 * ui.spacing().button_padding.x;
+        let state = self.engine_state(settings);
+        // The engine part on the right is measured first: the rest gets what it leaves.
+        let engine = self.engine_texts(settings, state, width);
+        let engine_w = match &engine {
+            EngineTexts::Running => (width * 0.35).clamp(90.0, 360.0) + text_width(ui, tr("Stop"), egui::TextStyle::Button) + pad + 2.0 * gap,
+            EngineTexts::Button { label, note } | EngineTexts::Done { label, note } => {
+                text_width(ui, label, egui::TextStyle::Button)
+                    + pad
+                    + note.as_deref().map_or(0.0, |n| text_width(ui, n, egui::TextStyle::Body) + gap)
+                    + gap
+            }
+        } + 26.0 + gap;
         ui.horizontal(|ui| {
             for choice in [ColorChoice::White, ColorChoice::Black, ColorChoice::Both] {
-                if ui.selectable_value(&mut self.color, choice, choice.label()).clicked() {
-                    // A selection of a colour no longer shown is dropped.
-                    let keep = match &self.selection {
-                        Selection::None => true,
-                        Selection::Node { white, .. }
-                        | Selection::Opening { white, .. }
-                        | Selection::Repeated { white, .. }
-                        | Selection::Error { white, .. } => self.color.colours().contains(white),
-                    };
-                    if !keep {
-                        self.select(Selection::None);
-                    }
+                if ui.selectable_label(self.color == choice, choice.label()).clicked() {
+                    self.set_color(choice);
                 }
             }
             ui.separator();
-            let book_w = if width < 900.0 { 150.0 } else { 240.0 };
-            if width >= 640.0 {
+            let caption_apart = width >= 640.0;
+            if caption_apart {
                 ui.label(tr("Book"));
             }
-            let own_name = self.db_name.clone();
-            if let Some(b) = book_picker(ui, "prep_book", &self.book, &self.path, &own_name, &self.dbs, book_w) {
+            let book_w = if width < 900.0 { 150.0 } else { 240.0 };
+            if let Some(b) = book_picker(ui, "prep_book", &self.book, &self.path, &self.dbs, book_w, !caption_apart) {
                 self.book = b;
                 self.book_failed = None;
                 self.book_asked = None;
@@ -1955,15 +2313,22 @@ impl PrepScreen {
                 actions.push(PrepAction::SettingsChanged);
             }
             if let Some((_, why)) = &self.book_failed {
-                ui.label(RichText::new(trf("Book: could not open — {reason}", &[("reason", why)])).color(ui.visuals().warn_fg_color));
+                ui.label(RichText::new("⚠").color(ui.visuals().warn_fg_color))
+                    .on_hover_text(trf("Book: could not open — {reason}", &[("reason", why)]));
             }
             ui.separator();
+            // The depth's caption by the room left: «Opening: 10 moves», «10 moves», «10 m.».
             let moves = self.plies.div_ceil(2);
-            let depth_label = if width < 760.0 {
-                format!("{moves}")
-            } else {
-                trf("Opening: {n} moves", &[("n", &moves)])
-            };
+            let board_w = if low { text_width(ui, "♙", egui::TextStyle::Button) + pad + 2.0 * gap } else { 0.0 };
+            let room = ui.available_width() - engine_w - board_w;
+            let depth_label = [
+                trf("Opening: {n} moves", &[("n", &moves)]),
+                trf("{n} moves", &[("n", &moves)]),
+                trf("{n} m.", &[("n", &moves)]),
+            ]
+            .into_iter()
+            .find(|l| text_width(ui, l, egui::TextStyle::Button) + pad + 20.0 + gap <= room)
+            .unwrap_or_else(|| trf("{n} m.", &[("n", &moves)]));
             let mut new_plies = None;
             egui::ComboBox::from_id_salt("prep_plies")
                 .selected_text(depth_label)
@@ -1979,31 +2344,14 @@ impl PrepScreen {
                 })
                 .response
                 .on_hover_text(tr("How deep the tree and the engine look"));
-            if let Some(p) = new_plies.filter(|p| *p != self.plies) {
-                self.plies = p;
-                settings.prep.plies = p;
+            if let Some(p) = new_plies {
+                self.set_plies(p, settings, ui.ctx());
                 actions.push(PrepAction::SettingsChanged);
-                self.save();
-                self.report = None;
-                let dir = cache_dir();
-                let options = Options {
-                    plies: p,
-                    side: Side::Any,
-                };
-                let cached = dir
-                    .as_deref()
-                    .and_then(|d| PrepReport::load(d, &self.db, &self.player, &options));
-                match cached {
-                    Some(r) => self.take_report(r, settings),
-                    None => self.rebuild(ui.ctx()),
-                }
-                self.selection = Selection::None;
-                self.shown_pos = None;
             }
             if low {
                 ui.separator();
                 if ui
-                    .selectable_label(self.board_popup, if width < 760.0 { "♙" } else { tr("♙ Board") })
+                    .selectable_label(self.board_popup, "♙")
                     .on_hover_text(tr("The board of the chosen position"))
                     .clicked()
                 {
@@ -2011,13 +2359,63 @@ impl PrepScreen {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.engine_control(ui, settings, width, actions);
+                self.engine_control(ui, settings, engine, width, actions);
             });
         });
     }
 
-    /// The engine button, the progress while it runs, the state after.
-    fn engine_control(&mut self, ui: &mut Ui, settings: &Settings, width: f32, actions: &mut Vec<PrepAction>) {
+    /// What the engine part of the controls says, by the room there is.
+    fn engine_texts(&self, settings: &Settings, state: EngineState, width: f32) -> EngineTexts {
+        let (missing, secs) = self.estimate(settings);
+        let time = review::format_duration(secs);
+        match state {
+            EngineState::Running => EngineTexts::Running,
+            EngineState::NotRun => EngineTexts::Button {
+                label: if width < 700.0 {
+                    format!("▶ ≈ {time}")
+                } else if width < 900.0 {
+                    trf("▶ Errors ≈ {time}", &[("time", &time)])
+                } else {
+                    trf("▶ Find opening errors ≈ {time}", &[("time", &time)])
+                },
+                note: None,
+            },
+            EngineState::Partial { done, total } => EngineTexts::Button {
+                label: if width < 700.0 {
+                    format!("▶ ≈ {time}")
+                } else {
+                    trf("Continue ≈ {time}", &[("time", &time)])
+                },
+                note: (width >= 900.0).then(|| {
+                    trf(
+                        "Checked {done} of {total} positions",
+                        &[("done", &grouped(done)), ("total", &grouped(total))],
+                    )
+                }),
+            },
+            EngineState::Complete { .. } => {
+                let _ = missing;
+                EngineTexts::Done {
+                    label: tr("Errors found").to_owned(),
+                    note: None,
+                }
+            }
+        }
+    }
+
+    /// The engine button, the progress while it runs, the state after; «▾» (the
+    /// options) at the right end.
+    fn engine_control(
+        &mut self,
+        ui: &mut Ui,
+        settings: &Settings,
+        texts: EngineTexts,
+        width: f32,
+        actions: &mut Vec<PrepAction>,
+    ) {
+        if ui.button("▾").on_hover_text(tr("Options…")).clicked() {
+            self.dialog_open = true;
+        }
         if let Some(job) = &self.job {
             let (done, total) = (job.done, job.total);
             if ui.button(tr("Stop")).on_hover_text("Shift+A").clicked() {
@@ -2028,11 +2426,11 @@ impl PrepScreen {
             let per_thread = self.nps_per_thread.unwrap_or(review::DEFAULT_NPS);
             let secs = review::estimate_secs(left, job.nodes, per_thread, job.threads);
             let text = if width < 760.0 {
-                format!("{done}/{total}")
+                format!("{}/{}", grouped(done), grouped(total))
             } else {
                 trf(
                     "Finding errors: {done} of {total} positions · ≈ {time}",
-                    &[("done", &done), ("total", &total), ("time", &review::format_duration(secs))],
+                    &[("done", &grouped(done)), ("total", &grouped(total)), ("time", &review::format_duration(secs))],
                 )
             };
             ui.add(
@@ -2043,44 +2441,23 @@ impl PrepScreen {
             return;
         }
         let Some(report) = &self.report else { return };
-        let (missing, secs) = self.estimate(settings);
-        let time = review::format_duration(secs);
-        let done_before = report.engine.is_some();
-        let label = if missing == 0 && done_before {
-            tr("Errors found").to_owned()
-        } else if width < 700.0 {
-            format!("▶ ≈ {time}")
-        } else if width < 900.0 {
-            trf("▶ Errors ≈ {time}", &[("time", &time)])
-        } else if done_before {
-            trf("Analyse {n} more positions ≈ {time}", &[("n", &missing), ("time", &time)])
-        } else {
-            trf("▶ Find opening errors ≈ {time}", &[("time", &time)])
-        };
-        let hint = match &report.engine {
-            Some(e) => {
-                let quality = REVIEW_QUALITY
-                    .iter()
-                    .find(|q| q.1 == e.nodes)
-                    .map_or_else(|| review::format_count(e.nodes), |q| tr(q.0).to_owned());
-                trf(
-                    "Errors found · {engine} · {quality} · {n} positions",
-                    &[("engine", &e.name), ("quality", &quality), ("n", &report.evals.len())],
-                )
+        let hint = self.engine_status(settings).unwrap_or_else(|| {
+            tr("The engine finds the opening errors in his games (Shift+A)").to_owned()
+        });
+        let _ = report;
+        match texts {
+            EngineTexts::Done { label, .. } => {
+                ui.label(RichText::new(label).weak()).on_hover_text(hint);
             }
-            None => tr("The engine finds the opening errors in his games (Shift+A)").to_owned(),
-        };
-        if missing == 0 && done_before {
-            ui.label(RichText::new(label).weak()).on_hover_text(hint);
-        } else if crate::widgets::primary(ui, &label).on_hover_text(hint).clicked() {
-            self.engine_asked(settings, ui.ctx(), actions);
-        }
-        if ui
-            .button("▾")
-            .on_hover_text(tr("Options…"))
-            .clicked()
-        {
-            self.dialog_open = true;
+            EngineTexts::Button { label, note } => {
+                if crate::widgets::primary(ui, &label).on_hover_text(hint).clicked() {
+                    self.engine_asked(settings, ui.ctx(), actions);
+                }
+                if let Some(n) = note {
+                    ui.label(RichText::new(n).weak());
+                }
+            }
+            EngineTexts::Running => {}
         }
         if let Some(e) = &self.error {
             ui.label(RichText::new("⚠").color(ui.visuals().error_fg_color))
@@ -2088,91 +2465,155 @@ impl PrepScreen {
         }
     }
 
-    /// A line per colour: games, score, opponents, the last game, the book.
+    /// «Errors found · Stockfish 19 · Fast · 2 947 positions», once evaluated.
+    fn engine_status(&self, settings: &Settings) -> Option<String> {
+        let report = self.report.as_ref()?;
+        if !report.evaluated() {
+            return None;
+        }
+        let nodes = report.engine.as_ref().map_or(settings.prep.nodes(), |e| e.nodes);
+        let quality = REVIEW_QUALITY
+            .iter()
+            .find(|q| q.1 == nodes)
+            .map_or_else(|| review::format_count(nodes), |q| tr(q.0).to_owned());
+        let n = grouped(report.distinct_positions_for(self.color.side()));
+        Some(match report.engine.as_ref().filter(|e| !e.name.is_empty()) {
+            Some(e) => trf(
+                "Errors found · {engine} · {quality} · {n} positions",
+                &[("engine", &e.name), ("quality", &quality), ("n", &n)],
+            ),
+            None => trf(
+                "Errors found · {quality} · {n} positions",
+                &[("quality", &quality), ("n", &n)],
+            ),
+        })
+    }
+
+    /// The summary: a row per colour in columns — colour, games, score, opponents,
+    /// the last game, the book, the errors; the columns give way from the right (the
+    /// last game, the book, the opponents) instead of wrapping.
     fn summary(&self, ui: &mut Ui, stacked: bool) {
         let Some(report) = &self.report else { return };
         let colours = if stacked { self.color.colours() } else { vec![true, false] };
-        for white in colours {
+        let evaluated = report.evaluated() && !stacked;
+        let book = self.book_ok();
+        // Texts per colour: [games, score, opponents, last, book].
+        let mut rows: Vec<(bool, [String; 5], ErrorCounts, usize)> = Vec::new();
+        for &white in &colours {
             let cr = report.color(white);
-            let tally = &cr.tree.nodes[0].tally;
-            let weak = !self.color.colours().contains(&white);
+            let root = &cr.tree.nodes[0];
+            let tally = &root.tally;
             let title = if white { tr("As White") } else { tr("As Black") };
-            ui.horizontal_wrapped(|ui| {
-                let text = |ui: &mut Ui, s: String| {
-                    let rt = RichText::new(s);
-                    ui.label(if weak { rt.weak() } else { rt });
-                };
-                text(ui, format!("{title}  {}", tally.games));
-                if tally.games == 0 {
-                    return;
-                }
-                text(ui, format!("· {} ({})", score_text(tally), tally_hint(tally)));
-                if !stacked {
-                    if let Some(elo) = cr.tree.nodes[0].average_elo() {
-                        text(ui, format!("· {}", trf("opponents ≈ {elo}", &[("elo", &elo)])));
-                    }
-                    let last = crate::library::display_date(&cr.tree.nodes[0].last_date);
-                    if !last.is_empty() {
-                        text(ui, format!("· {}", trf("last {date}", &[("date", &last)])));
-                    }
-                }
-                if report.book.is_some() {
-                    let mut plies: Vec<u32> = cr
-                        .games
-                        .iter()
-                        .filter_map(|&g| report.games[g as usize].book.map(|b| b.ply))
-                        .collect();
-                    if !plies.is_empty() {
-                        plies.sort_unstable();
-                        let median = plies[plies.len() / 2];
+            let games = format!("{title}  {}", tally.games);
+            let score = if tally.games > 0 {
+                format!("{} ({})", score_text(tally), tally_hint(tally))
+            } else {
+                String::new()
+            };
+            let opponents = root
+                .average_elo()
+                .map(|elo| trf("opponents ≈ {elo}", &[("elo", &elo)]))
+                .unwrap_or_default();
+            let last = crate::library::display_date(&root.last_date);
+            let last = if last.is_empty() { String::new() } else { trf("last {date}", &[("date", &last)]) };
+            let book_text = if book {
+                let mut plies: Vec<u32> = cr
+                    .games
+                    .iter()
+                    .filter_map(|&g| report.games[g as usize].book.map(|b| b.ply))
+                    .collect();
+                plies.sort_unstable();
+                match plies.get(plies.len() / 2) {
+                    Some(median) => {
                         let (own, other) = cr.book_exits(&report.games);
                         let p = 100 * own / (own + other).max(1);
-                        text(
-                            ui,
-                            format!(
-                                "· {}",
-                                trf(
-                                    "leaves the book at move {n}, first in {p} % of games",
-                                    &[("n", &median.div_ceil(2).max(1)), ("p", &p)]
-                                )
-                            ),
-                        );
+                        trf(
+                            "leaves the book at move {n}, first in {p} % of games",
+                            &[("n", &median.div_ceil(2).max(1)), ("p", &p)],
+                        )
                     }
-                } else if self.book_job.is_some() {
-                    text(ui, format!("· {}", tr("book…")));
+                    None => String::new(),
                 }
-                if !stacked && report.engine.is_some() && cr.counts.total() > 0 {
-                    let games_with: HashSet<u32> = cr.errors.iter().map(|e| e.game).collect();
-                    let n = games_with.len();
-                    let p = 100 * n / cr.games.len().max(1);
-                    let c = &cr.counts;
-                    ui.label(RichText::new("·").weak());
-                    let line = trf(
-                        "Opening errors: {i} inaccuracies · {m} mistakes · {b} blunders — in {g} games ({p} %)",
-                        &[
-                            ("i", &c.inaccuracies),
-                            ("m", &c.mistakes),
-                            ("b", &c.blunders),
-                            ("g", &n),
-                            ("p", &p),
-                        ],
-                    );
-                    let rt = RichText::new(line);
-                    ui.label(if weak { rt.weak() } else { rt });
+            } else if self.book_job.is_some() {
+                tr("book…").to_owned()
+            } else {
+                String::new()
+            };
+            let with_errors: HashSet<u32> = cr
+                .errors
+                .iter()
+                .filter(|e| self.visible(e.judgement))
+                .map(|e| e.game)
+                .collect();
+            let p = 100 * with_errors.len() / cr.games.len().max(1);
+            rows.push((white, [games, score, opponents, last, book_text], self.shown_counts(&cr.counts), p));
+        }
+        // Which columns fit: the errors stay; last, book, opponents give way in turn.
+        let gap = 14.0;
+        let col_w = |k: usize| -> f32 {
+            rows.iter()
+                .map(|r| text_width(ui, &r.1[k], egui::TextStyle::Body))
+                .fold(0.0, f32::max)
+        };
+        let errors_w = if evaluated {
+            rows.iter()
+                .map(|(_, _, c, p)| {
+                    errors_text_width(ui, c) + text_width(ui, &trf("in {p} % of games", &[("p", p)]), egui::TextStyle::Body) + 12.0
+                })
+                .fold(0.0, f32::max)
+        } else {
+            0.0
+        };
+        let width = ui.available_width();
+        let mut shown = [true; 5];
+        let used = |shown: &[bool; 5]| -> f32 {
+            (0..5).filter(|&k| shown[k]).map(|k| col_w(k) + gap).sum::<f32>() + errors_w
+        };
+        for k in [3, 4, 2, 1] {
+            if used(&shown) <= width {
+                break;
+            }
+            shown[k] = false;
+        }
+        egui::Grid::new("prep_summary")
+            .num_columns(6)
+            .spacing(vec2(gap, 2.0))
+            .show(ui, |ui| {
+                for (white, texts, counts, p) in &rows {
+                    let weak = !self.color.colours().contains(white);
+                    for k in 0..5 {
+                        if !shown[k] {
+                            continue;
+                        }
+                        let rt = RichText::new(&texts[k]);
+                        let rt = if k == 0 { rt.strong() } else { rt };
+                        ui.label(if weak { rt.weak() } else { rt });
+                    }
+                    if evaluated {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            if counts.total() > 0 {
+                                counts_text(ui, counts);
+                                ui.label(RichText::new(trf("in {p} % of games", &[("p", p)])).weak());
+                            } else {
+                                ui.label(RichText::new(tr("no errors")).weak());
+                            }
+                        });
+                    }
+                    ui.end_row();
                 }
             });
-        }
-        let shown: usize = self
+        let n: usize = self
             .color
             .colours()
             .iter()
             .map(|&w| report.color(w).games.len())
             .sum();
-        if shown > 0 && shown < 10 {
+        if n > 0 && n < 10 {
             ui.label(
                 RichText::new(trf(
                     "Few games ({n}): percentages and scores are unreliable",
-                    &[("n", &shown)],
+                    &[("n", &n)],
                 ))
                 .color(ui.visuals().warn_fg_color),
             );
@@ -2298,7 +2739,12 @@ impl PrepScreen {
                 ui.label(RichText::new(tr("Start position")).weak());
             }
             for (i, san) in s.sans.iter().enumerate() {
-                let label = short_label(i, san);
+                // Numbers at White's moves only: «1.e4 c5 2.Nf3 d6».
+                let label = if i.is_multiple_of(2) {
+                    short_label(i, san)
+                } else {
+                    crate::san::show(san).into_owned()
+                };
                 let current = i + 1 == s.ply;
                 let text = if current {
                     RichText::new(label).strong()
@@ -2443,11 +2889,13 @@ impl PrepScreen {
     fn right_column(&mut self, ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<PrepAction>) {
         let height = ui.available_height();
         let width = ui.available_width();
-        let least = 4.0 * ROW_H + 60.0;
+        // In a low window the tabs keep the most: two rows of games at least, a quarter.
+        let (rows, share) = if self.low_window { (2.0, 0.25) } else { (4.0, 0.35) };
+        let least = rows * ROW_H + 60.0;
         let most = (height - 160.0).max(least);
         let games_h = self
             .games_height
-            .unwrap_or(height * 0.35)
+            .unwrap_or(height * share)
             .clamp(least, most)
             .floor();
         let tabs_h = (height - games_h - 10.0).max(0.0);
@@ -2637,7 +3085,7 @@ impl PrepScreen {
         let Some(report) = self.report.as_ref() else { return };
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
-        let has_book = report.book.is_some() || self.book_job.is_some();
+        let has_book = self.book_ok() || (self.book_job.is_some() && self.book != BookChoice::None);
         let mut used = 180.0 + 56.0 + 40.0 + 50.0 + 4.0 * gap;
         let mut fits = |w: f32, wanted: bool| {
             let ok = wanted && used + w + gap <= width;
@@ -2713,7 +3161,14 @@ impl PrepScreen {
                                 if ui.add(egui::Label::new(RichText::new(glyph).weak()).sense(Sense::click())).clicked() {
                                     toggled = Some(r);
                                 }
-                                ui.label(RichText::new(trf("other moves ({n})", &[("n", &count)])).weak());
+                                // Short when the column is narrow at this depth.
+                                let full = trf("other moves ({n})", &[("n", &count)]);
+                                let text = if text_width(ui, &full, egui::TextStyle::Body) > ui.available_width() {
+                                    trf("others ({n})", &[("n", &count)])
+                                } else {
+                                    full
+                                };
+                                ui.label(RichText::new(text).weak());
                             });
                             let rest = 2 + usize::from(show_opening) + 1 + usize::from(show_last) + usize::from(show_book);
                             for _ in 0..rest {
@@ -2726,7 +3181,9 @@ impl PrepScreen {
                             let parent = n.parent.map(|p| &cr.tree.nodes[p as usize]);
                             let has_children = !n.children.is_empty();
                             let open = self.expanded.contains(&(white, node));
-                            let few = n.tally.games < FEW_GAMES;
+                            // The statistics are the position's, whatever the move order.
+                            let tally = cr.tree.position_tally(n.key);
+                            let few = tally.games < FEW_GAMES;
                             row.col(|ui| {
                                 ui.add_space(depth as f32 * 14.0);
                                 let glyph = if !has_children { " " } else if open { "▾" } else { "▸" };
@@ -2744,7 +3201,9 @@ impl PrepScreen {
                                 let label = short_label(ply, &n.san);
                                 let text = if players { RichText::new(label) } else { RichText::new(label).weak() };
                                 let l = ui.add(egui::Label::new(text).truncate());
-                                if !show_opening && let Some(o) = n.opening.filter(|_| n.named).and_then(|o| report.openings.get(o)) {
+                                if !show_opening
+                                    && let Some(o) = n.opening.filter(|_| n.named).and_then(|o| report.openings.get(o))
+                                {
                                     l.on_hover_text(format!("{} · {}", o.name, o.eco));
                                 }
                                 if n.transposition {
@@ -2763,16 +3222,18 @@ impl PrepScreen {
                                 }
                                 if let Some(p) = parent
                                     && let Some(m) = self.mark_of(white, p.key, &n.uci)
+                                    && self.visible(m.judgement)
                                 {
                                     let best = crate::san::show(&m.best_san).into_owned();
-                                    pill(ui, m.judgement).on_hover_text(format!(
-                                        "{}: {}",
-                                        review::judgement_name(m.judgement),
-                                        trf(
-                                            "Mistake: better {best} ({before} → {after}) · in {n} games",
-                                            &[("best", &best), ("before", &m.before.format()), ("after", &m.after.format()), ("n", &m.games)],
-                                        )
-                                        .trim_start_matches(&format!("{}: ", tr("Mistake")))
+                                    pill(ui, m.judgement).on_hover_text(trf(
+                                        "{judgement}: better {best} ({before} → {after}) · in {n} games",
+                                        &[
+                                            ("judgement", &review::judgement_name(m.judgement)),
+                                            ("best", &best),
+                                            ("before", &m.before.format()),
+                                            ("after", &m.after.format()),
+                                            ("n", &m.games),
+                                        ],
                                     ));
                                     if m.games > 1 {
                                         ui.label(RichText::new(format!("×{}", m.games)).weak().small());
@@ -2781,24 +3242,25 @@ impl PrepScreen {
                             });
                             if show_opening {
                                 row.col(|ui| {
-                                    // The name where it first appears (the table names
-                                    // 2.Nf3 «Sicilian Defense» again: not repeated).
-                                    let new_name = n.named
-                                        && parent.is_none_or(|p| {
-                                            p.opening.map(|o| report.openings[o].name.as_str())
-                                                != n.opening.map(|o| report.openings[o].name.as_str())
+                                    // The name where it changes (`named`); the ECO keeps
+                                    // its place at the right, the name takes the rest.
+                                    if n.named && let Some(o) = n.opening.and_then(|o| report.openings.get(o)) {
+                                        let eco = RichText::new(&o.eco).weak().small();
+                                        let eco_w = text_width(ui, &o.eco, egui::TextStyle::Small) + ui.spacing().item_spacing.x;
+                                        let name_w = (ui.available_width() - eco_w).max(0.0);
+                                        ui.allocate_ui(vec2(name_w, ROW_H), |ui| {
+                                            ui.add(egui::Label::new(RichText::new(&o.name).weak()).truncate())
+                                                .on_hover_text(format!("{} · {}", o.name, o.eco));
                                         });
-                                    if new_name && let Some(o) = n.opening.and_then(|o| report.openings.get(o)) {
-                                        ui.add(egui::Label::new(RichText::new(&o.name).weak()).truncate())
-                                            .on_hover_text(format!("{} · {}", o.name, o.eco));
-                                        ui.label(RichText::new(&o.eco).weak().small());
+                                        ui.label(eco);
                                     }
                                 });
                             }
                             row.col(|ui| {
-                                ui.label(n.tally.games.to_string());
+                                ui.label(tally.games.to_string());
                             });
                             row.col(|ui| {
+                                // The move's share where the games were (this order).
                                 if let Some(p) = parent {
                                     let pct = 100 * n.tally.games / p.tally.games.max(1);
                                     let t = RichText::new(format!("{pct}"));
@@ -2809,19 +3271,16 @@ impl PrepScreen {
                                 }
                             });
                             row.col(|ui| {
-                                let t = RichText::new(score_text(&n.tally));
+                                let t = RichText::new(score_text(&tally));
                                 let l = ui.label(if few { t.weak() } else { t });
-                                l.on_hover_text(tally_hint(&n.tally));
+                                l.on_hover_text(tally_hint(&tally));
                                 if show_bar {
-                                    let (rect, _) = ui.allocate_exact_size(vec2(56.0, 14.0), Sense::hover());
-                                    let painter_alpha = if few { 0.5 } else { 1.0 };
-                                    let _ = painter_alpha;
-                                    board_search::results_bar(ui, rect, &bar_tally(&n.tally, white), ui.visuals().text_color());
+                                    score_bar(ui, &tally, white, few);
                                 }
                             });
                             if show_last {
                                 row.col(|ui| {
-                                    let d = crate::library::display_date(&n.last_date);
+                                    let d = crate::library::display_date(cr.tree.position_last_date(n.key));
                                     ui.label(RichText::new(if d.is_empty() { "—".to_owned() } else { d }).weak());
                                 });
                             }
@@ -2949,7 +3408,7 @@ impl PrepScreen {
         let both = self.color == ColorChoice::Both;
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
-        let mut used = 200.0 + 56.0 + 40.0 + 50.0 + 4.0 * gap + if both { 90.0 + gap } else { 0.0 };
+        let mut used = 180.0 + 56.0 + 40.0 + 50.0 + 4.0 * gap + if both { 24.0 + gap } else { 0.0 };
         let mut fits = |w: f32, wanted: bool| {
             let ok = wanted && used + w + gap <= width;
             if ok {
@@ -2958,11 +3417,11 @@ impl PrepScreen {
             ok
         };
         // The errors stay as long as possible; the first moves give way first.
-        let show_errors = fits(90.0, report.engine.is_some());
+        let show_errors = fits(90.0, report.evaluated());
         let show_bar = fits(64.0, true);
         let show_eco = fits(64.0, true);
         let show_last = fits(84.0, true);
-        let show_moves = fits(160.0, true);
+        let show_moves = fits(140.0, true);
         ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
             .id_salt("prep_openings")
@@ -2971,14 +3430,14 @@ impl PrepScreen {
             .auto_shrink([false, false])
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
         if both {
-            table = table.column(Column::exact(90.0));
+            table = table.column(Column::exact(24.0));
         }
-        table = table.column(Column::remainder().at_least(200.0).clip(true));
+        table = table.column(Column::remainder().at_least(180.0).clip(true));
         if show_eco {
             table = table.column(Column::exact(64.0));
         }
         if show_moves {
-            table = table.column(Column::remainder().at_least(160.0).clip(true));
+            table = table.column(Column::remainder().at_least(140.0).clip(true));
         }
         table = table.column(Column::exact(56.0)).column(Column::exact(40.0));
         table = table.column(Column::exact(if show_bar { 110.0 } else { 50.0 }));
@@ -3002,7 +3461,7 @@ impl PrepScreen {
         table
             .header(ROW_H, |mut h| {
                 if both {
-                    head_col(&mut h, tr("Colour"), "");
+                    head_col(&mut h, "", "");
                 }
                 head_col(&mut h, tr("Opening"), "");
                 if show_eco {
@@ -3012,7 +3471,7 @@ impl PrepScreen {
                     head_col(&mut h, tr("First moves"), "");
                 }
                 head_col(&mut h, tr("Games"), "");
-                head_col(&mut h, "%", "");
+                head_col(&mut h, "%", tr("Share of the colour's games; a variation's — of its family's"));
                 head_col(&mut h, tr("Score"), tr("The opponent's points in these games"));
                 if show_last {
                     head_col(&mut h, tr("Last"), "");
@@ -3039,7 +3498,8 @@ impl PrepScreen {
                     if both {
                         row.col(|ui| {
                             if v.is_none() {
-                                ui.label(RichText::new(if white { tr("♙ White") } else { tr("♟ Black") }).weak());
+                                ui.label(RichText::new(if white { "♙" } else { "♟" }).weak())
+                                    .on_hover_text(if white { tr("As White") } else { tr("As Black") });
                             }
                         });
                     }
@@ -3101,9 +3561,10 @@ impl PrepScreen {
                                 None => family_line(report, fam),
                             };
                             if let Some(l) = line {
-                                let shown = crate::san::show_line(&shorten_middle(&l, 40));
-                                ui.add(egui::Label::new(RichText::new(shown).weak()).truncate())
-                                    .on_hover_text(crate::san::show_line(&l));
+                                let tokens = table_line(&l);
+                                let full = crate::san::show_line(&tokens.join(" "));
+                                let shown = fit_line(ui, &tokens, ui.available_width());
+                                ui.label(RichText::new(shown).weak()).on_hover_text(full);
                             }
                         });
                     }
@@ -3123,8 +3584,7 @@ impl PrepScreen {
                         let t = RichText::new(score_text(tally));
                         ui.label(if few { t.weak() } else { t }).on_hover_text(tally_hint(tally));
                         if show_bar {
-                            let (rect, _) = ui.allocate_exact_size(vec2(56.0, 14.0), Sense::hover());
-                            board_search::results_bar(ui, rect, &bar_tally(tally, white), ui.visuals().text_color());
+                            score_bar(ui, tally, white, few);
                         }
                     });
                     if show_last {
@@ -3141,7 +3601,7 @@ impl PrepScreen {
                     if show_errors {
                         row.col(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
-                            counts_text(ui, errors);
+                            counts_text(ui, &self.shown_counts(errors));
                         });
                     }
                     let resp = row.response();
@@ -3164,10 +3624,11 @@ impl PrepScreen {
 
     // ----- the errors ----------------------------------------------------------------
 
-    fn errors_tab(&mut self, ui: &mut Ui, settings: &Settings, actions: &mut Vec<PrepAction>) {
+    fn errors_tab(&mut self, ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<PrepAction>) {
         let Some(report) = self.report.as_ref() else { return };
         let moves = self.plies.div_ceil(2);
-        if report.engine.is_none() && self.job.is_none() {
+        let state = self.engine_state(settings);
+        if state == EngineState::NotRun {
             // The invitation (§5).
             let (positions, secs) = self.estimate(settings);
             let games: usize = self.color.colours().iter().map(|&w| report.color(w).games.len()).sum();
@@ -3185,7 +3646,7 @@ impl PrepScreen {
                         ("n", &moves),
                         ("games", &games),
                         ("colour", &colour),
-                        ("positions", &positions),
+                        ("positions", &grouped(positions)),
                         ("time", &review::format_duration(secs)),
                     ],
                 ));
@@ -3196,56 +3657,72 @@ impl PrepScreen {
             });
             return;
         }
-        let dark = ui.visuals().dark_mode;
         let (mut ask_engine, mut open_dialog) = (false, false);
-        // The state line and the summary per colour.
+        let mut inaccuracies = settings.prep.inaccuracies;
+        // The state line: how far the engine got; the switch of the inaccuracies.
         ui.horizontal_wrapped(|ui| {
-            match (&self.job, &report.engine) {
-                (Some(job), _) => {
-                    let left = job.total.saturating_sub(job.done);
-                    let per_thread = self.nps_per_thread.unwrap_or(review::DEFAULT_NPS);
-                    let secs = review::estimate_secs(left, job.nodes, per_thread, job.threads);
+            match state {
+                EngineState::Running => {
+                    if let Some(job) = &self.job {
+                        let left = job.total.saturating_sub(job.done);
+                        let per_thread = self.nps_per_thread.unwrap_or(review::DEFAULT_NPS);
+                        let secs = review::estimate_secs(left, job.nodes, per_thread, job.threads);
+                        ui.label(
+                            RichText::new(trf(
+                                "Checked {done} of {total} positions",
+                                &[("done", &grouped(job.done)), ("total", &grouped(job.total))],
+                            ))
+                            .weak(),
+                        );
+                        ui.label(RichText::new(format!("· ≈ {}", review::format_duration(secs))).weak());
+                    }
+                }
+                EngineState::Partial { done, total } => {
+                    let (_, secs) = self.estimate(settings);
                     ui.label(
                         RichText::new(trf(
                             "Checked {done} of {total} positions",
-                            &[("done", &job.done), ("total", &job.total)],
+                            &[("done", &grouped(done)), ("total", &grouped(total))],
                         ))
                         .weak(),
-                    );
-                    ui.label(RichText::new(format!("· ≈ {}", review::format_duration(secs))).weak());
+                    )
+                    .on_hover_text(tr("The counts are of the checked positions"));
+                    ui.label(RichText::new("·").weak());
+                    if ui
+                        .link(trf("Continue ≈ {time}", &[("time", &review::format_duration(secs))]))
+                        .clicked()
+                    {
+                        ask_engine = true;
+                    }
                 }
-                (None, Some(e)) => {
-                    let quality = REVIEW_QUALITY
-                        .iter()
-                        .find(|q| q.1 == e.nodes)
-                        .map_or_else(|| review::format_count(e.nodes), |q| tr(q.0).to_owned());
-                    ui.label(
-                        RichText::new(trf(
-                            "Errors found · {engine} · {quality} · {n} positions",
-                            &[("engine", &e.name), ("quality", &quality), ("n", &report.evals.len())],
-                        ))
-                        .weak(),
-                    );
-                    let (missing, secs) = self.estimate(settings);
-                    if missing > 0 {
-                        ui.label(RichText::new("·").weak());
-                        if ui
-                            .link(trf("Analyse {n} more positions ≈ {time}", &[("n", &missing), ("time", &review::format_duration(secs))]))
-                            .clicked()
-                        {
-                            ask_engine = true;
-                        }
+                EngineState::Complete { .. } => {
+                    if let Some(status) = self.engine_status(settings) {
+                        ui.label(RichText::new(status).weak());
                     }
                     if settings.prep.quality == 0 {
                         ui.label(RichText::new("·").weak());
-                        if ui.link(tr("More precisely…")).on_hover_text(tr("The same positions at «Normal» quality")).clicked() {
+                        if ui
+                            .link(tr("More precisely…"))
+                            .on_hover_text(tr("The same positions at «Normal» quality"))
+                            .clicked()
+                        {
                             open_dialog = true;
                         }
                     }
                 }
-                (None, None) => {}
+                EngineState::NotRun => {}
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.checkbox(&mut inaccuracies, tr("Inaccuracies"))
+                    .on_hover_text(tr("Show the inaccuracies (?!) with the mistakes and blunders"));
+            });
         });
+        if inaccuracies != settings.prep.inaccuracies {
+            settings.prep.inaccuracies = inaccuracies;
+            self.show_inaccuracies = inaccuracies;
+            self.rebuild_marks();
+            actions.push(PrepAction::SettingsChanged);
+        }
         if ask_engine {
             self.engine_asked(settings, ui.ctx(), actions);
             return;
@@ -3254,32 +3731,20 @@ impl PrepScreen {
             self.dialog_open = true;
         }
         let Some(report) = self.report.as_ref() else { return };
-        for white in self.color.colours() {
-            let cr = report.color(white);
-            let games_with: HashSet<u32> = cr.errors.iter().map(|e| e.game).collect();
-            let c = &cr.counts;
-            let title = if white { tr("As White") } else { tr("As Black") };
-            let p = 100 * games_with.len() / cr.games.len().max(1);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(format!("{title}:")).strong());
-                let text = trf(
-                    "{i} inaccuracies · {m} mistakes · {b} blunders — in {g} games of {t} ({p} %)",
-                    &[
-                        ("i", &c.inaccuracies),
-                        ("m", &c.mistakes),
-                        ("b", &c.blunders),
-                        ("g", &games_with.len()),
-                        ("t", &cr.games.len()),
-                        ("p", &p),
-                    ],
-                );
-                let l = ui.label(text);
-                if self.job.is_some() {
-                    l.on_hover_text(tr("of the checked positions"));
-                }
-            });
+        // The lines per colour: in the stack only (beside the board the summary has them).
+        if self.stacked {
+            for white in self.color.colours() {
+                let cr = report.color(white);
+                let with: HashSet<u32> = cr.errors.iter().filter(|e| self.visible(e.judgement)).map(|e| e.game).collect();
+                let p = 100 * with.len() / cr.games.len().max(1);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.label(RichText::new(if white { tr("As White") } else { tr("As Black") }).strong());
+                    counts_text(ui, &self.shown_counts(&cr.counts));
+                    ui.label(RichText::new(trf("in {p} % of games", &[("p", &p)])).weak());
+                });
+            }
         }
-        let total_errors: u32 = self.color.colours().iter().map(|&w| report.color(w).counts.total()).sum();
         let serious: u32 = self
             .color
             .colours()
@@ -3289,274 +3754,472 @@ impl PrepScreen {
                 c.mistakes + c.blunders
             })
             .sum();
-        if self.job.is_none() && serious == 0 {
+        let inacc: u32 = self.color.colours().iter().map(|&w| report.color(w).counts.inaccuracies).sum();
+        if matches!(state, EngineState::Complete { .. }) && serious == 0 {
+            let mut deeper = false;
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(trf("No errors in the first {n} moves ({i} inaccuracies).", &[("n", &moves), ("i", &(total_errors - serious))]));
+                ui.label(trf("No errors in the first {n} moves ({i} inaccuracies).", &[("n", &moves), ("i", &inacc)]));
                 if self.plies < 30 && ui.link(trf("Deeper: {n} moves", &[("n", &15)])).clicked() {
-                    // The depth picker's choice, as if chosen there.
-                    self.plies = 30;
-                    self.report = None;
-                    self.rebuild(ui.ctx());
-                    actions.push(PrepAction::SettingsChanged);
+                    deeper = true;
                 }
             });
-            if total_errors == 0 {
+            if deeper {
+                // As if chosen in the depth list.
+                self.set_plies(30, settings, ui.ctx());
+                actions.push(PrepAction::SettingsChanged);
                 return;
             }
         }
-        ui.add_space(6.0);
-        let both = self.color == ColorChoice::Both;
-        egui::ScrollArea::vertical()
-            .id_salt("prep_errors")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.style_mut().interaction.selectable_labels = false;
-                self.repeated_list(ui, both, dark, actions);
-                ui.add_space(10.0);
-                self.by_opening_list(ui, both, dark, actions);
-            });
+        ui.add_space(4.0);
+        self.errors_table(ui, actions);
     }
 
-    /// «Repeated errors — the same position, the same move».
-    fn repeated_list(&mut self, ui: &mut Ui, both: bool, dark: bool, actions: &mut Vec<PrepAction>) {
-        let Some(report) = self.report.as_ref() else { return };
-        let mut list: Vec<(bool, usize)> = Vec::new();
-        for white in self.color.colours() {
-            for i in 0..report.color(white).repeated.len() {
-                list.push((white, i));
+    /// The repeated errors (the same position and move in several games) and the
+    /// errors by opening (the variations, the worst first), the inaccuracies left out
+    /// when they are hidden.
+    fn repeated_shown(&self) -> Vec<(bool, usize)> {
+        let Some(report) = &self.report else {
+            return Vec::new();
+        };
+        let mut list: Vec<(bool, usize)> = self
+            .color
+            .colours()
+            .into_iter()
+            .flat_map(|w| {
+                report
+                    .color(w)
+                    .repeated
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| self.visible(r.judgement))
+                    .map(move |(i, _)| (w, i))
+            })
+            .collect();
+        list.sort_by(|a, b| {
+            let ra = &report.color(a.0).repeated[a.1];
+            let rb = &report.color(b.0).repeated[b.1];
+            rb.games
+                .len()
+                .cmp(&ra.games.len())
+                .then(judgement_weight(rb.judgement).cmp(&judgement_weight(ra.judgement)))
+        });
+        list
+    }
+
+    /// The games of a repeated error, the newest first.
+    fn repeated_games(&self, white: bool, index: usize) -> Vec<u32> {
+        let Some(report) = &self.report else {
+            return Vec::new();
+        };
+        let mut games = report.color(white).repeated[index].games.clone();
+        games.sort_by_key(|&g| std::cmp::Reverse(report.games[g as usize].date_number()));
+        games
+    }
+
+    fn err_rows(&self) -> Vec<ErrRow> {
+        let Some(report) = &self.report else {
+            return Vec::new();
+        };
+        let mut rows = vec![ErrRow::RepeatedTitle];
+        for (white, index) in self.repeated_shown() {
+            rows.push(ErrRow::Repeated { white, index });
+            if self.open_repeated.contains(&(white, index)) {
+                for game in self.repeated_games(white, index) {
+                    rows.push(ErrRow::RepeatedGame { white, index, game });
+                }
             }
         }
-        if both {
-            list.sort_by(|a, b| {
-                let ra = &report.color(a.0).repeated[a.1];
-                let rb = &report.color(b.0).repeated[b.1];
-                rb.games.len().cmp(&ra.games.len()).then(judgement_weight(rb.judgement).cmp(&judgement_weight(ra.judgement)))
-            });
-        }
-        ui.label(RichText::new(tr("Repeated errors — the same position, the same move")).strong());
-        if list.is_empty() {
-            ui.label(RichText::new(tr("None so far")).weak());
-            return;
-        }
-        let width = ui.available_width();
-        let show_opening = width > 700.0;
-        let show_score = width > 560.0;
-        let mut clicked = None;
-        let mut opened = None;
-        let mut toggled = None;
-        egui::Grid::new("prep_repeated")
-            .num_columns(5 + usize::from(show_score) + usize::from(show_opening) + usize::from(both))
-            .striped(true)
-            .spacing(vec2(10.0, 4.0))
-            .show(ui, |ui| {
-                let head = |ui: &mut Ui, t: &str| {
-                    ui.label(RichText::new(t).strong());
-                };
-                head(ui, "");
-                if both {
-                    head(ui, tr("Colour"));
-                }
-                head(ui, tr("Position"));
-                head(ui, tr("Played"));
-                head(ui, tr("Better"));
-                head(ui, "×");
-                if show_score {
-                    head(ui, tr("Score"));
-                }
-                if show_opening {
-                    head(ui, tr("Opening"));
-                }
-                ui.end_row();
-                for &(white, i) in &list {
-                    let cr = report.color(white);
-                    let r = &cr.repeated[i];
-                    let selected = self.selection == Selection::Repeated { white, index: i };
-                    let open = self.open_repeated.contains(&(white, i));
-                    let g = &report.games[r.games[0] as usize];
-                    let glyph = if open { "▾" } else { "▸" };
-                    if ui.add(egui::Label::new(RichText::new(glyph).weak()).sense(Sense::click())).clicked() {
-                        toggled = Some((white, i));
-                    }
-                    if both {
-                        ui.label(RichText::new(if white { tr("♙ White") } else { tr("♟ Black") }).weak());
-                    }
-                    let before = (r.ply as usize)
-                        .checked_sub(1)
-                        .map(|p| short_label(p, &g.sans[p]))
-                        .map_or_else(|| tr("start").to_owned(), |m| trf("after {move}", &[("move", &m)]));
-                    let side = if r.ply.is_multiple_of(2) { tr("White to move") } else { tr("Black to move") };
-                    let pos_text = format!("{before} · {side}");
-                    let t = RichText::new(pos_text);
-                    let resp = ui.add(egui::Label::new(if selected { t.strong() } else { t }).sense(Sense::click()));
-                    if resp.clicked() {
-                        clicked = Some((white, i));
-                    }
-                    if resp.double_clicked() {
-                        opened = Some((r.games[0], r.ply as usize));
-                    }
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(short_label(r.ply as usize, &r.san));
-                        pill(ui, r.judgement).on_hover_text(review::judgement_name(r.judgement));
-                    });
-                    ui.label(short_label(r.ply as usize, &r.best_san));
-                    ui.label(r.times().to_string());
-                    if show_score {
-                        ui.label(RichText::new(tally_hint(&r.tally)).weak());
-                    }
-                    if show_opening {
-                        let name = r.opening.and_then(|o| report.openings.get(o)).map(|o| format!("{} · {}", o.name, o.eco)).unwrap_or_default();
-                        ui.label(RichText::new(name).weak());
-                    }
-                    ui.end_row();
-                    if open {
-                        for &gi in &r.games {
-                            let g = &report.games[gi as usize];
-                            let row = &self.rows[gi as usize];
-                            ui.label("");
-                            if both {
-                                ui.label("");
-                            }
-                            let text = format!("{} — {}", row.white, row.black);
-                            let resp = ui.add(egui::Label::new(RichText::new(text).weak()).sense(Sense::click()).truncate());
-                            if resp.double_clicked() {
-                                opened = Some((gi, r.ply as usize));
-                            }
-                            ui.label(RichText::new(result_text(row.result)).weak());
-                            ui.label(RichText::new(crate::library::display_date(&g.date)).weak());
-                            ui.end_row();
-                        }
-                    }
-                }
-            });
-        let _ = dark;
-        let opened = opened.map(|(gi, ply)| (report.games[gi as usize].index as usize, ply));
-        if let Some(k) = toggled
-            && !self.open_repeated.remove(&k)
-        {
-            self.open_repeated.insert(k);
-        }
-        if let Some((white, index)) = clicked {
-            self.focus_games = false;
-            self.select(Selection::Repeated { white, index });
-        }
-        if let Some((index, ply)) = opened {
-            actions.push(PrepAction::OpenGame {
-                path: self.path.clone(),
-                index,
-                ply,
-            });
-        }
-    }
-
-    /// «By opening»: the variations with errors, the worst first, their errors by game.
-    fn by_opening_list(&mut self, ui: &mut Ui, both: bool, dark: bool, actions: &mut Vec<PrepAction>) {
-        let Some(report) = self.report.as_ref() else { return };
-        ui.label(RichText::new(tr("By opening")).strong());
+        rows.push(ErrRow::OpeningsTitle);
         // (white, family, variation, weight)
         let mut vars: Vec<(bool, usize, usize, u32)> = Vec::new();
         for white in self.color.colours() {
             let cr = report.color(white);
             for (f, fam) in cr.families.iter().enumerate() {
                 for (v, var) in fam.variations.iter().enumerate() {
-                    if var.errors.total() == 0 {
-                        continue;
+                    let weight: u32 = var
+                        .error_list
+                        .iter()
+                        .map(|&e| cr.errors[e as usize].judgement)
+                        .filter(|j| self.visible(*j))
+                        .map(judgement_weight)
+                        .sum();
+                    if weight > 0 {
+                        vars.push((white, f, v, weight));
                     }
-                    let weight = var.error_list.iter().map(|&e| judgement_weight(cr.errors[e as usize].judgement)).sum();
-                    vars.push((white, f, v, weight));
                 }
             }
         }
         vars.sort_by_key(|v| std::cmp::Reverse(v.3));
-        if vars.is_empty() {
-            ui.label(RichText::new(tr("None so far")).weak());
-            return;
-        }
-        let mut clicked = None;
-        let mut opened = None;
-        let mut toggled = None;
-        for (white, f, v, _) in vars {
-            let cr = report.color(white);
-            let var = &cr.families[f].variations[v];
-            let name = var
-                .opening
-                .and_then(|o| report.openings.get(o))
-                .map_or_else(|| tr("no name").to_owned(), |o| format!("{} · {}", o.name, o.eco));
-            let open = self.open_families.contains(&(white, f * 1000 + v + 100_000));
-            ui.horizontal(|ui| {
-                let glyph = if open { "▾" } else { "▸" };
-                if ui.add(egui::Label::new(RichText::new(glyph).weak()).sense(Sense::click())).clicked() {
-                    toggled = Some((white, f * 1000 + v + 100_000));
-                }
-                if both {
-                    ui.label(RichText::new(if white { "♙" } else { "♟" }).weak());
-                }
-                let selected = self.selection == Selection::Opening { white, family: f, variation: Some(v) };
-                let t = RichText::new(name);
-                let resp = ui.add(egui::Label::new(if selected { t.strong() } else { t }).sense(Sense::click()).truncate());
-                if resp.clicked() {
-                    clicked = Some(Selection::Opening { white, family: f, variation: Some(v) });
-                }
-                if resp.double_clicked() {
-                    toggled = Some((white, f * 1000 + v + 100_000));
-                }
-                ui.label(RichText::new(format!("· {}", crate::i18n::games(var.games.len()))).weak());
-                ui.label(RichText::new("·").weak());
-                ui.spacing_mut().item_spacing.x = 4.0;
-                counts_text(ui, &var.errors);
-            });
-            if open {
-                for &ei in &var.error_list {
-                    let e = &cr.errors[ei as usize];
-                    let g = &report.games[e.game as usize];
-                    let row = &self.rows[e.game as usize];
-                    let selected = self.selection == Selection::Error { white, index: ei as usize };
-                    ui.horizontal(|ui| {
-                        ui.add_space(24.0);
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        let t = RichText::new(short_label(e.ply as usize, &e.san));
-                        let resp = ui.add(egui::Label::new(if selected { t.strong() } else { t }).sense(Sense::click()));
-                        pill(ui, e.judgement).on_hover_text(format!(
-                            "{} · {} → {}",
-                            review::judgement_name(e.judgement),
-                            e.before.format(),
-                            e.after.format()
-                        ));
-                        ui.add_space(6.0);
-                        ui.label(RichText::new(trf("better {best}", &[("best", &crate::san::show(&e.best_san))])).weak());
-                        ui.add_space(8.0);
-                        let names = format!("{} — {}", row.white, row.black);
-                        let r2 = ui.add(egui::Label::new(RichText::new(names).weak()).sense(Sense::click()).truncate());
-                        ui.label(RichText::new(result_text(row.result)).weak());
-                        ui.label(RichText::new(crate::library::display_date(&g.date)).weak());
-                        if resp.clicked() || r2.clicked() {
-                            clicked = Some(Selection::Error { white, index: ei as usize });
-                        }
-                        if resp.double_clicked() || r2.double_clicked() {
-                            opened = Some((e.game, e.ply as usize));
-                        }
-                    });
+        for (white, family, variation, _) in vars {
+            rows.push(ErrRow::Variation { white, family, variation });
+            if self.open_variations.contains(&(white, family, variation)) {
+                let cr = report.color(white);
+                for &e in &cr.families[family].variations[variation].error_list {
+                    if self.visible(cr.errors[e as usize].judgement) {
+                        rows.push(ErrRow::Error { white, index: e as usize });
+                    }
                 }
             }
         }
-        let _ = dark;
-        let opened = opened.map(|(gi, ply)| (report.games[gi as usize].index as usize, ply));
-        if let Some(k) = toggled
-            && !self.open_families.remove(&k)
+        rows
+    }
+
+    /// The error of a repeated error in one of its games.
+    fn error_in(&self, white: bool, index: usize, game: u32) -> Option<usize> {
+        let cr = self.report.as_ref()?.color(white);
+        let r = cr.repeated.get(index)?;
+        cr.errors
+            .iter()
+            .position(|e| e.game == game && e.key == r.key && e.uci == r.uci)
+    }
+
+    /// What a row of the errors tab chooses.
+    fn err_select(&mut self, row: ErrRow) {
+        self.err_cursor = Some(row);
+        self.focus_games = false;
+        let sel = match row {
+            ErrRow::Repeated { white, index } => Selection::Repeated { white, index },
+            ErrRow::RepeatedGame { white, index, game } => match self.error_in(white, index, game) {
+                Some(e) => Selection::Error { white, index: e },
+                None => return,
+            },
+            ErrRow::Variation { white, family, variation } => Selection::Opening {
+                white,
+                family,
+                variation: Some(variation),
+            },
+            ErrRow::Error { white, index } => Selection::Error { white, index },
+            ErrRow::RepeatedTitle | ErrRow::OpeningsTitle => return,
+        };
+        self.select(sel);
+    }
+
+    /// The game a row opens, at the move after the error: (record, ply). A repeated
+    /// error opens its newest game.
+    fn err_open(&self, row: ErrRow) -> Option<(usize, usize)> {
+        let report = self.report.as_ref()?;
+        let (white, e) = match row {
+            ErrRow::Repeated { white, index } => {
+                let game = *self.repeated_games(white, index).first()?;
+                (white, self.error_in(white, index, game)?)
+            }
+            ErrRow::RepeatedGame { white, index, game } => (white, self.error_in(white, index, game)?),
+            ErrRow::Error { white, index } => (white, index),
+            _ => return None,
+        };
+        let e = report.color(white).errors.get(e)?;
+        Some((report.games[e.game as usize].index as usize, e.ply as usize + 1))
+    }
+
+    fn err_toggle(&mut self, row: ErrRow) {
+        match row {
+            ErrRow::Repeated { white, index } => {
+                if !self.open_repeated.remove(&(white, index)) {
+                    self.open_repeated.insert((white, index));
+                }
+            }
+            ErrRow::Variation { white, family, variation } => {
+                let k = (white, family, variation);
+                if !self.open_variations.remove(&k) {
+                    self.open_variations.insert(k);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The errors tab as one table: the repeated errors, then by opening; a click
+    /// chooses, a double click (Enter) opens the game at the error.
+    fn errors_table(&mut self, ui: &mut Ui, actions: &mut Vec<PrepAction>) {
+        let rows = self.err_rows();
+        let Some(report) = self.report.as_ref() else { return };
+        let both = self.color == ColorChoice::Both;
+        let width = ui.available_width();
+        let show_last = width > 640.0;
+        let cursor = self.err_cursor.and_then(|c| rows.iter().position(|r| *r == c));
+        ui.style_mut().interaction.selectable_labels = false;
+        let mut table = TableBuilder::new(ui)
+            .id_salt("prep_errors")
+            .striped(true)
+            .sense(Sense::click())
+            .auto_shrink([false, false])
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::remainder().at_least(180.0).clip(true))
+            .column(Column::exact(110.0))
+            .column(Column::exact(80.0))
+            .column(Column::exact(70.0))
+            .column(Column::exact(120.0).clip(true));
+        if show_last {
+            table = table.column(Column::exact((width * 0.24).clamp(120.0, 260.0)).clip(true));
+        }
+        if self.scroll_to_selected
+            && let Some(i) = cursor
         {
-            self.open_families.insert(k);
+            table = table.scroll_to_row(i, None);
         }
-        if let Some(sel) = clicked {
-            self.focus_games = false;
-            self.select(sel);
+        self.scroll_to_selected = false;
+        let mut clicked = None;
+        let mut toggled = None;
+        let mut opened = None;
+        let colour_icon = |ui: &mut Ui, white: bool| {
+            if both {
+                ui.label(RichText::new(if white { "♙" } else { "♟" }).weak())
+                    .on_hover_text(if white { tr("As White") } else { tr("As Black") });
+            }
+        };
+        let repeated_n = rows.iter().filter(|r| matches!(r, ErrRow::Repeated { .. })).count();
+        let openings_n = rows.iter().filter(|r| matches!(r, ErrRow::Variation { .. })).count();
+        table.body(|body| {
+            body.rows(ROW_H, rows.len(), |mut row| {
+                let r = rows[row.index()];
+                row.set_selected(Some(row.index()) == cursor);
+                let weak = |t: &str| RichText::new(t).weak();
+                match r {
+                    ErrRow::RepeatedTitle | ErrRow::OpeningsTitle => {
+                        let repeated = r == ErrRow::RepeatedTitle;
+                        let (title, empty) = if repeated {
+                            (tr("Repeated errors — the same position, the same move"), repeated_n == 0)
+                        } else {
+                            (tr("By opening"), openings_n == 0)
+                        };
+                        row.col(|ui| {
+                            ui.label(RichText::new(title).strong());
+                            if empty {
+                                ui.label(weak(tr("none")));
+                            }
+                        });
+                        let captions: [&str; 5] = if repeated {
+                            [tr("Played"), tr("Better"), "×", tr("Score"), tr("Opening")]
+                        } else {
+                            [tr("Played"), tr("Better"), tr("Games"), tr("Errors"), tr("Date")]
+                        };
+                        for (k, c) in captions.iter().enumerate() {
+                            if k < 4 || show_last {
+                                row.col(|ui| {
+                                    ui.label(weak(c));
+                                });
+                            }
+                        }
+                    }
+                    ErrRow::Repeated { white, index } => {
+                        let cr = report.color(white);
+                        let rep = &cr.repeated[index];
+                        let g = &report.games[rep.games[0] as usize];
+                        let open = self.open_repeated.contains(&(white, index));
+                        row.col(|ui| {
+                            if ui.add(egui::Label::new(weak(if open { "▾" } else { "▸" })).sense(Sense::click())).clicked() {
+                                toggled = Some(r);
+                            }
+                            colour_icon(ui, white);
+                            let before = (rep.ply as usize)
+                                .checked_sub(1)
+                                .map(|p| short_label(p, &g.sans[p]))
+                                .map_or_else(|| tr("start").to_owned(), |m| trf("after {move}", &[("move", &m)]));
+                            let side = if rep.ply.is_multiple_of(2) { tr("White to move") } else { tr("Black to move") };
+                            ui.add(egui::Label::new(format!("{before} · {side}")).truncate());
+                        });
+                        row.col(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.label(short_label(rep.ply as usize, &rep.san));
+                            pill(ui, rep.judgement).on_hover_text(review::judgement_name(rep.judgement));
+                        });
+                        row.col(|ui| {
+                            ui.label(short_label(rep.ply as usize, &rep.best_san));
+                        });
+                        row.col(|ui| {
+                            ui.label(rep.times().to_string());
+                        });
+                        row.col(|ui| {
+                            ui.label(weak(&tally_hint(&rep.tally)));
+                        });
+                        if show_last {
+                            row.col(|ui| {
+                                let name = rep
+                                    .opening
+                                    .and_then(|o| report.openings.get(o))
+                                    .map(|o| format!("{} · {}", o.name, o.eco))
+                                    .unwrap_or_default();
+                                ui.add(egui::Label::new(weak(&name)).truncate()).on_hover_text(name);
+                            });
+                        }
+                    }
+                    ErrRow::RepeatedGame { white, index, game } => {
+                        let g = &report.games[game as usize];
+                        let lr = &self.rows[game as usize];
+                        let _ = (white, index);
+                        row.col(|ui| {
+                            ui.add_space(28.0);
+                            ui.add(egui::Label::new(format!("{} — {}", lr.white, lr.black)).truncate());
+                        });
+                        row.col(|_| {});
+                        row.col(|_| {});
+                        row.col(|_| {});
+                        row.col(|ui| {
+                            ui.label(result_text(lr.result));
+                        });
+                        if show_last {
+                            row.col(|ui| {
+                                ui.label(weak(&crate::library::display_date(&g.date)));
+                            });
+                        }
+                    }
+                    ErrRow::Variation { white, family, variation } => {
+                        let cr = report.color(white);
+                        let var = &cr.families[family].variations[variation];
+                        let open = self.open_variations.contains(&(white, family, variation));
+                        let mut counts = ErrorCounts::default();
+                        for &e in &var.error_list {
+                            counts.add(cr.errors[e as usize].judgement);
+                        }
+                        row.col(|ui| {
+                            if ui.add(egui::Label::new(weak(if open { "▾" } else { "▸" })).sense(Sense::click())).clicked() {
+                                toggled = Some(r);
+                            }
+                            colour_icon(ui, white);
+                            let name = var
+                                .opening
+                                .and_then(|o| report.openings.get(o))
+                                .map_or_else(|| tr("no name").to_owned(), |o| format!("{} · {}", o.name, o.eco));
+                            ui.add(egui::Label::new(name.as_str()).truncate()).on_hover_text(name);
+                        });
+                        row.col(|_| {});
+                        row.col(|_| {});
+                        row.col(|ui| {
+                            ui.label(weak(&var.games.len().to_string()));
+                        });
+                        row.col(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            counts_text(ui, &self.shown_counts(&counts));
+                        });
+                        if show_last {
+                            row.col(|_| {});
+                        }
+                    }
+                    ErrRow::Error { white, index } => {
+                        let e = &report.color(white).errors[index];
+                        let g = &report.games[e.game as usize];
+                        let lr = &self.rows[e.game as usize];
+                        row.col(|ui| {
+                            ui.add_space(28.0);
+                            ui.add(egui::Label::new(format!("{} — {}", lr.white, lr.black)).truncate());
+                        });
+                        row.col(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.label(short_label(e.ply as usize, &e.san));
+                            pill(ui, e.judgement).on_hover_text(format!(
+                                "{} · {} → {}",
+                                review::judgement_name(e.judgement),
+                                e.before.format(),
+                                e.after.format()
+                            ));
+                        });
+                        row.col(|ui| {
+                            ui.label(short_label(e.ply as usize, &e.best_san));
+                        });
+                        row.col(|_| {});
+                        row.col(|ui| {
+                            ui.label(result_text(lr.result));
+                        });
+                        if show_last {
+                            row.col(|ui| {
+                                ui.label(weak(&crate::library::display_date(&g.date)));
+                            });
+                        }
+                    }
+                }
+                if !r.is_title() {
+                    let resp = row.response();
+                    if resp.double_clicked() {
+                        match r {
+                            ErrRow::Repeated { .. } | ErrRow::Variation { .. } => toggled = Some(r),
+                            _ => opened = Some(r),
+                        }
+                        clicked = Some(r);
+                    } else if resp.clicked() {
+                        clicked = Some(r);
+                    }
+                }
+            });
+        });
+        if let Some(r) = toggled {
+            self.err_toggle(r);
         }
-        if let Some((index, ply)) = opened {
+        if let Some(r) = clicked {
+            self.err_select(r);
+        }
+        if let Some((index, ply)) = opened.and_then(|r| self.err_open(r)) {
             actions.push(PrepAction::OpenGame {
                 path: self.path.clone(),
                 index,
                 ply,
             });
+        }
+    }
+
+    /// The keyboard in the errors tab: ↑/↓ the rows, →/← open and close, Enter the game.
+    #[allow(clippy::too_many_arguments)]
+    fn errors_keys(&mut self, up: bool, down: bool, left: bool, right: bool, enter: bool, space: bool, home: bool, end: bool, actions: &mut Vec<PrepAction>) {
+        let rows: Vec<ErrRow> = self.err_rows().into_iter().filter(|r| !r.is_title()).collect();
+        if rows.is_empty() {
+            return;
+        }
+        let at = self.err_cursor.and_then(|c| rows.iter().position(|r| *r == c));
+        let Some(at) = at else {
+            if up || down || home || end {
+                self.err_select(rows[0]);
+                self.scroll_to_selected = true;
+            }
+            return;
+        };
+        let r = rows[at];
+        let next = if down {
+            Some((at + 1).min(rows.len() - 1))
+        } else if up {
+            Some(at.saturating_sub(1))
+        } else if home {
+            Some(0)
+        } else if end {
+            Some(rows.len() - 1)
+        } else {
+            None
+        };
+        if let Some(i) = next {
+            self.err_select(rows[i]);
+            self.scroll_to_selected = true;
+            return;
+        }
+        let open = match r {
+            ErrRow::Repeated { white, index } => Some(self.open_repeated.contains(&(white, index))),
+            ErrRow::Variation { white, family, variation } => {
+                Some(self.open_variations.contains(&(white, family, variation)))
+            }
+            _ => None,
+        };
+        if (right && open == Some(false)) || (left && open == Some(true)) || (space && open.is_some()) {
+            self.err_toggle(r);
+        } else if left {
+            // A game or an error row: to the row it is under.
+            if let Some(parent) = rows[..at]
+                .iter()
+                .rev()
+                .find(|p| matches!(p, ErrRow::Repeated { .. } | ErrRow::Variation { .. }))
+            {
+                self.err_select(*parent);
+                self.scroll_to_selected = true;
+            }
+        } else if enter {
+            match self.err_open(r) {
+                Some((index, ply)) => actions.push(PrepAction::OpenGame {
+                    path: self.path.clone(),
+                    index,
+                    ply,
+                }),
+                None => {
+                    self.focus_games = true;
+                    self.games_cursor = Some(0);
+                }
+            }
         }
     }
 
@@ -3595,7 +4258,7 @@ impl PrepScreen {
         ui.horizontal(|ui| {
             ui.label(RichText::new(title).strong());
             if self.selection != Selection::None
-                && ui.small_button("🗙").on_hover_text(tr("All games")).clicked()
+                && crate::widgets::small_close_button(ui).on_hover_text(tr("All games")).clicked()
             {
                 clear = true;
             }
@@ -3607,26 +4270,44 @@ impl PrepScreen {
         if list.is_empty() {
             return;
         }
-        let ply = self.selection_ply();
         let width = ui.available_width();
-        let show_event = width > 820.0;
-        let show_then = width > 600.0;
-        let show_date = width > 480.0;
-        let show_elo = width > 400.0;
-        let show_errors = report.engine.is_some() && width > 540.0;
-        let columns = 3 + 2 * usize::from(show_elo) + usize::from(show_date) + usize::from(show_then) + usize::from(show_event) + usize::from(show_errors);
-        let fixed = 44.0
-            + if show_elo { 88.0 } else { 0.0 }
-            + if show_date { 84.0 } else { 0.0 }
-            + if show_errors { 80.0 } else { 0.0 }
-            + match (show_then, show_event) {
-                (true, true) => 150.0,
-                (true, false) => 100.0,
-                _ => 0.0,
+        // The names first (at least 110 each): the event, «Then», the ratings (they go
+        // into the name cell), the errors and the date give way in turn.
+        let mut show_event = true;
+        let mut show_then = true;
+        let mut show_elo = true;
+        let mut show_errors = report.evaluated();
+        let mut show_date = true;
+        let gap = ui.spacing().item_spacing.x;
+        let player_w_of = |event: bool, then: bool, elo: bool, errors: bool, date: bool| -> f32 {
+            let columns = 3 + 2 * usize::from(elo) + usize::from(date) + usize::from(then) + usize::from(event) + usize::from(errors);
+            let fixed = 44.0
+                + if elo { 88.0 } else { 0.0 }
+                + if date { 84.0 } else { 0.0 }
+                + if errors { 80.0 } else { 0.0 }
+                + match (then, event) {
+                    (true, true) => 150.0,
+                    (true, false) => 100.0,
+                    _ => 0.0,
+                }
+                + if event { 100.0 } else { 0.0 }
+                + gap * columns as f32;
+            (width - fixed) / 2.0
+        };
+        for drop in 0..5 {
+            if player_w_of(show_event, show_then, show_elo, show_errors, show_date) >= 110.0 {
+                break;
             }
-            + if show_event { 100.0 } else { 0.0 }
-            + ui.spacing().item_spacing.x * columns as f32;
-        let player_w = ((width - fixed) / 2.0).clamp(60.0, 170.0);
+            match drop {
+                0 => show_event = false,
+                1 => show_then = false,
+                2 => show_elo = false,
+                3 => show_errors = false,
+                _ => show_date = false,
+            }
+        }
+        let player_w = player_w_of(show_event, show_then, show_elo, show_errors, show_date).clamp(60.0, 170.0);
+        let plies: HashMap<u32, usize> = list.iter().map(|&g| (g, self.game_ply(g))).collect();
         ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
             .id_salt("prep_games_table")
@@ -3716,13 +4397,21 @@ impl PrepScreen {
                         ui.add(egui::Label::new(if player_names.contains(n) { t.strong() } else { t }).truncate());
                     };
                     let elo = |e: u16| if e > 0 { e.to_string() } else { String::new() };
-                    row.col(|ui| name(ui, &r.white));
+                    let ply = plies.get(&gi).copied().unwrap_or(0);
+                    // Without their column the ratings go after the names, weak.
+                    let name = |ui: &mut Ui, n: &str, e: u16| {
+                        name(ui, n);
+                        if !show_elo && e > 0 {
+                            ui.label(RichText::new(e.to_string()).weak().small());
+                        }
+                    };
+                    row.col(|ui| name(ui, &r.white, r.white_elo));
                     if show_elo {
                         row.col(|ui| {
                             ui.label(RichText::new(elo(r.white_elo)).weak());
                         });
                     }
-                    row.col(|ui| name(ui, &r.black));
+                    row.col(|ui| name(ui, &r.black, r.black_elo));
                     if show_elo {
                         row.col(|ui| {
                             ui.label(RichText::new(elo(r.black_elo)).weak());
@@ -3761,7 +4450,7 @@ impl PrepScreen {
                         row.col(|ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
                             let cr = report.color(g.white);
-                            for e in cr.errors.iter().filter(|e| e.game == gi) {
+                            for e in cr.errors.iter().filter(|e| e.game == gi && self.visible(e.judgement)) {
                                 let number = e.ply as usize / 2 + 1;
                                 ui.label(RichText::new(format!("{number}.")).small());
                                 pill(ui, e.judgement).on_hover_text(format!(
@@ -3793,6 +4482,7 @@ impl PrepScreen {
             && s.ply + 1 == s.positions.len()
         {
             let g = &report.games[gi as usize];
+            let ply = plies.get(&gi).copied().unwrap_or(0);
             if let Some(m) = g.ucis.get(ply).and_then(|u| u.parse::<UciMove>().ok()).and_then(|u| u.to_move(&s.positions[s.ply]).ok()) {
                 self.hover_arrow = m.from().map(|f| (f, crate::board::ui_target(&m)));
             }
@@ -3805,7 +4495,7 @@ impl PrepScreen {
             actions.push(PrepAction::OpenGame {
                 path: self.path.clone(),
                 index: report.games[gi as usize].index as usize,
-                ply,
+                ply: self.open_ply(gi),
             });
         }
     }
@@ -3918,7 +4608,7 @@ impl PrepScreen {
                 actions.push(PrepAction::OpenGame {
                     path: self.path.clone(),
                     index: r.games[list[next] as usize].index as usize,
-                    ply: self.selection_ply(),
+                    ply: self.open_ply(list[next]),
                 });
             }
             return;
@@ -3926,28 +4616,7 @@ impl PrepScreen {
         match self.tab {
             Tab::Repertoire => self.tree_keys(up, down, left, right, enter, space, home, end),
             Tab::Openings => self.openings_keys(up, down, left, right, enter, space, home, end),
-            Tab::Errors => {
-                if enter && let Some(r) = &self.report {
-                    let open = match &self.selection {
-                        Selection::Repeated { white, index } => {
-                            let rep = &r.color(*white).repeated[*index];
-                            Some((rep.games[0], rep.ply as usize))
-                        }
-                        Selection::Error { white, index } => {
-                            let e = &r.color(*white).errors[*index];
-                            Some((e.game, e.ply as usize))
-                        }
-                        _ => None,
-                    };
-                    if let Some((gi, ply)) = open {
-                        actions.push(PrepAction::OpenGame {
-                            path: self.path.clone(),
-                            index: r.games[gi as usize].index as usize,
-                            ply,
-                        });
-                    }
-                }
-            }
+            Tab::Errors => self.errors_keys(up, down, left, right, enter, space, home, end, actions),
         }
     }
 
@@ -4218,8 +4887,8 @@ mod tests {
         assert_eq!(short_label(4, "Bb5"), "3.Bb5");
         let sans: Vec<String> = ["e4", "c5", "Nf3"].iter().map(|s| (*s).to_owned()).collect();
         assert_eq!(line_text(&sans), "1.e4 c5 2.Nf3");
-        assert_eq!(shorten_middle("1. e4 c5 2. Nf3", 100), "1. e4 c5 2. Nf3");
-        assert_eq!(shorten_middle("abcdefghij", 7), "abc…hij");
+        assert_eq!(table_line("1. e4 c5 2. Nf3 Nc6 3. Bb5"), vec!["1.e4", "c5", "2.Nf3", "Nc6", "3.Bb5"]);
+        assert_eq!(table_line("1... e5"), vec!["1…e5"]);
         let ucis: Vec<String> = ["e2e4", "c7c5", "g1f3"].iter().map(|s| (*s).to_owned()).collect();
         assert_eq!(replay(&ucis).len(), 4);
         assert_eq!(replay(&["zz".to_owned()]).len(), 1);

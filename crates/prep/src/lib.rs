@@ -138,7 +138,7 @@ pub struct BookInfo {
     pub left: u32,
 }
 
-const REPORT_VERSION: u32 = 2;
+const REPORT_VERSION: u32 = 3;
 
 /// Everything the preparation knows about the player.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -398,6 +398,12 @@ impl PrepReport {
             }
         }
         out
+    }
+
+    /// Some position has an engine evaluation (from a run or from the cache): the
+    /// errors are judged.
+    pub fn evaluated(&self) -> bool {
+        self.evals.values().any(|e| e.nodes != EXACT)
     }
 
     /// Distinct positions an engine run looks at.
@@ -890,6 +896,7 @@ mod tests {
         }
         assert_eq!(report.missing(1000), 0);
         assert_eq!(report.missing(2000), total);
+        assert!(report.evaluated());
         report.refresh();
         assert_eq!(report.engine.as_ref().map(|e| e.nodes), Some(1000));
         let w = &report.white;
@@ -921,7 +928,9 @@ mod tests {
         assert!(PrepReport::load(&dir, &db, &other, &Options::default()).is_none());
         let mut fresh = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
             .expect("report");
+        assert!(!fresh.evaluated());
         assert_eq!(fresh.take_cached(&cache, 1000), total);
+        assert!(fresh.evaluated(), "evaluations from the cache judge the errors too");
         assert_eq!(fresh.white.repeated, report.white.repeated);
         assert_eq!(fresh.take_cached(&cache, 1000), 0);
         let _ = std::fs::remove_dir_all(&dir);
