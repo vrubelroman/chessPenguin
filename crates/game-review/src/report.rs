@@ -204,6 +204,9 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
     {
         return Some(Judgement::Brilliant);
     }
+    if f.pawn_shape(rules) && mates_sooner {
+        return Some(Judgement::Brilliant);
+    }
     let w2 = second?;
     // The engine's own best move loses nothing: a drop to the next position is the noise
     // of two searches (9.Nf5! of the Immortal game, −0.51 then −0.82 at 3M nodes); the

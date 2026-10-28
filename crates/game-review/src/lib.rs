@@ -333,7 +333,8 @@ impl GameAnalysis {
             .map(|i| {
                 let (m, before) = (moves[i].as_ref()?, positions.get(i)?);
                 let prev = i.checked_sub(1).and_then(|p| moves[p].as_ref());
-                Some(MoveFeatures::of(before, m, prev))
+                let own = i.checked_sub(2).and_then(|p| moves[p].as_ref());
+                Some(MoveFeatures::of(before, m, prev, own))
             })
             .collect();
         self.played = (1..self.line.len())

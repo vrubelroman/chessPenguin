@@ -17,12 +17,20 @@ pub struct MoveFeatures {
     /// Takes back on the square where the opponent has just taken.
     pub recapture: bool,
     /// After the move the opponent can win a piece (a knight or more) for at least two
-    /// points more than the move took; a piece that was lost anyway does not count, nor
-    /// one whose capture loses as much back at once (the move uncovered an attack on a
-    /// bigger piece: taking is no answer to it).
+    /// points more than the move took; not a piece selling itself (an attacked piece
+    /// taking something on its way, a desperado), nor one whose capture loses as much
+    /// back at once (the move uncovered an attack on a bigger piece: taking is no answer
+    /// to it). An attacked piece moved quietly to another square where it is lost is
+    /// offered: it could have stepped away (18…Ra3!! of Pillsbury — Lasker).
     pub sacrifice: bool,
+    /// A pawn moved (not taking) to a square where the opponent wins it: offered, but
+    /// brilliant only for a quicker mate (29…b5+!! of Pillsbury — Lasker).
+    pub pawn_offered: bool,
     /// A capture that wins two points or more.
     pub winning_capture: bool,
+    /// The capture only wins back what the opponent has just taken, elsewhere (18.fxe6!
+    /// of Pillsbury — Lasker after 17…Rxc3): no gain, so it can be great.
+    pub takes_back: bool,
     /// The first rules' sacrifice ([`Rules::Strict`]): any piece the opponent can win
     /// after the move, also one that hung before it.
     pub sacrifice_any: bool,
@@ -46,8 +54,9 @@ pub enum Rules {
 }
 
 impl MoveFeatures {
-    /// `prev`: the opponent's move just before (for a recapture).
-    pub fn of(before: &Chess, m: &Move, prev: Option<&Move>) -> MoveFeatures {
+    /// `prev`: the opponent's move just before (for a recapture); `own`: the mover's move
+    /// before that.
+    pub fn of(before: &Chess, m: &Move, prev: Option<&Move>, own: Option<&Move>) -> MoveFeatures {
         let mover = before.turn();
         let mut after = before.clone();
         after.play_unchecked(*m);
@@ -86,6 +95,7 @@ impl MoveFeatures {
             .from()
             .map_or(0, |f| pseudo_threat(before.board(), f, mover.other()));
         let lost_anyway = from_threat >= 2;
+        let desperado = lost_anyway && m.is_capture();
         let on_target = threats.iter().find(|t| t.2 == m.to()).map_or(0, |t| t.0);
         let gain = taken - on_target;
         MoveFeatures {
@@ -94,8 +104,19 @@ impl MoveFeatures {
             promotion: m.is_promotion(),
             mates: after.is_checkmate(),
             recapture: m.is_capture() && prev.is_some_and(|p| p.is_capture() && p.to() == m.to()),
-            sacrifice: offered >= 3 && taken - threat <= -2 && !lost_anyway && !taking_loses,
+            sacrifice: offered >= 3 && taken - threat <= -2 && !desperado && !taking_loses,
+            pawn_offered: m.role() == Role::Pawn
+                && !m.is_capture()
+                && pseudo_threat(after.board(), m.to(), mover.other()) > 0,
             winning_capture: m.is_capture() && gain >= 2,
+            takes_back: m.is_capture()
+                && prev.is_some_and(|p| {
+                    // Not the piece the mover had just put there: taking it accepted an
+                    // offer, and winning something now goes on with the combination
+                    // (24…Bxe4+ of Rotlewi — Rubinstein after 23…Rd2 24.Qxd2).
+                    p.capture().is_some_and(|r| gain - value(r) < 2)
+                        && own.is_none_or(|o| o.to() != p.to())
+                }),
             sacrifice_any: offered_any >= 3 && taken - threat_any <= -2 && !lost_anyway,
             escape: lost_anyway && from_threat < 900 && gain >= 0,
             book: chess_openings::in_book(chess_openings::key(&after)),
@@ -123,7 +144,7 @@ impl MoveFeatures {
             && !(rules == Rules::ChessCom && self.book)
             && !self.mates
             && !self.recapture
-            && !self.winning_capture
+            && !(self.winning_capture && !(rules == Rules::ChessCom && self.takes_back))
             && !(rules == Rules::Strict && self.escape)
     }
 
@@ -132,7 +153,17 @@ impl MoveFeatures {
     pub fn candidate(&self) -> bool {
         [Rules::Strict, Rules::ChessCom]
             .into_iter()
-            .any(|r| self.brilliant_shape(r) || self.great_shape(r))
+            .any(|r| self.brilliant_shape(r) || self.pawn_shape(r) || self.great_shape(r))
+    }
+
+    /// Could be brilliant for a quicker mate only: a pawn offered ([`Rules::ChessCom`]).
+    pub fn pawn_shape(&self, rules: Rules) -> bool {
+        rules == Rules::ChessCom
+            && self.pawn_offered
+            && self.legal > 1
+            && !self.check
+            && !self.promotion
+            && !self.book
     }
 }
 
@@ -252,6 +283,7 @@ mod tests {
     fn last(start: Chess, moves: &str) -> MoveFeatures {
         let mut pos = start;
         let mut prev = None;
+        let mut own = None;
         let sans: Vec<&str> = moves
             .split_whitespace()
             .filter(|t| !t.ends_with('.'))
@@ -259,9 +291,10 @@ mod tests {
         for (i, san) in sans.iter().enumerate() {
             let m = san.parse::<San>().unwrap().to_move(&pos).unwrap();
             if i + 1 == sans.len() {
-                return MoveFeatures::of(&pos, &m, prev.as_ref());
+                return MoveFeatures::of(&pos, &m, prev.as_ref(), own.as_ref());
             }
             pos.play_unchecked(m);
+            own = prev;
             prev = Some(m);
         }
         unreachable!()
@@ -347,6 +380,47 @@ mod tests {
              20. Qg4 g6 21. Ng5+ Ke8 22. Rxe7+",
         );
         assert!(f.sacrifice && f.brilliant_shape(Rules::ChessCom), "{f:?}");
+    }
+
+    const PILLSBURY: &str = "1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Nf3 c5 5. Bg5 cxd4 6. Qxd4 Nc6 \
+        7. Qh4 Be7 8. O-O-O Qa5 9. e3 Bd7 10. Kb1 h6 11. cxd5 exd5 12. Nd4 O-O 13. Bxf6 Bxf6 \
+        14. Qh5 Nxd4 15. exd4 Be6 16. f4 Rac8 17. f5 Rxc3 18. fxe6 Ra3";
+
+    #[test]
+    fn an_attacked_piece_moved_into_another_attack_is_offered() {
+        // 18…Ra3!! (Pillsbury — Lasker): the rook on c3 under the pawn could step away.
+        let f = last(Chess::default(), PILLSBURY);
+        assert!(f.sacrifice && f.brilliant_shape(Rules::ChessCom), "{f:?}");
+        // 18.fxe6! just before: takes back the knight taken on c3, no gain.
+        let f = last(Chess::default(), &PILLSBURY[..PILLSBURY.rfind(" Ra3").unwrap()]);
+        assert!(f.winning_capture && f.takes_back && f.great_shape(Rules::ChessCom), "{f:?}");
+        assert!(!f.great_shape(Rules::Strict), "the first rules stay: {f:?}");
+    }
+
+    #[test]
+    fn taking_back_an_offered_piece_is_no_trade() {
+        // 24…Bxe4+ (Rotlewi — Rubinstein) after 23…Rd2 24.Qxd2: the combination goes on.
+        let f = last(
+            Chess::default(),
+            "1. d4 d5 2. Nf3 e6 3. e3 c5 4. c4 Nc6 5. Nc3 Nf6 6. dxc5 Bxc5 7. a3 a6 8. b4 Bd6 \
+             9. Bb2 O-O 10. Qd2 Qe7 11. Bd3 dxc4 12. Bxc4 b5 13. Bd3 Rd8 14. Qe2 Bb7 \
+             15. O-O Ne5 16. Nxe5 Bxe5 17. f4 Bc7 18. e4 Rac8 19. e5 Bb6+ 20. Kh1 Ng4 \
+             21. Be4 Qh4 22. g3 Rxc3 23. gxh4 Rd2 24. Qxd2 Bxe4+",
+        );
+        assert!(f.winning_capture && !f.takes_back && !f.great_shape(Rules::ChessCom), "{f:?}");
+    }
+
+    #[test]
+    fn a_pawn_offered_is_only_for_a_quicker_mate() {
+        // 29…b5+!! (Pillsbury — Lasker): the pawn under the king.
+        let line = format!(
+            "{PILLSBURY} 19. exf7+ Rxf7 20. bxa3 Qb6+ 21. Bb5 Qxb5+ 22. Ka1 Rc7 23. Rd2 Rc4 \
+             24. Rhd1 Rc3 25. Qf5 Qc4 26. Kb2 Rxa3 27. Qe6+ Kh7 28. Kxa3 Qc3+ 29. Ka4 b5+"
+        );
+        let f = last(Chess::default(), &line);
+        assert!(f.pawn_offered && f.pawn_shape(Rules::ChessCom), "{f:?}");
+        assert!(!f.sacrifice && !f.brilliant_shape(Rules::ChessCom), "{f:?}");
+        assert!(!f.pawn_shape(Rules::Strict));
     }
 
     #[test]
