@@ -2126,16 +2126,8 @@ impl LargeView {
             .header(26.0, |mut header| {
                 for (label, key, _) in &columns {
                     header.col(|ui| {
-                        let arrow = match key {
-                            Some(k) if sort.0 == *k => {
-                                if sort.1 { " ⏶" } else { " ⏷" }
-                            }
-                            _ => "",
-                        };
-                        let r = ui.add(
-                            egui::Button::new(RichText::new(format!("{label}{arrow}")).strong())
-                                .frame(false),
-                        );
+                        let active = key.filter(|k| sort.0 == *k).map(|_| sort.1);
+                        let r = crate::widgets::sort_header(ui, label, active);
                         if let Some(k) = key
                             && r.clicked()
                         {

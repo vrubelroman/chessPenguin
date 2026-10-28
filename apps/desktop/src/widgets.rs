@@ -32,6 +32,17 @@ pub fn check_panel(name: &str, panel: &egui::Response) {
     }
 }
 
+/// A sortable column's header: the title in bold, ▲/▼ when the table is ordered by
+/// it (`Some(ascending)`); click to sort.
+pub fn sort_header(ui: &mut Ui, label: &str, ascending: Option<bool>) -> egui::Response {
+    let arrow = match ascending {
+        Some(true) => " ⏶",
+        Some(false) => " ⏷",
+        None => "",
+    };
+    ui.add(egui::Button::new(egui::RichText::new(format!("{label}{arrow}")).strong()).frame(false))
+}
+
 /// Compact ✕ (e.g. to cancel a running task); the caller adds the tooltip.
 pub fn small_close_button(ui: &mut Ui) -> egui::Response {
     x_button(ui, vec2(22.0, 20.0), 4.5)

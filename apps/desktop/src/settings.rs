@@ -169,6 +169,8 @@ pub struct PrepSettings {
     pub chosen: bool,
     /// Inaccuracies (?!) are shown with the mistakes and blunders.
     pub inaccuracies: bool,
+    /// The order of each table of the screen.
+    pub sorts: crate::prep_ui::PrepSorts,
 }
 
 impl Default for PrepSettings {
@@ -180,6 +182,7 @@ impl Default for PrepSettings {
             branches_from: 3,
             chosen: false,
             inaccuracies: true,
+            sorts: Default::default(),
         }
     }
 }

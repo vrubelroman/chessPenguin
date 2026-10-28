@@ -15,6 +15,7 @@ use chess_import::Database;
 use chess_import::chessbase::base::{Side, fold};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
+use serde::{Deserialize, Serialize};
 use game_review::{JobEvent, JobFailure, JobSettings, Judgement};
 use prep::{
     BookExit, BookOptions, Candidate, ErrorCounts, GameInfo, Options, Player,
@@ -39,6 +40,152 @@ pub struct PrepEntry {
     /// The name id when it was picked from the list.
     pub exact: Option<u32>,
     pub side: Side,
+}
+
+/// A table's order: the column and the direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SortBy<K> {
+    pub key: K,
+    pub ascending: bool,
+}
+
+impl<K: Copy + PartialEq> SortBy<K> {
+    /// A click on the header of `key`: the same column turns the order round, another
+    /// one starts in its natural direction (names A–Z, numbers and dates high first).
+    fn click(&mut self, key: K, ascending_first: bool) {
+        if self.key == key {
+            self.ascending = !self.ascending;
+        } else {
+            *self = SortBy {
+                key,
+                ascending: ascending_first,
+            };
+        }
+    }
+
+    /// `ord` (ascending) in this table's direction.
+    fn apply(&self, ord: std::cmp::Ordering) -> std::cmp::Ordering {
+        if self.ascending { ord } else { ord.reverse() }
+    }
+}
+
+/// The columns the repertoire tree orders the moves of a position by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TreeSort {
+    Games,
+    Share,
+    Score,
+    Last,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpeningSort {
+    Name,
+    Eco,
+    Games,
+    Share,
+    Score,
+    Last,
+    Errors,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RepeatedSort {
+    Move,
+    Times,
+    Score,
+    Opening,
+}
+
+/// «By opening» of the errors tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VariationSort {
+    Games,
+    Errors,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GameSort {
+    White,
+    WhiteElo,
+    Black,
+    BlackElo,
+    Result,
+    Date,
+    Then,
+    Event,
+    Errors,
+}
+
+/// The order of every table of the screen (kept in the settings).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrepSorts {
+    pub tree: SortBy<TreeSort>,
+    pub openings: SortBy<OpeningSort>,
+    pub repeated: SortBy<RepeatedSort>,
+    pub variations: SortBy<VariationSort>,
+    pub games: SortBy<GameSort>,
+}
+
+impl Default for PrepSorts {
+    fn default() -> Self {
+        // Most played, most repeated, worst, newest first.
+        PrepSorts {
+            tree: SortBy { key: TreeSort::Games, ascending: false },
+            openings: SortBy { key: OpeningSort::Games, ascending: false },
+            repeated: SortBy { key: RepeatedSort::Times, ascending: false },
+            variations: SortBy { key: VariationSort::Errors, ascending: false },
+            games: SortBy { key: GameSort::Date, ascending: false },
+        }
+    }
+}
+
+/// A sort column of the errors tab (its two parts).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SortKeyOf {
+    Repeated(RepeatedSort),
+    Variation(VariationSort),
+}
+
+/// A value a table is ordered by.
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+enum SortVal {
+    Num(f64),
+    Text(String),
+}
+
+fn num(x: impl Into<f64>) -> SortVal {
+    SortVal::Num(x.into())
+}
+
+/// `a` against `b` (a value never compared to another kind is equal).
+fn cmp_val(a: &SortVal, b: &SortVal) -> std::cmp::Ordering {
+    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+}
+
+/// A score for ordering: games without a result last when high first.
+fn score_val(t: &Tally) -> SortVal {
+    num(t.score().unwrap_or(-1.0))
+}
+
+/// A sortable column's header: the title with ▲/▼ when the table is ordered by it;
+/// a click is noted in `clicked`.
+fn sort_col<K: Copy + PartialEq>(
+    h: &mut egui_extras::TableRow<'_, '_>,
+    text: &str,
+    hint: &str,
+    key: K,
+    sort: SortBy<K>,
+    clicked: &mut Option<K>,
+) {
+    h.col(|ui| {
+        let r = crate::widgets::sort_header(ui, text, (sort.key == key).then_some(sort.ascending));
+        let r = if hint.is_empty() { r } else { r.on_hover_text(hint) };
+        if r.clicked() {
+            *clicked = Some(key);
+        }
+    });
 }
 
 /// The colour switch of the report.
@@ -868,9 +1015,6 @@ enum EngineState {
     Complete { total: usize },
 }
 
-/// The default expansion: nodes with at least this many games, this deep.
-const EXPAND_GAMES: u32 = 5;
-const EXPAND_PLIES: u8 = 6;
 /// Fewer games: the percentages are shown weak.
 const FEW_GAMES: u32 = 5;
 const BOARD_MIN: f32 = 220.0;
@@ -940,7 +1084,8 @@ pub struct PrepScreen {
     board_state: BoardState,
     /// In a low window the board is a panel over the lists, opened by a button.
     board_popup: bool,
-    newest_first: bool,
+    /// The order of each table (the settings' `prep.sorts`, written back on change).
+    sorts: PrepSorts,
     /// The keyboard is in the games list (else in the tab's table).
     focus_games: bool,
     games_cursor: Option<usize>,
@@ -1236,7 +1381,7 @@ impl PrepScreen {
             flipped: None,
             board_state: BoardState::default(),
             board_popup: false,
-            newest_first: true,
+            sorts: settings.prep.sorts.clone(),
             focus_games: false,
             games_cursor: None,
             hover_arrow: None,
@@ -1318,15 +1463,12 @@ impl PrepScreen {
                 }
             })
             .collect();
+        // Everything folded: the user opens what he wants (the roots too).
         self.expanded.clear();
         self.others_open.clear();
-        for cr in [&report.white, &report.black] {
-            for (i, n) in cr.tree.nodes.iter().enumerate() {
-                if n.tally.games >= EXPAND_GAMES && n.ply <= EXPAND_PLIES {
-                    self.expanded.insert((cr.white, i as u32));
-                }
-            }
-        }
+        self.open_families.clear();
+        self.open_variations.clear();
+        self.open_repeated.clear();
         // A book step of the report this one replaces is not this report's.
         self.book_job = None;
         self.report = Some(report);
@@ -2059,7 +2201,7 @@ impl PrepScreen {
         let Some(report) = &self.report else {
             return Vec::new();
         };
-        let mut list: Vec<u32> = match &self.selection {
+        let list: Vec<u32> = match &self.selection {
             Selection::None => self
                 .color
                 .colours()
@@ -2100,10 +2242,33 @@ impl PrepScreen {
                 .map(|e| vec![e.game])
                 .unwrap_or_default(),
         };
-        if self.newest_first {
-            list.sort_by_key(|&g| std::cmp::Reverse(report.games[g as usize].date_number()));
-        }
-        list
+        let sort = self.sorts.games;
+        let val = |gi: u32| -> SortVal {
+            let g = &report.games[gi as usize];
+            let r = &self.rows[gi as usize];
+            match sort.key {
+                GameSort::White => SortVal::Text(fold(&r.white)),
+                GameSort::Black => SortVal::Text(fold(&r.black)),
+                GameSort::WhiteElo => num(r.white_elo),
+                GameSort::BlackElo => num(r.black_elo),
+                GameSort::Result => SortVal::Text(r.result.to_owned()),
+                GameSort::Date => num(g.date_number()),
+                GameSort::Then => SortVal::Text(g.sans.iter().skip(self.game_ply(gi)).take(3).cloned().collect::<Vec<_>>().join(" ")),
+                GameSort::Event => SortVal::Text(fold(&r.event)),
+                GameSort::Errors => num(
+                    report
+                        .color(g.white)
+                        .errors
+                        .iter()
+                        .filter(|e| e.game == gi && self.visible(e.judgement))
+                        .map(|e| judgement_weight(e.judgement))
+                        .sum::<u32>(),
+                ),
+            }
+        };
+        let mut keyed: Vec<(SortVal, u32)> = list.into_iter().map(|g| (val(g), g)).collect();
+        keyed.sort_by(|a, b| sort.apply(cmp_val(&a.0, &b.0)));
+        keyed.into_iter().map(|(_, g)| g).collect()
     }
 
     /// The move of the selection to open a game at.
@@ -2208,6 +2373,10 @@ impl PrepScreen {
         self.engine_dialog(&ctx, settings, &mut actions);
         if !typing && !overlay {
             self.keyboard(&ctx, settings, &mut actions);
+        }
+        if settings.prep.sorts != self.sorts {
+            settings.prep.sorts = self.sorts.clone();
+            actions.push(PrepAction::SettingsChanged);
         }
         actions
     }
@@ -3041,10 +3210,21 @@ impl PrepScreen {
                     }
                 };
                 let n = &tree.nodes[node as usize];
-                let (main, rest): (Vec<u32>, Vec<u32>) = n
-                    .children
-                    .iter()
-                    .copied()
+                let mut children = n.children.clone();
+                let sort = self.sorts.tree;
+                let val = |c: u32| -> SortVal {
+                    let m = &tree.nodes[c as usize];
+                    match sort.key {
+                        TreeSort::Games => num(tree.position_tally(m.key).games),
+                        TreeSort::Share => num(m.tally.games),
+                        TreeSort::Score => score_val(&tree.position_tally(m.key)),
+                        TreeSort::Last => num(chess_import::pgn_catalog::date_number(tree.position_last_date(m.key))),
+                    }
+                };
+                // Ties: most played first, as the tree has them.
+                children.sort_by(|&a, &b| sort.apply(cmp_val(&val(a), &val(b))));
+                let (main, rest): (Vec<u32>, Vec<u32>) = children
+                    .into_iter()
                     .partition(|&c| tree.nodes[c as usize].tally.games >= self.branches_from);
                 // Pushed in reverse: the stack pops the first child first.
                 if listed {
@@ -3086,7 +3266,7 @@ impl PrepScreen {
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
         let has_book = self.book_ok() || (self.book_job.is_some() && self.book != BookChoice::None);
-        let mut used = 180.0 + 56.0 + 40.0 + 50.0 + 4.0 * gap;
+        let mut used = 180.0 + 76.0 + 48.0 + 50.0 + 4.0 * gap;
         let mut fits = |w: f32, wanted: bool| {
             let ok = wanted && used + w + gap <= width;
             if ok {
@@ -3110,7 +3290,7 @@ impl PrepScreen {
         if show_opening {
             table = table.column(Column::remainder().at_least(160.0).clip(true));
         }
-        table = table.column(Column::exact(56.0)).column(Column::exact(40.0));
+        table = table.column(Column::exact(76.0)).column(Column::exact(48.0));
         table = table.column(Column::exact(if show_bar { 110.0 } else { 50.0 }));
         if show_last {
             table = table.column(Column::exact(84.0));
@@ -3132,17 +3312,19 @@ impl PrepScreen {
         let mut toggled: Option<TreeRow> = None;
         let mut hovered: Option<(bool, u32)> = None;
         let threshold = report.book.as_ref().map_or(prep::DEFAULT_BOOK_THRESHOLD, |b| b.threshold);
+        let mut tree_click = None;
         table
             .header(ROW_H, |mut h| {
                 head_col(&mut h, tr("Move"), tr("His moves plain, the opponents' weak; ⇄ — the position is reached by another move order too"));
                 if show_opening {
                     head_col(&mut h, tr("Opening"), "");
                 }
-                head_col(&mut h, tr("Games"), "");
-                head_col(&mut h, "%", tr("Share of the games of the move above"));
-                head_col(&mut h, tr("Score"), tr("The opponent's points in these games"));
+                let sort = self.sorts.tree;
+                sort_col(&mut h, tr("Games"), "", TreeSort::Games, sort, &mut tree_click);
+                sort_col(&mut h, "%", tr("Share of the games of the move above"), TreeSort::Share, sort, &mut tree_click);
+                sort_col(&mut h, tr("Score"), tr("The opponent's points in these games"), TreeSort::Score, sort, &mut tree_click);
                 if show_last {
-                    head_col(&mut h, tr("Last"), "");
+                    sort_col(&mut h, tr("Last"), "", TreeSort::Last, sort, &mut tree_click);
                 }
                 if show_book {
                     head_col(&mut h, book_title, tr("Games of the book in this position; the first number under the threshold is where he leaves the book"));
@@ -3325,6 +3507,9 @@ impl PrepScreen {
                     }
                 });
             });
+        if let Some(k) = tree_click {
+            self.sorts.tree.click(k, false);
+        }
         // A child of the chosen node under the pointer: its move as an arrow.
         if let (Some((white, node)), Selection::Node { white: sw, node: sn }) = (hovered, &self.selection)
             && white == *sw
@@ -3386,21 +3571,85 @@ impl PrepScreen {
 
     // ----- the openings --------------------------------------------------------------
 
-    fn openings_table(&mut self, ui: &mut Ui) {
-        let Some(report) = self.report.as_ref() else { return };
-        // (white, family, variation): the rows as laid out.
-        let mut rows: Vec<(bool, usize, Option<usize>)> = Vec::new();
+    /// The value of a family (`v` None) or a variation for the openings' order.
+    fn opening_val(&self, white: bool, f: usize, v: Option<usize>, key: OpeningSort) -> SortVal {
+        let Some(report) = &self.report else {
+            return num(0);
+        };
+        let cr = report.color(white);
+        let fam = &cr.families[f];
+        let vars: Vec<&prep::Variation> = match v {
+            Some(v) => vec![&fam.variations[v]],
+            None => fam.variations.iter().collect(),
+        };
+        let tally = match v {
+            Some(v) => fam.variations[v].tally,
+            None => fam.tally,
+        };
+        let opening = |var: &prep::Variation| var.opening.and_then(|o| report.openings.get(o));
+        match key {
+            OpeningSort::Name => SortVal::Text(match v {
+                Some(_) => vars[0].opening.map_or_else(String::new, |o| report.openings[o].name.clone()),
+                None => fam.name.clone(),
+            }),
+            OpeningSort::Eco => SortVal::Text(vars.iter().filter_map(|x| opening(x)).map(|o| o.eco.clone()).min().unwrap_or_default()),
+            OpeningSort::Games | OpeningSort::Share => num(tally.games),
+            OpeningSort::Score => score_val(&tally),
+            OpeningSort::Last => num(
+                vars.iter()
+                    .flat_map(|x| x.games.iter())
+                    .map(|&g| report.games[g as usize].date_number())
+                    .max()
+                    .unwrap_or(0),
+            ),
+            OpeningSort::Errors => num(
+                vars.iter()
+                    .flat_map(|x| x.error_list.iter())
+                    .map(|&e| cr.errors[e as usize].judgement)
+                    .filter(|j| self.visible(*j))
+                    .map(judgement_weight)
+                    .sum::<u32>(),
+            ),
+        }
+    }
+
+    /// The rows of the openings table: (white, family, variation) — families in the
+    /// chosen order, the variations of an open one under it in the same order.
+    fn opening_rows(&self) -> Vec<(bool, usize, Option<usize>)> {
+        let Some(report) = &self.report else {
+            return Vec::new();
+        };
+        let sort = self.sorts.openings;
+        let mut rows = Vec::new();
         for white in self.color.colours() {
             let cr = report.color(white);
-            for (f, fam) in cr.families.iter().enumerate() {
+            let mut fams: Vec<usize> = (0..cr.families.len()).collect();
+            fams.sort_by(|&a, &b| {
+                sort.apply(cmp_val(
+                    &self.opening_val(white, a, None, sort.key),
+                    &self.opening_val(white, b, None, sort.key),
+                ))
+            });
+            for f in fams {
                 rows.push((white, f, None));
                 if self.open_families.contains(&(white, f)) {
-                    for v in 0..fam.variations.len() {
-                        rows.push((white, f, Some(v)));
-                    }
+                    let mut vars: Vec<usize> = (0..cr.families[f].variations.len()).collect();
+                    vars.sort_by(|&a, &b| {
+                        sort.apply(cmp_val(
+                            &self.opening_val(white, f, Some(a), sort.key),
+                            &self.opening_val(white, f, Some(b), sort.key),
+                        ))
+                    });
+                    rows.extend(vars.into_iter().map(|v| (white, f, Some(v))));
                 }
             }
         }
+        rows
+    }
+
+    fn openings_table(&mut self, ui: &mut Ui) {
+        let rows = self.opening_rows();
+        let Some(report) = self.report.as_ref() else { return };
         if rows.is_empty() {
             self.no_games_note(ui);
             return;
@@ -3408,7 +3657,7 @@ impl PrepScreen {
         let both = self.color == ColorChoice::Both;
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
-        let mut used = 180.0 + 56.0 + 40.0 + 50.0 + 4.0 * gap + if both { 24.0 + gap } else { 0.0 };
+        let mut used = 180.0 + 76.0 + 48.0 + 50.0 + 4.0 * gap + if both { 24.0 + gap } else { 0.0 };
         let mut fits = |w: f32, wanted: bool| {
             let ok = wanted && used + w + gap <= width;
             if ok {
@@ -3439,7 +3688,7 @@ impl PrepScreen {
         if show_moves {
             table = table.column(Column::remainder().at_least(140.0).clip(true));
         }
-        table = table.column(Column::exact(56.0)).column(Column::exact(40.0));
+        table = table.column(Column::exact(76.0)).column(Column::exact(48.0));
         table = table.column(Column::exact(if show_bar { 110.0 } else { 50.0 }));
         if show_last {
             table = table.column(Column::exact(84.0));
@@ -3457,27 +3706,30 @@ impl PrepScreen {
         }
         self.scroll_to_selected = false;
         let mut clicked = None;
+        let mut opening_click = None;
         let mut toggled = None;
         table
             .header(ROW_H, |mut h| {
                 if both {
                     head_col(&mut h, "", "");
                 }
-                head_col(&mut h, tr("Opening"), "");
+                let sort = self.sorts.openings;
+                let c = &mut opening_click;
+                sort_col(&mut h, tr("Opening"), "", OpeningSort::Name, sort, c);
                 if show_eco {
-                    head_col(&mut h, "ECO", "");
+                    sort_col(&mut h, "ECO", "", OpeningSort::Eco, sort, c);
                 }
                 if show_moves {
                     head_col(&mut h, tr("First moves"), "");
                 }
-                head_col(&mut h, tr("Games"), "");
-                head_col(&mut h, "%", tr("Share of the colour's games; a variation's — of its family's"));
-                head_col(&mut h, tr("Score"), tr("The opponent's points in these games"));
+                sort_col(&mut h, tr("Games"), "", OpeningSort::Games, sort, c);
+                sort_col(&mut h, "%", tr("Share of the colour's games; a variation's — of its family's"), OpeningSort::Share, sort, c);
+                sort_col(&mut h, tr("Score"), tr("The opponent's points in these games"), OpeningSort::Score, sort, c);
                 if show_last {
-                    head_col(&mut h, tr("Last"), "");
+                    sort_col(&mut h, tr("Last"), "", OpeningSort::Last, sort, c);
                 }
                 if show_errors {
-                    head_col(&mut h, tr("Errors"), "");
+                    sort_col(&mut h, tr("Errors"), "", OpeningSort::Errors, sort, c);
                 }
             })
             .body(|body| {
@@ -3612,6 +3864,9 @@ impl PrepScreen {
                     }
                 });
             });
+        if let Some(k) = opening_click {
+            self.sorts.openings.click(k, matches!(k, OpeningSort::Name | OpeningSort::Eco));
+        }
         if let Some(key) = toggled {
             if !self.open_families.remove(&key) {
                 self.open_families.insert(key);
@@ -3796,12 +4051,20 @@ impl PrepScreen {
                     .map(move |(i, _)| (w, i))
             })
             .collect();
+        let sort = self.sorts.repeated;
+        let val = |&(w, i): &(bool, usize)| -> SortVal {
+            let r = &report.color(w).repeated[i];
+            match sort.key {
+                RepeatedSort::Move => num(r.ply),
+                RepeatedSort::Times => num(r.games.len() as u32),
+                RepeatedSort::Score => score_val(&r.tally),
+                RepeatedSort::Opening => SortVal::Text(r.opening.map_or_else(String::new, |o| report.openings[o].name.clone())),
+            }
+        };
+        // Ties: the worst first.
         list.sort_by(|a, b| {
-            let ra = &report.color(a.0).repeated[a.1];
-            let rb = &report.color(b.0).repeated[b.1];
-            rb.games
-                .len()
-                .cmp(&ra.games.len())
+            let (ra, rb) = (&report.color(a.0).repeated[a.1], &report.color(b.0).repeated[b.1]);
+            sort.apply(cmp_val(&val(a), &val(b)))
                 .then(judgement_weight(rb.judgement).cmp(&judgement_weight(ra.judgement)))
         });
         list
@@ -3850,7 +4113,14 @@ impl PrepScreen {
                 }
             }
         }
-        vars.sort_by_key(|v| std::cmp::Reverse(v.3));
+        let sort = self.sorts.variations;
+        let val = |v: &(bool, usize, usize, u32)| -> u32 {
+            match sort.key {
+                VariationSort::Games => report.color(v.0).families[v.1].variations[v.2].games.len() as u32,
+                VariationSort::Errors => v.3,
+            }
+        };
+        vars.sort_by(|a, b| sort.apply(val(a).cmp(&val(b))).then(b.3.cmp(&a.3)));
         for (white, family, variation, _) in vars {
             rows.push(ErrRow::Variation { white, family, variation });
             if self.open_variations.contains(&(white, family, variation)) {
@@ -3969,6 +4239,8 @@ impl PrepScreen {
             }
         };
         let repeated_n = rows.iter().filter(|r| matches!(r, ErrRow::Repeated { .. })).count();
+        let sorts = self.sorts.clone();
+        let mut sort_click: Option<SortKeyOf> = None;
         let openings_n = rows.iter().filter(|r| matches!(r, ErrRow::Variation { .. })).count();
         table.body(|body| {
             body.rows(ROW_H, rows.len(), |mut row| {
@@ -3989,15 +4261,40 @@ impl PrepScreen {
                                 ui.label(weak(tr("none")));
                             }
                         });
-                        let captions: [&str; 5] = if repeated {
-                            [tr("Played"), tr("Better"), "×", tr("Score"), tr("Opening")]
+                        // The captions of the part's columns; those it can be ordered by
+                        // are sort buttons.
+                        let captions: [(&str, Option<SortKeyOf>); 5] = if repeated {
+                            [
+                                (tr("Played"), Some(SortKeyOf::Repeated(RepeatedSort::Move))),
+                                (tr("Better"), None),
+                                ("×", Some(SortKeyOf::Repeated(RepeatedSort::Times))),
+                                (tr("Score"), Some(SortKeyOf::Repeated(RepeatedSort::Score))),
+                                (tr("Opening"), Some(SortKeyOf::Repeated(RepeatedSort::Opening))),
+                            ]
                         } else {
-                            [tr("Played"), tr("Better"), tr("Games"), tr("Errors"), tr("Date")]
+                            [
+                                (tr("Played"), None),
+                                (tr("Better"), None),
+                                (tr("Games"), Some(SortKeyOf::Variation(VariationSort::Games))),
+                                (tr("Errors"), Some(SortKeyOf::Variation(VariationSort::Errors))),
+                                (tr("Date"), None),
+                            ]
                         };
-                        for (k, c) in captions.iter().enumerate() {
+                        for (k, (c, key)) in captions.iter().enumerate() {
                             if k < 4 || show_last {
-                                row.col(|ui| {
-                                    ui.label(weak(c));
+                                row.col(|ui| match key {
+                                    Some(key) => {
+                                        let active = match key {
+                                            SortKeyOf::Repeated(k) => (sorts.repeated.key == *k).then_some(sorts.repeated.ascending),
+                                            SortKeyOf::Variation(k) => (sorts.variations.key == *k).then_some(sorts.variations.ascending),
+                                        };
+                                        if crate::widgets::sort_header(ui, c, active).clicked() {
+                                            sort_click = Some(*key);
+                                        }
+                                    }
+                                    None => {
+                                        ui.label(weak(c));
+                                    }
                                 });
                             }
                         }
@@ -4142,6 +4439,14 @@ impl PrepScreen {
                 }
             });
         });
+        match sort_click {
+            Some(SortKeyOf::Repeated(k)) => {
+                // Indices into the lists do not change: the rows only reorder.
+                self.sorts.repeated.click(k, matches!(k, RepeatedSort::Move | RepeatedSort::Opening))
+            }
+            Some(SortKeyOf::Variation(k)) => self.sorts.variations.click(k, false),
+            None => {}
+        }
         if let Some(r) = toggled {
             self.err_toggle(r);
         }
@@ -4347,43 +4652,32 @@ impl PrepScreen {
         let mut hovered = None;
         let mut clicked = None;
         let mut opened = None;
-        let mut sort_click = false;
-        let newest = self.newest_first;
+        let mut game_click = None;
+        let sort = self.sorts.games;
         let player_names: HashSet<&str> = self.names.iter().map(String::as_str).collect();
         table
             .header(ROW_H, |mut h| {
-                head_col(&mut h, tr("White"), "");
+                let c = &mut game_click;
+                sort_col(&mut h, tr("White"), "", GameSort::White, sort, c);
                 if show_elo {
-                    head_col(&mut h, "Elo", "");
+                    sort_col(&mut h, "Elo", "", GameSort::WhiteElo, sort, c);
                 }
-                head_col(&mut h, tr("Black"), "");
+                sort_col(&mut h, tr("Black"), "", GameSort::Black, sort, c);
                 if show_elo {
-                    head_col(&mut h, "Elo", "");
+                    sort_col(&mut h, "Elo", "", GameSort::BlackElo, sort, c);
                 }
-                head_col(&mut h, tr("Res."), "");
+                sort_col(&mut h, tr("Res."), "", GameSort::Result, sort, c);
                 if show_date {
-                    h.col(|ui| {
-                        let arrow = if newest { " ⏷" } else { " ⏶" };
-                        if ui
-                            .add(egui::Button::new(RichText::new(format!("{}{arrow}", tr("Date"))).strong()).frame(false))
-                            .on_hover_text(tr("Newest first"))
-                            .clicked()
-                        {
-                            sort_click = true;
-                        }
-                    });
+                    sort_col(&mut h, tr("Date"), "", GameSort::Date, sort, c);
                 }
                 if show_then {
-                    h.col(|ui| {
-                        ui.label(RichText::new(tr("Then")).strong())
-                            .on_hover_text(tr("How the game went on from this position"));
-                    });
+                    sort_col(&mut h, tr("Then"), tr("How the game went on from this position"), GameSort::Then, sort, c);
                 }
                 if show_event {
-                    head_col(&mut h, tr("Event"), "");
+                    sort_col(&mut h, tr("Event"), "", GameSort::Event, sort, c);
                 }
                 if show_errors {
-                    head_col(&mut h, tr("Errors"), tr("His marked moves in the opening of this game"));
+                    sort_col(&mut h, tr("Errors"), tr("His marked moves in the opening of this game"), GameSort::Errors, sort, c);
                 }
             })
             .body(|body| {
@@ -4473,8 +4767,11 @@ impl PrepScreen {
                     }
                 });
             });
-        if sort_click {
-            self.newest_first = !self.newest_first;
+        if let Some(k) = game_click {
+            let names = matches!(k, GameSort::White | GameSort::Black | GameSort::Result | GameSort::Then | GameSort::Event);
+            self.sorts.games.click(k, names);
+            // The keyboard's row is a place in the list: it goes back to the top.
+            self.games_cursor = None;
         }
         // The game's move from the shown position, as an arrow.
         if let Some(gi) = hovered
@@ -4697,19 +4994,7 @@ impl PrepScreen {
 
     #[allow(clippy::too_many_arguments)]
     fn openings_keys(&mut self, up: bool, down: bool, left: bool, right: bool, enter: bool, space: bool, home: bool, end: bool) {
-        let Some(report) = &self.report else { return };
-        let mut rows: Vec<(bool, usize, Option<usize>)> = Vec::new();
-        for white in self.color.colours() {
-            let cr = report.color(white);
-            for (f, fam) in cr.families.iter().enumerate() {
-                rows.push((white, f, None));
-                if self.open_families.contains(&(white, f)) {
-                    for v in 0..fam.variations.len() {
-                        rows.push((white, f, Some(v)));
-                    }
-                }
-            }
-        }
+        let rows = self.opening_rows();
         if rows.is_empty() {
             return;
         }
@@ -4878,6 +5163,24 @@ mod tests {
         // Commas and case do not matter.
         let (exact, _) = split_candidates("radel vafin", list);
         assert_eq!(exact.iter().map(|c| c.id).collect::<Vec<_>>(), vec![2]);
+    }
+
+    #[test]
+    fn a_header_click_sorts_then_turns_the_order_round() {
+        let mut s = PrepSorts::default().games;
+        assert_eq!((s.key, s.ascending), (GameSort::Date, false), "newest first");
+        s.click(GameSort::Date, false);
+        assert!(s.ascending, "the same column again: the other way");
+        s.click(GameSort::White, true);
+        assert_eq!((s.key, s.ascending), (GameSort::White, true), "a name column starts A–Z");
+        assert_eq!(s.apply(std::cmp::Ordering::Less), std::cmp::Ordering::Less);
+        s.click(GameSort::White, true);
+        assert_eq!(s.apply(std::cmp::Ordering::Less), std::cmp::Ordering::Greater);
+        assert_eq!(cmp_val(&num(2), &num(10)), std::cmp::Ordering::Less);
+        assert_eq!(cmp_val(&SortVal::Text("b".into()), &SortVal::Text("a".into())), std::cmp::Ordering::Greater);
+        // Kept in the settings as they are.
+        let json = serde_json::to_string(&PrepSorts::default()).unwrap();
+        assert_eq!(serde_json::from_str::<PrepSorts>(&json).unwrap(), PrepSorts::default());
     }
 
     #[test]
