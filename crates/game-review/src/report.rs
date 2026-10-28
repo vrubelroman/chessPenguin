@@ -141,7 +141,7 @@ mod good {
     pub const NEAR_BEST: f64 = 2.0;
     /// !!: the position after the sacrifice is at least this good.
     pub const SOUND_AFTER: f64 = 45.0;
-    /// !!: without the move the game was not won anyway.
+    /// !! ([`Rules::Strict`]): without the move the game was not won anyway.
     pub const WON_ANYWAY: f64 = 90.0;
     /// !: every other move loses at least this much.
     pub const GAP: f64 = 10.0;
@@ -197,10 +197,19 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
         && ply
             .second
             .is_some_and(|s| mates_sooner(after, s, ply.mover));
+    // Won anyway without the move: [`Rules::Strict`] by win %, [`Rules::ChessCom`] only
+    // with a forced mate there — every sacrifice of the check set whose best other move
+    // still won (to 93 %) is chess.com's !! (23…Qg3 of Levitsky — Marshall, 22…Rxc3 of
+    // Rotlewi — Rubinstein).
+    let without_eval = if ply.best { ply.second } else { Some(before) };
+    let won_anyway = match rules {
+        Rules::Strict => without.is_none_or(|w| w >= good::WON_ANYWAY),
+        Rules::ChessCom => without_eval.is_none_or(|e| e.mate_for(ply.mover) == Some(true)),
+    };
     if f.brilliant_shape(rules)
         && (ply.best || loss <= good::NEAR_BEST)
         && wa >= good::SOUND_AFTER
-        && (without.is_some_and(|w| w < good::WON_ANYWAY) || mates_sooner)
+        && (!won_anyway || mates_sooner)
     {
         return Some(Judgement::Brilliant);
     }
@@ -757,12 +766,23 @@ mod tests {
         );
         assert_eq!(r.judgements[0], Some(Judgement::Brilliant));
         assert_eq!(r.white.brilliant, 1);
-        // Another move won as well: no !!.
+        // Another move won as well: still !! by chess.com's marks, no !! by the first
+        // rules; with a forced mate there: no !! either way.
         let r = Report::build(
             &evals,
             &[noted(w, true, Some(Eval::Cp(800)))],
             Phases::default(),
         );
+        assert_eq!(r.judgements[0], Some(Judgement::Brilliant));
+        let r = Report::build_with(
+            &evals,
+            &[noted(w, true, Some(Eval::Cp(800)))],
+            Phases::default(),
+            Rules::Strict,
+        );
+        assert_eq!(r.judgements[0], None);
+        let mate = Some(Eval::Mate { white: true, moves: 5 });
+        let r = Report::build(&evals, &[noted(w, true, mate)], Phases::default());
         assert_eq!(r.judgements[0], None);
         // No best other move known (an older analysis): nothing said.
         let r = Report::build(&evals, &[noted(w, true, None)], Phases::default());

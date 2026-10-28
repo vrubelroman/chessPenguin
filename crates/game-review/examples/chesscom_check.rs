@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
+use chess_core::shakmaty::Color;
 use chess_core::{Game, Nag};
 use game_review::{GameAnalysis, JobSettings, Judgement, ReviewMeta};
 
@@ -47,6 +48,34 @@ fn main() {
             file.file_name().unwrap().to_string_lossy(),
         );
         let line = a.line().to_vec();
+        // Only chess.com's totals are known ("white !! 0 ! 1, black !! 2 ! 1"): compare
+        // counts, list our marks, leave the game out of the shares.
+        if let Some(counts) = game.tag("ChessComCounts") {
+            let ours = |white: bool, j: Judgement| {
+                a.report
+                    .judgements
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, x)| **x == Some(j) && (a.movers()[*i] == Color::White) == white)
+                    .count()
+            };
+            println!("   chess.com: {counts}");
+            println!(
+                "   ours:      white !! {} ! {}, black !! {} ! {}",
+                ours(true, Judgement::Brilliant),
+                ours(true, Judgement::Great),
+                ours(false, Judgement::Brilliant),
+                ours(false, Judgement::Great),
+            );
+            for (i, j) in a.report.judgements.iter().enumerate() {
+                if let Some(j @ (Judgement::Brilliant | Judgement::Great)) = j {
+                    let mark = if *j == Judgement::Brilliant { "!!" } else { "!" };
+                    let label = game.move_label(line[i + 1]).unwrap_or_default();
+                    println!("   ours  {label:<14} {mark}");
+                }
+            }
+            continue;
+        }
         for i in 0..line.len() - 1 {
             let node = line[i + 1];
             let theirs = game.node(node).map_or("", |n| mark_of_nags(n.nags()));
