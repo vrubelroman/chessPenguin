@@ -231,7 +231,10 @@ impl GameAnalysis {
     /// so does an analysis of another search ([`Self::stale`]), so that one report never
     /// mixes two. Returns the positions without an evaluation, for [`run`].
     pub fn begin(&mut self, game: &Game, full: bool) -> Vec<Target> {
-        if full || self.stale() {
+        // Evaluations read from the PGN are no engine analysis to fill in: the engine
+        // analyses the whole game (else they would pass for the fixed search).
+        let from_pgn = self.meta.as_ref().is_some_and(|m| m.nodes == 0);
+        if full || from_pgn || self.stale() {
             self.evals.clear();
         }
         let engine = self

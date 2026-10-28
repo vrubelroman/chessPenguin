@@ -540,7 +540,9 @@ impl Review {
                 ui.label(RichText::new(text).color(ui.visuals().warn_fg_color));
                 let can_update = self.analysis.meta.as_ref().is_some_and(|m| m.nodes > 0);
                 if can_update {
-                    let mut button = ui.button(tr("Update"));
+                    // Stale: everything again («Обновить»); otherwise the gaps («Дополнить»).
+                    let mut button =
+                        ui.button(if stale { tr("Analyse again") } else { tr("Update") });
                     if stale {
                         button = button.on_hover_text(tr(
                             "Every position is analysed again, the same way on every computer",

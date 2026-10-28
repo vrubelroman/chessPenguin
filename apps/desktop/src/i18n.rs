@@ -7904,6 +7904,17 @@ const ROWS: &[[&str; 9]] = &[
         "PGN-дағы бағалар ([%eval])",
     ],
     [
+        "Analyse again",
+        "Обновить",
+        "Mettre à jour",
+        "Aktualisieren",
+        "Actualizar",
+        "Aggiorna",
+        "Atualizar",
+        "Yangilash",
+        "Жаңарту",
+    ],
+    [
         "Update",
         "Дополнить",
         "Compléter",
