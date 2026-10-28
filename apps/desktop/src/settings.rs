@@ -120,7 +120,7 @@ pub struct Settings {
     pub databases: Vec<PathBuf>,
     /// The first-start engine discovery has run (see `engines::first_run_setup`).
     pub engines_discovered: bool,
-    /// The sample databases were put on the shelf (see `examples::first_run_setup`).
+    /// The sample databases were put on the shelf (see `examples::setup`).
     pub examples_added: bool,
     /// Ask GitHub for a newer release at start (Settings → About).
     pub check_updates: bool,

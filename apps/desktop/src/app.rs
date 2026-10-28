@@ -360,7 +360,7 @@ impl App {
             let _ = settings.save();
         }
         let engines_found = crate::engines::first_run_setup(&mut settings);
-        if crate::examples::first_run_setup(&mut settings) || engines_found {
+        if crate::examples::setup(&mut settings) || engines_found {
             let _ = settings.save();
         }
         // PGN files passed on the command line (e.g. "Open with…") join the library, first one selected.

@@ -73,7 +73,8 @@ data class DbEntry(
     val format: String? = null,
     /// A sample shows the name of the current language until it is renamed (displayName).
     val renamed: Boolean = false,
-    /// A copy's SHA-256: the same file opened again is not copied twice.
+    /// A copy's SHA-256: the same file opened again is not copied twice. A sample's: of
+    /// the text its number of games was taken from (a new app may bring a new text).
     val sha256: String? = null,
     /// A downloaded database: when its last download finished (Unix seconds).
     val updated: Long? = null,
@@ -203,6 +204,18 @@ class Library(private val context: Context) {
         )
         return names.map { (f, name) -> DbEntry(id = "sample-$f", name = name, source = Source.Sample, location = "examples/$f", fileName = f) }
     }
+
+    /// Counts the samples on the list not counted yet, or counted in a text other than
+    /// the one in this app: an update of the app brings a sample's new version (more
+    /// games), read from the app itself as ever, and its row shows it at once.
+    suspend fun countSamples() {
+        for (e in _entries.value.filter { it.source == Source.Sample }) {
+            if (e.games != null && e.sha256 == withContext(Dispatchers.IO) { sha256(sampleBytes(e)) }) continue
+            database(e.id)
+        }
+    }
+
+    private fun sampleBytes(e: DbEntry): ByteArray = context.assets.open(e.location).use { it.readBytes() }
 
     /// Puts the sample games back on the list (those not on it), at its end.
     fun addSamples() = update { list -> list + samples().filter { s -> list.none { it.id == s.id } } }
@@ -579,10 +592,14 @@ class Library(private val context: Context) {
     suspend fun database(id: String): Result<Database> = lock.withLock {
         open[id]?.let { return@withLock Result.success(it) }
         val e = entry(id) ?: return@withLock Result.failure(IllegalArgumentException("no database $id"))
+        var text: String? = e.sha256
         val result = withContext(Dispatchers.IO) {
             runCatching {
                 when (e.source) {
-                    Source.Sample -> openBytes(e.fileName, context.assets.open(e.location).use { it.readBytes() })
+                    Source.Sample -> sampleBytes(e).let { bytes ->
+                        text = sha256(bytes)
+                        openBytes(e.fileName, bytes)
+                    }
                     Source.File -> openFile(e.fileName, openDocument(Uri.parse(e.location)).detachFd())
                     Source.ChessBase -> openChessBase(e)
                     Source.Copy -> openFile(
@@ -601,10 +618,14 @@ class Library(private val context: Context) {
             open[id] = db
             val games = db.len().toInt()
             val format = db.format()
-            if (e.games != games || e.format != format) {
-                update { list -> list.map { if (it.id == id) it.copy(games = games, format = format) else it } }
+            val sum = text
+            if (e.games != games || e.format != format || e.sha256 != sum) {
+                update { list -> list.map { if (it.id == id) it.copy(games = games, format = format, sha256 = sum) else it } }
             }
         }
         result
     }
 }
+
+private fun sha256(bytes: ByteArray): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

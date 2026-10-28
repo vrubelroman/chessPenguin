@@ -120,6 +120,17 @@ pub fn tr(key: &'static str) -> &'static str {
         .unwrap_or(key)
 }
 
+/// `key` in every language (English first; the same text once).
+pub fn all_languages(key: &'static str) -> Vec<&'static str> {
+    let mut out = vec![key];
+    for t in table().get(key).into_iter().flat_map(|row| row.iter()) {
+        if !out.contains(t) {
+            out.push(t);
+        }
+    }
+    out
+}
+
 /// "1 game", "5 games" in the interface language, with Russian plural forms
 /// ("1 партия", "3 партии", "5 партий").
 pub fn games(n: usize) -> String {

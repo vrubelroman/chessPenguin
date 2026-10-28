@@ -224,9 +224,7 @@ fun DatabasesScreen(onOpen: (String) -> Unit, onAdded: (DbEntry) -> Unit, onSett
     }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
     // The samples are small: read them at once, so their rows show the number of games.
-    LaunchedEffect(Unit) {
-        library.entries.value.filter { it.source == Source.Sample && it.games == null }.forEach { library.database(it.id) }
-    }
+    LaunchedEffect(Unit) { library.countSamples() }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
