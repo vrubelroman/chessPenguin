@@ -191,3 +191,11 @@ Family 0.83, © 2010–2011 Canonical Ltd., Ubuntu Font Licence 1.0), from
 the official release `https://assets.ubuntu.com/v1/fad7939b-ubuntu-font-family-0.83.zip`
 (SHA-256 456d7d42…05b42, as in Arch Linux's `ttf-ubuntu-font-family`):
 `apps/desktop/assets/fonts/Ubuntu-B.ttf`, licence `UFL.txt` beside it.
+
+## Classic games (examples/classics.pgn)
+
+62 of the 100 sample classic games (added 2026-10-28) are game records — players,
+event, date, result and moves, which are historical facts — taken from the free player
+files of pgnmentor.com (64 Squares; "available for download, completely free") and,
+where possible, checked against Wikipedia articles (used only for comparison, no text
+copied). Details: `docs/research/classics-sources.md`.
