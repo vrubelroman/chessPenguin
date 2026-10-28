@@ -124,16 +124,10 @@ impl Review {
         let spawned = std::thread::Builder::new()
             .name("game-review".into())
             .spawn(move || {
-                let result = game_review::run(
-                    config,
-                    &settings,
-                    targets,
-                    &cancel_w,
-                    &mut |e| {
-                        let _ = tx.send(JobMsg::Event(e));
-                        ctx_w.request_repaint();
-                    },
-                );
+                let result = game_review::run(config, &settings, targets, &cancel_w, &mut |e| {
+                    let _ = tx.send(JobMsg::Event(e));
+                    ctx_w.request_repaint();
+                });
                 let msg = match result {
                     Ok(()) => JobMsg::Done,
                     Err(JobFailure::Start(e) | JobFailure::Engine(e)) => JobMsg::Failed(e),
@@ -541,8 +535,11 @@ impl Review {
                 let can_update = self.analysis.meta.as_ref().is_some_and(|m| m.nodes > 0);
                 if can_update {
                     // Stale: everything again («Обновить»); otherwise the gaps («Дополнить»).
-                    let mut button =
-                        ui.button(if stale { tr("Analyse again") } else { tr("Update") });
+                    let mut button = ui.button(if stale {
+                        tr("Analyse again")
+                    } else {
+                        tr("Update")
+                    });
                     if stale {
                         button = button.on_hover_text(tr(
                             "Every position is analysed again, the same way on every computer",

@@ -98,11 +98,13 @@ impl Tree {
                         let key = game.keys[i + 1];
                         // A more general name than the path's keeps the path's
                         // (see `openings::deepest`).
-                        let parent = tree.nodes[at].opening.map(|o| openings.list[o].name.clone());
+                        let parent = tree.nodes[at]
+                            .opening
+                            .map(|o| openings.list[o].name.clone());
                         let named = openings::by_position(key).filter(|&id| {
-                            parent
-                                .as_deref()
-                                .is_none_or(|p| !openings::is_prefix_name(&openings::get(id).name, p))
+                            parent.as_deref().is_none_or(|p| {
+                                !openings::is_prefix_name(&openings::get(id).name, p)
+                            })
                         });
                         let opening = named
                             .map(|id| openings.intern(id))
@@ -161,9 +163,12 @@ impl Tree {
             if let Some(&o) = best.get(&tree.nodes[i].key) {
                 tree.nodes[i].opening = Some(o);
             }
-            let parent = tree.nodes[i].parent.and_then(|p| tree.nodes[p as usize].opening);
+            let parent = tree.nodes[i]
+                .parent
+                .and_then(|p| tree.nodes[p as usize].opening);
             let name = |o: Option<usize>| o.map(|o| openings.list[o].name.as_str());
-            tree.nodes[i].named = tree.nodes[i].opening.is_some() && name(tree.nodes[i].opening) != name(parent);
+            tree.nodes[i].named =
+                tree.nodes[i].opening.is_some() && name(tree.nodes[i].opening) != name(parent);
         }
         tree
     }
@@ -238,11 +243,18 @@ impl Tree {
 pub(crate) mod tests {
     use super::*;
     use crate::games::Outcome;
-    use chess_core::shakmaty::san::SanPlus;
     use chess_core::shakmaty::Chess;
+    use chess_core::shakmaty::san::SanPlus;
     use chess_import::position::{key, uci};
 
-    pub(crate) fn game(index: u32, white: bool, moves: &[&str], result: &str, date: &str, elo: u16) -> GameInfo {
+    pub(crate) fn game(
+        index: u32,
+        white: bool,
+        moves: &[&str],
+        result: &str,
+        date: &str,
+        elo: u16,
+    ) -> GameInfo {
         let mut pos = Chess::default();
         let (mut ucis, mut sans, mut keys) = (Vec::new(), Vec::new(), vec![key(&pos)]);
         for s in moves {
@@ -270,11 +282,25 @@ pub(crate) mod tests {
     #[test]
     fn the_tree_counts_games_and_marks_transpositions() {
         let games = vec![
-            game(0, true, &["d4", "d5", "Nf3", "Nf6"], "1-0", "2026.01.05", 1500),
+            game(
+                0,
+                true,
+                &["d4", "d5", "Nf3", "Nf6"],
+                "1-0",
+                "2026.01.05",
+                1500,
+            ),
             game(1, true, &["Nf3", "d5", "d4", "Nf6"], "0-1", "2026.03.01", 0),
             game(2, true, &["d4", "d5", "c4"], "1/2-1/2", "2025.12.31", 1700),
             game(3, false, &["e4", "c5"], "0-1", "2026.02.02", 1600),
-            game(4, true, &["d4", "d5", "c4", "e6", "Nc3", "Nf6", "h3"], "1-0", "", 0),
+            game(
+                4,
+                true,
+                &["d4", "d5", "c4", "e6", "Nc3", "Nf6", "h3"],
+                "1-0",
+                "",
+                0,
+            ),
         ];
         let mut set = OpeningSet::default();
         let tree = Tree::build(&games, &[0, 1, 2], 20, &mut set);
@@ -284,20 +310,42 @@ pub(crate) mod tests {
         assert_eq!(root.average_elo(), Some(1600));
         assert_eq!(root.games, vec![0, 1, 2]);
         // 1.d4 (2 games) before 1.Nf3 (1 game).
-        let kids: Vec<&str> = root.children.iter().map(|&c| tree.nodes[c as usize].san.as_str()).collect();
+        let kids: Vec<&str> = root
+            .children
+            .iter()
+            .map(|&c| tree.nodes[c as usize].san.as_str())
+            .collect();
         assert_eq!(kids, vec!["d4", "Nf3"]);
         // The position after 1.d4 d5 2.Nf3 / 1.Nf3 d5 2.d4 is in two nodes.
         let shared: Vec<&Node> = tree.nodes.iter().filter(|n| n.transposition).collect();
         let keys: Vec<u64> = shared.iter().map(|n| n.key).collect();
         assert_eq!(shared.len(), 4, "{keys:?}");
-        let after_nf3 = tree.nodes.iter().find(|n| n.ply == 3 && n.san == "Nf3").unwrap();
-        let after_d4 = tree.nodes.iter().find(|n| n.ply == 3 && n.san == "d4").unwrap();
+        let after_nf3 = tree
+            .nodes
+            .iter()
+            .find(|n| n.ply == 3 && n.san == "Nf3")
+            .unwrap();
+        let after_d4 = tree
+            .nodes
+            .iter()
+            .find(|n| n.ply == 3 && n.san == "d4")
+            .unwrap();
         assert_eq!(after_nf3.key, after_d4.key);
         assert_eq!(tree.position_tally(after_nf3.key).games, 2);
         assert_eq!(tree.position_games(after_nf3.key), vec![0, 1]);
         assert_eq!(tree.position_last_date(after_nf3.key), "2026.03.01");
-        assert!(!tree.nodes.iter().find(|n| n.san == "c4").unwrap().transposition);
-        assert_eq!(tree.path(after_d4.parent.unwrap() as usize), vec!["Nf3", "d5"]);
+        assert!(
+            !tree
+                .nodes
+                .iter()
+                .find(|n| n.san == "c4")
+                .unwrap()
+                .transposition
+        );
+        assert_eq!(
+            tree.path(after_d4.parent.unwrap() as usize),
+            vec!["Nf3", "d5"]
+        );
         // Names: 1.d4 d5 2.Nf3 is named in the table, 2...Nf6 is too (Zukertort);
         // both move orders get the same name.
         assert!(after_nf3.named && after_d4.named);
@@ -310,7 +358,11 @@ pub(crate) mod tests {
         let h3 = tree.nodes.iter().find(|n| n.san == "h3").unwrap();
         assert!(!h3.named);
         assert_eq!(h3.opening, tree.nodes[h3.parent.unwrap() as usize].opening);
-        assert!(set.list[h3.opening.unwrap()].name.starts_with("Queen's Gambit Declined"));
+        assert!(
+            set.list[h3.opening.unwrap()]
+                .name
+                .starts_with("Queen's Gambit Declined")
+        );
         // Depth limit.
         let short = Tree::build(&games, &[0, 1, 2], 1, &mut set);
         assert_eq!(short.nodes.len(), 3);

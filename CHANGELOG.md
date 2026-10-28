@@ -4,6 +4,27 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-10-28
+
+- Desktop: preparing against an opponent. Pick a player of a database (similar names
+  shown apart, spellings can be joined) and get their opening repertoire: a tree of
+  their moves for each colour with opening names (the Lichess opening table), games,
+  score and the last game, a table of openings and variations with their first moves,
+  and — on request — the engine's look at their opening mistakes, by opening, with the
+  mistakes they repeat. A book from the shelf shows where they leave theory. Every
+  table sorts by its columns; the tree starts folded.
+- The game review always uses the same engine search, on every computer and phone:
+  Stockfish 19 of ChessPenguin, one million nodes a position, one thread per engine
+  process and several processes side by side. The same game gets the same marks
+  everywhere; nothing to choose any more (the analysis dialog is gone). An analysis made
+  with other settings says so and offers «Update».
+- Brilliant (!!) and great (!) moves recalibrated on chess.com's marks of 15 famous
+  games (a check set the program keeps): !! now agree with chess.com 96 % of the time.
+  Great moves are rarer and surer: never for a capture, only when every other move is
+  clearly worse; no ! or !! for a book move.
+- The sample «Classic games» grow from 38 to 100 famous games; a new version of a
+  sample replaces the old one on update (desktop and Android).
+
 ## [2.0.0] — 2026-10-28
 
 - The databases downloaded from Lichess and Chess.com get the games played since on their

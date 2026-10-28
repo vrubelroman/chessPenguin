@@ -968,7 +968,8 @@ impl Base {
             let mut first = true;
             moves::main_line(&bytes, 0, fast, |pos, step| {
                 if std::mem::take(&mut first) {
-                    line.standard_start = crate::position::same_position(pos, &shakmaty::Chess::default());
+                    line.standard_start =
+                        crate::position::same_position(pos, &shakmaty::Chess::default());
                     if !line.standard_start {
                         return false;
                     }

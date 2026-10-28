@@ -652,7 +652,10 @@ impl Library {
         if !matches!(self.slots.get(&path), Some(Slot::Ready(_))) {
             return None;
         }
-        Some((path.clone(), self.large.get(&path).and_then(|v| v.prep_entry())))
+        Some((
+            path.clone(),
+            self.large.get(&path).and_then(|v| v.prep_entry()),
+        ))
     }
 
     fn notes_window(&mut self, ctx: &egui::Context) {

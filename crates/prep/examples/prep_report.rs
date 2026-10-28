@@ -16,9 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::Instant;
 
-use prep::{
-    BookOptions, ColorReport, Options, Player, PrepReport, PositionCache, Side, Tree,
-};
+use prep::{BookOptions, ColorReport, Options, Player, PositionCache, PrepReport, Side, Tree};
 
 struct Args {
     db: PathBuf,
@@ -50,10 +48,16 @@ fn args() -> Args {
             "--book" => a.book = it.next().map(PathBuf::from),
             "--plies" => a.plies = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.plies),
             "--processes" => {
-                a.processes = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.processes)
+                a.processes = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(a.processes)
             }
             "--min-games" => {
-                a.min_games = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.min_games)
+                a.min_games = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(a.min_games)
             }
             "--no-cache" => a.cache = false,
             _ => positional.push(arg),
@@ -70,8 +74,8 @@ fn args() -> Args {
 
 fn open(path: &Path) -> chess_import::Database {
     let t = Instant::now();
-    let opened = chess_import::open(path, &mut |_| {}, &AtomicBool::new(false))
-        .unwrap_or_else(|e| {
+    let opened =
+        chess_import::open(path, &mut |_| {}, &AtomicBool::new(false)).unwrap_or_else(|e| {
             eprintln!("cannot open {}: {e}", path.display());
             std::process::exit(1);
         });
@@ -105,7 +109,8 @@ fn print_tree(tree: &Tree, node: usize, depth: usize, min_games: u32, report: &P
             prep::move_label(usize::from(n.ply) - 1, &n.san),
             tally(&n.tally),
             n.last_date,
-            n.average_elo().map_or(String::new(), |e| format!(" Elo {e}")),
+            n.average_elo()
+                .map_or(String::new(), |e| format!(" Elo {e}")),
             if n.transposition { " ↔" } else { "" },
             name,
             indent = depth * 2
@@ -118,7 +123,11 @@ fn print_tree(tree: &Tree, node: usize, depth: usize, min_games: u32, report: &P
 
 fn print_color(report: &PrepReport, cr: &ColorReport, min_games: u32) {
     let colour = if cr.white { "White" } else { "Black" };
-    println!("\n==== {colour}: {} games, {} tree nodes ====", cr.games.len(), cr.tree.nodes.len());
+    println!(
+        "\n==== {colour}: {} games, {} tree nodes ====",
+        cr.games.len(),
+        cr.tree.nodes.len()
+    );
     println!("-- repertoire (nodes with at least {min_games} games; ↔ = transposition)");
     print_tree(&cr.tree, 0, 0, min_games, report);
     println!("-- openings");
@@ -126,7 +135,11 @@ fn print_color(report: &PrepReport, cr: &ColorReport, min_games: u32) {
         println!(
             "{} {}{}",
             tally(&f.tally),
-            if f.name.is_empty() { "(unnamed)" } else { &f.name },
+            if f.name.is_empty() {
+                "(unnamed)"
+            } else {
+                &f.name
+            },
             errors_text(&f.errors)
         );
         for v in &f.variations {
@@ -239,7 +252,11 @@ fn main() {
 
     let t = Instant::now();
     let (list, total) = prep::candidates(&db, &a.player, 10);
-    println!("[candidates] {total} for «{}», {:.1} ms:", a.player, t.elapsed().as_secs_f64() * 1000.0);
+    println!(
+        "[candidates] {total} for «{}», {:.1} ms:",
+        a.player,
+        t.elapsed().as_secs_f64() * 1000.0
+    );
     for c in &list {
         println!("    {} · {} games (id {})", c.name, c.games, c.id);
     }
@@ -264,7 +281,10 @@ fn main() {
         .and_then(|d| PrepReport::load(d, &db, &player, &options));
     let mut report = match cached {
         Some(r) => {
-            println!("[report] from the cache, {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+            println!(
+                "[report] from the cache, {:.1} ms",
+                t.elapsed().as_secs_f64() * 1000.0
+            );
             r
         }
         None => {
@@ -290,7 +310,11 @@ fn main() {
     };
     let book = a.book.as_deref().map(open);
     let book_db = book.as_ref().unwrap_or(&db);
-    if report.book.as_ref().is_some_and(|b| b.fingerprint == prep::fingerprint(book_db)) {
+    if report
+        .book
+        .as_ref()
+        .is_some_and(|b| b.fingerprint == prep::fingerprint(book_db))
+    {
         println!("[book] from the cached report");
     } else {
         let progress = AtomicUsize::new(0);
@@ -341,7 +365,13 @@ fn main() {
                     first = false;
                 }
                 if last_shown.elapsed().as_secs_f64() >= 5.0 {
-                    println!("    {} / {} ({:.0} s, nps {})", p.done, p.total, t.elapsed().as_secs_f64(), p.nps);
+                    println!(
+                        "    {} / {} ({:.0} s, nps {})",
+                        p.done,
+                        p.total,
+                        t.elapsed().as_secs_f64(),
+                        p.nps
+                    );
                     last_shown = Instant::now();
                 }
             },

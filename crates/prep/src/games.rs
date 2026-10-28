@@ -57,7 +57,8 @@ impl Tally {
     /// Points per game, 0..1, over the games with a result.
     pub fn score(&self) -> Option<f64> {
         let decided = self.wins + self.draws + self.losses;
-        (decided > 0).then(|| (f64::from(self.wins) + 0.5 * f64::from(self.draws)) / f64::from(decided))
+        (decided > 0)
+            .then(|| (f64::from(self.wins) + 0.5 * f64::from(self.draws)) / f64::from(decided))
     }
 }
 
@@ -214,7 +215,13 @@ mod tests {
         assert_eq!(Outcome::of("1/2-1/2", true), Outcome::Draw);
         assert_eq!(Outcome::of("*", true), Outcome::Unknown);
         let mut t = Tally::default();
-        for o in [Outcome::Win, Outcome::Win, Outcome::Draw, Outcome::Loss, Outcome::Unknown] {
+        for o in [
+            Outcome::Win,
+            Outcome::Win,
+            Outcome::Draw,
+            Outcome::Loss,
+            Outcome::Unknown,
+        ] {
             t.add(o);
         }
         assert_eq!((t.games, t.wins, t.draws, t.losses), (5, 2, 1, 1));

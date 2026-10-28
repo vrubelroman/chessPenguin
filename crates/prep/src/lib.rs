@@ -34,9 +34,7 @@ mod tree;
 
 pub use book::BookOptions;
 pub use chess_import::chessbase::base::Side;
-pub use errors::{
-    EXACT, ErrorCounts, OpeningError, PositionCache, PositionEval, RepeatedError,
-};
+pub use errors::{EXACT, ErrorCounts, OpeningError, PositionCache, PositionEval, RepeatedError};
 pub use game_review::{Eval, Judgement};
 pub use games::{BookExit, GameInfo, Outcome, Tally, move_label};
 pub use openings::Opening;
@@ -179,7 +177,11 @@ pub fn fingerprint(db: &Database) -> u64 {
     match db {
         Database::Pgn(p) => {
             let f = p.fingerprint();
-            fnv(f.content_hash.to_le_bytes().iter().chain(f.len.to_le_bytes().iter()))
+            fnv(f
+                .content_hash
+                .to_le_bytes()
+                .iter()
+                .chain(f.len.to_le_bytes().iter()))
         }
         Database::ChessBase(b) => {
             let meta = std::fs::metadata(b.path()).ok();
@@ -188,7 +190,8 @@ pub fn fingerprint(db: &Database) -> u64 {
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_secs());
-            fnv(b.path()
+            fnv(b
+                .path()
                 .to_string_lossy()
                 .bytes()
                 .chain(len.to_le_bytes())
@@ -562,7 +565,12 @@ impl PrepReport {
     }
 
     /// The report cached in `dir` for this database, player and options, if any.
-    pub fn load(dir: &Path, db: &Database, player: &Player, options: &Options) -> Option<PrepReport> {
+    pub fn load(
+        dir: &Path,
+        db: &Database,
+        player: &Player,
+        options: &Options,
+    ) -> Option<PrepReport> {
         let fp = fingerprint(db);
         let bytes = std::fs::read(Self::cache_path(dir, fp, player, options)).ok()?;
         let mut report: PrepReport = serde_json::from_slice(&bytes).ok()?;
@@ -733,24 +741,44 @@ mod tests {
         let player = Player::new([list[0].id, list[1].id]);
         let never = AtomicBool::new(false);
         let found = games_of(&db, &player, Side::Any, &never).expect("games");
-        assert_eq!(found, vec![(0, true), (1, false), (2, true), (3, true), (4, true)]);
+        assert_eq!(
+            found,
+            vec![(0, true), (1, false), (2, true), (3, true), (4, true)]
+        );
         assert_eq!(
             games_of(&db, &player, Side::Black, &never).expect("games"),
             vec![(1, false)]
         );
-        let report = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
-            .expect("report");
+        let report = build(
+            &db,
+            &player,
+            &Options::default(),
+            &AtomicUsize::new(0),
+            &never,
+        )
+        .expect("report");
         assert_eq!(report.games.len(), 4, "the set-up game is left out");
         assert_eq!(report.skipped, 1);
         assert_eq!(report.names, vec!["Вафин Радель", "Вафин Р."]);
         let g = &report.games[0];
-        assert_eq!((g.index, g.white, g.opponent.as_str(), g.opponent_elo), (0, true, "Иванов Иван", 1500));
+        assert_eq!(
+            (g.index, g.white, g.opponent.as_str(), g.opponent_elo),
+            (0, true, "Иванов Иван", 1500)
+        );
         assert_eq!(g.date, "2026.01.10");
         assert_eq!(g.outcome, Outcome::Win);
-        assert_eq!(g.sans, vec!["e4", "c5", "Nf3", "Nc6", "Bb5", "g6", "O-O", "Bg7"]);
+        assert_eq!(
+            g.sans,
+            vec!["e4", "c5", "Nf3", "Nc6", "Bb5", "g6", "O-O", "Bg7"]
+        );
         assert_eq!(g.keys.len(), 9);
         let o = &report.openings[g.opening.expect("named")];
-        assert!(o.name.starts_with("Sicilian Defense: Nyezhmetdinov-Rossolimo Attack"), "{}", o.name);
+        assert!(
+            o.name
+                .starts_with("Sicilian Defense: Nyezhmetdinov-Rossolimo Attack"),
+            "{}",
+            o.name
+        );
         assert_eq!(g.named, Some(6));
         assert_eq!(report.games[1].outcome, Outcome::Win);
         assert_eq!(report.games[1].opponent_elo, 1700);
@@ -760,7 +788,11 @@ mod tests {
         assert_eq!(w.families.len(), 2);
         assert_eq!(w.families[0].name, "Sicilian Defense");
         assert_eq!(w.families[0].tally.games, 3 - 1);
-        assert_eq!(w.families[0].variations.len(), 2, "3...g6 and 3...e6 are named apart");
+        assert_eq!(
+            w.families[0].variations.len(),
+            2,
+            "3...g6 and 3...e6 are named apart"
+        );
         assert_eq!(w.families[1].name, "Queen's Gambit");
         assert_eq!(w.tree.nodes[0].tally.games, 3);
         assert_eq!(w.tree.nodes[0].last_date, "2026.04.01");
@@ -790,7 +822,16 @@ mod tests {
         assert_eq!(white_only.side(), Side::White);
         // Cancelled.
         let cancelled = AtomicBool::new(true);
-        assert!(build(&db, &player, &Options::default(), &AtomicUsize::new(0), &cancelled).is_none());
+        assert!(
+            build(
+                &db,
+                &player,
+                &Options::default(),
+                &AtomicUsize::new(0),
+                &cancelled
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -801,15 +842,24 @@ mod tests {
              [White \"A\"]\n[Black \"C\"]\n[Result \"0-1\"]\n\n1. e4 c5 2. Nc3 0-1\n\n",
         );
         let player = Player::new([candidates(&db, "A", 1).0[0].id]);
-        let report = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &AtomicBool::new(false))
-            .expect("report");
+        let report = build(
+            &db,
+            &player,
+            &Options::default(),
+            &AtomicUsize::new(0),
+            &AtomicBool::new(false),
+        )
+        .expect("report");
         let fam = &report.white.families[0];
         assert_eq!(fam.name, "Sicilian Defense");
         assert_eq!(fam.variations.len(), 1);
         let v = &fam.variations[0];
         assert_eq!(v.games, vec![0, 1]);
         let o = &report.openings[v.opening.unwrap()];
-        assert_eq!((o.name.as_str(), o.line.as_str()), ("Sicilian Defense: Closed", "1. e4 c5 2. Nc3"));
+        assert_eq!(
+            (o.name.as_str(), o.line.as_str()),
+            ("Sicilian Defense: Closed", "1. e4 c5 2. Nc3")
+        );
     }
 
     #[test]
@@ -818,8 +868,14 @@ mod tests {
         let (list, _) = candidates(&db, "Вафин Р.", 2);
         let player = Player::new([list[0].id, list[1].id]);
         let never = AtomicBool::new(false);
-        let mut report = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
-            .expect("report");
+        let mut report = build(
+            &db,
+            &player,
+            &Options::default(),
+            &AtomicUsize::new(0),
+            &never,
+        )
+        .expect("report");
         // The database itself as the book, threshold 2: 1.e4 c5 2.Nf3 is in three
         // games; game 0 (3...g6) and game 2 (3...e6) part after 3.Bb5, which is in
         // both. `ply` counts the moves to the first rare position.
@@ -839,10 +895,21 @@ mod tests {
                 count: 1
             })
         );
-        assert_eq!(exits[1].map(|b| (b.ply, b.by_player)), Some((4, true)), "2...d6 is his");
+        assert_eq!(
+            exits[1].map(|b| (b.ply, b.by_player)),
+            Some((4, true)),
+            "2...d6 is his"
+        );
         assert_eq!(exits[2].map(|b| (b.ply, b.by_player)), Some((6, false)));
-        assert_eq!(exits[3].map(|b| (b.ply, b.by_player)), Some((1, true)), "1.d4 is his own");
-        assert_eq!(report.book.as_ref().map(|b| (b.threshold, b.left)), Some((2, 4)));
+        assert_eq!(
+            exits[3].map(|b| (b.ply, b.by_player)),
+            Some((1, true)),
+            "1.d4 is his own"
+        );
+        assert_eq!(
+            report.book.as_ref().map(|b| (b.threshold, b.left)),
+            Some((2, 4))
+        );
         assert_eq!(report.white.book_exits(&report.games), (1, 2));
         // The counts of the positions looked at: the start (4 games), 1.e4 c5 2.Nf3
         // (3), the rare 3...g6 (1).
@@ -868,8 +935,14 @@ mod tests {
         let (list, _) = candidates(&db, "Вафин Радель", 1);
         let player = Player::new([list[0].id]);
         let never = AtomicBool::new(false);
-        let mut report = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
-            .expect("report");
+        let mut report = build(
+            &db,
+            &player,
+            &Options::default(),
+            &AtomicUsize::new(0),
+            &never,
+        )
+        .expect("report");
         let total = report.distinct_positions();
         // 9 + 11 + 7 positions; the start and 1.e4 c5 2.Nf3 shared by three games,
         // 2...Nc6 3.Bb5 by two.
@@ -886,15 +959,27 @@ mod tests {
         assert!(targets[0].pos.moves.is_empty());
         assert_eq!(targets[3].pos.moves, vec!["e2e4", "c7c5", "g1f3"]);
         assert_eq!(targets[3].turn, uci::Side::Black);
-        assert!(targets.iter().all(|t| t.played.is_none() && t.known.is_none()));
+        assert!(
+            targets
+                .iter()
+                .all(|t| t.played.is_none() && t.known.is_none())
+        );
         // The engine says: every move fine but 3.Bb5, a blunder (+0.3 → −1.5).
         let mut cache = PositionCache::default();
         for t in &targets {
             let key = u64::from_str_radix(&t.key, 16).unwrap();
             let after_bb5 = report.games[0].keys[5];
-            let eval = if key == after_bb5 { Eval::Cp(-150) } else { Eval::Cp(30) };
+            let eval = if key == after_bb5 {
+                Eval::Cp(-150)
+            } else {
+                Eval::Cp(30)
+            };
             let before_bb5 = report.games[0].keys[4];
-            let pv = if key == before_bb5 { vec!["d2d4".to_owned()] } else { Vec::new() };
+            let pv = if key == before_bb5 {
+                vec!["d2d4".to_owned()]
+            } else {
+                Vec::new()
+            };
             let event = JobEvent::Eval {
                 key: t.key.clone(),
                 eval: game_review::PosEval {
@@ -918,7 +1003,10 @@ mod tests {
         assert_eq!(w.errors[0].san, "Bb5");
         assert_eq!(w.errors[0].best_san, "d4");
         assert_eq!(w.errors[0].ply, 4);
-        assert_eq!(report.games[w.errors[0].game as usize].move_label(4), "3. Bb5");
+        assert_eq!(
+            report.games[w.errors[0].game as usize].move_label(4),
+            "3. Bb5"
+        );
         assert_eq!(w.families[0].errors.blunders, 2);
         assert_eq!(w.families[0].variations[0].errors.blunders, 1);
         assert_eq!(w.families[0].variations[0].error_list.len(), 1);
@@ -936,14 +1024,34 @@ mod tests {
         let again = PrepReport::load(&dir, &db, &player, &Options::default()).expect("cached");
         assert_eq!(again.white.errors, report.white.errors);
         assert_eq!(again.evals.len(), report.evals.len());
-        assert!(PrepReport::load(&dir, &db, &player, &Options { plies: 10, side: Side::Any }).is_none());
+        assert!(
+            PrepReport::load(
+                &dir,
+                &db,
+                &player,
+                &Options {
+                    plies: 10,
+                    side: Side::Any
+                }
+            )
+            .is_none()
+        );
         let other = Player::new([list[0].id + 1]);
         assert!(PrepReport::load(&dir, &db, &other, &Options::default()).is_none());
-        let mut fresh = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
-            .expect("report");
+        let mut fresh = build(
+            &db,
+            &player,
+            &Options::default(),
+            &AtomicUsize::new(0),
+            &never,
+        )
+        .expect("report");
         assert!(!fresh.evaluated());
         assert_eq!(fresh.take_cached(&cache), total);
-        assert!(fresh.evaluated(), "evaluations from the cache judge the errors too");
+        assert!(
+            fresh.evaluated(),
+            "evaluations from the cache judge the errors too"
+        );
         assert_eq!(fresh.white.repeated, report.white.repeated);
         assert_eq!(fresh.take_cached(&cache), 0);
         // A report of another search (from before the fixed one) keeps its games but
@@ -972,8 +1080,14 @@ mod tests {
         let (list, _) = candidates(&db, "Вафин Радель", 1);
         let player = Player::new([list[0].id]);
         let never = AtomicBool::new(false);
-        let mut report = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
-            .expect("report");
+        let mut report = build(
+            &db,
+            &player,
+            &Options::default(),
+            &AtomicUsize::new(0),
+            &never,
+        )
+        .expect("report");
         let total = report.distinct_positions();
         let settings = JobSettings::new(2, None);
         let mut cache = PositionCache::default();
@@ -991,10 +1105,19 @@ mod tests {
         assert_eq!((last.done, last.total), (total, total));
         assert_eq!(report.missing(), 0);
         assert_eq!(cache.len(), total);
-        assert_eq!(report.engine.as_ref().map(|e| e.name.as_str()), Some("Fake UCI"));
+        assert_eq!(
+            report.engine.as_ref().map(|e| e.name.as_str()),
+            Some("Fake UCI")
+        );
         // A second run has nothing to do; a cancelled one ends at once.
-        let mut again = build(&db, &player, &Options::default(), &AtomicUsize::new(0), &never)
-            .expect("report");
+        let mut again = build(
+            &db,
+            &player,
+            &Options::default(),
+            &AtomicUsize::new(0),
+            &never,
+        )
+        .expect("report");
         let cancelled = AtomicBool::new(true);
         let mut calls = 0;
         analyse(

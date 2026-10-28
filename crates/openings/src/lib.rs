@@ -203,10 +203,18 @@ mod tests {
         let (at, id) = deepest(&k).expect("named");
         let o = get(id);
         assert_eq!(o.eco, "B31");
-        assert!(o.name.starts_with("Sicilian Defense: Nyezhmetdinov-Rossolimo Attack"), "{}", o.name);
+        assert!(
+            o.name
+                .starts_with("Sicilian Defense: Nyezhmetdinov-Rossolimo Attack"),
+            "{}",
+            o.name
+        );
         assert_eq!(at, 6, "the position after 3...g6");
         assert_eq!(o.family(), "Sicilian Defense");
-        assert!(o.variation().is_some_and(|v| v.starts_with("Nyezhmetdinov")));
+        assert!(
+            o.variation()
+                .is_some_and(|v| v.starts_with("Nyezhmetdinov"))
+        );
         assert_eq!(o.plies, 6);
         assert_eq!(o.line, "1. e4 c5 2. Nf3 Nc6 3. Bb5 g6");
         // A transposition: 1.Nf3 d5 2.d4 reaches the table's 1.d4 d5 2.Nf3.
@@ -226,8 +234,14 @@ mod tests {
         let after_d4 = by_position(line[5]).map(|id| get(id).name.clone());
         assert_eq!(after_d4.as_deref(), Some("Sicilian Defense"));
         let (at, id) = deepest(&line).expect("named");
-        assert_eq!((at, get(id).name.as_str()), (4, "Sicilian Defense: Modern Variations"));
-        assert!(is_prefix_name("Sicilian Defense", "Sicilian Defense: Modern Variations"));
+        assert_eq!(
+            (at, get(id).name.as_str()),
+            (4, "Sicilian Defense: Modern Variations")
+        );
+        assert!(is_prefix_name(
+            "Sicilian Defense",
+            "Sicilian Defense: Modern Variations"
+        ));
         assert!(is_prefix_name("A: B", "A: B, C"));
         assert!(!is_prefix_name("Sicilian Defense", "Sicilian Defense"));
         assert!(!is_prefix_name("English", "English Opening"));
@@ -236,11 +250,22 @@ mod tests {
     #[test]
     fn book_positions_and_keys() {
         // The Greco Gambit lines pass 6...Bb4+; 7...d5 is on none of them.
-        let k = keys(&["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d4", "exd4", "cxd4", "Bb4+"]);
-        assert!(in_book(k[12]) && by_position(k[12]).is_none(), "on the way, not named");
-        let more = keys(&["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d4", "exd4", "cxd4", "Bb4+", "Nc3", "d5"]);
+        let k = keys(&[
+            "e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d4", "exd4", "cxd4", "Bb4+",
+        ]);
+        assert!(
+            in_book(k[12]) && by_position(k[12]).is_none(),
+            "on the way, not named"
+        );
+        let more = keys(&[
+            "e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d4", "exd4", "cxd4", "Bb4+",
+            "Nc3", "d5",
+        ]);
         assert!(in_book(more[13]) && !in_book(more[14]));
-        assert!(!in_book(k[0]), "the start position is no move into the book");
+        assert!(
+            !in_book(k[0]),
+            "the start position is no move into the book"
+        );
         // The key is the one the rest of the program uses.
         let pos = Chess::default();
         assert_eq!(key(&pos), chess_import::position::key(&pos));

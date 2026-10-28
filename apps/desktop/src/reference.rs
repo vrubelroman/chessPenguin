@@ -15,9 +15,7 @@ use std::sync::atomic::AtomicBool;
 
 use chess_core::{Game, NodeId};
 use chess_import::Database;
-use chess_import::position::{
-    Match, MoveStat, PositionOutcome, PositionQuery, Tally, theory_end,
-};
+use chess_import::position::{Match, MoveStat, PositionOutcome, PositionQuery, Tally, theory_end};
 use egui::{RichText, Sense, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
 use shakmaty::uci::UciMove;

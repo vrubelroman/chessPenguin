@@ -127,10 +127,18 @@ pub fn judge_games(
     let mut out = Vec::new();
     for &g in which {
         let game = &games[g as usize];
-        let mover = if game.white { Color::White } else { Color::Black };
+        let mover = if game.white {
+            Color::White
+        } else {
+            Color::Black
+        };
         let mut pos = Chess::default();
         for (i, uci) in game.ucis.iter().enumerate() {
-            let Some(m) = uci.parse::<UciMove>().ok().and_then(|u| u.to_move(&pos).ok()) else {
+            let Some(m) = uci
+                .parse::<UciMove>()
+                .ok()
+                .and_then(|u| u.to_move(&pos).ok())
+            else {
                 break;
             };
             if game.player_moves_at(i)
@@ -268,7 +276,11 @@ impl PositionCache {
 
     /// Keeps `eval` unless the cache has one with more nodes; says whether it was kept.
     pub fn insert(&mut self, key: u64, eval: PositionEval) -> bool {
-        if self.entries.get(&key).is_some_and(|e| e.nodes >= eval.nodes) {
+        if self
+            .entries
+            .get(&key)
+            .is_some_and(|e| e.nodes >= eval.nodes)
+        {
             return false;
         }
         self.entries.insert(key, eval);

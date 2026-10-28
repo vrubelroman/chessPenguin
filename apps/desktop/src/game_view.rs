@@ -787,7 +787,8 @@ impl GameView {
         if std::mem::take(&mut self.review_asked) {
             if self.engine_busy {
                 actions.push(GameAction::Toast(
-                    tr("Opening errors are being searched — wait or stop it in the report").to_owned(),
+                    tr("Opening errors are being searched — wait or stop it in the report")
+                        .to_owned(),
                 ));
             } else {
                 self.start_review(false, ui.ctx(), &mut actions);

@@ -54,7 +54,9 @@ const SEARCH_GUARD: Duration = Duration::from_secs(300);
 pub fn processes(limit: usize) -> usize {
     let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
     let memory = available_mb().map_or(usize::MAX, |mb| {
-        (mb.saturating_sub(SHARED_MB) / PROCESS_MB).try_into().unwrap_or(usize::MAX)
+        (mb.saturating_sub(SHARED_MB) / PROCESS_MB)
+            .try_into()
+            .unwrap_or(usize::MAX)
     });
     cpus.min(limit).min(memory).clamp(1, MAX_PROCESSES)
 }
@@ -158,7 +160,10 @@ pub fn run(
     if targets.is_empty() {
         return Ok(());
     }
-    let workers = settings.processes.clamp(1, MAX_PROCESSES).min(targets.len());
+    let workers = settings
+        .processes
+        .clamp(1, MAX_PROCESSES)
+        .min(targets.len());
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
     let halted = || cancel.load(Ordering::Relaxed) || failed.load(Ordering::Relaxed);
@@ -228,7 +233,14 @@ fn worker(
     let mut search = |pos: &EnginePosition, among: Vec<String>| {
         next_id += 1;
         let _ = handle.new_game();
-        search_once(&handle, pos, SearchId(next_id), among, settings.nodes, halted)
+        search_once(
+            &handle,
+            pos,
+            SearchId(next_id),
+            among,
+            settings.nodes,
+            halted,
+        )
     };
     while let Some(t) = targets.get(next.fetch_add(1, Ordering::Relaxed)) {
         if halted() {

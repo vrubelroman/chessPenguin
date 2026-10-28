@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.1.0" date="2026-10-28">
+      <description>
+        <p>Preparing against an opponent: their opening repertoire by colour with opening names, and their opening mistakes found by the engine. The game review uses one fixed engine search everywhere, so the same game gets the same marks on every computer and phone. Brilliant and great moves recalibrated on chess.com; 100 classic sample games instead of 38.</p>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-10-28">
       <description>
         <p>The game review marks brilliant (!!) and great (!) moves, calibrated on chess.com, in the notation, the report and on the board, now also on Android; move marks in a clearer palette, bold moves in the notation. Downloaded Lichess and Chess.com databases get new games on their own. The notation no longer jumps with the engine on; Android starts in the dark theme.</p>

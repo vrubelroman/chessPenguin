@@ -242,15 +242,13 @@ impl Settings {
         };
         migrate_legacy_config(&path);
         match std::fs::read(&path) {
-            Ok(bytes) => {
-                serde_json::from_slice(&bytes).unwrap_or_else(|e| {
-                    eprintln!(
-                        "settings: cannot parse {}: {e}; using defaults",
-                        path.display()
-                    );
-                    Self::default()
-                })
-            }
+            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+                eprintln!(
+                    "settings: cannot parse {}: {e}; using defaults",
+                    path.display()
+                );
+                Self::default()
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::first_start(),
             Err(_) => Self::default(),
         }

@@ -805,7 +805,10 @@ mod tests {
             Rules::Strict,
         );
         assert_eq!(r.judgements[0], None);
-        let mate = Some(Eval::Mate { white: true, moves: 5 });
+        let mate = Some(Eval::Mate {
+            white: true,
+            moves: 5,
+        });
         let r = Report::build(&evals, &[noted(w, true, mate)], Phases::default());
         assert_eq!(r.judgements[0], None);
         // No best other move known (an older analysis): nothing said.

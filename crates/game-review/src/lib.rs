@@ -23,8 +23,8 @@ pub mod report;
 
 pub use features::{MoveFeatures, Rules};
 pub use job::{
-    JobEvent, JobFailure, JobSettings, MAX_PROCESSES, PHONE_PROCESSES, SEARCH_HASH_MB, SEARCH_NODES,
-    SEARCH_VERSION, Target, estimate_secs, processes, run,
+    JobEvent, JobFailure, JobSettings, MAX_PROCESSES, PHONE_PROCESSES, SEARCH_HASH_MB,
+    SEARCH_NODES, SEARCH_VERSION, Target, estimate_secs, processes, run,
 };
 pub use report::{Eval, Judgement, Phase, Phases, Ply, Report, SideStats, judge};
 
@@ -313,7 +313,11 @@ impl GameAnalysis {
     /// !! and ! ("Update" fills them in without evaluating anything again). None for
     /// evaluations from the PGN, which have no engine lines.
     pub fn seconds_missing(&self) -> usize {
-        if self.meta.as_ref().is_none_or(|m| m.nodes == 0 || m.is_stale()) {
+        if self
+            .meta
+            .as_ref()
+            .is_none_or(|m| m.nodes == 0 || m.is_stale())
+        {
             return 0;
         }
         (0..self.played.len())

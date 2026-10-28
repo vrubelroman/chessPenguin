@@ -15,12 +15,12 @@ use chess_import::Database;
 use chess_import::chessbase::base::{Side, fold};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
-use serde::{Deserialize, Serialize};
 use game_review::{JobEvent, JobFailure, JobSettings, Judgement};
 use prep::{
-    BookExit, BookOptions, Candidate, ErrorCounts, GameInfo, Options, Player,
-    PositionCache, PrepReport, Tally,
+    BookExit, BookOptions, Candidate, ErrorCounts, GameInfo, Options, Player, PositionCache,
+    PrepReport, Tally,
 };
+use serde::{Deserialize, Serialize};
 use shakmaty::uci::UciMove;
 use shakmaty::{Chess, Color, Move, Position, Square};
 
@@ -132,11 +132,26 @@ impl Default for PrepSorts {
     fn default() -> Self {
         // Most played, most repeated, worst, newest first.
         PrepSorts {
-            tree: SortBy { key: TreeSort::Games, ascending: false },
-            openings: SortBy { key: OpeningSort::Games, ascending: false },
-            repeated: SortBy { key: RepeatedSort::Times, ascending: false },
-            variations: SortBy { key: VariationSort::Errors, ascending: false },
-            games: SortBy { key: GameSort::Date, ascending: false },
+            tree: SortBy {
+                key: TreeSort::Games,
+                ascending: false,
+            },
+            openings: SortBy {
+                key: OpeningSort::Games,
+                ascending: false,
+            },
+            repeated: SortBy {
+                key: RepeatedSort::Times,
+                ascending: false,
+            },
+            variations: SortBy {
+                key: VariationSort::Errors,
+                ascending: false,
+            },
+            games: SortBy {
+                key: GameSort::Date,
+                ascending: false,
+            },
         }
     }
 }
@@ -181,7 +196,11 @@ fn sort_col<K: Copy + PartialEq>(
 ) {
     h.col(|ui| {
         let r = crate::widgets::sort_header(ui, text, (sort.key == key).then_some(sort.ascending));
-        let r = if hint.is_empty() { r } else { r.on_hover_text(hint) };
+        let r = if hint.is_empty() {
+            r
+        } else {
+            r.on_hover_text(hint)
+        };
         if r.clicked() {
             *clicked = Some(key);
         }
@@ -476,8 +495,10 @@ impl PrepDialog {
         }
         let (db, q) = (db.clone(), query.clone());
         let now = ctx.input(|i| i.time);
-        self.search = Background::spawn(ctx, now, move |_, _| Some(prep::candidates(&db, &q, CANDIDATES)))
-            .map(|j| (query, j));
+        self.search = Background::spawn(ctx, now, move |_, _| {
+            Some(prep::candidates(&db, &q, CANDIDATES))
+        })
+        .map(|j| (query, j));
     }
 
     fn poll(&mut self, ctx: &egui::Context, db: &Arc<Database>) {
@@ -547,7 +568,11 @@ impl PrepDialog {
         if self.book.is_none() && !self.dbs.is_empty() {
             // The book chosen last time, else the largest database on the shelf: once
             // the shelf is known.
-            self.book = Some(BookChoice::from_setting(settings.prep.book.as_deref(), &self.path, &self.dbs));
+            self.book = Some(BookChoice::from_setting(
+                settings.prep.book.as_deref(),
+                &self.path,
+                &self.dbs,
+            ));
         }
         let book = self.book.clone().unwrap_or(BookChoice::None);
         let mut outcome = None;
@@ -733,7 +758,10 @@ impl PrepDialog {
         if modal.should_close() {
             outcome = Some(DialogOutcome::Cancel);
         }
-        if outcome.is_none() && ready && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+        if outcome.is_none()
+            && ready
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
+        {
             outcome = Some(DialogOutcome::Open(self.start()));
         }
         if outcome.is_none() && ready && self.auto_open && self.search.is_none() {
@@ -768,7 +796,10 @@ impl PrepDialog {
         if self.query.trim().is_empty() {
             ui.horizontal(|ui| {
                 ui.add_space(indent);
-                ui.label(RichText::new(tr("Type a name: the players of the database are offered")).weak());
+                ui.label(
+                    RichText::new(tr("Type a name: the players of the database are offered"))
+                        .weak(),
+                );
             });
             return;
         }
@@ -968,9 +999,18 @@ struct Mark {
 /// A row of the repertoire tree as laid out.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TreeRow {
-    Node { white: bool, node: u32, depth: usize },
+    Node {
+        white: bool,
+        node: u32,
+        depth: usize,
+    },
     /// «other moves (n)» under a node.
-    Others { white: bool, parent: u32, depth: usize, count: usize },
+    Others {
+        white: bool,
+        parent: u32,
+        depth: usize,
+        count: usize,
+    },
 }
 
 /// A row of the errors tab.
@@ -980,11 +1020,25 @@ enum ErrRow {
     RepeatedTitle,
     OpeningsTitle,
     /// A repeated error (colour, index into `repeated`) and one of its games.
-    Repeated { white: bool, index: usize },
-    RepeatedGame { white: bool, index: usize, game: u32 },
+    Repeated {
+        white: bool,
+        index: usize,
+    },
+    RepeatedGame {
+        white: bool,
+        index: usize,
+        game: u32,
+    },
     /// A variation with errors (colour, family, variation) and one of its errors.
-    Variation { white: bool, family: usize, variation: usize },
-    Error { white: bool, index: usize },
+    Variation {
+        white: bool,
+        family: usize,
+        variation: usize,
+    },
+    Error {
+        white: bool,
+        index: usize,
+    },
 }
 
 impl ErrRow {
@@ -997,9 +1051,15 @@ impl ErrRow {
 enum EngineTexts {
     Running,
     /// A button to start or go on, and a note beside it.
-    Button { label: String, note: Option<String> },
+    Button {
+        label: String,
+        note: Option<String>,
+    },
     /// Done: a quiet label.
-    Done { label: String, note: Option<String> },
+    Done {
+        label: String,
+        note: Option<String>,
+    },
 }
 
 /// Where the engine run stands for the colour(s) shown.
@@ -1009,8 +1069,13 @@ enum EngineState {
     /// No evaluation yet.
     NotRun,
     /// Some positions evaluated (a run stopped, a new depth, new games).
-    Partial { done: usize, total: usize },
-    Complete { total: usize },
+    Partial {
+        done: usize,
+        total: usize,
+    },
+    Complete {
+        total: usize,
+    },
 }
 
 /// Fewer games: the percentages are shown weak.
@@ -1141,7 +1206,12 @@ fn table_line(line: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut number: Option<&str> = None;
     for tok in line.split_whitespace() {
-        if tok.ends_with('.') && tok.trim_end_matches('.').chars().all(|c| c.is_ascii_digit()) {
+        if tok.ends_with('.')
+            && tok
+                .trim_end_matches('.')
+                .chars()
+                .all(|c| c.is_ascii_digit())
+        {
             number = Some(tok);
         } else {
             out.push(match number.take() {
@@ -1193,7 +1263,9 @@ fn period(games: &[GameInfo]) -> String {
     let month = |g: &GameInfo| -> String {
         let parts: Vec<&str> = g.date.split('.').collect();
         match parts.as_slice() {
-            [y, m, ..] if m.chars().all(|c| c.is_ascii_digit()) && !m.is_empty() => format!("{m}.{y}"),
+            [y, m, ..] if m.chars().all(|c| c.is_ascii_digit()) && !m.is_empty() => {
+                format!("{m}.{y}")
+            }
             [y, ..] => (*y).to_string(),
             _ => String::new(),
         }
@@ -1212,7 +1284,11 @@ fn period(games: &[GameInfo]) -> String {
 /// player's, the percentages are in its tooltip. Faint over few games.
 fn score_bar(ui: &mut Ui, t: &Tally, white: bool, few: bool) {
     let (rect, resp) = ui.allocate_exact_size(vec2(56.0, 12.0), Sense::hover());
-    let (white_wins, black_wins) = if white { (t.wins, t.losses) } else { (t.losses, t.wins) };
+    let (white_wins, black_wins) = if white {
+        (t.wins, t.losses)
+    } else {
+        (t.losses, t.wins)
+    };
     let decided = white_wins + t.draws + black_wins;
     let fade = |c: Color32| if few { c.gamma_multiply(0.45) } else { c };
     let painter = ui.painter();
@@ -1231,7 +1307,10 @@ fn score_bar(ui: &mut Ui, t: &Tally, white: bool, few: bool) {
             let w = rect.width() * n as f32 / decided as f32;
             if w > 0.0 {
                 painter.rect_filled(
-                    egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w, rect.bottom())),
+                    egui::Rect::from_min_max(
+                        egui::pos2(x, rect.top()),
+                        egui::pos2(x + w, rect.bottom()),
+                    ),
                     0.0,
                     fade(fill),
                 );
@@ -1239,18 +1318,28 @@ fn score_bar(ui: &mut Ui, t: &Tally, white: bool, few: bool) {
             x += w;
         }
     }
-    painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, fade(outline)), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0, fade(outline)),
+        egui::StrokeKind::Inside,
+    );
     if decided > 0 {
         let pct = |n: u32| 100 * n / decided;
         resp.on_hover_text(trf(
             "White wins {w} % · draws {d} % · Black wins {b} %",
-            &[("w", &pct(white_wins)), ("d", &pct(t.draws)), ("b", &pct(black_wins))],
+            &[
+                ("w", &pct(white_wins)),
+                ("d", &pct(t.draws)),
+                ("b", &pct(black_wins)),
+            ],
         ));
     }
 }
 
 fn score_text(t: &Tally) -> String {
-    t.score().map_or_else(|| "—".to_owned(), |s| format!("{:.0} %", 100.0 * s))
+    t.score()
+        .map_or_else(|| "—".to_owned(), |s| format!("{:.0} %", 100.0 * s))
 }
 
 /// "+10 =1 −3".
@@ -1271,15 +1360,15 @@ fn judgement_weight(j: Judgement) -> u32 {
 fn pill(ui: &mut Ui, j: Judgement) -> egui::Response {
     let text = review::judgement_symbol(j);
     let font = egui::FontId::proportional(11.0);
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, Color32::WHITE);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, Color32::WHITE);
     let size = vec2(galley.size().x + 8.0, 16.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter().rect_filled(rect, 8.0, review::judgement_color(j));
-    ui.painter().galley(
-        rect.center() - galley.size() / 2.0,
-        galley,
-        Color32::WHITE,
-    );
+    ui.painter()
+        .rect_filled(rect, 8.0, review::judgement_color(j));
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, Color32::WHITE);
     resp
 }
 
@@ -1321,7 +1410,12 @@ fn counts_text(ui: &mut Ui, c: &ErrorCounts) {
 }
 
 impl PrepScreen {
-    pub fn new(start: PrepStart, db: Arc<Database>, settings: &Settings, ctx: &egui::Context) -> Self {
+    pub fn new(
+        start: PrepStart,
+        db: Arc<Database>,
+        settings: &Settings,
+        ctx: &egui::Context,
+    ) -> Self {
         let dir = cache_dir();
         let cache = dir.as_deref().map(PositionCache::load).unwrap_or_default();
         let plies = settings.prep.plies.clamp(2, 60);
@@ -1531,8 +1625,7 @@ impl PrepScreen {
         let Some(report) = &self.report else {
             return false;
         };
-        self.book_fp.is_some()
-            && report.book.as_ref().map(|b| b.fingerprint) == self.book_fp
+        self.book_fp.is_some() && report.book.as_ref().map(|b| b.fingerprint) == self.book_fp
     }
 
     /// The judgement is shown (inaccuracies can be hidden).
@@ -1577,22 +1670,35 @@ impl PrepScreen {
     /// rebuilt, so a chosen error is found again in them by what it is, not by its
     /// place (else the choice is dropped).
     fn rejudge(&mut self, f: impl FnOnce(&mut PrepReport)) {
-        let Some(report) = self.report.as_mut() else { return };
+        let Some(report) = self.report.as_mut() else {
+            return;
+        };
         // What the selection and the errors tab's row are, by content.
         let error_id = |r: &PrepReport, white: bool, i: usize| {
             r.color(white).errors.get(i).map(|e| (e.game, e.ply))
         };
         let repeated_id = |r: &PrepReport, white: bool, i: usize| {
-            r.color(white).repeated.get(i).map(|x| (x.key, x.uci.clone()))
+            r.color(white)
+                .repeated
+                .get(i)
+                .map(|x| (x.key, x.uci.clone()))
         };
         let sel = match &self.selection {
-            Selection::Error { white, index } => error_id(report, *white, *index).map(|id| (*white, Ok(id))),
-            Selection::Repeated { white, index } => repeated_id(report, *white, *index).map(|id| (*white, Err(id))),
+            Selection::Error { white, index } => {
+                error_id(report, *white, *index).map(|id| (*white, Ok(id)))
+            }
+            Selection::Repeated { white, index } => {
+                repeated_id(report, *white, *index).map(|id| (*white, Err(id)))
+            }
             _ => None,
         };
         let cursor = match self.err_cursor {
-            Some(ErrRow::Error { white, index }) => error_id(report, white, index).map(|id| (white, Ok(id))),
-            Some(ErrRow::Repeated { white, index }) => repeated_id(report, white, index).map(|id| (white, Err(id))),
+            Some(ErrRow::Error { white, index }) => {
+                error_id(report, white, index).map(|id| (white, Ok(id)))
+            }
+            Some(ErrRow::Repeated { white, index }) => {
+                repeated_id(report, white, index).map(|id| (white, Err(id)))
+            }
             _ => None,
         };
         let open: Vec<(bool, (u64, String))> = self
@@ -1601,17 +1707,34 @@ impl PrepScreen {
             .filter_map(|&(w, i)| repeated_id(report, w, i).map(|id| (w, id)))
             .collect();
         f(report);
-        let find = |r: &PrepReport, white: bool, id: &Result<(u32, u32), (u64, String)>| -> Option<usize> {
+        let find = |r: &PrepReport,
+                    white: bool,
+                    id: &Result<(u32, u32), (u64, String)>|
+         -> Option<usize> {
             match id {
-                Ok((game, ply)) => r.color(white).errors.iter().position(|e| e.game == *game && e.ply == *ply),
-                Err((key, uci)) => r.color(white).repeated.iter().position(|x| x.key == *key && x.uci == *uci),
+                Ok((game, ply)) => r
+                    .color(white)
+                    .errors
+                    .iter()
+                    .position(|e| e.game == *game && e.ply == *ply),
+                Err((key, uci)) => r
+                    .color(white)
+                    .repeated
+                    .iter()
+                    .position(|x| x.key == *key && x.uci == *uci),
             }
         };
         if let Some((white, id)) = &sel {
             let found = find(report, *white, id);
             self.selection = match (found, id) {
-                (Some(index), Ok(_)) => Selection::Error { white: *white, index },
-                (Some(index), Err(_)) => Selection::Repeated { white: *white, index },
+                (Some(index), Ok(_)) => Selection::Error {
+                    white: *white,
+                    index,
+                },
+                (Some(index), Err(_)) => Selection::Repeated {
+                    white: *white,
+                    index,
+                },
                 (None, _) => Selection::None,
             };
             if found.is_none() {
@@ -1620,8 +1743,14 @@ impl PrepScreen {
         }
         if let Some((white, id)) = &cursor {
             self.err_cursor = match (find(report, *white, id), id) {
-                (Some(index), Ok(_)) => Some(ErrRow::Error { white: *white, index }),
-                (Some(index), Err(_)) => Some(ErrRow::Repeated { white: *white, index }),
+                (Some(index), Ok(_)) => Some(ErrRow::Error {
+                    white: *white,
+                    index,
+                }),
+                (Some(index), Err(_)) => Some(ErrRow::Repeated {
+                    white: *white,
+                    index,
+                }),
                 (None, _) => None,
             };
         } else if matches!(self.err_cursor, Some(ErrRow::RepeatedGame { .. })) {
@@ -1630,7 +1759,11 @@ impl PrepScreen {
         self.open_repeated = open
             .into_iter()
             .filter_map(|(w, (key, uci))| {
-                let i = report.color(w).repeated.iter().position(|x| x.key == key && x.uci == uci)?;
+                let i = report
+                    .color(w)
+                    .repeated
+                    .iter()
+                    .position(|x| x.key == key && x.uci == uci)?;
                 Some((w, i))
             })
             .collect();
@@ -1694,7 +1827,10 @@ impl PrepScreen {
                     }
                 }
                 None => {
-                    self.book_failed = Some((fp, tr("the position search failed (not enough memory?)").to_owned()))
+                    self.book_failed = Some((
+                        fp,
+                        tr("the position search failed (not enough memory?)").to_owned(),
+                    ))
                 }
             }
         }
@@ -1790,7 +1926,12 @@ impl PrepScreen {
     }
 
     /// The button: the dialog the first time, at once with the colour chosen before.
-    fn engine_asked(&mut self, settings: &Settings, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
+    fn engine_asked(
+        &mut self,
+        settings: &Settings,
+        ctx: &egui::Context,
+        actions: &mut Vec<PrepAction>,
+    ) {
         if crate::engines::own_stockfish().is_none() {
             actions.push(PrepAction::NeedEngine);
             return;
@@ -1815,10 +1956,14 @@ impl PrepScreen {
         self.rejudge(|r| taken = r.take_cached(&cache));
         self.cache = cache;
         self.dirty |= taken > 0;
-        let Some(report) = self.report.as_ref() else { return };
+        let Some(report) = self.report.as_ref() else {
+            return;
+        };
         let targets = report.targets_for(self.color.side());
         if targets.is_empty() {
-            actions.push(PrepAction::Toast(tr("Every position is already evaluated").to_owned()));
+            actions.push(PrepAction::Toast(
+                tr("Every position is already evaluated").to_owned(),
+            ));
             self.tab = Tab::Errors;
             return;
         }
@@ -1869,7 +2014,9 @@ impl PrepScreen {
 
     fn poll_engine(&mut self, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
         let Some(job) = self.job.as_mut() else { return };
-        let Some(report) = self.report.as_mut() else { return };
+        let Some(report) = self.report.as_mut() else {
+            return;
+        };
         let mut ended = false;
         let mut got = false;
         while let Ok(msg) = job.rx.try_recv() {
@@ -1950,7 +2097,12 @@ impl PrepScreen {
     }
 
     /// The launch dialog (§4.2).
-    fn engine_dialog(&mut self, ctx: &egui::Context, settings: &mut Settings, actions: &mut Vec<PrepAction>) {
+    fn engine_dialog(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &mut Settings,
+        actions: &mut Vec<PrepAction>,
+    ) {
         if !self.dialog_open {
             return;
         }
@@ -2112,7 +2264,8 @@ impl PrepScreen {
                                 if g.opening.is_none() {
                                     continue;
                                 }
-                                let ply = family_ply(g, &fam.name).unwrap_or(g.named.unwrap_or(0) as usize);
+                                let ply = family_ply(g, &fam.name)
+                                    .unwrap_or(g.named.unwrap_or(0) as usize);
                                 if best.is_none_or(|(_, p)| ply < p) {
                                     best = Some((g, ply));
                                 }
@@ -2130,7 +2283,15 @@ impl PrepScreen {
                 let r = cr.repeated.get(*index)?;
                 let g = &report.games[*r.games.first()? as usize];
                 let mut s = from_game(g, r.ply as usize, *white);
-                s.arrows = error_arrows(&s.positions[s.ply], &r.uci, cr.errors.iter().find(|e| e.key == r.key && e.uci == r.uci).map(|e| e.best_uci.as_str()), r.judgement);
+                s.arrows = error_arrows(
+                    &s.positions[s.ply],
+                    &r.uci,
+                    cr.errors
+                        .iter()
+                        .find(|e| e.key == r.key && e.uci == r.uci)
+                        .map(|e| e.best_uci.as_str()),
+                    r.judgement,
+                );
                 s.note = cr
                     .errors
                     .iter()
@@ -2144,7 +2305,8 @@ impl PrepScreen {
                 let e = cr.errors.get(*index)?;
                 let g = &report.games[e.game as usize];
                 let mut s = from_game(g, e.ply as usize, *white);
-                s.arrows = error_arrows(&s.positions[s.ply], &e.uci, Some(&e.best_uci), e.judgement);
+                s.arrows =
+                    error_arrows(&s.positions[s.ply], &e.uci, Some(&e.best_uci), e.judgement);
                 s.note = Some(error_note(e));
                 s.opening = e.opening;
                 Some(s)
@@ -2181,8 +2343,16 @@ impl PrepScreen {
                 .families
                 .get(*family)
                 .map(|f| match variation {
-                    Some(v) => f.variations.get(*v).map(|v| v.games.clone()).unwrap_or_default(),
-                    None => f.variations.iter().flat_map(|v| v.games.iter().copied()).collect(),
+                    Some(v) => f
+                        .variations
+                        .get(*v)
+                        .map(|v| v.games.clone())
+                        .unwrap_or_default(),
+                    None => f
+                        .variations
+                        .iter()
+                        .flat_map(|v| v.games.iter().copied())
+                        .collect(),
                 })
                 .unwrap_or_default(),
             Selection::Repeated { white, index } => report
@@ -2209,17 +2379,23 @@ impl PrepScreen {
                 GameSort::BlackElo => num(r.black_elo),
                 GameSort::Result => SortVal::Text(r.result.to_owned()),
                 GameSort::Date => num(g.date_number()),
-                GameSort::Then => SortVal::Text(g.sans.iter().skip(self.game_ply(gi)).take(3).cloned().collect::<Vec<_>>().join(" ")),
-                GameSort::Event => SortVal::Text(fold(&r.event)),
-                GameSort::Errors => num(
-                    report
-                        .color(g.white)
-                        .errors
+                GameSort::Then => SortVal::Text(
+                    g.sans
                         .iter()
-                        .filter(|e| e.game == gi && self.visible(e.judgement))
-                        .map(|e| judgement_weight(e.judgement))
-                        .sum::<u32>(),
+                        .skip(self.game_ply(gi))
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" "),
                 ),
+                GameSort::Event => SortVal::Text(fold(&r.event)),
+                GameSort::Errors => num(report
+                    .color(g.white)
+                    .errors
+                    .iter()
+                    .filter(|e| e.game == gi && self.visible(e.judgement))
+                    .map(|e| judgement_weight(e.judgement))
+                    .sum::<u32>()),
             }
         };
         let mut keyed: Vec<(SortVal, u32)> = list.into_iter().map(|g| (val(g), g)).collect();
@@ -2237,7 +2413,10 @@ impl PrepScreen {
     fn game_ply(&self, gi: u32) -> usize {
         if let (Selection::Node { white, node }, Some(report)) = (&self.selection, &self.report)
             && let Some(n) = report.color(*white).tree.nodes.get(*node as usize)
-            && let Some(p) = report.games[gi as usize].keys.iter().position(|k| *k == n.key)
+            && let Some(p) = report.games[gi as usize]
+                .keys
+                .iter()
+                .position(|k| *k == n.key)
         {
             return p;
         }
@@ -2246,7 +2425,10 @@ impl PrepScreen {
 
     /// The move to open game `gi` at: the chosen position, or after the error.
     fn open_ply(&self, gi: u32) -> usize {
-        let after = matches!(self.selection, Selection::Error { .. } | Selection::Repeated { .. });
+        let after = matches!(
+            self.selection,
+            Selection::Error { .. } | Selection::Repeated { .. }
+        );
         self.game_ply(gi) + usize::from(after)
     }
 
@@ -2307,12 +2489,17 @@ impl PrepScreen {
                     ui.add_space(4.0);
                 });
             }
-            egui::CentralPanel::default().show(ui, |ui| self.right_column(ui, settings, &mut actions));
+            egui::CentralPanel::default()
+                .show(ui, |ui| self.right_column(ui, settings, &mut actions));
             if low && self.board_popup {
                 self.board_overlay(&ctx, settings, &mut actions);
             }
         } else {
-            let board_side = (h - 120.0).min(420.0).min(w - BOARD_MIN - 24.0 - RIGHT_MIN + BOARD_MIN).max(BOARD_MIN).floor();
+            let board_side = (h - 120.0)
+                .min(420.0)
+                .min(w - BOARD_MIN - 24.0 - RIGHT_MIN + BOARD_MIN)
+                .max(BOARD_MIN)
+                .floor();
             egui::Panel::left("prep_board")
                 .exact_size(board_side + 24.0)
                 .resizable(false)
@@ -2324,7 +2511,8 @@ impl PrepScreen {
                         self.board_info(ui, &mut actions);
                     });
                 });
-            egui::CentralPanel::default().show(ui, |ui| self.right_column(ui, settings, &mut actions));
+            egui::CentralPanel::default()
+                .show(ui, |ui| self.right_column(ui, settings, &mut actions));
         }
         self.engine_dialog(&ctx, settings, &mut actions);
         if !typing && !overlay {
@@ -2340,7 +2528,9 @@ impl PrepScreen {
     fn header(&mut self, ui: &mut Ui, actions: &mut Vec<PrepAction>) {
         let gap = ui.spacing().item_spacing.x;
         let button_w = |ui: &Ui, text: &str| {
-            text_width(ui, text, egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.x + gap
+            text_width(ui, text, egui::TextStyle::Button)
+                + 2.0 * ui.spacing().button_padding.x
+                + gap
         };
         let row = ui.available_width();
         let compact = row < 700.0;
@@ -2382,10 +2572,14 @@ impl PrepScreen {
                     }
                     let skipped = self.report.as_ref().map_or(0, |r| r.skipped);
                     let r = ui.add(
-                        egui::Label::new(RichText::new(format!("· {}", parts.join(" · "))).weak()).truncate(),
+                        egui::Label::new(RichText::new(format!("· {}", parts.join(" · "))).weak())
+                            .truncate(),
                     );
                     if skipped > 0 {
-                        r.on_hover_text(trf("not counted: from a set position — {n}", &[("n", &skipped)]));
+                        r.on_hover_text(trf(
+                            "not counted: from a set position — {n}",
+                            &[("n", &skipped)],
+                        ));
                     }
                 });
             });
@@ -2402,7 +2596,13 @@ impl PrepScreen {
     }
 
     /// The colour switch, the book, the depth and the engine button or its progress.
-    fn controls(&mut self, ui: &mut Ui, settings: &mut Settings, low: bool, actions: &mut Vec<PrepAction>) {
+    fn controls(
+        &mut self,
+        ui: &mut Ui,
+        settings: &mut Settings,
+        low: bool,
+        actions: &mut Vec<PrepAction>,
+    ) {
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
         let pad = 2.0 * ui.spacing().button_padding.x;
@@ -2410,17 +2610,28 @@ impl PrepScreen {
         // The engine part on the right is measured first: the rest gets what it leaves.
         let engine = self.engine_texts(state, width);
         let engine_w = match &engine {
-            EngineTexts::Running => (width * 0.35).clamp(90.0, 360.0) + text_width(ui, tr("Stop"), egui::TextStyle::Button) + pad + 2.0 * gap,
+            EngineTexts::Running => {
+                (width * 0.35).clamp(90.0, 360.0)
+                    + text_width(ui, tr("Stop"), egui::TextStyle::Button)
+                    + pad
+                    + 2.0 * gap
+            }
             EngineTexts::Button { label, note } | EngineTexts::Done { label, note } => {
                 text_width(ui, label, egui::TextStyle::Button)
                     + pad
-                    + note.as_deref().map_or(0.0, |n| text_width(ui, n, egui::TextStyle::Body) + gap)
+                    + note
+                        .as_deref()
+                        .map_or(0.0, |n| text_width(ui, n, egui::TextStyle::Body) + gap)
                     + gap
             }
-        } + 26.0 + gap;
+        } + 26.0
+            + gap;
         ui.horizontal(|ui| {
             for choice in [ColorChoice::White, ColorChoice::Black, ColorChoice::Both] {
-                if ui.selectable_label(self.color == choice, choice.label()).clicked() {
+                if ui
+                    .selectable_label(self.color == choice, choice.label())
+                    .clicked()
+                {
                     self.set_color(choice);
                 }
             }
@@ -2430,7 +2641,15 @@ impl PrepScreen {
                 ui.label(tr("Book"));
             }
             let book_w = if width < 900.0 { 150.0 } else { 240.0 };
-            if let Some(b) = book_picker(ui, "prep_book", &self.book, &self.path, &self.dbs, book_w, !caption_apart) {
+            if let Some(b) = book_picker(
+                ui,
+                "prep_book",
+                &self.book,
+                &self.path,
+                &self.dbs,
+                book_w,
+                !caption_apart,
+            ) {
                 self.book = b;
                 self.book_failed = None;
                 self.book_asked = None;
@@ -2444,7 +2663,11 @@ impl PrepScreen {
             ui.separator();
             // The depth's caption by the room left: «Opening: 10 moves», «10 moves», «10 m.».
             let moves = self.plies.div_ceil(2);
-            let board_w = if low { text_width(ui, "♙", egui::TextStyle::Button) + pad + 2.0 * gap } else { 0.0 };
+            let board_w = if low {
+                text_width(ui, "♙", egui::TextStyle::Button) + pad + 2.0 * gap
+            } else {
+                0.0
+            };
             let room = ui.available_width() - engine_w - board_w;
             let depth_label = [
                 trf("Opening: {n} moves", &[("n", &moves)]),
@@ -2460,7 +2683,10 @@ impl PrepScreen {
                 .show_ui(ui, |ui| {
                     for m in [6usize, 10, 15] {
                         if ui
-                            .selectable_label(self.plies == m * 2, trf("Opening: {n} moves", &[("n", &m)]))
+                            .selectable_label(
+                                self.plies == m * 2,
+                                trf("Opening: {n} moves", &[("n", &m)]),
+                            )
                             .clicked()
                         {
                             new_plies = Some(m * 2);
@@ -2553,7 +2779,11 @@ impl PrepScreen {
             } else {
                 trf(
                     "Finding errors: {done} of {total} positions · ≈ {time}",
-                    &[("done", &grouped(done)), ("total", &grouped(total)), ("time", &review::format_duration(secs))],
+                    &[
+                        ("done", &grouped(done)),
+                        ("total", &grouped(total)),
+                        ("time", &review::format_duration(secs)),
+                    ],
                 )
             };
             ui.add(
@@ -2573,7 +2803,10 @@ impl PrepScreen {
                 ui.label(RichText::new(label).weak()).on_hover_text(hint);
             }
             EngineTexts::Button { label, note } => {
-                if crate::widgets::primary(ui, &label).on_hover_text(hint).clicked() {
+                if crate::widgets::primary(ui, &label)
+                    .on_hover_text(hint)
+                    .clicked()
+                {
                     self.engine_asked(settings, ui.ctx(), actions);
                 }
                 if let Some(n) = note {
@@ -2595,13 +2828,15 @@ impl PrepScreen {
             return None;
         }
         let n = grouped(report.distinct_positions_for(self.color.side()));
-        Some(match report.engine.as_ref().filter(|e| !e.name.is_empty()) {
-            Some(e) => trf(
-                "Errors found · {engine} · {n} positions",
-                &[("engine", &e.name), ("n", &n)],
-            ),
-            None => trf("Errors found · {n} positions", &[("n", &n)]),
-        })
+        Some(
+            match report.engine.as_ref().filter(|e| !e.name.is_empty()) {
+                Some(e) => trf(
+                    "Errors found · {engine} · {n} positions",
+                    &[("engine", &e.name), ("n", &n)],
+                ),
+                None => trf("Errors found · {n} positions", &[("n", &n)]),
+            },
+        )
     }
 
     /// The summary: a row per colour in columns — colour, games, score, opponents,
@@ -2609,7 +2844,11 @@ impl PrepScreen {
     /// last game, the book, the opponents) instead of wrapping.
     fn summary(&self, ui: &mut Ui, stacked: bool) {
         let Some(report) = &self.report else { return };
-        let colours = if stacked { self.color.colours() } else { vec![true, false] };
+        let colours = if stacked {
+            self.color.colours()
+        } else {
+            vec![true, false]
+        };
         let evaluated = report.evaluated() && !stacked;
         let book = self.book_ok();
         // Texts per colour: [games, score, opponents, last, book].
@@ -2618,7 +2857,11 @@ impl PrepScreen {
             let cr = report.color(white);
             let root = &cr.tree.nodes[0];
             let tally = &root.tally;
-            let title = if white { tr("As White") } else { tr("As Black") };
+            let title = if white {
+                tr("As White")
+            } else {
+                tr("As Black")
+            };
             let games = format!("{title}  {}", tally.games);
             let score = if tally.games > 0 {
                 format!("{} ({})", score_text(tally), tally_hint(tally))
@@ -2630,7 +2873,11 @@ impl PrepScreen {
                 .map(|elo| trf("opponents ≈ {elo}", &[("elo", &elo)]))
                 .unwrap_or_default();
             let last = crate::library::display_date(&root.last_date);
-            let last = if last.is_empty() { String::new() } else { trf("last {date}", &[("date", &last)]) };
+            let last = if last.is_empty() {
+                String::new()
+            } else {
+                trf("last {date}", &[("date", &last)])
+            };
             let book_text = if book {
                 let mut plies: Vec<u32> = cr
                     .games
@@ -2661,7 +2908,12 @@ impl PrepScreen {
                 .map(|e| e.game)
                 .collect();
             let p = 100 * with_errors.len() / cr.games.len().max(1);
-            rows.push((white, [games, score, opponents, last, book_text], self.shown_counts(&cr.counts), p));
+            rows.push((
+                white,
+                [games, score, opponents, last, book_text],
+                self.shown_counts(&cr.counts),
+                p,
+            ));
         }
         // Which columns fit: the errors stay; last, book, opponents give way in turn.
         let gap = 14.0;
@@ -2673,7 +2925,13 @@ impl PrepScreen {
         let errors_w = if evaluated {
             rows.iter()
                 .map(|(_, _, c, p)| {
-                    errors_text_width(ui, c) + text_width(ui, &trf("in {p} % of games", &[("p", p)]), egui::TextStyle::Body) + 12.0
+                    errors_text_width(ui, c)
+                        + text_width(
+                            ui,
+                            &trf("in {p} % of games", &[("p", p)]),
+                            egui::TextStyle::Body,
+                        )
+                        + 12.0
                 })
                 .fold(0.0, f32::max)
         } else {
@@ -2682,7 +2940,11 @@ impl PrepScreen {
         let width = ui.available_width();
         let mut shown = [true; 5];
         let used = |shown: &[bool; 5]| -> f32 {
-            (0..5).filter(|&k| shown[k]).map(|k| col_w(k) + gap).sum::<f32>() + errors_w
+            (0..5)
+                .filter(|&k| shown[k])
+                .map(|k| col_w(k) + gap)
+                .sum::<f32>()
+                + errors_w
         };
         for k in [3, 4, 2, 1] {
             if used(&shown) <= width {
@@ -2709,7 +2971,9 @@ impl PrepScreen {
                             ui.spacing_mut().item_spacing.x = 4.0;
                             if counts.total() > 0 {
                                 counts_text(ui, counts);
-                                ui.label(RichText::new(trf("in {p} % of games", &[("p", p)])).weak());
+                                ui.label(
+                                    RichText::new(trf("in {p} % of games", &[("p", p)])).weak(),
+                                );
                             } else {
                                 ui.label(RichText::new(tr("no errors")).weak());
                             }
@@ -2771,7 +3035,11 @@ impl PrepScreen {
                 } else {
                     tr("Black to move")
                 };
-                match s.ply.checked_sub(1).and_then(|p| s.sans.get(p).map(|san| short_label(p, san))) {
+                match s
+                    .ply
+                    .checked_sub(1)
+                    .and_then(|p| s.sans.get(p).map(|san| short_label(p, san)))
+                {
                     Some(m) => format!("{side} · {}", trf("after {move}", &[("move", &m)])),
                     None => side.to_owned(),
                 }
@@ -2783,43 +3051,52 @@ impl PrepScreen {
 
     fn board(&mut self, ui: &mut Ui, settings: &Settings, side: f32) {
         let start = Chess::default();
-        let (pos, last_move, arrows): (&Chess, Option<(Square, Square)>, Vec<Arrow>) = match &self.shown_pos {
-            Some(s) => {
-                let pos = &s.positions[s.ply];
-                let last = s
-                    .ply
-                    .checked_sub(1)
-                    .and_then(|p| s.ucis.get(p))
-                    .and_then(|u| u.parse::<UciMove>().ok())
-                    .and_then(|u| u.to_move(&s.positions[s.ply - 1]).ok())
-                    .and_then(|m| Some((m.from()?, crate::board::ui_target(&m))));
-                let mut arrows = if s.ply + 1 == s.positions.len() { s.arrows.clone() } else { Vec::new() };
-                if let Some((from, to)) = self.hover_arrow {
-                    arrows.push(Arrow {
-                        from,
-                        to,
-                        color: PREVIEW_ARROW,
-                        weight: 1.0,
-                    });
+        let (pos, last_move, arrows): (&Chess, Option<(Square, Square)>, Vec<Arrow>) =
+            match &self.shown_pos {
+                Some(s) => {
+                    let pos = &s.positions[s.ply];
+                    let last = s
+                        .ply
+                        .checked_sub(1)
+                        .and_then(|p| s.ucis.get(p))
+                        .and_then(|u| u.parse::<UciMove>().ok())
+                        .and_then(|u| u.to_move(&s.positions[s.ply - 1]).ok())
+                        .and_then(|m| Some((m.from()?, crate::board::ui_target(&m))));
+                    let mut arrows = if s.ply + 1 == s.positions.len() {
+                        s.arrows.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some((from, to)) = self.hover_arrow {
+                        arrows.push(Arrow {
+                            from,
+                            to,
+                            color: PREVIEW_ARROW,
+                            weight: 1.0,
+                        });
+                    }
+                    (pos, last, arrows)
                 }
-                (pos, last, arrows)
-            }
-            None => {
-                let mut arrows = Vec::new();
-                if let Some((from, to)) = self.hover_arrow {
-                    arrows.push(Arrow {
-                        from,
-                        to,
-                        color: PREVIEW_ARROW,
-                        weight: 1.0,
-                    });
+                None => {
+                    let mut arrows = Vec::new();
+                    if let Some((from, to)) = self.hover_arrow {
+                        arrows.push(Arrow {
+                            from,
+                            to,
+                            color: PREVIEW_ARROW,
+                            weight: 1.0,
+                        });
+                    }
+                    (&start, None, arrows)
                 }
-                (&start, None, arrows)
-            }
-        };
+            };
         let view = BoardView {
             pos,
-            orientation: if self.board_white() { Color::White } else { Color::Black },
+            orientation: if self.board_white() {
+                Color::White
+            } else {
+                Color::Black
+            },
             last_move,
             arrows: &arrows,
             circles: &[],
@@ -2844,7 +3121,12 @@ impl PrepScreen {
         ui.add_space(4.0);
         let Some(report) = &self.report else { return };
         let Some(s) = &self.shown_pos else {
-            ui.label(RichText::new(tr("Choose a move in the tree, an opening or an error: its position is shown here")).weak());
+            ui.label(
+                RichText::new(tr(
+                    "Choose a move in the tree, an opening or an error: its position is shown here",
+                ))
+                .weak(),
+            );
             return;
         };
         let mut goto = None;
@@ -2866,18 +3148,31 @@ impl PrepScreen {
                 } else {
                     RichText::new(label)
                 };
-                if ui.add(egui::Label::new(text).sense(Sense::click())).clicked() {
+                if ui
+                    .add(egui::Label::new(text).sense(Sense::click()))
+                    .clicked()
+                {
                     goto = Some(i + 1);
                 }
             }
         });
         if let Some(o) = s.opening.and_then(|o| report.openings.get(o)) {
-            ui.label(RichText::new(format!("{} · {}", o.name, o.eco)).weak().small());
+            ui.label(
+                RichText::new(format!("{} · {}", o.name, o.eco))
+                    .weak()
+                    .small(),
+            );
         }
         if let Some(note) = &s.note {
             ui.label(RichText::new(note).small());
         }
-        let (sans, ucis, pos, white, ply) = (s.sans.clone(), s.ucis.clone(), s.positions[s.ply].clone(), s.white, s.ply);
+        let (sans, ucis, pos, white, ply) = (
+            s.sans.clone(),
+            s.ucis.clone(),
+            s.positions[s.ply].clone(),
+            s.white,
+            s.ply,
+        );
         ui.horizontal(|ui| {
             if ui
                 .button(tr("Open as a game"))
@@ -2899,7 +3194,9 @@ impl PrepScreen {
                             })
                             .collect()
                     };
-                    let last = moves.last().and_then(|m| Some((m.from()?, crate::board::ui_target(m))));
+                    let last = moves
+                        .last()
+                        .and_then(|m| Some((m.from()?, crate::board::ui_target(m))));
                     let after = ply.checked_sub(1).map(|p| prep::move_label(p, &sans[p]));
                     actions.push(PrepAction::PlayFrom(Box::new(crate::play::StartFrom {
                         start_fen: None,
@@ -2913,7 +3210,10 @@ impl PrepScreen {
                     })));
                     ui.close();
                 }
-                if ui.button(tr("Find this position in a database (Ctrl+Shift+F)")).clicked() {
+                if ui
+                    .button(tr("Find this position in a database (Ctrl+Shift+F)"))
+                    .clicked()
+                {
                     let mut p = Chess::default();
                     let moves: Vec<Move> = ucis[..ply]
                         .iter()
@@ -2923,16 +3223,26 @@ impl PrepScreen {
                             Some(m)
                         })
                         .collect();
-                    actions.push(PrepAction::FindPosition(self.path.clone(), Chess::default(), moves, !self.board_white()));
+                    actions.push(PrepAction::FindPosition(
+                        self.path.clone(),
+                        Chess::default(),
+                        moves,
+                        !self.board_white(),
+                    ));
                     ui.close();
                 }
                 if ui.button(tr("Copy FEN")).clicked() {
-                    let fen = shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal).to_string();
+                    let fen =
+                        shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal)
+                            .to_string();
                     actions.push(PrepAction::CopyText(fen, tr("FEN copied")));
                     ui.close();
                 }
                 if ui.button(tr("Copy moves (PGN)")).clicked() {
-                    actions.push(PrepAction::CopyText(self.line_pgn(&sans[..ply], white), tr("PGN copied")));
+                    actions.push(PrepAction::CopyText(
+                        self.line_pgn(&sans[..ply], white),
+                        tr("PGN copied"),
+                    ));
                     ui.close();
                 }
             });
@@ -2948,7 +3258,11 @@ impl PrepScreen {
     /// The line as a PGN game: the player on his side, the opponent unnamed.
     fn line_pgn(&self, sans: &[String], white: bool) -> String {
         let name = self.names.first().cloned().unwrap_or_default();
-        let (w, b) = if white { (name, "?".to_owned()) } else { ("?".to_owned(), name) };
+        let (w, b) = if white {
+            (name, "?".to_owned())
+        } else {
+            ("?".to_owned(), name)
+        };
         let mut moves = String::new();
         for (i, san) in sans.iter().enumerate() {
             if i.is_multiple_of(2) {
@@ -2957,11 +3271,19 @@ impl PrepScreen {
             moves.push_str(san);
             moves.push(' ');
         }
-        format!("[Event \"{}\"]\n[White \"{w}\"]\n[Black \"{b}\"]\n[Result \"*\"]\n\n{moves}*\n", self.title())
+        format!(
+            "[Event \"{}\"]\n[White \"{w}\"]\n[Black \"{b}\"]\n[Result \"*\"]\n\n{moves}*\n",
+            self.title()
+        )
     }
 
     /// In a low window: the board over the right bottom of the screen.
-    fn board_overlay(&mut self, ctx: &egui::Context, settings: &Settings, actions: &mut Vec<PrepAction>) {
+    fn board_overlay(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &Settings,
+        actions: &mut Vec<PrepAction>,
+    ) {
         let screen = ctx.content_rect();
         let size = vec2(264.0, 300.0);
         let rect = egui::Rect::from_min_size(screen.right_bottom() - size, size);
@@ -2986,7 +3308,9 @@ impl PrepScreen {
                         if ui.button(tr("Open as a game")).clicked()
                             && let Some(s) = &self.shown_pos
                         {
-                            actions.push(PrepAction::OpenPgn(self.line_pgn(&s.sans[..s.ply], s.white)));
+                            actions.push(PrepAction::OpenPgn(
+                                self.line_pgn(&s.sans[..s.ply], s.white),
+                            ));
                         }
                     });
                 });
@@ -3001,11 +3325,20 @@ impl PrepScreen {
     /// The tabs over the games list, the border between them draggable. (A nested
     /// bottom panel would not do: in a top-down `Ui` egui's available rect ignores
     /// the cursor's bottom, so the content above overlaps it.)
-    fn right_column(&mut self, ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<PrepAction>) {
+    fn right_column(
+        &mut self,
+        ui: &mut Ui,
+        settings: &mut Settings,
+        actions: &mut Vec<PrepAction>,
+    ) {
         let height = ui.available_height();
         let width = ui.available_width();
         // In a low window the tabs keep the most: two rows of games at least, a quarter.
-        let (rows, share) = if self.low_window { (2.0, 0.25) } else { (4.0, 0.35) };
+        let (rows, share) = if self.low_window {
+            (2.0, 0.25)
+        } else {
+            (4.0, 0.35)
+        };
         let least = rows * ROW_H + 60.0;
         let most = (height - 160.0).max(least);
         let games_h = self
@@ -3014,11 +3347,15 @@ impl PrepScreen {
             .clamp(least, most)
             .floor();
         let tabs_h = (height - games_h - 10.0).max(0.0);
-        ui.allocate_ui_with_layout(vec2(width, tabs_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_min_height(tabs_h);
-            ui.set_max_height(tabs_h);
-            self.tabs(ui, settings, actions);
-        });
+        ui.allocate_ui_with_layout(
+            vec2(width, tabs_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_height(tabs_h);
+                ui.set_max_height(tabs_h);
+                self.tabs(ui, settings, actions);
+            },
+        );
         // The border: dragged, it gives the games list more or less.
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 10.0), Sense::drag());
         if resp.hovered() || resp.dragged() {
@@ -3033,11 +3370,15 @@ impl PrepScreen {
             ui.visuals().widgets.noninteractive.bg_stroke
         };
         ui.painter().hline(rect.x_range(), rect.center().y, stroke);
-        ui.allocate_ui_with_layout(vec2(width, games_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_min_height(games_h);
-            ui.set_max_height(games_h);
-            self.games_list(ui, actions);
-        });
+        ui.allocate_ui_with_layout(
+            vec2(width, games_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_height(games_h);
+                ui.set_max_height(games_h);
+                self.games_list(ui, actions);
+            },
+        );
     }
 
     fn tabs(&mut self, ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<PrepAction>) {
@@ -3048,7 +3389,8 @@ impl PrepScreen {
                     (Tab::Openings, tr("Openings"), "Ctrl+2"),
                     (Tab::Errors, tr("Errors"), "Ctrl+3"),
                 ] {
-                    ui.selectable_value(&mut self.tab, tab, label).on_hover_text(key);
+                    ui.selectable_value(&mut self.tab, tab, label)
+                        .on_hover_text(key);
                 }
                 if self.tab == Tab::Repertoire {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3063,7 +3405,11 @@ impl PrepScreen {
                             .selected_text(trf("Branches from {n} games", &[("n", &n)]))
                             .show_ui(ui, |ui| {
                                 for k in [2u32, 3, 5] {
-                                    ui.selectable_value(&mut n, k, trf("Branches from {n} games", &[("n", &k)]));
+                                    ui.selectable_value(
+                                        &mut n,
+                                        k,
+                                        trf("Branches from {n} games", &[("n", &k)]),
+                                    );
                                 }
                             })
                             .response
@@ -3164,7 +3510,9 @@ impl PrepScreen {
                         TreeSort::Games => num(tree.position_tally(m.key).games),
                         TreeSort::Share => num(m.tally.games),
                         TreeSort::Score => score_val(&tree.position_tally(m.key)),
-                        TreeSort::Last => num(chess_import::pgn_catalog::date_number(tree.position_last_date(m.key))),
+                        TreeSort::Last => num(chess_import::pgn_catalog::date_number(
+                            tree.position_last_date(m.key),
+                        )),
                     }
                 };
                 // Ties: most played first, as the tree has them.
@@ -3208,7 +3556,9 @@ impl PrepScreen {
         if rows.len() <= 1 {
             self.no_games_note(ui);
         }
-        let Some(report) = self.report.as_ref() else { return };
+        let Some(report) = self.report.as_ref() else {
+            return;
+        };
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
         let has_book = self.book_ok() || (self.book_job.is_some() && self.book != BookChoice::None);
@@ -3224,7 +3574,11 @@ impl PrepScreen {
         let show_bar = fits(64.0, true);
         let show_last = fits(84.0, true);
         let show_book = fits(80.0, has_book);
-        let book_title = if self.book == BookChoice::Same { tr("In database") } else { tr("Book") };
+        let book_title = if self.book == BookChoice::Same {
+            tr("In database")
+        } else {
+            tr("Book")
+        };
         ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
             .id_salt("prep_tree")
@@ -3236,7 +3590,9 @@ impl PrepScreen {
         if show_opening {
             table = table.column(Column::remainder().at_least(160.0).clip(true));
         }
-        table = table.column(Column::exact(76.0)).column(Column::exact(48.0));
+        table = table
+            .column(Column::exact(76.0))
+            .column(Column::exact(48.0));
         table = table.column(Column::exact(if show_bar { 110.0 } else { 50.0 }));
         if show_last {
             table = table.column(Column::exact(84.0));
@@ -3245,7 +3601,13 @@ impl PrepScreen {
             table = table.column(Column::exact(80.0));
         }
         let selected_row = rows.iter().position(|r| match (r, &self.selection) {
-            (TreeRow::Node { white, node, .. }, Selection::Node { white: sw, node: sn }) => white == sw && node == sn,
+            (
+                TreeRow::Node { white, node, .. },
+                Selection::Node {
+                    white: sw,
+                    node: sn,
+                },
+            ) => white == sw && node == sn,
             _ => false,
         });
         if self.scroll_to_selected
@@ -3257,7 +3619,10 @@ impl PrepScreen {
         let mut clicked: Option<TreeRow> = None;
         let mut toggled: Option<TreeRow> = None;
         let mut hovered: Option<(bool, u32)> = None;
-        let threshold = report.book.as_ref().map_or(prep::DEFAULT_BOOK_THRESHOLD, |b| b.threshold);
+        let threshold = report
+            .book
+            .as_ref()
+            .map_or(prep::DEFAULT_BOOK_THRESHOLD, |b| b.threshold);
         let mut tree_click = None;
         table
             .header(ROW_H, |mut h| {
@@ -3457,7 +3822,13 @@ impl PrepScreen {
             self.sorts.tree.click(k, false);
         }
         // A child of the chosen node under the pointer: its move as an arrow.
-        if let (Some((white, node)), Selection::Node { white: sw, node: sn }) = (hovered, &self.selection)
+        if let (
+            Some((white, node)),
+            Selection::Node {
+                white: sw,
+                node: sn,
+            },
+        ) = (hovered, &self.selection)
             && white == *sw
         {
             let cr = report.color(white);
@@ -3465,7 +3836,11 @@ impl PrepScreen {
             if n.parent == Some(*sn)
                 && let Some(s) = &self.shown_pos
                 && s.ply + 1 == s.positions.len()
-                && let Some(m) = n.uci.parse::<UciMove>().ok().and_then(|u| u.to_move(&s.positions[s.ply]).ok())
+                && let Some(m) = n
+                    .uci
+                    .parse::<UciMove>()
+                    .ok()
+                    .and_then(|u| u.to_move(&s.positions[s.ply]).ok())
             {
                 self.hover_arrow = m.from().map(|f| (f, crate::board::ui_target(&m)));
             }
@@ -3505,11 +3880,22 @@ impl PrepScreen {
             return;
         }
         let other_n = report.color(other).games.len();
-        let (colour, other_name) = if shown { (tr("White"), tr("Black")) } else { (tr("Black"), tr("White")) };
+        let (colour, other_name) = if shown {
+            (tr("White"), tr("Black"))
+        } else {
+            (tr("Black"), tr("White"))
+        };
         ui.add_space(12.0);
         ui.horizontal_wrapped(|ui| {
-            ui.label(trf("No games as {colour}. As {other} — {n}", &[("colour", &colour), ("other", &other_name), ("n", &other_n)]));
-            if other_n > 0 && ui.link(trf("Show {other}", &[("other", &other_name)])).clicked() {
+            ui.label(trf(
+                "No games as {colour}. As {other} — {n}",
+                &[("colour", &colour), ("other", &other_name), ("n", &other_n)],
+            ));
+            if other_n > 0
+                && ui
+                    .link(trf("Show {other}", &[("other", &other_name)]))
+                    .clicked()
+            {
                 self.color = ColorChoice::from_side(if other { Side::White } else { Side::Black });
             }
         });
@@ -3535,27 +3921,33 @@ impl PrepScreen {
         let opening = |var: &prep::Variation| var.opening.and_then(|o| report.openings.get(o));
         match key {
             OpeningSort::Name => SortVal::Text(match v {
-                Some(_) => vars[0].opening.map_or_else(String::new, |o| report.openings[o].name.clone()),
+                Some(_) => vars[0]
+                    .opening
+                    .map_or_else(String::new, |o| report.openings[o].name.clone()),
                 None => fam.name.clone(),
             }),
-            OpeningSort::Eco => SortVal::Text(vars.iter().filter_map(|x| opening(x)).map(|o| o.eco.clone()).min().unwrap_or_default()),
+            OpeningSort::Eco => SortVal::Text(
+                vars.iter()
+                    .filter_map(|x| opening(x))
+                    .map(|o| o.eco.clone())
+                    .min()
+                    .unwrap_or_default(),
+            ),
             OpeningSort::Games | OpeningSort::Share => num(tally.games),
             OpeningSort::Score => score_val(&tally),
-            OpeningSort::Last => num(
-                vars.iter()
-                    .flat_map(|x| x.games.iter())
-                    .map(|&g| report.games[g as usize].date_number())
-                    .max()
-                    .unwrap_or(0),
-            ),
-            OpeningSort::Errors => num(
-                vars.iter()
-                    .flat_map(|x| x.error_list.iter())
-                    .map(|&e| cr.errors[e as usize].judgement)
-                    .filter(|j| self.visible(*j))
-                    .map(judgement_weight)
-                    .sum::<u32>(),
-            ),
+            OpeningSort::Last => num(vars
+                .iter()
+                .flat_map(|x| x.games.iter())
+                .map(|&g| report.games[g as usize].date_number())
+                .max()
+                .unwrap_or(0)),
+            OpeningSort::Errors => num(vars
+                .iter()
+                .flat_map(|x| x.error_list.iter())
+                .map(|&e| cr.errors[e as usize].judgement)
+                .filter(|j| self.visible(*j))
+                .map(judgement_weight)
+                .sum::<u32>()),
         }
     }
 
@@ -3595,7 +3987,9 @@ impl PrepScreen {
 
     fn openings_table(&mut self, ui: &mut Ui) {
         let rows = self.opening_rows();
-        let Some(report) = self.report.as_ref() else { return };
+        let Some(report) = self.report.as_ref() else {
+            return;
+        };
         if rows.is_empty() {
             self.no_games_note(ui);
             return;
@@ -3634,7 +4028,9 @@ impl PrepScreen {
         if show_moves {
             table = table.column(Column::remainder().at_least(140.0).clip(true));
         }
-        table = table.column(Column::exact(76.0)).column(Column::exact(48.0));
+        table = table
+            .column(Column::exact(76.0))
+            .column(Column::exact(48.0));
         table = table.column(Column::exact(if show_bar { 110.0 } else { 50.0 }));
         if show_last {
             table = table.column(Column::exact(84.0));
@@ -3643,7 +4039,12 @@ impl PrepScreen {
             table = table.column(Column::exact(90.0));
         }
         let selected_row = rows.iter().position(|&(w, f, v)| {
-            self.selection == Selection::Opening { white: w, family: f, variation: v }
+            self.selection
+                == Selection::Opening {
+                    white: w,
+                    family: f,
+                    variation: v,
+                }
         });
         if self.scroll_to_selected
             && let Some(i) = selected_row
@@ -3669,8 +4070,22 @@ impl PrepScreen {
                     head_col(&mut h, tr("First moves"), "");
                 }
                 sort_col(&mut h, tr("Games"), "", OpeningSort::Games, sort, c);
-                sort_col(&mut h, "%", tr("Share of the colour's games; a variation's — of its family's"), OpeningSort::Share, sort, c);
-                sort_col(&mut h, tr("Score"), tr("The opponent's points in these games"), OpeningSort::Score, sort, c);
+                sort_col(
+                    &mut h,
+                    "%",
+                    tr("Share of the colour's games; a variation's — of its family's"),
+                    OpeningSort::Share,
+                    sort,
+                    c,
+                );
+                sort_col(
+                    &mut h,
+                    tr("Score"),
+                    tr("The opponent's points in these games"),
+                    OpeningSort::Score,
+                    sort,
+                    c,
+                );
                 if show_last {
                     sort_col(&mut h, tr("Last"), "", OpeningSort::Last, sort, c);
                 }
@@ -3690,14 +4105,25 @@ impl PrepScreen {
                             let var = &fam.variations[v];
                             (&var.tally, &var.errors, var.games.clone())
                         }
-                        None => (&fam.tally, &fam.errors, fam.variations.iter().flat_map(|v| v.games.iter().copied()).collect()),
+                        None => (
+                            &fam.tally,
+                            &fam.errors,
+                            fam.variations
+                                .iter()
+                                .flat_map(|v| v.games.iter().copied())
+                                .collect(),
+                        ),
                     };
                     let few = tally.games < FEW_GAMES;
                     if both {
                         row.col(|ui| {
                             if v.is_none() {
                                 ui.label(RichText::new(if white { "♙" } else { "♟" }).weak())
-                                    .on_hover_text(if white { tr("As White") } else { tr("As Black") });
+                                    .on_hover_text(if white {
+                                        tr("As White")
+                                    } else {
+                                        tr("As Black")
+                                    });
                             }
                         });
                     }
@@ -3705,10 +4131,20 @@ impl PrepScreen {
                         None => {
                             let open = self.open_families.contains(&(white, f));
                             let glyph = if open { "▾" } else { "▸" };
-                            if ui.add(egui::Label::new(RichText::new(glyph).weak()).sense(Sense::click())).clicked() {
+                            if ui
+                                .add(
+                                    egui::Label::new(RichText::new(glyph).weak())
+                                        .sense(Sense::click()),
+                                )
+                                .clicked()
+                            {
                                 toggled = Some((white, f));
                             }
-                            let name = if fam.name.is_empty() { tr("no name").to_owned() } else { fam.name.clone() };
+                            let name = if fam.name.is_empty() {
+                                tr("no name").to_owned()
+                            } else {
+                                fam.name.clone()
+                            };
                             ui.add(egui::Label::new(RichText::new(name).strong()).truncate());
                         }
                         Some(v) => {
@@ -3716,7 +4152,9 @@ impl PrepScreen {
                             let name = fam.variations[v]
                                 .opening
                                 .and_then(|o| report.openings.get(o))
-                                .map(|o| o.variation().map_or_else(|| o.name.clone(), str::to_owned));
+                                .map(|o| {
+                                    o.variation().map_or_else(|| o.name.clone(), str::to_owned)
+                                });
                             match name {
                                 Some(n) => {
                                     ui.add(egui::Label::new(n).truncate());
@@ -3730,12 +4168,17 @@ impl PrepScreen {
                     if show_eco {
                         row.col(|ui| {
                             let eco = match v {
-                                Some(v) => fam.variations[v].opening.and_then(|o| report.openings.get(o)).map(|o| o.eco.clone()),
+                                Some(v) => fam.variations[v]
+                                    .opening
+                                    .and_then(|o| report.openings.get(o))
+                                    .map(|o| o.eco.clone()),
                                 None => {
                                     let mut ecos: Vec<&str> = fam
                                         .variations
                                         .iter()
-                                        .filter_map(|v| v.opening.and_then(|o| report.openings.get(o)))
+                                        .filter_map(|v| {
+                                            v.opening.and_then(|o| report.openings.get(o))
+                                        })
                                         .map(|o| o.eco.as_str())
                                         .collect();
                                     ecos.sort_unstable();
@@ -3755,7 +4198,10 @@ impl PrepScreen {
                     if show_moves {
                         row.col(|ui| {
                             let line = match v {
-                                Some(v) => fam.variations[v].opening.and_then(|o| report.openings.get(o)).map(|o| o.line.clone()),
+                                Some(v) => fam.variations[v]
+                                    .opening
+                                    .and_then(|o| report.openings.get(o))
+                                    .map(|o| o.line.clone()),
                                 None => family_line(report, fam),
                             };
                             if let Some(l) = line {
@@ -3780,7 +4226,8 @@ impl PrepScreen {
                     });
                     row.col(|ui| {
                         let t = RichText::new(score_text(tally));
-                        ui.label(if few { t.weak() } else { t }).on_hover_text(tally_hint(tally));
+                        ui.label(if few { t.weak() } else { t })
+                            .on_hover_text(tally_hint(tally));
                         if show_bar {
                             score_bar(ui, tally, white, few);
                         }
@@ -3793,7 +4240,14 @@ impl PrepScreen {
                                 .max_by_key(|g| g.date_number())
                                 .map(|g| crate::library::display_date(&g.date))
                                 .unwrap_or_default();
-                            ui.label(RichText::new(if last.is_empty() { "—".to_owned() } else { last }).weak());
+                            ui.label(
+                                RichText::new(if last.is_empty() {
+                                    "—".to_owned()
+                                } else {
+                                    last
+                                })
+                                .weak(),
+                            );
                         });
                     }
                     if show_errors {
@@ -3811,7 +4265,9 @@ impl PrepScreen {
                 });
             });
         if let Some(k) = opening_click {
-            self.sorts.openings.click(k, matches!(k, OpeningSort::Name | OpeningSort::Eco));
+            self.sorts
+                .openings
+                .click(k, matches!(k, OpeningSort::Name | OpeningSort::Eco));
         }
         if let Some(key) = toggled {
             if !self.open_families.remove(&key) {
@@ -3819,20 +4275,31 @@ impl PrepScreen {
             }
         } else if let Some((white, family, variation)) = clicked {
             self.focus_games = false;
-            self.select(Selection::Opening { white, family, variation });
+            self.select(Selection::Opening {
+                white,
+                family,
+                variation,
+            });
         }
     }
 
     // ----- the errors ----------------------------------------------------------------
 
     fn errors_tab(&mut self, ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<PrepAction>) {
-        let Some(report) = self.report.as_ref() else { return };
+        let Some(report) = self.report.as_ref() else {
+            return;
+        };
         let moves = self.plies.div_ceil(2);
         let state = self.engine_state();
         if state == EngineState::NotRun {
             // The invitation (§5).
             let (positions, secs) = self.estimate();
-            let games: usize = self.color.colours().iter().map(|&w| report.color(w).games.len()).sum();
+            let games: usize = self
+                .color
+                .colours()
+                .iter()
+                .map(|&w| report.color(w).games.len())
+                .sum();
             let colour = match self.color {
                 ColorChoice::White => tr("as White"),
                 ColorChoice::Black => tr("as Black"),
@@ -3873,7 +4340,9 @@ impl PrepScreen {
                             ))
                             .weak(),
                         );
-                        ui.label(RichText::new(format!("· ≈ {}", review::format_duration(secs))).weak());
+                        ui.label(
+                            RichText::new(format!("· ≈ {}", review::format_duration(secs))).weak(),
+                        );
                     }
                 }
                 EngineState::Partial { done, total } => {
@@ -3888,7 +4357,10 @@ impl PrepScreen {
                     .on_hover_text(tr("The counts are of the checked positions"));
                     ui.label(RichText::new("·").weak());
                     if ui
-                        .link(trf("Continue ≈ {time}", &[("time", &review::format_duration(secs))]))
+                        .link(trf(
+                            "Continue ≈ {time}",
+                            &[("time", &review::format_duration(secs))],
+                        ))
                         .clicked()
                     {
                         ask_engine = true;
@@ -3903,7 +4375,9 @@ impl PrepScreen {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.checkbox(&mut inaccuracies, tr("Inaccuracies"))
-                    .on_hover_text(tr("Show the inaccuracies (?!) with the mistakes and blunders"));
+                    .on_hover_text(tr(
+                        "Show the inaccuracies (?!) with the mistakes and blunders",
+                    ));
             });
         });
         if inaccuracies != settings.prep.inaccuracies {
@@ -3916,16 +4390,30 @@ impl PrepScreen {
             self.engine_asked(settings, ui.ctx(), actions);
             return;
         }
-        let Some(report) = self.report.as_ref() else { return };
+        let Some(report) = self.report.as_ref() else {
+            return;
+        };
         // The lines per colour: in the stack only (beside the board the summary has them).
         if self.stacked {
             for white in self.color.colours() {
                 let cr = report.color(white);
-                let with: HashSet<u32> = cr.errors.iter().filter(|e| self.visible(e.judgement)).map(|e| e.game).collect();
+                let with: HashSet<u32> = cr
+                    .errors
+                    .iter()
+                    .filter(|e| self.visible(e.judgement))
+                    .map(|e| e.game)
+                    .collect();
                 let p = 100 * with.len() / cr.games.len().max(1);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.label(RichText::new(if white { tr("As White") } else { tr("As Black") }).strong());
+                    ui.label(
+                        RichText::new(if white {
+                            tr("As White")
+                        } else {
+                            tr("As Black")
+                        })
+                        .strong(),
+                    );
                     counts_text(ui, &self.shown_counts(&cr.counts));
                     ui.label(RichText::new(trf("in {p} % of games", &[("p", &p)])).weak());
                 });
@@ -3940,12 +4428,20 @@ impl PrepScreen {
                 c.mistakes + c.blunders
             })
             .sum();
-        let inacc: u32 = self.color.colours().iter().map(|&w| report.color(w).counts.inaccuracies).sum();
+        let inacc: u32 = self
+            .color
+            .colours()
+            .iter()
+            .map(|&w| report.color(w).counts.inaccuracies)
+            .sum();
         if matches!(state, EngineState::Complete { .. }) && serious == 0 {
             let mut deeper = false;
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(trf("No errors in the first {n} moves ({i} inaccuracies).", &[("n", &moves), ("i", &inacc)]));
+                ui.label(trf(
+                    "No errors in the first {n} moves ({i} inaccuracies).",
+                    &[("n", &moves), ("i", &inacc)],
+                ));
                 if self.plies < 30 && ui.link(trf("Deeper: {n} moves", &[("n", &15)])).clicked() {
                     deeper = true;
                 }
@@ -3989,12 +4485,18 @@ impl PrepScreen {
                 RepeatedSort::Move => num(r.ply),
                 RepeatedSort::Times => num(r.games.len() as u32),
                 RepeatedSort::Score => score_val(&r.tally),
-                RepeatedSort::Opening => SortVal::Text(r.opening.map_or_else(String::new, |o| report.openings[o].name.clone())),
+                RepeatedSort::Opening => SortVal::Text(
+                    r.opening
+                        .map_or_else(String::new, |o| report.openings[o].name.clone()),
+                ),
             }
         };
         // Ties: the worst first.
         list.sort_by(|a, b| {
-            let (ra, rb) = (&report.color(a.0).repeated[a.1], &report.color(b.0).repeated[b.1]);
+            let (ra, rb) = (
+                &report.color(a.0).repeated[a.1],
+                &report.color(b.0).repeated[b.1],
+            );
             sort.apply(cmp_val(&val(a), &val(b)))
                 .then(judgement_weight(rb.judgement).cmp(&judgement_weight(ra.judgement)))
         });
@@ -4047,18 +4549,27 @@ impl PrepScreen {
         let sort = self.sorts.variations;
         let val = |v: &(bool, usize, usize, u32)| -> u32 {
             match sort.key {
-                VariationSort::Games => report.color(v.0).families[v.1].variations[v.2].games.len() as u32,
+                VariationSort::Games => {
+                    report.color(v.0).families[v.1].variations[v.2].games.len() as u32
+                }
                 VariationSort::Errors => v.3,
             }
         };
         vars.sort_by(|a, b| sort.apply(val(a).cmp(&val(b))).then(b.3.cmp(&a.3)));
         for (white, family, variation, _) in vars {
-            rows.push(ErrRow::Variation { white, family, variation });
+            rows.push(ErrRow::Variation {
+                white,
+                family,
+                variation,
+            });
             if self.open_variations.contains(&(white, family, variation)) {
                 let cr = report.color(white);
                 for &e in &cr.families[family].variations[variation].error_list {
                     if self.visible(cr.errors[e as usize].judgement) {
-                        rows.push(ErrRow::Error { white, index: e as usize });
+                        rows.push(ErrRow::Error {
+                            white,
+                            index: e as usize,
+                        });
                     }
                 }
             }
@@ -4081,11 +4592,17 @@ impl PrepScreen {
         self.focus_games = false;
         let sel = match row {
             ErrRow::Repeated { white, index } => Selection::Repeated { white, index },
-            ErrRow::RepeatedGame { white, index, game } => match self.error_in(white, index, game) {
-                Some(e) => Selection::Error { white, index: e },
-                None => return,
-            },
-            ErrRow::Variation { white, family, variation } => Selection::Opening {
+            ErrRow::RepeatedGame { white, index, game } => {
+                match self.error_in(white, index, game) {
+                    Some(e) => Selection::Error { white, index: e },
+                    None => return,
+                }
+            }
+            ErrRow::Variation {
+                white,
+                family,
+                variation,
+            } => Selection::Opening {
                 white,
                 family,
                 variation: Some(variation),
@@ -4105,12 +4622,17 @@ impl PrepScreen {
                 let game = *self.repeated_games(white, index).first()?;
                 (white, self.error_in(white, index, game)?)
             }
-            ErrRow::RepeatedGame { white, index, game } => (white, self.error_in(white, index, game)?),
+            ErrRow::RepeatedGame { white, index, game } => {
+                (white, self.error_in(white, index, game)?)
+            }
             ErrRow::Error { white, index } => (white, index),
             _ => return None,
         };
         let e = report.color(white).errors.get(e)?;
-        Some((report.games[e.game as usize].index as usize, e.ply as usize + 1))
+        Some((
+            report.games[e.game as usize].index as usize,
+            e.ply as usize + 1,
+        ))
     }
 
     fn err_toggle(&mut self, row: ErrRow) {
@@ -4120,7 +4642,11 @@ impl PrepScreen {
                     self.open_repeated.insert((white, index));
                 }
             }
-            ErrRow::Variation { white, family, variation } => {
+            ErrRow::Variation {
+                white,
+                family,
+                variation,
+            } => {
                 let k = (white, family, variation);
                 if !self.open_variations.remove(&k) {
                     self.open_variations.insert(k);
@@ -4134,11 +4660,15 @@ impl PrepScreen {
     /// chooses, a double click (Enter) opens the game at the error.
     fn errors_table(&mut self, ui: &mut Ui, actions: &mut Vec<PrepAction>) {
         let rows = self.err_rows();
-        let Some(report) = self.report.as_ref() else { return };
+        let Some(report) = self.report.as_ref() else {
+            return;
+        };
         let both = self.color == ColorChoice::Both;
         let width = ui.available_width();
         let show_last = width > 640.0;
-        let cursor = self.err_cursor.and_then(|c| rows.iter().position(|r| *r == c));
+        let cursor = self
+            .err_cursor
+            .and_then(|c| rows.iter().position(|r| *r == c));
         ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
             .id_salt("prep_errors")
@@ -4166,13 +4696,23 @@ impl PrepScreen {
         let colour_icon = |ui: &mut Ui, white: bool| {
             if both {
                 ui.label(RichText::new(if white { "♙" } else { "♟" }).weak())
-                    .on_hover_text(if white { tr("As White") } else { tr("As Black") });
+                    .on_hover_text(if white {
+                        tr("As White")
+                    } else {
+                        tr("As Black")
+                    });
             }
         };
-        let repeated_n = rows.iter().filter(|r| matches!(r, ErrRow::Repeated { .. })).count();
+        let repeated_n = rows
+            .iter()
+            .filter(|r| matches!(r, ErrRow::Repeated { .. }))
+            .count();
         let sorts = self.sorts.clone();
         let mut sort_click: Option<SortKeyOf> = None;
-        let openings_n = rows.iter().filter(|r| matches!(r, ErrRow::Variation { .. })).count();
+        let openings_n = rows
+            .iter()
+            .filter(|r| matches!(r, ErrRow::Variation { .. }))
+            .count();
         table.body(|body| {
             body.rows(ROW_H, rows.len(), |mut row| {
                 let r = rows[row.index()];
@@ -4182,7 +4722,10 @@ impl PrepScreen {
                     ErrRow::RepeatedTitle | ErrRow::OpeningsTitle => {
                         let repeated = r == ErrRow::RepeatedTitle;
                         let (title, empty) = if repeated {
-                            (tr("Repeated errors — the same position, the same move"), repeated_n == 0)
+                            (
+                                tr("Repeated errors — the same position, the same move"),
+                                repeated_n == 0,
+                            )
                         } else {
                             (tr("By opening"), openings_n == 0)
                         };
@@ -4200,14 +4743,23 @@ impl PrepScreen {
                                 (tr("Better"), None),
                                 ("×", Some(SortKeyOf::Repeated(RepeatedSort::Times))),
                                 (tr("Score"), Some(SortKeyOf::Repeated(RepeatedSort::Score))),
-                                (tr("Opening"), Some(SortKeyOf::Repeated(RepeatedSort::Opening))),
+                                (
+                                    tr("Opening"),
+                                    Some(SortKeyOf::Repeated(RepeatedSort::Opening)),
+                                ),
                             ]
                         } else {
                             [
                                 (tr("Played"), None),
                                 (tr("Better"), None),
-                                (tr("Games"), Some(SortKeyOf::Variation(VariationSort::Games))),
-                                (tr("Errors"), Some(SortKeyOf::Variation(VariationSort::Errors))),
+                                (
+                                    tr("Games"),
+                                    Some(SortKeyOf::Variation(VariationSort::Games)),
+                                ),
+                                (
+                                    tr("Errors"),
+                                    Some(SortKeyOf::Variation(VariationSort::Errors)),
+                                ),
                                 (tr("Date"), None),
                             ]
                         };
@@ -4216,8 +4768,10 @@ impl PrepScreen {
                                 row.col(|ui| match key {
                                     Some(key) => {
                                         let active = match key {
-                                            SortKeyOf::Repeated(k) => (sorts.repeated.key == *k).then_some(sorts.repeated.ascending),
-                                            SortKeyOf::Variation(k) => (sorts.variations.key == *k).then_some(sorts.variations.ascending),
+                                            SortKeyOf::Repeated(k) => (sorts.repeated.key == *k)
+                                                .then_some(sorts.repeated.ascending),
+                                            SortKeyOf::Variation(k) => (sorts.variations.key == *k)
+                                                .then_some(sorts.variations.ascending),
                                         };
                                         if crate::widgets::sort_header(ui, c, active).clicked() {
                                             sort_click = Some(*key);
@@ -4236,21 +4790,35 @@ impl PrepScreen {
                         let g = &report.games[rep.games[0] as usize];
                         let open = self.open_repeated.contains(&(white, index));
                         row.col(|ui| {
-                            if ui.add(egui::Label::new(weak(if open { "▾" } else { "▸" })).sense(Sense::click())).clicked() {
+                            if ui
+                                .add(
+                                    egui::Label::new(weak(if open { "▾" } else { "▸" }))
+                                        .sense(Sense::click()),
+                                )
+                                .clicked()
+                            {
                                 toggled = Some(r);
                             }
                             colour_icon(ui, white);
                             let before = (rep.ply as usize)
                                 .checked_sub(1)
                                 .map(|p| short_label(p, &g.sans[p]))
-                                .map_or_else(|| tr("start").to_owned(), |m| trf("after {move}", &[("move", &m)]));
-                            let side = if rep.ply.is_multiple_of(2) { tr("White to move") } else { tr("Black to move") };
+                                .map_or_else(
+                                    || tr("start").to_owned(),
+                                    |m| trf("after {move}", &[("move", &m)]),
+                                );
+                            let side = if rep.ply.is_multiple_of(2) {
+                                tr("White to move")
+                            } else {
+                                tr("Black to move")
+                            };
                             ui.add(egui::Label::new(format!("{before} · {side}")).truncate());
                         });
                         row.col(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
                             ui.label(short_label(rep.ply as usize, &rep.san));
-                            pill(ui, rep.judgement).on_hover_text(review::judgement_name(rep.judgement));
+                            pill(ui, rep.judgement)
+                                .on_hover_text(review::judgement_name(rep.judgement));
                         });
                         row.col(|ui| {
                             ui.label(short_label(rep.ply as usize, &rep.best_san));
@@ -4268,7 +4836,8 @@ impl PrepScreen {
                                     .and_then(|o| report.openings.get(o))
                                     .map(|o| format!("{} · {}", o.name, o.eco))
                                     .unwrap_or_default();
-                                ui.add(egui::Label::new(weak(&name)).truncate()).on_hover_text(name);
+                                ui.add(egui::Label::new(weak(&name)).truncate())
+                                    .on_hover_text(name);
                             });
                         }
                     }
@@ -4278,7 +4847,9 @@ impl PrepScreen {
                         let _ = (white, index);
                         row.col(|ui| {
                             ui.add_space(28.0);
-                            ui.add(egui::Label::new(format!("{} — {}", lr.white, lr.black)).truncate());
+                            ui.add(
+                                egui::Label::new(format!("{} — {}", lr.white, lr.black)).truncate(),
+                            );
                         });
                         row.col(|_| {});
                         row.col(|_| {});
@@ -4292,7 +4863,11 @@ impl PrepScreen {
                             });
                         }
                     }
-                    ErrRow::Variation { white, family, variation } => {
+                    ErrRow::Variation {
+                        white,
+                        family,
+                        variation,
+                    } => {
                         let cr = report.color(white);
                         let var = &cr.families[family].variations[variation];
                         let open = self.open_variations.contains(&(white, family, variation));
@@ -4301,15 +4876,25 @@ impl PrepScreen {
                             counts.add(cr.errors[e as usize].judgement);
                         }
                         row.col(|ui| {
-                            if ui.add(egui::Label::new(weak(if open { "▾" } else { "▸" })).sense(Sense::click())).clicked() {
+                            if ui
+                                .add(
+                                    egui::Label::new(weak(if open { "▾" } else { "▸" }))
+                                        .sense(Sense::click()),
+                                )
+                                .clicked()
+                            {
                                 toggled = Some(r);
                             }
                             colour_icon(ui, white);
                             let name = var
                                 .opening
                                 .and_then(|o| report.openings.get(o))
-                                .map_or_else(|| tr("no name").to_owned(), |o| format!("{} · {}", o.name, o.eco));
-                            ui.add(egui::Label::new(name.as_str()).truncate()).on_hover_text(name);
+                                .map_or_else(
+                                    || tr("no name").to_owned(),
+                                    |o| format!("{} · {}", o.name, o.eco),
+                                );
+                            ui.add(egui::Label::new(name.as_str()).truncate())
+                                .on_hover_text(name);
                         });
                         row.col(|_| {});
                         row.col(|_| {});
@@ -4330,7 +4915,9 @@ impl PrepScreen {
                         let lr = &self.rows[e.game as usize];
                         row.col(|ui| {
                             ui.add_space(28.0);
-                            ui.add(egui::Label::new(format!("{} — {}", lr.white, lr.black)).truncate());
+                            ui.add(
+                                egui::Label::new(format!("{} — {}", lr.white, lr.black)).truncate(),
+                            );
                         });
                         row.col(|ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
@@ -4373,7 +4960,9 @@ impl PrepScreen {
         match sort_click {
             Some(SortKeyOf::Repeated(k)) => {
                 // Indices into the lists do not change: the rows only reorder.
-                self.sorts.repeated.click(k, matches!(k, RepeatedSort::Move | RepeatedSort::Opening))
+                self.sorts
+                    .repeated
+                    .click(k, matches!(k, RepeatedSort::Move | RepeatedSort::Opening))
             }
             Some(SortKeyOf::Variation(k)) => self.sorts.variations.click(k, false),
             None => {}
@@ -4395,12 +4984,29 @@ impl PrepScreen {
 
     /// The keyboard in the errors tab: ↑/↓ the rows, →/← open and close, Enter the game.
     #[allow(clippy::too_many_arguments)]
-    fn errors_keys(&mut self, up: bool, down: bool, left: bool, right: bool, enter: bool, space: bool, home: bool, end: bool, actions: &mut Vec<PrepAction>) {
-        let rows: Vec<ErrRow> = self.err_rows().into_iter().filter(|r| !r.is_title()).collect();
+    fn errors_keys(
+        &mut self,
+        up: bool,
+        down: bool,
+        left: bool,
+        right: bool,
+        enter: bool,
+        space: bool,
+        home: bool,
+        end: bool,
+        actions: &mut Vec<PrepAction>,
+    ) {
+        let rows: Vec<ErrRow> = self
+            .err_rows()
+            .into_iter()
+            .filter(|r| !r.is_title())
+            .collect();
         if rows.is_empty() {
             return;
         }
-        let at = self.err_cursor.and_then(|c| rows.iter().position(|r| *r == c));
+        let at = self
+            .err_cursor
+            .and_then(|c| rows.iter().position(|r| *r == c));
         let Some(at) = at else {
             if up || down || home || end {
                 self.err_select(rows[0]);
@@ -4427,12 +5033,17 @@ impl PrepScreen {
         }
         let open = match r {
             ErrRow::Repeated { white, index } => Some(self.open_repeated.contains(&(white, index))),
-            ErrRow::Variation { white, family, variation } => {
-                Some(self.open_variations.contains(&(white, family, variation)))
-            }
+            ErrRow::Variation {
+                white,
+                family,
+                variation,
+            } => Some(self.open_variations.contains(&(white, family, variation))),
             _ => None,
         };
-        if (right && open == Some(false)) || (left && open == Some(true)) || (space && open.is_some()) {
+        if (right && open == Some(false))
+            || (left && open == Some(true))
+            || (space && open.is_some())
+        {
             self.err_toggle(r);
         } else if left {
             // A game or an error row: to the row it is under.
@@ -4462,7 +5073,9 @@ impl PrepScreen {
     // ----- the games list ------------------------------------------------------------
 
     fn games_list(&mut self, ui: &mut Ui, actions: &mut Vec<PrepAction>) {
-        let Some(report) = self.report.as_ref() else { return };
+        let Some(report) = self.report.as_ref() else {
+            return;
+        };
         let list = self.games_of();
         let title = match &self.selection {
             Selection::None => trf("Games · {n}", &[("n", &list.len())]),
@@ -4470,31 +5083,76 @@ impl PrepScreen {
                 let n = &report.color(*white).tree.nodes[*node as usize];
                 match n.ply {
                     0 => trf("Games · {n}", &[("n", &list.len())]),
-                    p => trf("Games · after {move} · {n}", &[("move", &short_label(usize::from(p) - 1, &n.san)), ("n", &list.len())]),
+                    p => trf(
+                        "Games · after {move} · {n}",
+                        &[
+                            ("move", &short_label(usize::from(p) - 1, &n.san)),
+                            ("n", &list.len()),
+                        ],
+                    ),
                 }
             }
-            Selection::Opening { white, family, variation } => {
+            Selection::Opening {
+                white,
+                family,
+                variation,
+            } => {
                 let fam = &report.color(*white).families[*family];
                 let name = match variation {
-                    Some(v) => fam.variations[*v].opening.and_then(|o| report.openings.get(o)).map(|o| o.name.clone()).unwrap_or_else(|| fam.name.clone()),
+                    Some(v) => fam.variations[*v]
+                        .opening
+                        .and_then(|o| report.openings.get(o))
+                        .map(|o| o.name.clone())
+                        .unwrap_or_else(|| fam.name.clone()),
                     None => fam.name.clone(),
                 };
-                trf("Games · {opening} · {n}", &[("opening", &name), ("n", &list.len())])
+                trf(
+                    "Games · {opening} · {n}",
+                    &[("opening", &name), ("n", &list.len())],
+                )
             }
             Selection::Repeated { white, index } => {
                 let r = &report.color(*white).repeated[*index];
-                trf("Games · {move} · {n}", &[("move", &format!("{} {}", short_label(r.ply as usize, &r.san), review::judgement_symbol(r.judgement))), ("n", &list.len())])
+                trf(
+                    "Games · {move} · {n}",
+                    &[
+                        (
+                            "move",
+                            &format!(
+                                "{} {}",
+                                short_label(r.ply as usize, &r.san),
+                                review::judgement_symbol(r.judgement)
+                            ),
+                        ),
+                        ("n", &list.len()),
+                    ],
+                )
             }
             Selection::Error { white, index } => {
                 let e = &report.color(*white).errors[*index];
-                trf("Games · {move} · {n}", &[("move", &format!("{} {}", short_label(e.ply as usize, &e.san), review::judgement_symbol(e.judgement))), ("n", &list.len())])
+                trf(
+                    "Games · {move} · {n}",
+                    &[
+                        (
+                            "move",
+                            &format!(
+                                "{} {}",
+                                short_label(e.ply as usize, &e.san),
+                                review::judgement_symbol(e.judgement)
+                            ),
+                        ),
+                        ("n", &list.len()),
+                    ],
+                )
             }
         };
         let mut clear = false;
         ui.horizontal(|ui| {
             ui.label(RichText::new(title).strong());
             if self.selection != Selection::None
-                && crate::widgets::small_close_button(ui).on_hover_text(tr("All games")).clicked()
+                && crate::widgets::small_close_button(ui)
+                    .on_hover_text(tr("All games"))
+                    .clicked()
             {
                 clear = true;
             }
@@ -4516,7 +5174,12 @@ impl PrepScreen {
         let mut show_date = true;
         let gap = ui.spacing().item_spacing.x;
         let player_w_of = |event: bool, then: bool, elo: bool, errors: bool, date: bool| -> f32 {
-            let columns = 3 + 2 * usize::from(elo) + usize::from(date) + usize::from(then) + usize::from(event) + usize::from(errors);
+            let columns = 3
+                + 2 * usize::from(elo)
+                + usize::from(date)
+                + usize::from(then)
+                + usize::from(event)
+                + usize::from(errors);
             let fixed = 44.0
                 + if elo { 88.0 } else { 0.0 }
                 + if date { 84.0 } else { 0.0 }
@@ -4542,7 +5205,8 @@ impl PrepScreen {
                 _ => show_date = false,
             }
         }
-        let player_w = player_w_of(show_event, show_then, show_elo, show_errors, show_date).clamp(60.0, 170.0);
+        let player_w =
+            player_w_of(show_event, show_then, show_elo, show_errors, show_date).clamp(60.0, 170.0);
         let plies: HashMap<u32, usize> = list.iter().map(|&g| (g, self.game_ply(g))).collect();
         ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
@@ -4602,13 +5266,27 @@ impl PrepScreen {
                     sort_col(&mut h, tr("Date"), "", GameSort::Date, sort, c);
                 }
                 if show_then {
-                    sort_col(&mut h, tr("Then"), tr("How the game went on from this position"), GameSort::Then, sort, c);
+                    sort_col(
+                        &mut h,
+                        tr("Then"),
+                        tr("How the game went on from this position"),
+                        GameSort::Then,
+                        sort,
+                        c,
+                    );
                 }
                 if show_event {
                     sort_col(&mut h, tr("Event"), "", GameSort::Event, sort, c);
                 }
                 if show_errors {
-                    sort_col(&mut h, tr("Errors"), tr("His marked moves in the opening of this game"), GameSort::Errors, sort, c);
+                    sort_col(
+                        &mut h,
+                        tr("Errors"),
+                        tr("His marked moves in the opening of this game"),
+                        GameSort::Errors,
+                        sort,
+                        c,
+                    );
                 }
             })
             .body(|body| {
@@ -4619,7 +5297,14 @@ impl PrepScreen {
                     row.set_selected(self.games_cursor == Some(row.index()));
                     let name = |ui: &mut Ui, n: &str| {
                         let t = RichText::new(n);
-                        ui.add(egui::Label::new(if player_names.contains(n) { t.strong() } else { t }).truncate());
+                        ui.add(
+                            egui::Label::new(if player_names.contains(n) {
+                                t.strong()
+                            } else {
+                                t
+                            })
+                            .truncate(),
+                        );
                     };
                     let elo = |e: u16| if e > 0 { e.to_string() } else { String::new() };
                     let ply = plies.get(&gi).copied().unwrap_or(0);
@@ -4652,7 +5337,8 @@ impl PrepScreen {
                     }
                     if show_then {
                         row.col(|ui| {
-                            let then: Vec<String> = g.sans.iter().skip(ply).take(3).cloned().collect();
+                            let then: Vec<String> =
+                                g.sans.iter().skip(ply).take(3).cloned().collect();
                             let mut text = String::new();
                             for (k, san) in then.iter().enumerate() {
                                 let p = ply + k;
@@ -4663,31 +5349,45 @@ impl PrepScreen {
                                 }
                                 text.push(' ');
                             }
-                            ui.add(egui::Label::new(crate::san::show_line(text.trim_end())).truncate());
+                            ui.add(
+                                egui::Label::new(crate::san::show_line(text.trim_end())).truncate(),
+                            );
                         });
                     }
                     if show_event {
                         row.col(|ui| {
-                            ui.add(egui::Label::new(RichText::new(&r.event).italics().weak()).truncate());
+                            ui.add(
+                                egui::Label::new(RichText::new(&r.event).italics().weak())
+                                    .truncate(),
+                            );
                         });
                     }
                     if show_errors {
                         row.col(|ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
                             let cr = report.color(g.white);
-                            for e in cr.errors.iter().filter(|e| e.game == gi && self.visible(e.judgement)) {
+                            for e in cr
+                                .errors
+                                .iter()
+                                .filter(|e| e.game == gi && self.visible(e.judgement))
+                            {
                                 let number = e.ply as usize / 2 + 1;
                                 ui.label(RichText::new(format!("{number}.")).small());
                                 pill(ui, e.judgement).on_hover_text(format!(
                                     "{} {} — {}",
                                     short_label(e.ply as usize, &e.san),
                                     review::judgement_name(e.judgement),
-                                    trf("better {best}", &[("best", &crate::san::show(&e.best_san))])
+                                    trf(
+                                        "better {best}",
+                                        &[("best", &crate::san::show(&e.best_san))]
+                                    )
                                 ));
                             }
                         });
                     }
-                    let resp = row.response().on_hover_text(tr("Double click: open this game at this position"));
+                    let resp = row
+                        .response()
+                        .on_hover_text(tr("Double click: open this game at this position"));
                     if resp.hovered() {
                         hovered = Some(gi);
                     }
@@ -4699,7 +5399,14 @@ impl PrepScreen {
                 });
             });
         if let Some(k) = game_click {
-            let names = matches!(k, GameSort::White | GameSort::Black | GameSort::Result | GameSort::Then | GameSort::Event);
+            let names = matches!(
+                k,
+                GameSort::White
+                    | GameSort::Black
+                    | GameSort::Result
+                    | GameSort::Then
+                    | GameSort::Event
+            );
             self.sorts.games.click(k, names);
             // The keyboard's row is a place in the list: it goes back to the top.
             self.games_cursor = None;
@@ -4711,7 +5418,12 @@ impl PrepScreen {
         {
             let g = &report.games[gi as usize];
             let ply = plies.get(&gi).copied().unwrap_or(0);
-            if let Some(m) = g.ucis.get(ply).and_then(|u| u.parse::<UciMove>().ok()).and_then(|u| u.to_move(&s.positions[s.ply]).ok()) {
+            if let Some(m) = g
+                .ucis
+                .get(ply)
+                .and_then(|u| u.parse::<UciMove>().ok())
+                .and_then(|u| u.to_move(&s.positions[s.ply]).ok())
+            {
                 self.hover_arrow = m.from().map(|f| (f, crate::board::ui_target(&m)));
             }
         }
@@ -4730,7 +5442,12 @@ impl PrepScreen {
 
     // ----- the keyboard --------------------------------------------------------------
 
-    fn keyboard(&mut self, ctx: &egui::Context, settings: &Settings, actions: &mut Vec<PrepAction>) {
+    fn keyboard(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &Settings,
+        actions: &mut Vec<PrepAction>,
+    ) {
         let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
         let alt = |k| KeyboardShortcut::new(Modifiers::ALT, k);
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::Num1))) {
@@ -4755,7 +5472,10 @@ impl PrepScreen {
             actions.push(PrepAction::Back);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F)) {
-            let base = self.shown_pos.as_ref().map_or(self.color != ColorChoice::Black, |s| s.white);
+            let base = self
+                .shown_pos
+                .as_ref()
+                .map_or(self.color != ColorChoice::Black, |s| s.white);
             self.flipped = Some(!self.board_white() == base);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::A)) {
@@ -4765,8 +5485,12 @@ impl PrepScreen {
                 self.engine_asked(settings, ctx, actions);
             }
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)))
-            && let Some(s) = &self.shown_pos
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Key::F,
+            ))
+        }) && let Some(s) = &self.shown_pos
         {
             let mut p = Chess::default();
             let moves: Vec<Move> = s.ucis[..s.ply]
@@ -4777,7 +5501,12 @@ impl PrepScreen {
                     Some(m)
                 })
                 .collect();
-            actions.push(PrepAction::FindPosition(self.path.clone(), Chess::default(), moves, !self.board_white()));
+            actions.push(PrepAction::FindPosition(
+                self.path.clone(),
+                Chess::default(),
+                moves,
+                !self.board_white(),
+            ));
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             if self.board_popup {
@@ -4830,9 +5559,7 @@ impl PrepScreen {
                 self.games_cursor = Some(next);
                 self.scroll_to_selected = true;
             }
-            if enter
-                && let Some(r) = &self.report
-            {
+            if enter && let Some(r) = &self.report {
                 actions.push(PrepAction::OpenGame {
                     path: self.path.clone(),
                     index: r.games[list[next] as usize].index as usize,
@@ -4844,18 +5571,36 @@ impl PrepScreen {
         match self.tab {
             Tab::Repertoire => self.tree_keys(up, down, left, right, enter, space, home, end),
             Tab::Openings => self.openings_keys(up, down, left, right, enter, space, home, end),
-            Tab::Errors => self.errors_keys(up, down, left, right, enter, space, home, end, actions),
+            Tab::Errors => {
+                self.errors_keys(up, down, left, right, enter, space, home, end, actions)
+            }
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn tree_keys(&mut self, up: bool, down: bool, left: bool, right: bool, enter: bool, space: bool, home: bool, end: bool) {
+    fn tree_keys(
+        &mut self,
+        up: bool,
+        down: bool,
+        left: bool,
+        right: bool,
+        enter: bool,
+        space: bool,
+        home: bool,
+        end: bool,
+    ) {
         let rows = self.tree_rows();
         if rows.is_empty() {
             return;
         }
         let at = rows.iter().position(|r| match (r, &self.selection) {
-            (TreeRow::Node { white, node, .. }, Selection::Node { white: sw, node: sn }) => white == sw && node == sn,
+            (
+                TreeRow::Node { white, node, .. },
+                Selection::Node {
+                    white: sw,
+                    node: sn,
+                },
+            ) => white == sw && node == sn,
             _ => false,
         });
         let go = |screen: &mut Self, i: usize| {
@@ -4898,7 +5643,10 @@ impl PrepScreen {
         } else if home {
             go(self, 0);
         } else if end {
-            let last = rows.iter().rposition(|r| matches!(r, TreeRow::Node { .. })).unwrap_or(0);
+            let last = rows
+                .iter()
+                .rposition(|r| matches!(r, TreeRow::Node { .. }))
+                .unwrap_or(0);
             go(self, last);
         } else if right {
             if has_children && !open {
@@ -4909,7 +5657,11 @@ impl PrepScreen {
         } else if left {
             if open {
                 self.expanded.remove(&(white, node));
-            } else if let Some(p) = self.report.as_ref().and_then(|r| r.color(white).tree.nodes[node as usize].parent) {
+            } else if let Some(p) = self
+                .report
+                .as_ref()
+                .and_then(|r| r.color(white).tree.nodes[node as usize].parent)
+            {
                 self.select(Selection::Node { white, node: p });
                 self.scroll_to_selected = true;
             }
@@ -4924,15 +5676,36 @@ impl PrepScreen {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn openings_keys(&mut self, up: bool, down: bool, left: bool, right: bool, enter: bool, space: bool, home: bool, end: bool) {
+    fn openings_keys(
+        &mut self,
+        up: bool,
+        down: bool,
+        left: bool,
+        right: bool,
+        enter: bool,
+        space: bool,
+        home: bool,
+        end: bool,
+    ) {
         let rows = self.opening_rows();
         if rows.is_empty() {
             return;
         }
-        let at = rows.iter().position(|&(w, f, v)| self.selection == Selection::Opening { white: w, family: f, variation: v });
+        let at = rows.iter().position(|&(w, f, v)| {
+            self.selection
+                == Selection::Opening {
+                    white: w,
+                    family: f,
+                    variation: v,
+                }
+        });
         let go = |screen: &mut Self, i: usize| {
             if let Some(&(white, family, variation)) = rows.get(i) {
-                screen.select(Selection::Opening { white, family, variation });
+                screen.select(Selection::Opening {
+                    white,
+                    family,
+                    variation,
+                });
                 screen.scroll_to_selected = true;
             }
         };
@@ -4957,7 +5730,12 @@ impl PrepScreen {
             }
         } else if left {
             if v.is_some() {
-                go(self, rows.iter().position(|&(w, ff, vv)| w == white && ff == f && vv.is_none()).unwrap_or(at));
+                go(
+                    self,
+                    rows.iter()
+                        .position(|&(w, ff, vv)| w == white && ff == f && vv.is_none())
+                        .unwrap_or(at),
+                );
             } else {
                 self.open_families.remove(&(white, f));
             }
@@ -4984,7 +5762,12 @@ fn error_arrows(pos: &Chess, played: &str, best: Option<&str>, j: Judgement) -> 
     if let Some(a) = to_arrow(played, review::judgement_color(j).gamma_multiply(0.85)) {
         out.push(a);
     }
-    if let Some(a) = best.and_then(|b| to_arrow(b, crate::board::shape_preview_color(chess_core::ShapeColor::Green))) {
+    if let Some(a) = best.and_then(|b| {
+        to_arrow(
+            b,
+            crate::board::shape_preview_color(chess_core::ShapeColor::Green),
+        )
+    }) {
         out.push(a);
     }
     out
@@ -4992,7 +5775,11 @@ fn error_arrows(pos: &Chess, played: &str, best: Option<&str>, j: Judgement) -> 
 
 /// «6…Nb6 ? — better 6…e6 · 0.0 → −1.2».
 fn error_note(e: &prep::OpeningError) -> String {
-    let played = format!("{} {}", short_label(e.ply as usize, &e.san), review::judgement_symbol(e.judgement));
+    let played = format!(
+        "{} {}",
+        short_label(e.ply as usize, &e.san),
+        review::judgement_symbol(e.judgement)
+    );
     trf(
         "{played} — better {best} · {before} → {after}",
         &[
@@ -5099,19 +5886,36 @@ mod tests {
     #[test]
     fn a_header_click_sorts_then_turns_the_order_round() {
         let mut s = PrepSorts::default().games;
-        assert_eq!((s.key, s.ascending), (GameSort::Date, false), "newest first");
+        assert_eq!(
+            (s.key, s.ascending),
+            (GameSort::Date, false),
+            "newest first"
+        );
         s.click(GameSort::Date, false);
         assert!(s.ascending, "the same column again: the other way");
         s.click(GameSort::White, true);
-        assert_eq!((s.key, s.ascending), (GameSort::White, true), "a name column starts A–Z");
+        assert_eq!(
+            (s.key, s.ascending),
+            (GameSort::White, true),
+            "a name column starts A–Z"
+        );
         assert_eq!(s.apply(std::cmp::Ordering::Less), std::cmp::Ordering::Less);
         s.click(GameSort::White, true);
-        assert_eq!(s.apply(std::cmp::Ordering::Less), std::cmp::Ordering::Greater);
+        assert_eq!(
+            s.apply(std::cmp::Ordering::Less),
+            std::cmp::Ordering::Greater
+        );
         assert_eq!(cmp_val(&num(2), &num(10)), std::cmp::Ordering::Less);
-        assert_eq!(cmp_val(&SortVal::Text("b".into()), &SortVal::Text("a".into())), std::cmp::Ordering::Greater);
+        assert_eq!(
+            cmp_val(&SortVal::Text("b".into()), &SortVal::Text("a".into())),
+            std::cmp::Ordering::Greater
+        );
         // Kept in the settings as they are.
         let json = serde_json::to_string(&PrepSorts::default()).unwrap();
-        assert_eq!(serde_json::from_str::<PrepSorts>(&json).unwrap(), PrepSorts::default());
+        assert_eq!(
+            serde_json::from_str::<PrepSorts>(&json).unwrap(),
+            PrepSorts::default()
+        );
     }
 
     #[test]
@@ -5119,11 +5923,20 @@ mod tests {
         assert_eq!(short_label(0, "e4"), "1.e4");
         assert_eq!(short_label(1, "c5"), "1…c5");
         assert_eq!(short_label(4, "Bb5"), "3.Bb5");
-        let sans: Vec<String> = ["e4", "c5", "Nf3"].iter().map(|s| (*s).to_owned()).collect();
+        let sans: Vec<String> = ["e4", "c5", "Nf3"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
         assert_eq!(line_text(&sans), "1.e4 c5 2.Nf3");
-        assert_eq!(table_line("1. e4 c5 2. Nf3 Nc6 3. Bb5"), vec!["1.e4", "c5", "2.Nf3", "Nc6", "3.Bb5"]);
+        assert_eq!(
+            table_line("1. e4 c5 2. Nf3 Nc6 3. Bb5"),
+            vec!["1.e4", "c5", "2.Nf3", "Nc6", "3.Bb5"]
+        );
         assert_eq!(table_line("1... e5"), vec!["1…e5"]);
-        let ucis: Vec<String> = ["e2e4", "c7c5", "g1f3"].iter().map(|s| (*s).to_owned()).collect();
+        let ucis: Vec<String> = ["e2e4", "c7c5", "g1f3"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
         assert_eq!(replay(&ucis).len(), 4);
         assert_eq!(replay(&["zz".to_owned()]).len(), 1);
     }
@@ -5145,7 +5958,10 @@ mod tests {
             named: None,
             book: None,
         };
-        assert_eq!(period(&[game("2026.10.18"), game("2026.01.03"), game("")]), "01.2026 – 10.2026");
+        assert_eq!(
+            period(&[game("2026.10.18"), game("2026.01.03"), game("")]),
+            "01.2026 – 10.2026"
+        );
         assert_eq!(period(&[game("2026.10.18")]), "10.2026");
         assert_eq!(period(&[game("")]), "");
     }
@@ -5176,15 +5992,27 @@ mod tests {
                 bytes: 10,
             },
         ];
-        assert_eq!(BookChoice::from_setting(None, own, &dbs), BookChoice::Database(PathBuf::from("/a/mega.cbh")));
-        assert_eq!(BookChoice::from_setting(Some(Path::new("")), own, &dbs), BookChoice::None);
-        assert_eq!(BookChoice::from_setting(Some(own), own, &dbs), BookChoice::Same);
+        assert_eq!(
+            BookChoice::from_setting(None, own, &dbs),
+            BookChoice::Database(PathBuf::from("/a/mega.cbh"))
+        );
+        assert_eq!(
+            BookChoice::from_setting(Some(Path::new("")), own, &dbs),
+            BookChoice::None
+        );
+        assert_eq!(
+            BookChoice::from_setting(Some(own), own, &dbs),
+            BookChoice::Same
+        );
         assert_eq!(
             BookChoice::from_setting(Some(Path::new("/a/small.pgn")), own, &dbs),
             BookChoice::Database(PathBuf::from("/a/small.pgn"))
         );
         // A database no longer on the shelf: the default again.
-        assert_eq!(BookChoice::from_setting(Some(Path::new("/gone.pgn")), own, &dbs), BookChoice::Database(PathBuf::from("/a/mega.cbh")));
+        assert_eq!(
+            BookChoice::from_setting(Some(Path::new("/gone.pgn")), own, &dbs),
+            BookChoice::Database(PathBuf::from("/a/mega.cbh"))
+        );
         assert_eq!(BookChoice::Same.setting(own), own);
         assert_eq!(BookChoice::None.setting(own), PathBuf::new());
     }

@@ -23,8 +23,9 @@ fn main() {
         eprintln!("usage: chesscom_check <engine>");
         std::process::exit(2);
     };
-    let nodes: u64 = std::env::var("CP_REVIEW_NODES")
-        .map_or(SEARCH_NODES, |n| n.parse().expect("CP_REVIEW_NODES: a number"));
+    let nodes: u64 = std::env::var("CP_REVIEW_NODES").map_or(SEARCH_NODES, |n| {
+        n.parse().expect("CP_REVIEW_NODES: a number")
+    });
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // Evaluations of one version of the fixed search are the same on every machine;
     // those of other nodes go apart.
@@ -82,7 +83,11 @@ fn main() {
             );
             for (i, j) in a.report.judgements.iter().enumerate() {
                 if let Some(j @ (Judgement::Brilliant | Judgement::Great)) = j {
-                    let mark = if *j == Judgement::Brilliant { "!!" } else { "!" };
+                    let mark = if *j == Judgement::Brilliant {
+                        "!!"
+                    } else {
+                        "!"
+                    };
                     let label = game.move_label(line[i + 1]).unwrap_or_default();
                     println!("   ours  {label:<14} {mark}");
                 }

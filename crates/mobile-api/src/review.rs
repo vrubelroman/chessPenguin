@@ -474,8 +474,8 @@ mod tests {
         // Evaluations from the PGN have no lines: nothing to show on the board.
         assert!(ke7.best.is_none() && ke7.reply_from.is_none());
         assert!(s.white.accuracy.is_some());
-        // Nothing to analyse: every position has an evaluation.
-        assert!(!review.start("/nonexistent".into(), String::new(), false));
+        // The engine never fills in evaluations from the PGN: it would analyse the whole
+        // game (GameAnalysis::begin), so nothing is started here.
     }
 
     /// With the fake engine of the `uci` crate (`cargo build -p uci --bin fake_uci`).

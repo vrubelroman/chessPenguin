@@ -254,14 +254,12 @@ fn taking_loses(before: &Board, pos: &Chess, sq: Square, threat: i32) -> bool {
     let mut after = pos.clone();
     after.play_unchecked(take);
     let mover = after.turn();
-    threats(&after)
-        .iter()
-        .any(|t| {
-            t.2 != sq
-                && t.0 >= threat
-                && pseudo_threat(pos.board(), t.2, mover) >= threat
-                && pseudo_threat(before, t.2, mover) < threat
-        })
+    threats(&after).iter().any(|t| {
+        t.2 != sq
+            && t.0 >= threat
+            && pseudo_threat(pos.board(), t.2, mover) >= threat
+            && pseudo_threat(before, t.2, mover) < threat
+    })
 }
 
 /// What `by` would win taking on `sq`, whoever is to move (a piece already hanging).
@@ -403,8 +401,14 @@ mod tests {
         let f = last(Chess::default(), PILLSBURY);
         assert!(f.sacrifice && f.brilliant_shape(Rules::ChessCom), "{f:?}");
         // 18.fxe6! just before: takes back the knight taken on c3, no gain.
-        let f = last(Chess::default(), &PILLSBURY[..PILLSBURY.rfind(" Ra3").unwrap()]);
-        assert!(f.winning_capture && f.takes_back && f.great_shape(Rules::ChessCom), "{f:?}");
+        let f = last(
+            Chess::default(),
+            &PILLSBURY[..PILLSBURY.rfind(" Ra3").unwrap()],
+        );
+        assert!(
+            f.winning_capture && f.takes_back && f.great_shape(Rules::ChessCom),
+            "{f:?}"
+        );
         assert!(!f.great_shape(Rules::Strict), "the first rules stay: {f:?}");
     }
 
@@ -418,7 +422,10 @@ mod tests {
              15. O-O Ne5 16. Nxe5 Bxe5 17. f4 Bc7 18. e4 Rac8 19. e5 Bb6+ 20. Kh1 Ng4 \
              21. Be4 Qh4 22. g3 Rxc3 23. gxh4 Rd2 24. Qxd2 Bxe4+",
         );
-        assert!(f.winning_capture && !f.takes_back && !f.great_shape(Rules::ChessCom), "{f:?}");
+        assert!(
+            f.winning_capture && !f.takes_back && !f.great_shape(Rules::ChessCom),
+            "{f:?}"
+        );
     }
 
     #[test]

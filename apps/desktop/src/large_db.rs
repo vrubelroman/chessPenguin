@@ -1306,7 +1306,10 @@ impl LargeView {
         // dialog offers the names that match the text (opponent-prep.md §2.1).
         if player_set {
             let label = match self.form.player.exact {
-                Some(_) => trf("♟ Prepare against {name}…", &[("name", &self.form.player.text)]),
+                Some(_) => trf(
+                    "♟ Prepare against {name}…",
+                    &[("name", &self.form.player.text)],
+                ),
                 None => tr("♟ Prepare against an opponent…").to_owned(),
             };
             if ui

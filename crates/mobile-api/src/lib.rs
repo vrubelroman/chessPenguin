@@ -661,7 +661,10 @@ mod tests {
     fn comments_and_variations_come_along() {
         // The Opera game of the samples has comments and a variation.
         let db = classics();
-        let g = db.game(0).expect("a game");
+        let g = (0..db.len())
+            .map(|i| db.game(i).expect("a game"))
+            .find(|g| g.nodes.iter().any(|n| n.san == "Qb8+"))
+            .expect("the Opera game");
         assert!(
             g.nodes
                 .iter()

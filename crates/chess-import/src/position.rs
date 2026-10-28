@@ -408,9 +408,21 @@ mod tests {
         assert_eq!(theory_end(10, 0, |_| None), None);
         // Continuing from a known prefix.
         let end = theory_end(10, 4, |i| Some(i < 7)).expect("end");
-        assert_eq!(end, TheoryEnd { last_known: Some(6), first_unknown: Some(7) });
+        assert_eq!(
+            end,
+            TheoryEnd {
+                last_known: Some(6),
+                first_unknown: Some(7)
+            }
+        );
         let end = theory_end(10, 4, |_| Some(true)).expect("end");
-        assert_eq!(end, TheoryEnd { last_known: Some(9), first_unknown: None });
+        assert_eq!(
+            end,
+            TheoryEnd {
+                last_known: Some(9),
+                first_unknown: None
+            }
+        );
     }
 
     #[test]
