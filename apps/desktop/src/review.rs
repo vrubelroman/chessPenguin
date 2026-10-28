@@ -719,79 +719,26 @@ impl Review {
                 .weak(),
             );
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label(tr("Engine"));
-                let current = settings
-                    .active_engine()
-                    .map(|e| e.name.clone())
-                    .unwrap_or_else(|| tr("not selected").into());
-                egui::ComboBox::from_id_salt("review_engine")
-                    .selected_text(current)
-                    .width(ui.available_width() - 8.0)
-                    .show_ui(ui, |ui| {
-                        for i in 0..settings.engines.len() {
-                            let selected = settings.active_engine == Some(i);
-                            if ui
-                                .selectable_label(selected, &settings.engines[i].name)
-                                .clicked()
-                                && !selected
-                            {
-                                settings.active_engine = Some(i);
-                                action = Some(DialogAction::EngineSwitch);
-                            }
-                        }
-                        ui.separator();
-                        if ui.button(tr("Add or edit engines…")).clicked() {
-                            action = Some(DialogAction::OpenEngines);
-                        }
-                    });
-            });
+            if let Some(a) = engine_picker(ui, settings, "review_engine") {
+                action = Some(a);
+            }
             ui.add_space(4.0);
             let rs = &mut settings.review;
-            let cores = std::thread::available_parallelism()
-                .map(|n| n.get() as u32)
-                .unwrap_or(1);
-            let hash_steps = crate::game_view::hash_steps();
-            ui.spacing_mut().slider_width = 200.0;
-            egui::Grid::new("review_grid")
-                .num_columns(3)
-                .spacing(vec2(12.0, 8.0))
-                .show(ui, |ui| {
-                    ui.label(tr("Quality"));
-                    let mut q = rs.quality.min(REVIEW_QUALITY.len() - 1);
-                    crate::game_view::index_slider(ui, &mut q, REVIEW_QUALITY.len());
-                    rs.quality = q;
-                    ui.label(trf(
-                        "{quality} · {nodes} nodes",
-                        &[
-                            ("quality", &tr(REVIEW_QUALITY[q].0)),
-                            ("nodes", &format_count(REVIEW_QUALITY[q].1)),
-                        ],
-                    ));
-                    ui.end_row();
-
-                    ui.label(tr("Threads"));
-                    let mut th = rs.threads.clamp(1, cores) as usize - 1;
-                    crate::game_view::index_slider(ui, &mut th, cores as usize);
-                    rs.threads = th as u32 + 1;
-                    ui.label(format!("{} / {cores}", rs.threads));
-                    ui.end_row();
-
-                    ui.label(tr("Memory"));
-                    let mut h = hash_steps
-                        .iter()
-                        .position(|m| *m >= rs.hash_mb)
-                        .unwrap_or(hash_steps.len() - 1);
-                    crate::game_view::index_slider(ui, &mut h, hash_steps.len());
-                    rs.hash_mb = hash_steps[h];
-                    ui.label(crate::game_view::format_mb(rs.hash_mb));
-                    ui.end_row();
-                });
+            let mut quality = rs.quality;
+            options_grid(
+                ui,
+                "review_grid",
+                &mut quality,
+                &mut rs.threads,
+                &mut rs.hash_mb,
+                None,
+            );
+            rs.quality = quality;
             ui.add_space(6.0);
             let positions = self.analysis.positions();
-            let per_thread = self.nps_per_thread.unwrap_or(700_000.0);
+            let per_thread = self.nps_per_thread.unwrap_or(DEFAULT_NPS);
             let searches = self.analysis.searches();
-            let secs = searches as f64 * rs.nodes() as f64 / (per_thread * f64::from(rs.threads));
+            let secs = estimate_secs(searches, rs.nodes(), per_thread, rs.threads);
             ui.label(trf(
                 "{n} positions, about {time}",
                 &[("n", &positions), ("time", &format_duration(secs))],
@@ -839,6 +786,102 @@ impl Drop for Review {
         // Leaving the game mid-analysis keeps what was computed.
         self.cancel();
     }
+}
+
+/// Nodes per second and thread assumed until an engine was measured.
+pub const DEFAULT_NPS: f64 = 700_000.0;
+
+/// Seconds `searches` of `nodes` take at `per_thread` nodes per second on `threads`.
+pub fn estimate_secs(searches: usize, nodes: u64, per_thread: f64, threads: u32) -> f64 {
+    searches as f64 * nodes as f64 / (per_thread * f64::from(threads.max(1)))
+}
+
+/// The «Engine» row of a launch dialog: the active engine, the others to switch to,
+/// «Add or edit engines…».
+pub fn engine_picker(ui: &mut Ui, settings: &mut Settings, id: &str) -> Option<DialogAction> {
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label(tr("Engine"));
+        let current = settings
+            .active_engine()
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| tr("not selected").into());
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(current)
+            .width(ui.available_width() - 8.0)
+            .show_ui(ui, |ui| {
+                for i in 0..settings.engines.len() {
+                    let selected = settings.active_engine == Some(i);
+                    if ui
+                        .selectable_label(selected, &settings.engines[i].name)
+                        .clicked()
+                        && !selected
+                    {
+                        settings.active_engine = Some(i);
+                        action = Some(DialogAction::EngineSwitch);
+                    }
+                }
+                ui.separator();
+                if ui.button(tr("Add or edit engines…")).clicked() {
+                    action = Some(DialogAction::OpenEngines);
+                }
+            });
+    });
+    action
+}
+
+/// The «Quality · Threads · Memory» grid of a launch dialog; `quality` indexes
+/// [`REVIEW_QUALITY`]. `quality_hint`: a tooltip on the quality slider.
+pub fn options_grid(
+    ui: &mut Ui,
+    id: &str,
+    quality: &mut usize,
+    threads: &mut u32,
+    hash_mb: &mut u32,
+    quality_hint: Option<&str>,
+) {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(1);
+    let hash_steps = crate::game_view::hash_steps();
+    ui.spacing_mut().slider_width = 200.0;
+    egui::Grid::new(id)
+        .num_columns(3)
+        .spacing(vec2(12.0, 8.0))
+        .show(ui, |ui| {
+            ui.label(tr("Quality"));
+            let mut q = (*quality).min(REVIEW_QUALITY.len() - 1);
+            crate::game_view::index_slider(ui, &mut q, REVIEW_QUALITY.len());
+            *quality = q;
+            let label = ui.label(trf(
+                "{quality} · {nodes} nodes",
+                &[
+                    ("quality", &tr(REVIEW_QUALITY[q].0)),
+                    ("nodes", &format_count(REVIEW_QUALITY[q].1)),
+                ],
+            ));
+            if let Some(hint) = quality_hint {
+                label.on_hover_text(hint);
+            }
+            ui.end_row();
+
+            ui.label(tr("Threads"));
+            let mut th = (*threads).clamp(1, cores) as usize - 1;
+            crate::game_view::index_slider(ui, &mut th, cores as usize);
+            *threads = th as u32 + 1;
+            ui.label(format!("{} / {cores}", *threads));
+            ui.end_row();
+
+            ui.label(tr("Memory"));
+            let mut h = hash_steps
+                .iter()
+                .position(|m| *m >= *hash_mb)
+                .unwrap_or(hash_steps.len() - 1);
+            crate::game_view::index_slider(ui, &mut h, hash_steps.len());
+            *hash_mb = hash_steps[h];
+            ui.label(crate::game_view::format_mb(*hash_mb));
+            ui.end_row();
+        });
 }
 
 /// Removes `[%eval …]` commands from a comment.
@@ -929,7 +972,7 @@ fn percent(a: f64) -> String {
 }
 
 /// 250 000 → "250k", 1 000 000 → "1M".
-fn format_count(n: u64) -> String {
+pub fn format_count(n: u64) -> String {
     if n >= 1_000_000 && n.is_multiple_of(100_000) {
         let m = n as f64 / 1e6;
         if n.is_multiple_of(1_000_000) {
@@ -944,7 +987,7 @@ fn format_count(n: u64) -> String {
     }
 }
 
-fn format_duration(secs: f64) -> String {
+pub fn format_duration(secs: f64) -> String {
     let s = secs.ceil().max(1.0) as u64;
     if s < 60 {
         trf("{n} s", &[("n", &s)])

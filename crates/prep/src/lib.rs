@@ -138,7 +138,7 @@ pub struct BookInfo {
     pub left: u32,
 }
 
-const REPORT_VERSION: u32 = 1;
+const REPORT_VERSION: u32 = 2;
 
 /// Everything the preparation knows about the player.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -160,6 +160,10 @@ pub struct PrepReport {
     pub white: ColorReport,
     pub black: ColorReport,
     pub book: Option<BookInfo>,
+    /// The book's number of games in every position the book step looked at (by
+    /// key): the first plies of every line, then the positions around each exit.
+    #[serde(default)]
+    pub book_counts: HashMap<u64, u32>,
     pub engine: Option<EngineInfo>,
     /// Engine evaluations by position key.
     pub evals: HashMap<u64, PositionEval>,
@@ -263,6 +267,7 @@ pub fn build(
         white,
         black,
         book: None,
+        book_counts: HashMap::new(),
         engine: None,
         evals,
     };
@@ -356,13 +361,14 @@ impl PrepReport {
         cancel: &AtomicBool,
     ) -> Option<()> {
         let mut games = self.games.clone();
-        let left = book::find_exits(&mut games, book, options, progress, cancel)?;
+        let (left, counts) = book::find_exits(&mut games, book, options, progress, cancel)?;
         self.games = games;
         self.book = Some(BookInfo {
             fingerprint: fingerprint(book),
             threshold: options.threshold,
             left,
         });
+        self.book_counts = counts;
         Some(())
     }
 
@@ -371,9 +377,17 @@ impl PrepReport {
     /// Every distinct position of the lines (the one after the last move included),
     /// first met first; those without legal moves left out.
     fn positions(&self) -> Vec<(u64, &GameInfo, usize)> {
+        self.positions_for(Side::Any)
+    }
+
+    /// [`PrepReport::positions`] of the games the player had `side` in.
+    fn positions_for(&self, side: Side) -> Vec<(u64, &GameInfo, usize)> {
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         for g in &self.games {
+            if (side == Side::White && !g.white) || (side == Side::Black && g.white) {
+                continue;
+            }
             for (i, &k) in g.keys.iter().enumerate() {
                 if self.evals.get(&k).is_some_and(|e| e.nodes == EXACT) {
                     continue;
@@ -391,9 +405,19 @@ impl PrepReport {
         self.positions().len()
     }
 
+    /// Distinct positions of the games the player had `side` in.
+    pub fn distinct_positions_for(&self, side: Side) -> usize {
+        self.positions_for(side).len()
+    }
+
     /// Positions without an evaluation of at least `nodes`.
     pub fn missing(&self, nodes: u64) -> usize {
-        self.positions()
+        self.missing_for(nodes, Side::Any)
+    }
+
+    /// [`PrepReport::missing`] among the games the player had `side` in.
+    pub fn missing_for(&self, nodes: u64, side: Side) -> usize {
+        self.positions_for(side)
             .iter()
             .filter(|(k, _, _)| !self.evals.get(k).is_some_and(|e| e.nodes >= nodes))
             .count()
@@ -423,7 +447,13 @@ impl PrepReport {
     /// search each, no second search for !! and !). Their keys are the position keys
     /// in hexadecimal, as [`PrepReport::apply`] reads them.
     pub fn targets(&self, nodes: u64) -> Vec<Target> {
-        self.positions()
+        self.targets_for(nodes, Side::Any)
+    }
+
+    /// [`PrepReport::targets`] of the games the player had `side` in (the dialog's
+    /// «Black — 133 games» halves the work).
+    pub fn targets_for(&self, nodes: u64, side: Side) -> Vec<Target> {
+        self.positions_for(side)
             .into_iter()
             .filter(|(k, _, _)| !self.evals.get(k).is_some_and(|e| e.nodes >= nodes))
             .map(|(k, g, i)| Target {
@@ -794,6 +824,12 @@ mod tests {
         assert_eq!(exits[3].map(|b| (b.ply, b.by_player)), Some((1, true)), "1.d4 is his own");
         assert_eq!(report.book.as_ref().map(|b| (b.threshold, b.left)), Some((2, 4)));
         assert_eq!(report.white.book_exits(&report.games), (1, 2));
+        // The counts of the positions looked at: the start (4 games), 1.e4 c5 2.Nf3
+        // (3), the rare 3...g6 (1).
+        let g = &report.games[0];
+        assert_eq!(report.book_counts.get(&g.keys[0]), Some(&4));
+        assert_eq!(report.book_counts.get(&g.keys[3]), Some(&3));
+        assert_eq!(report.book_counts.get(&g.keys[6]), Some(&1));
         // The player's own games excluded: everything is out of the book at once.
         let own = BookOptions {
             threshold: 1,
@@ -820,6 +856,12 @@ mod tests {
         assert_eq!(total, 27 - 10);
         let targets = report.targets(1000);
         assert_eq!(targets.len(), total);
+        // One colour: the positions of its games only (the start position is in both).
+        let black = report.targets_for(1000, Side::Black);
+        assert_eq!(black.len(), report.games[1].keys.len());
+        assert_eq!(report.distinct_positions_for(Side::Black), black.len());
+        assert!(report.distinct_positions_for(Side::White) < total);
+        assert_eq!(report.missing_for(1000, Side::Black), black.len());
         assert_eq!(targets[0].key, format!("{:016x}", report.games[0].keys[0]));
         assert!(targets[0].pos.moves.is_empty());
         assert_eq!(targets[3].pos.moves, vec!["e2e4", "c7c5", "g1f3"]);

@@ -19,6 +19,8 @@ pub const DOWNLOAD_INDICATOR: &str = "download_indicator";
 pub enum Pending {
     LiveAnalysis,
     GameAnalysis,
+    /// The opponent preparation's search for opening errors.
+    OpeningErrors,
 }
 
 /// What the owner should do.
@@ -128,6 +130,9 @@ impl EngineOffer {
                             }
                             Some(Pending::LiveAnalysis) => {
                                 tr("Stockfish installed — analysis is on")
+                            }
+                            Some(Pending::OpeningErrors) => {
+                                tr("Stockfish installed — the search for opening errors started")
                             }
                             None => tr("Stockfish installed"),
                         }
@@ -327,6 +332,9 @@ impl EngineOffer {
         let after = match self.pending {
             Some(Pending::GameAnalysis) => {
                 tr("Game analysis will start by itself when the download finishes.")
+            }
+            Some(Pending::OpeningErrors) => {
+                tr("The search for opening errors will start by itself when the download finishes.")
             }
             _ => tr("Analysis will start by itself when the download finishes."),
         };

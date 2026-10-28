@@ -38,15 +38,16 @@ impl Default for BookOptions {
 }
 
 /// Fills in [`GameInfo::book`] of every game; `progress` counts the games done.
-/// Returns how many games left the book within their line. `None` when cancelled
-/// (or when the book cannot be searched: a PGN book without memory for its table).
+/// Returns how many games left the book within their line, and the book's count of
+/// every position looked at (by key). `None` when cancelled (or when the book cannot
+/// be searched: a PGN book without memory for its table).
 pub(crate) fn find_exits(
     games: &mut [GameInfo],
     book: &Database,
     options: &BookOptions,
     progress: &AtomicUsize,
     cancel: &AtomicBool,
-) -> Option<u32> {
+) -> Option<(u32, HashMap<u64, u32>)> {
     let exclude: HashSet<u32> = if options.same_database {
         games.iter().map(|g| g.index).collect()
     } else {
@@ -98,5 +99,5 @@ pub(crate) fn find_exits(
             }
         });
     }
-    Some(left)
+    Some((left, counts))
 }

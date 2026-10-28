@@ -13,6 +13,7 @@ use crate::analysis::Analysis;
 use crate::assets::Sound;
 use crate::game_view::{GameAction, GameSource, GameView};
 use crate::library::{Library, LibraryAction};
+use crate::prep_ui::{DialogOutcome, PrepAction, PrepDialog, PrepScreen};
 use crate::own_db::{
     self, Answer, ChooserFor, ChooserOutcome, EditorMode, EditorOutcome, NewBaseOutcome,
     QuestionKind,
@@ -244,6 +245,10 @@ pub struct App {
     restart_to: Option<PathBuf>,
     /// The reference tab of games (kept across games: its results stay cached).
     reference: crate::reference::Reference,
+    /// Preparing against an opponent: the dialog, and the report screen in the stack
+    /// between the library and the game (opponent-prep.md §3.1).
+    prep_dialog: Option<PrepDialog>,
+    prep: Option<PrepScreen>,
     allow_quit: bool,
     applied_dark: Option<bool>,
     debug: DebugStartup,
@@ -279,6 +284,9 @@ struct DebugStartup {
     next_key: f64,
     /// `CP_TYPE=<text>`: typed into the field that has the keyboard, 2.5 s after start.
     typed: Option<String>,
+    /// `CP_PREP=<name>`: «Prepare against…» for this name in the first database
+    /// (`CP_PREP_OPEN=1` presses «Open report», `CP_PREP_TAB`, `CP_PREP_ENGINE=1`).
+    prep: Option<String>,
 }
 
 impl DebugStartup {
@@ -321,6 +329,7 @@ impl DebugStartup {
                 .collect(),
             next_key: 2.0,
             typed: std::env::var("CP_TYPE").ok(),
+            prep: std::env::var("CP_PREP").ok(),
         }
     }
 }
@@ -410,6 +419,8 @@ impl App {
             update_ui: crate::update_ui::UpdateDialog::from_env(),
             restart_to: None,
             reference: Default::default(),
+            prep_dialog: None,
+            prep: None,
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
             online_probe: crate::online::Probe::start(ctx),
@@ -642,6 +653,23 @@ impl App {
     }
 
     fn debug_step(&mut self, ctx: &egui::Context) {
+        if self.debug.prep.is_some()
+            && let Some(path) = self.settings.databases.first().cloned()
+            && self.library.database(&path).is_some()
+        {
+            let query = self.debug.prep.take().unwrap_or_default();
+            let side = match std::env::var("CP_PREP_COLOR").as_deref() {
+                Ok("white") => chess_import::chessbase::base::Side::White,
+                Ok("black") => chess_import::chessbase::base::Side::Black,
+                _ => chess_import::chessbase::base::Side::Any,
+            };
+            let entry = crate::prep_ui::PrepEntry {
+                query,
+                exact: None,
+                side,
+            };
+            self.prep_dialog = Some(PrepDialog::new(path, entry, &self.settings));
+        }
         let Some(index) = self.debug.open else { return };
         let Some(path) = self.settings.databases.first().cloned() else {
             return;
@@ -734,6 +762,134 @@ impl App {
 
     fn toast(&mut self, ctx: &egui::Context, msg: impl Into<String>) {
         self.toast_for(ctx, msg, 3.5);
+    }
+
+    /// The shelf as the reference tab and the preparation see it.
+    fn shelf_dbs(&self) -> Vec<crate::reference::RefDb> {
+        self.settings
+            .databases
+            .iter()
+            .filter(|p| self.library.files.exists(p))
+            .map(|p| crate::reference::RefDb {
+                path: p.clone(),
+                name: p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                db: self.library.database(p),
+                failed: self.library.failure(p).map(str::to_owned),
+                bytes: self.library.file_size(p),
+            })
+            .collect()
+    }
+
+    // ----- preparing against an opponent (docs/design/opponent-prep.md) ------------
+
+    /// «Open report»: the report of the same player as it was, else a new one.
+    fn open_prep(&mut self, ctx: &egui::Context, start: crate::prep_ui::PrepStart) {
+        let Some(db) = self.library.database(&start.path) else {
+            return;
+        };
+        if let Some(p) = self.prep.as_mut()
+            && p.matches(&start.path, &start.player)
+        {
+            p.shown = true;
+            return;
+        }
+        if let Some(mut old) = self.prep.take() {
+            old.save();
+        }
+        self.prep = Some(PrepScreen::new(start, db, &self.settings, ctx));
+    }
+
+    /// The preparation's dialog, when it is open.
+    fn prep_dialog(&mut self, ctx: &egui::Context) {
+        if self.prep_dialog.is_none() {
+            return;
+        }
+        let dbs = self.shelf_dbs();
+        let Some(d) = self.prep_dialog.as_mut() else {
+            return;
+        };
+        d.dbs = dbs;
+        let outcome = d.show(ctx, &mut self.settings);
+        match outcome {
+            Some(DialogOutcome::Open(start)) => {
+                self.prep_dialog = None;
+                self.settings_dirty = true;
+                self.open_prep(ctx, start);
+            }
+            Some(DialogOutcome::Cancel) => self.prep_dialog = None,
+            Some(DialogOutcome::LoadDb(p))
+                if !self.library.loading(&p) && self.library.database(&p).is_none() =>
+            {
+                self.library.load(&p, ctx);
+            }
+            Some(DialogOutcome::LoadDb(_)) | None => {}
+        }
+    }
+
+    fn prep_actions(&mut self, ctx: &egui::Context, actions: Vec<PrepAction>) {
+        for a in actions {
+            match a {
+                PrepAction::Back => {
+                    if let Some(p) = self.prep.as_mut() {
+                        p.shown = false;
+                        p.save();
+                    }
+                }
+                PrepAction::OpenSettings => self.settings_ui.open = !self.settings_ui.open,
+                PrepAction::OpenGame { path, index, ply } => {
+                    let title = self.prep.as_ref().map(|p| p.title());
+                    self.open_game(ctx, path, index, None);
+                    if let Some(g) = self.game.as_mut() {
+                        g.previous = title;
+                        g.previous_prep = true;
+                        g.goto_ply(ply);
+                    }
+                }
+                PrepAction::LoadDb(p) => {
+                    if !self.library.loading(&p) && self.library.database(&p).is_none() {
+                        self.library.load(&p, ctx);
+                    }
+                }
+                // One engine job for the whole program: the live engine is off while
+                // the report is on the screen anyway (no game is open then).
+                PrepAction::EngineStarted => {
+                    self.analysis.stop();
+                    self.live_paused = false;
+                }
+                PrepAction::EngineEnded => {}
+                PrepAction::NeedEngine => self
+                    .engine_offer
+                    .ask(crate::engine_offer::Pending::OpeningErrors, &self.settings),
+                PrepAction::EngineSwitch | PrepAction::SettingsChanged => self.settings_dirty = true,
+                PrepAction::OpenEngines => {
+                    self.settings_ui.open = true;
+                    self.settings_ui.tab = Tab::Engines;
+                }
+                PrepAction::Toast(m) => self.toast(ctx, m),
+                PrepAction::CopyText(text, msg) => {
+                    ctx.copy_text(text);
+                    self.toast(ctx, msg);
+                }
+                PrepAction::OpenPgn(text) => {
+                    let title = self.prep.as_ref().map(|p| p.title());
+                    self.open_pgn_text(ctx, text, true);
+                    if let Some(g) = self.game.as_mut() {
+                        g.previous = title;
+                        g.previous_prep = true;
+                    }
+                }
+                PrepAction::FindPosition(path, start, line, flipped) => {
+                    if let Some(p) = self.prep.as_mut() {
+                        p.shown = false;
+                    }
+                    self.library.show_position(&path, start, line, flipped, ctx);
+                }
+                PrepAction::PlayFrom(from) => self.play_new(ctx, PlayNext::Dialog(Some(from))),
+            }
+        }
     }
 
     /// A message said once and seldom (a database made for the player): longer in view.
@@ -2351,6 +2507,9 @@ impl App {
             return;
         }
         self.previous_games.clear();
+        if let Some(p) = self.prep.as_mut() {
+            p.shown = false;
+        }
         if let Some(g) = closed
             && let Some(src) = g.source
         {
@@ -2401,6 +2560,13 @@ impl App {
 
     fn toggle_engine(&mut self, ctx: &egui::Context) {
         self.live_paused = false;
+        if self.prep.as_ref().is_some_and(|p| p.running()) && !self.analysis.is_on() {
+            self.toast(
+                ctx,
+                tr("Opening errors are being searched — wait or stop it in the report"),
+            );
+            return;
+        }
         if self.analysis.is_on() {
             self.analysis.stop();
             return;
@@ -2453,6 +2619,13 @@ impl App {
                         _ => {}
                     }
                 }
+            }
+            Some(crate::engine_offer::Pending::OpeningErrors) => {
+                let actions = match self.prep.as_mut() {
+                    Some(p) => p.start_after_engine(&self.settings, ctx),
+                    None => Vec::new(),
+                };
+                self.prep_actions(ctx, actions);
             }
             None => {}
         }
@@ -2723,27 +2896,18 @@ impl eframe::App for App {
         // A new game's target base that left the shelf or stopped taking games is
         // dropped before the game is drawn (its header names the target).
         let _ = self.current_target();
+        let shelf = self.shelf_dbs();
         if let Some(game) = &mut self.game {
             let input_enabled = self.confirm_close.is_none();
             // A database opened for the reference tab arrives here (the library is
             // not drawn while a game is shown).
             self.library.poll();
-            self.reference.dbs = self
-                .settings
-                .databases
-                .iter()
-                .filter(|p| self.library.files.exists(p))
-                .map(|p| crate::reference::RefDb {
-                    path: p.clone(),
-                    name: p
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                    db: self.library.database(p),
-                    failed: self.library.failure(p).map(str::to_owned),
-                    bytes: self.library.file_size(p),
-                })
-                .collect();
+            self.reference.dbs = shelf;
+            // The preparation's engine goes on under the game; no game analysis meanwhile.
+            game.engine_busy = self.prep.as_ref().is_some_and(|p| p.running());
+            if let Some(p) = self.prep.as_mut() {
+                p.poll_quietly(&ctx, &self.settings);
+            }
             let review = self.settings.review.clone();
             let actions = game.show(
                 ui,
@@ -2794,7 +2958,9 @@ impl eframe::App for App {
                     }
                     GameAction::OpenUpdate => self.update_ui.open = true,
                     GameAction::ReturnToPrevious => {
-                        if !self.previous_games.is_empty() {
+                        if !self.previous_games.is_empty()
+                            || self.prep.as_ref().is_some_and(|p| p.shown)
+                        {
                             self.request_close(&ctx, CloseIntent::ReturnToPrevious);
                         }
                     }
@@ -2923,8 +3089,37 @@ impl eframe::App for App {
                     }
                 }
             }
+        } else if self.prep.as_ref().is_some_and(|p| p.shown) {
+            // A database opened for the book arrives here (the library is not drawn).
+            self.library.poll();
+            let actions = match self.prep.as_mut() {
+                Some(p) => {
+                    p.dbs = shelf;
+                    p.show(ui, &mut self.settings)
+                }
+                None => Vec::new(),
+            };
+            self.prep_actions(&ctx, actions);
         } else {
             let dbs = self.settings.databases.clone();
+            if let Some(p) = self.prep.as_mut() {
+                p.poll_quietly(&ctx, &self.settings);
+            }
+            // Ctrl+Shift+P: «Prepare against…» with the player of the filter.
+            if ctx.input_mut(|i| {
+                i.consume_shortcut(&KeyboardShortcut::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::P,
+                ))
+            }) && self.prep_dialog.is_none()
+                && let Some((path, entry)) = self.library.prep_entry()
+            {
+                self.prep_dialog = Some(PrepDialog::new(
+                    path,
+                    entry.unwrap_or_default(),
+                    &self.settings,
+                ));
+            }
             self.online_probe.poll();
             self.library.online = self.online_probe.any();
             self.library.online_busy = self.online.busy();
@@ -2991,6 +3186,9 @@ impl eframe::App for App {
                     LibraryAction::EditGameData { path, index } => {
                         self.open_game(&ctx, path, index, None);
                         self.edit_game_data();
+                    }
+                    LibraryAction::PrepareAgainst { path, entry } => {
+                        self.prep_dialog = Some(PrepDialog::new(path, entry, &self.settings));
                     }
                 }
             }
@@ -3132,6 +3330,7 @@ impl eframe::App for App {
 
         self.confirm_dialog(&ctx);
         self.own_dialogs(&ctx);
+        self.prep_dialog(&ctx);
         // Whether the database the dialog names is there, as last found.
         if let Some(d) = self.play_dialog.as_mut() {
             d.target_there = d
@@ -3227,6 +3426,9 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         self.analysis.stop();
+        if let Some(p) = self.prep.as_mut() {
+            p.save();
+        }
         // Downloads of online games stop and save what they got; a new database goes on
         // the shelf with it (the next download continues it).
         for p in self.online.stop_all() {
