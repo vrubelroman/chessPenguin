@@ -39,6 +39,8 @@ pub struct MoveFeatures {
     pub escape: bool,
     /// The move goes into a position of the opening table (chess.com's «book»).
     pub book: bool,
+    /// The move gives check.
+    pub gives_check: bool,
 }
 
 /// Which rules decide !! and !. Both stay, to compare them and to go back.
@@ -122,6 +124,7 @@ impl MoveFeatures {
             sacrifice_any: offered_any >= 3 && taken - threat_any <= -2 && !lost_anyway,
             escape: lost_anyway && from_threat < 900 && gain >= 0,
             book: chess_openings::in_book(chess_openings::key(&after)),
+            gives_check: after.is_check(),
         }
     }
 
@@ -148,6 +151,10 @@ impl MoveFeatures {
             && !self.recapture
             && !(self.winning_capture && !(rules == Rules::ChessCom && self.takes_back))
             && !(rules == Rules::Strict && self.escape)
+            // An attacked piece stepping quietly to its one good square is plain, not
+            // great (10.Be2 of an online game, the owner: «какой же это !»); stepping away
+            // with check is an attack (19…Ne2+ of Byrne — Fischer, chess.com's !).
+            && !(rules == Rules::ChessCom && self.escape && !self.gives_check)
     }
 
     /// Worth asking the engine for the best other move.
@@ -342,10 +349,10 @@ mod tests {
 
     #[test]
     fn a_piece_saved_or_lost_anyway_is_no_sacrifice() {
-        // The bishop on c4 attacked by the pawn on d5: Bb3 saves it, which can be the only
-        // good move (great), never a sacrifice.
+        // The bishop on c4 attacked by the pawn on d5: Bb3 saves it — never a sacrifice,
+        // and a quiet step away is not great either.
         let f = features("4k3/8/8/3p4/2B5/8/8/4K3 w - - 0 1", "Bb3");
-        assert!(f.great_shape(Rules::ChessCom) && !f.sacrifice, "{f:?}");
+        assert!(f.escape && !f.sacrifice && !f.great_shape(Rules::ChessCom), "{f:?}");
         // Taking the pawn instead, into the knight: it was lost anyway (desperado).
         let f = features("4k3/8/5n2/3p4/2B5/8/8/4K3 w - - 0 1", "Bxd5");
         assert!(!f.sacrifice, "{f:?}");
@@ -439,6 +446,22 @@ mod tests {
         assert!(f.pawn_offered && f.pawn_shape(Rules::ChessCom), "{f:?}");
         assert!(!f.sacrifice && !f.brilliant_shape(Rules::ChessCom), "{f:?}");
         assert!(!f.pawn_shape(Rules::Strict));
+    }
+
+    #[test]
+    fn a_quiet_escape_is_not_great_but_one_with_check_can_be() {
+        // 10.Be2 (an online game): the bishop on d3 under the pawn steps to its one good
+        // square — plain.
+        let f = last(
+            Chess::default(),
+            "1. e4 e6 2. d4 d5 3. e5 c5 4. c3 Nc6 5. Nf3 Nge7 6. Na3 Bd7 7. Nc2 Nf5 \
+             8. Bd3 Nh4 9. O-O c4 10. Be2",
+        );
+        assert!(f.escape && !f.gives_check, "{f:?}");
+        assert!(!f.great_shape(Rules::ChessCom), "{f:?}");
+        // Stepping away with check can be great.
+        let f = features("4k3/8/8/8/2p5/1B6/8/4K3 w - - 0 1", "Ba4+");
+        assert!(f.escape && f.gives_check && f.great_shape(Rules::ChessCom), "{f:?}");
     }
 
     #[test]
