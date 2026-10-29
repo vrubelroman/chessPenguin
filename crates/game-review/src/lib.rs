@@ -24,9 +24,11 @@ pub mod report;
 pub use features::{MoveFeatures, Rules};
 pub use job::{
     JobEvent, JobFailure, JobSettings, MAX_PROCESSES, PHONE_PROCESSES, SEARCH_HASH_MB,
-    SEARCH_NODES, SEARCH_VERSION, Target, estimate_secs, processes, run,
+    SEARCH_NODES, SEARCH_VERSION, SHALLOW_NODES, Target, estimate_secs, processes, run,
 };
-pub use report::{Eval, Judgement, Phase, Phases, Ply, Report, SideStats, judge};
+pub use report::{
+    Eval, Hardness, Judgement, Measure, Phase, Phases, Ply, Report, SideStats, judge,
+};
 
 /// Engine result for one position of the main line.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -41,6 +43,26 @@ pub struct PosEval {
     /// be brilliant or great (older analyses have none).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub second: Option<Second>,
+    /// What a shallow search makes of the move played, for how hard it was to find
+    /// (when the rules ask for it, see [`Hardness`]; older analyses have none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shallow: Option<Shallow>,
+}
+
+/// The shallow search of a position whose move could be brilliant or great and was the
+/// engine's best: the same fixed search as every other, to `nodes` nodes only.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Shallow {
+    /// Nodes of the search ([`SHALLOW_NODES`] in the programs).
+    pub nodes: u64,
+    /// The move played (UCI), as [`Second::without`].
+    pub played: String,
+    /// The shallow search's best move (UCI) and its evaluation.
+    pub best: String,
+    pub best_eval: Eval,
+    /// The move played at the same nodes: `best_eval` when it is `best`, else a search
+    /// of the move played alone.
+    pub played_eval: Eval,
 }
 
 /// The best of the other moves: how the position stood without the move played.
@@ -127,6 +149,10 @@ pub struct GameAnalysis {
     pub marks: HashMap<NodeId, Mark>,
     /// The rules of !! and ! the report follows.
     rules: Rules,
+    /// How the difficulty of a move counts in them.
+    hardness: Hardness,
+    /// Nodes of the shallow search ([`SHALLOW_NODES`]; another only in an experiment).
+    shallow_nodes: u64,
 }
 
 impl GameAnalysis {
@@ -149,6 +175,8 @@ impl GameAnalysis {
             report: Report::default(),
             marks: HashMap::new(),
             rules: Rules::default(),
+            hardness: Hardness::default(),
+            shallow_nodes: SHALLOW_NODES,
         };
         a.rebuild(game);
         if cache_dir.is_some_and(|d| a.load_cache(d)) || a.load_pgn_evals(game) {
@@ -206,7 +234,7 @@ impl GameAnalysis {
             .features
             .iter()
             .flatten()
-            .filter(|f| f.candidate())
+            .filter(|f| f.candidate(self.hardness.bans))
             .count();
         self.positions() + candidates / 2
     }
@@ -216,6 +244,25 @@ impl GameAnalysis {
     pub fn set_rules(&mut self, rules: Rules) {
         if self.rules != rules {
             self.rules = rules;
+            self.dirty = true;
+        }
+    }
+
+    /// Counts the difficulty of a move as `hardness` says from the next
+    /// [`Self::refresh`] on; when it asks for it, [`Self::begin`] wants the shallow
+    /// searches.
+    pub fn set_hardness(&mut self, hardness: Hardness) {
+        if self.hardness != hardness {
+            self.hardness = hardness;
+            self.dirty = true;
+        }
+    }
+
+    /// Shallow searches of `nodes` instead of [`SHALLOW_NODES`]: only for an experiment
+    /// (choosing the nodes); those of other nodes are made again.
+    pub fn set_shallow_nodes(&mut self, nodes: u64) {
+        if self.shallow_nodes != nodes {
+            self.shallow_nodes = nodes;
             self.dirty = true;
         }
     }
@@ -251,8 +298,8 @@ impl GameAnalysis {
         (0..self.line.len())
             .filter_map(|i| {
                 let known = self.evals.get(&self.keys[i]).cloned();
-                // Already evaluated: only a missing second search can be left.
-                if known.is_some() && !self.second_missing(i)
+                // Already evaluated: only the second or shallow search can be left.
+                if known.is_some() && !self.extra_missing(i)
                     || known.is_none() && self.values[i].is_some()
                 {
                     return None;
@@ -264,7 +311,7 @@ impl GameAnalysis {
                     .get(i)
                     .copied()
                     .flatten()
-                    .filter(|f| f.candidate())
+                    .filter(|f| f.candidate(self.hardness.bans))
                     .and_then(|_| self.played.get(i).cloned().flatten());
                 let others = match &played {
                     Some(p) => here
@@ -287,6 +334,7 @@ impl GameAnalysis {
                     played,
                     others,
                     known,
+                    shallow: self.hardness.uses_shallow().then_some(self.shallow_nodes),
                 })
             })
             .collect()
@@ -294,8 +342,8 @@ impl GameAnalysis {
 
     /// Position `i` is evaluated, its move could be brilliant or great and was the
     /// engine's best, but the best other move was never searched for (an analysis from
-    /// before !! and !).
-    fn second_missing(&self, i: usize) -> bool {
+    /// before !! and !), or the shallow search the rules ask for was not made.
+    fn extra_missing(&self, i: usize) -> bool {
         let (Some(e), Some(Some(played)), Some(Some(f))) = (
             self.evals.get(&self.keys[i]),
             self.played.get(i),
@@ -303,15 +351,22 @@ impl GameAnalysis {
         ) else {
             return false;
         };
-        f.candidate()
+        let shallow_missing = || {
+            self.hardness.uses_shallow()
+                && !e
+                    .shallow
+                    .as_ref()
+                    .is_some_and(|s| &s.played == played && s.nodes == self.shallow_nodes)
+        };
+        f.candidate(self.hardness.bans)
             && e.pv.first() == Some(played)
             && report::worth_second(e.eval, self.movers[i])
-            && e.second.as_ref().map(|s| &s.without) != Some(played)
+            && (e.second.as_ref().map(|s| &s.without) != Some(played) || shallow_missing())
     }
 
-    /// Positions whose evaluation is there but which still want the second search of
-    /// !! and ! ("Update" fills them in without evaluating anything again). None for
-    /// evaluations from the PGN, which have no engine lines.
+    /// Positions whose evaluation is there but which still want the second (or shallow)
+    /// search of !! and ! ("Update" fills them in without evaluating anything again).
+    /// None for evaluations from the PGN, which have no engine lines.
     pub fn seconds_missing(&self) -> usize {
         if self
             .meta
@@ -321,7 +376,7 @@ impl GameAnalysis {
             return 0;
         }
         (0..self.played.len())
-            .filter(|i| self.second_missing(*i))
+            .filter(|i| self.extra_missing(*i))
             .count()
     }
 
@@ -398,11 +453,27 @@ impl GameAnalysis {
                     .and_then(|e| e.second.as_ref())
                     .filter(|s| Some(&s.without) == played.as_ref())
                     .map(|s| s.eval),
+                difficulty: e
+                    .and_then(|e| Some((e.eval, e.shallow.as_ref()?)))
+                    .filter(|(_, s)| {
+                        Some(&s.played) == played.as_ref() && s.nodes == self.shallow_nodes
+                    })
+                    .zip(positions.get(i - 1))
+                    .map(|((deep, s), p)| {
+                        self.hardness
+                            .measure
+                            .difficulty(deep, s.best_eval, s.played_eval, p.turn())
+                    }),
             });
         }
         self.movers = plies.iter().map(|p| p.mover).collect();
-        self.report =
-            Report::build_with(&self.values, &plies, Phases::divide(&positions), self.rules);
+        self.report = Report::build_tuned(
+            &self.values,
+            &plies,
+            Phases::divide(&positions),
+            self.rules,
+            self.hardness,
+        );
         self.marks.clear();
         for (i, j) in self.report.judgements.iter().enumerate() {
             let Some(judgement) = *j else { continue };
@@ -577,6 +648,7 @@ impl GameAnalysis {
                     pv: Vec::new(),
                     depth: 0,
                     second: None,
+                    shallow: None,
                 },
             );
         }
@@ -693,6 +765,7 @@ mod tests {
                     pv: vec!["e2e4".into()],
                     depth: 10,
                     second: None,
+                    shallow: None,
                 },
                 nps: 0,
             });

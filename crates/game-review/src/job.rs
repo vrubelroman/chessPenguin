@@ -17,11 +17,19 @@ use std::time::{Duration, Instant};
 
 use uci::{EngineEvent, EnginePosition, ScoreBound, SearchId, SearchLimits, Side};
 
-use crate::{Eval, PosEval, Second};
+use crate::{Eval, PosEval, Second, Shallow};
 
 /// Nodes of every search of a game analysis (0.85 s on one thread of an i7-13700KF,
 /// depth about 24).
 pub const SEARCH_NODES: u64 = 1_000_000;
+
+/// Nodes of the shallow search, for how hard a move is to find ([`crate::Measure`]):
+/// made only for a move that could be brilliant or great and was the engine's best, and
+/// only when the rules ask for it ([`crate::Hardness`]). At 5 000 nodes (depth about 10)
+/// Stockfish already finds nearly every move of note itself; above 10 000 hardly any is
+/// hard (the chess.com check set, 2026-10-29). Its time is lost in that of the full
+/// searches (+0.2 % for a game).
+pub const SHALLOW_NODES: u64 = 5_000;
 
 /// The engine's hash of every search, in MB. Part of the search: another size gives
 /// other evaluations.
@@ -88,8 +96,10 @@ pub struct Target {
     pub played: Option<String>,
     /// The other legal moves (UCI).
     pub others: Vec<String>,
-    /// The evaluation already there: only the second search is left.
+    /// The evaluation already there: only the second or shallow search is left.
     pub known: Option<PosEval>,
+    /// Nodes of the shallow search of `played`, when the rules want it.
+    pub shallow: Option<u64>,
 }
 
 /// How the job runs; the search itself is fixed (see the module).
@@ -230,17 +240,10 @@ fn worker(
     let _ = handle.set_multipv(1);
     let mut next_id = 0;
     // Every search starts from a clear hash, so that it depends on its position alone.
-    let mut search = |pos: &EnginePosition, among: Vec<String>| {
+    let mut search = |pos: &EnginePosition, among: Vec<String>, nodes: u64| {
         next_id += 1;
         let _ = handle.new_game();
-        search_once(
-            &handle,
-            pos,
-            SearchId(next_id),
-            among,
-            settings.nodes,
-            halted,
-        )
+        search_once(&handle, pos, SearchId(next_id), among, nodes, halted)
     };
     while let Some(t) = targets.get(next.fetch_add(1, Ordering::Relaxed)) {
         if halted() {
@@ -249,7 +252,7 @@ fn worker(
         let (mut eval, nps) = match &t.known {
             Some(e) => (e.clone(), 0),
             None => {
-                let Some((info, best)) = search(&t.pos, Vec::new())? else {
+                let Some((info, best)) = search(&t.pos, Vec::new(), settings.nodes)? else {
                     continue;
                 };
                 let Some(score) = info.score else { continue };
@@ -264,6 +267,7 @@ fn worker(
                     pv,
                     depth: info.depth.unwrap_or(0),
                     second: None,
+                    shallow: None,
                 };
                 (eval, info.nps.unwrap_or(0))
             }
@@ -274,12 +278,15 @@ fn worker(
             Side::White => chess_core::shakmaty::Color::White,
             Side::Black => chess_core::shakmaty::Color::Black,
         };
-        if let Some(played) = &t.played
-            && eval.pv.first() == Some(played)
-            && !t.others.is_empty()
-            && crate::report::worth_second(eval.eval, mover)
+        let played = t.played.as_ref().filter(|p| {
+            eval.pv.first() == Some(*p)
+                && !t.others.is_empty()
+                && crate::report::worth_second(eval.eval, mover)
+        });
+        if let Some(played) = played
+            && eval.second.as_ref().map(|s| &s.without) != Some(played)
         {
-            match search(&t.pos, t.others.clone())? {
+            match search(&t.pos, t.others.clone(), settings.nodes)? {
                 // An engine that ignores `searchmoves` answers with the move played:
                 // no second move then.
                 Some((info, best))
@@ -296,6 +303,19 @@ fn worker(
                 _ => {}
             }
         }
+        // How hard it was to find: what a shallow search makes of it.
+        if let (Some(played), Some(nodes)) = (played, t.shallow)
+            && !eval
+                .shallow
+                .as_ref()
+                .is_some_and(|s| &s.played == played && s.nodes == nodes)
+        {
+            match shallow(&mut search, t, played, nodes)? {
+                Some(s) => eval.shallow = Some(s),
+                None if halted() => break,
+                None => {}
+            }
+        }
         on_event(JobEvent::Eval {
             key: t.key.clone(),
             eval,
@@ -304,6 +324,52 @@ fn worker(
     }
     handle.quit();
     Ok(())
+}
+
+/// What a search gave: its last full line and the best move, `None` when there is none
+/// (see [`search_once`]).
+type SearchResult = Result<Option<(uci::SearchInfo, Option<String>)>, JobFailure>;
+
+/// The shallow search of `played` at `t`: the best move at `nodes` and, when it is
+/// another, the move played alone. `None` when the engine gave no answer (or ignored
+/// `searchmoves`) or the job was halted.
+fn shallow(
+    search: &mut dyn FnMut(&EnginePosition, Vec<String>, u64) -> SearchResult,
+    t: &Target,
+    played: &str,
+    nodes: u64,
+) -> Result<Option<Shallow>, JobFailure> {
+    let eval_of = |info: &uci::SearchInfo| {
+        info.score
+            .map(|s| Eval::from_white_eval(s.to_white(t.turn).eval))
+    };
+    let Some((info, best)) = search(&t.pos, Vec::new(), nodes)? else {
+        return Ok(None);
+    };
+    let (Some(best), Some(best_eval)) = (best.or_else(|| info.pv.first().cloned()), eval_of(&info))
+    else {
+        return Ok(None);
+    };
+    let played_eval = if best == played {
+        best_eval
+    } else {
+        match search(&t.pos, vec![played.to_owned()], nodes)? {
+            Some((info, b)) if b.as_deref().is_none_or(|b| b == played) => {
+                let Some(e) = eval_of(&info) else {
+                    return Ok(None);
+                };
+                e
+            }
+            _ => return Ok(None),
+        }
+    };
+    Ok(Some(Shallow {
+        nodes,
+        played: played.to_owned(),
+        best,
+        best_eval,
+        played_eval,
+    }))
 }
 
 /// One node-limited search: its last full line and the best move. `None` when it gave
@@ -315,7 +381,7 @@ fn search_once(
     among: Vec<String>,
     nodes: u64,
     halted: &dyn Fn() -> bool,
-) -> Result<Option<(uci::SearchInfo, Option<String>)>, JobFailure> {
+) -> SearchResult {
     handle
         .search_among(pos.clone(), id, SearchLimits::Nodes(nodes), among)
         .map_err(|e| JobFailure::Engine(e.to_string()))?;
@@ -454,6 +520,114 @@ mod tests {
         assert_eq!(evaluate(1, true), one);
         assert_eq!(evaluate(3, false), one);
         assert_eq!(evaluate(8, true), one);
+    }
+
+    /// The shallow search is made only when the rules ask how hard a move was to find,
+    /// for the engine's best move that could be brilliant or great; an analysis without
+    /// it is filled in, without evaluating anything again. The fake engine (from a FEN
+    /// it always says e2e4) honours `searchmoves`, and below the nodes given prefers
+    /// d2d4 (+0.40) to e2e4 (+0.10 searched alone).
+    #[test]
+    fn the_shallow_search_says_how_hard_the_move_was() {
+        let game = chess_core::parse_str(
+            "[FEN \"rnbqkbnr/1ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\"] 1. e4 e5 *",
+        )
+        .game;
+        let engine = |shallow_best: bool| {
+            let mut config = uci::EngineConfig::new(fake());
+            config.args = vec!["--searchmoves".into()];
+            if shallow_best {
+                config.args.extend([
+                    "--shallow".into(),
+                    (SHALLOW_NODES + 1).to_string().into(),
+                    "d2d4".into(),
+                ]);
+            }
+            config
+        };
+        let job = |a: &mut GameAnalysis, shallow_best: bool| {
+            let targets = a.begin(&game, false);
+            let n = targets.len();
+            run(
+                engine(shallow_best),
+                &settings(2),
+                targets,
+                &AtomicBool::new(false),
+                &mut |e| a.apply(e),
+            )
+            .expect("the job runs");
+            a.refresh(&game);
+            n
+        };
+        let mut a = GameAnalysis::new(&game, None);
+        assert_eq!(job(&mut a, true), 3);
+        let e = a.eval_at(0).expect("evaluated").clone();
+        assert_eq!(e.pv.first().map(String::as_str), Some("e2e4"));
+        assert_eq!(e.second.as_ref().map(|s| s.eval), Some(Eval::Cp(10)));
+        assert!(e.shallow.is_none(), "the rules do not ask for it");
+        assert_eq!(a.seconds_missing(), 0);
+
+        // Rules that ask for it: the earlier analysis wants the shallow search only.
+        let hard = crate::Hardness {
+            great: Some(1.0),
+            gap: 1.0,
+            ..Default::default()
+        };
+        a.set_hardness(hard);
+        a.refresh(&game);
+        assert_eq!(a.seconds_missing(), 1);
+        assert_eq!(a.report.judgements[0], None, "not known to be hard");
+        assert_eq!(job(&mut a, true), 1);
+        assert_eq!(a.seconds_missing(), 0);
+        let e = a.eval_at(0).expect("evaluated");
+        let s = e.shallow.as_ref().expect("the shallow search");
+        assert_eq!(
+            (s.nodes, s.played.as_str(), s.best.as_str()),
+            (SHALLOW_NODES, "e2e4", "d2d4")
+        );
+        assert_eq!((s.best_eval, s.played_eval), (Eval::Cp(40), Eval::Cp(10)));
+        assert_eq!(e.second.as_ref().map(|s| s.eval), Some(Eval::Cp(10)));
+        // 2.8 % harder than the shallow best: great at 1 %, not at 5 %, brilliant at 2 %.
+        let d = crate::Measure::Choice.difficulty(
+            e.eval,
+            s.best_eval,
+            s.played_eval,
+            chess_core::shakmaty::Color::White,
+        );
+        assert!((2.0..5.0).contains(&d), "{d}");
+        assert_eq!(a.report.judgements[0], Some(crate::Judgement::Great));
+        a.set_hardness(crate::Hardness {
+            great: Some(5.0),
+            ..hard
+        });
+        a.refresh(&game);
+        assert_eq!(a.report.judgements[0], None);
+        a.set_hardness(crate::Hardness {
+            brilliant: Some(2.0),
+            brilliant_gap: 1.0,
+            ..hard
+        });
+        a.refresh(&game);
+        assert_eq!(a.report.judgements[0], Some(crate::Judgement::Brilliant));
+        // Shallow searches of other nodes are made again.
+        a.set_shallow_nodes(SHALLOW_NODES / 2);
+        a.refresh(&game);
+        assert_eq!(a.seconds_missing(), 1);
+        assert_eq!(a.report.judgements[0], None);
+
+        // The shallow search finding the move itself: not hard at all.
+        let mut b = GameAnalysis::new(&game, None);
+        b.set_hardness(hard);
+        assert_eq!(job(&mut b, false), 3);
+        let s = b
+            .eval_at(0)
+            .and_then(|e| e.shallow.clone())
+            .expect("shallow");
+        assert_eq!(
+            (s.best.as_str(), s.best_eval, s.played_eval),
+            ("e2e4", Eval::Cp(40), Eval::Cp(40))
+        );
+        assert_eq!(b.report.judgements[0], None, "0 % is below 1 %");
     }
 
     #[test]

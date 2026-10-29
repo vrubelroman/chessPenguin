@@ -143,8 +143,9 @@ impl MoveFeatures {
 
     /// Could be great: not a forced, obvious or finishing move. With [`Rules::ChessCom`]
     /// a piece saving itself on the only good square can be (13.Qa4 of the Evergreen
-    /// game), a book move cannot (6…Bb4+ of Steinitz — von Bardeleben).
-    pub fn great_shape(&self, rules: Rules) -> bool {
+    /// game), a book move cannot (6…Bb4+ of Steinitz — von Bardeleben). `bans`: the
+    /// quiet retreat is not ([`crate::report::Hardness::bans`]).
+    pub fn great_shape(&self, rules: Rules, bans: bool) -> bool {
         self.legal > 1
             && !(rules == Rules::ChessCom && self.book)
             && !self.mates
@@ -154,15 +155,17 @@ impl MoveFeatures {
             // An attacked piece stepping quietly to its one good square is plain, not
             // great (10.Be2 of an online game, the owner: «какой же это !»); stepping away
             // with check is an attack (19…Ne2+ of Byrne — Fischer, chess.com's !).
-            && !(rules == Rules::ChessCom && self.escape && !self.gives_check)
+            && !(rules == Rules::ChessCom && bans && self.escape && !self.gives_check)
     }
 
-    /// Worth asking the engine for the best other move.
-    /// (Under either rules: one analysis serves both.)
-    pub fn candidate(&self) -> bool {
-        [Rules::Strict, Rules::ChessCom]
-            .into_iter()
-            .any(|r| self.brilliant_shape(r) || self.pawn_shape(r) || self.great_shape(r))
+    /// Worth asking the engine for the best other move (under either rules: one analysis
+    /// serves both); `bans` as for [`Self::great_shape`].
+    pub fn candidate(&self, bans: bool) -> bool {
+        [Rules::Strict, Rules::ChessCom].into_iter().any(|r| {
+            self.brilliant_shape(r)
+                || self.pawn_shape(r)
+                || self.great_shape(r, r == Rules::Strict || bans)
+        })
     }
 
     /// Could be brilliant for a quicker mate only: a pawn offered ([`Rules::ChessCom`]).
@@ -326,10 +329,13 @@ mod tests {
     fn a_queen_offered_for_mate_is_a_sacrifice() {
         let f = last(Chess::default(), OPERA);
         assert!(f.sacrifice && f.brilliant_shape(Rules::ChessCom), "{f:?}");
-        assert!(!f.mates && f.candidate());
+        assert!(!f.mates && f.candidate(true));
         // 15.Bxd7+ Nxd7: taken back, not a move of note.
         let f = last(Chess::default(), &OPERA[..OPERA.find(" 16.").unwrap()]);
-        assert!(f.recapture && !f.great_shape(Rules::ChessCom), "{f:?}");
+        assert!(
+            f.recapture && !f.great_shape(Rules::ChessCom, true),
+            "{f:?}"
+        );
     }
 
     #[test]
@@ -342,7 +348,7 @@ mod tests {
         // A free knight taken: a winning capture, never !.
         let f = features("4k3/8/8/3n4/8/8/8/3QK3 w - - 0 1", "Qxd5");
         assert!(
-            f.winning_capture && !f.great_shape(Rules::ChessCom) && !f.sacrifice,
+            f.winning_capture && !f.great_shape(Rules::ChessCom, true) && !f.sacrifice,
             "{f:?}"
         );
     }
@@ -352,7 +358,10 @@ mod tests {
         // The bishop on c4 attacked by the pawn on d5: Bb3 saves it — never a sacrifice,
         // and a quiet step away is not great either.
         let f = features("4k3/8/8/3p4/2B5/8/8/4K3 w - - 0 1", "Bb3");
-        assert!(f.escape && !f.sacrifice && !f.great_shape(Rules::ChessCom), "{f:?}");
+        assert!(
+            f.escape && !f.sacrifice && !f.great_shape(Rules::ChessCom, true),
+            "{f:?}"
+        );
         // Taking the pawn instead, into the knight: it was lost anyway (desperado).
         let f = features("4k3/8/5n2/3p4/2B5/8/8/4K3 w - - 0 1", "Bxd5");
         assert!(!f.sacrifice, "{f:?}");
@@ -413,10 +422,13 @@ mod tests {
             &PILLSBURY[..PILLSBURY.rfind(" Ra3").unwrap()],
         );
         assert!(
-            f.winning_capture && f.takes_back && f.great_shape(Rules::ChessCom),
+            f.winning_capture && f.takes_back && f.great_shape(Rules::ChessCom, true),
             "{f:?}"
         );
-        assert!(!f.great_shape(Rules::Strict), "the first rules stay: {f:?}");
+        assert!(
+            !f.great_shape(Rules::Strict, true),
+            "the first rules stay: {f:?}"
+        );
     }
 
     #[test]
@@ -430,7 +442,7 @@ mod tests {
              21. Be4 Qh4 22. g3 Rxc3 23. gxh4 Rd2 24. Qxd2 Bxe4+",
         );
         assert!(
-            f.winning_capture && !f.takes_back && !f.great_shape(Rules::ChessCom),
+            f.winning_capture && !f.takes_back && !f.great_shape(Rules::ChessCom, true),
             "{f:?}"
         );
     }
@@ -458,10 +470,19 @@ mod tests {
              8. Bd3 Nh4 9. O-O c4 10. Be2",
         );
         assert!(f.escape && !f.gives_check, "{f:?}");
-        assert!(!f.great_shape(Rules::ChessCom), "{f:?}");
+        assert!(!f.great_shape(Rules::ChessCom, true), "{f:?}");
+        assert!(!f.candidate(true), "{f:?}");
+        // Without the bans it is up to how hard it was to find.
+        assert!(
+            f.great_shape(Rules::ChessCom, false) && f.candidate(false),
+            "{f:?}"
+        );
         // Stepping away with check can be great.
         let f = features("4k3/8/8/8/2p5/1B6/8/4K3 w - - 0 1", "Ba4+");
-        assert!(f.escape && f.gives_check && f.great_shape(Rules::ChessCom), "{f:?}");
+        assert!(
+            f.escape && f.gives_check && f.great_shape(Rules::ChessCom, true),
+            "{f:?}"
+        );
     }
 
     #[test]

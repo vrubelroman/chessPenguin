@@ -480,6 +480,7 @@ impl PrepReport {
                 played: None,
                 others: Vec::new(),
                 known: None,
+                shallow: None,
             })
             .collect()
     }
@@ -987,6 +988,7 @@ mod tests {
                     pv,
                     depth: 12,
                     second: None,
+                    shallow: None,
                 },
                 nps: 0,
             };

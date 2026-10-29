@@ -9,13 +9,29 @@
 //!
 //! `CP_REVIEW_NODES=N` searches N nodes instead, for choosing the program's nodes (the
 //! program itself never does): its evaluations are cached apart.
+//!
+//! How hard a move is to find (`game_review::Hardness`, being tried out; the program
+//! does not use it yet), only for choosing its rules here:
+//! - `CP_GREAT_HARD=P` — ! only for a move at least P % (win) hard to find;
+//! - `CP_BRILLIANT_HARD=P` — !! also for the only good move at least P % hard;
+//! - `CP_GREAT_GAP=P` — the gap of ! (default 25);
+//! - `CP_BRILLIANT_GAP=P` — the gap of a hard move's !! (default 25);
+//! - `CP_GREAT_BANS=0` — captures and quiet retreats can be ! too;
+//! - `CP_HARD_DEPTH=1` — difficulty as the shallow search's underrating of the move
+//!   against the deep one (`Measure::Depth`), not against its own best move;
+//! - `CP_SHALLOW_NODES=S` — the shallow search's nodes (default
+//!   `game_review::SHALLOW_NODES`), kept with the evaluations (other nodes are searched
+//!   again).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use chess_core::shakmaty::Color;
 use chess_core::{Game, Nag};
-use game_review::{GameAnalysis, JobSettings, Judgement, SEARCH_NODES, SEARCH_VERSION};
+use game_review::{
+    GameAnalysis, Hardness, JobSettings, Judgement, Measure, SEARCH_NODES, SEARCH_VERSION,
+    SHALLOW_NODES,
+};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -26,6 +42,29 @@ fn main() {
     let nodes: u64 = std::env::var("CP_REVIEW_NODES").map_or(SEARCH_NODES, |n| {
         n.parse().expect("CP_REVIEW_NODES: a number")
     });
+    let number = |name: &str| {
+        std::env::var(name).ok().map(|v| {
+            v.parse::<f64>()
+                .unwrap_or_else(|_| panic!("{name}: a number"))
+        })
+    };
+    let defaults = Hardness::default();
+    let hardness = Hardness {
+        great: number("CP_GREAT_HARD"),
+        gap: number("CP_GREAT_GAP").unwrap_or(defaults.gap),
+        bans: number("CP_GREAT_BANS").is_none_or(|b| b != 0.0),
+        brilliant: number("CP_BRILLIANT_HARD"),
+        brilliant_gap: number("CP_BRILLIANT_GAP").unwrap_or(defaults.brilliant_gap),
+        measure: if number("CP_HARD_DEPTH").is_some_and(|d| d != 0.0) {
+            Measure::Depth
+        } else {
+            Measure::Choice
+        },
+    };
+    let shallow = number("CP_SHALLOW_NODES").map_or(SHALLOW_NODES, |n| n as u64);
+    if hardness != defaults {
+        println!("{hardness:?}, shallow search {shallow} nodes");
+    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // Evaluations of one version of the fixed search are the same on every machine;
     // those of other nodes go apart.
@@ -52,6 +91,8 @@ fn main() {
         let text = std::fs::read_to_string(&file).expect("pgn");
         let game = chess_core::parse_str(&text).game;
         let mut a = GameAnalysis::new(&game, Some(&cache));
+        a.set_hardness(hardness);
+        a.set_shallow_nodes(shallow);
         review(&mut a, &game, engine, nodes);
         a.save_cache(&cache).expect("cache");
         let compared = game.tag("ChessComMarks").unwrap_or("!! !").to_owned();
@@ -118,13 +159,30 @@ fn main() {
                 t.extra += u32::from(ours_compared == mark && theirs != mark);
             }
             let label = game.move_label(node).unwrap_or_default();
+            // How hard the move was to find, when the shallow search was made.
+            let hard = a
+                .eval_at(i)
+                .and_then(|e| Some((e.eval, e.shallow.as_ref()?)))
+                .filter(|(_, s)| s.nodes == shallow)
+                .map_or(String::new(), |(deep, s)| {
+                    let [choice, depth] = [Measure::Choice, Measure::Depth]
+                        .map(|m| m.difficulty(deep, s.best_eval, s.played_eval, a.movers()[i]));
+                    format!(
+                        "  (hard: choice {choice:.1} %, depth {depth:.1} %; shallow {} {}, \
+                         played {}, deep {})",
+                        s.best,
+                        s.best_eval.format(),
+                        s.played_eval.format(),
+                        deep.format()
+                    )
+                });
             if theirs == ours_compared {
                 agree += 1;
-                println!("   ok    {label:<14} {theirs}");
+                println!("   ok    {label:<14} {theirs}{hard}");
             } else {
                 differ += 1;
                 println!(
-                    "   DIFF  {label:<14} chess.com {:<3} ours {}",
+                    "   DIFF  {label:<14} chess.com {:<3} ours {}{hard}",
                     or_dash(theirs),
                     or_dash(ours_compared)
                 );

@@ -26,6 +26,10 @@
 //!   --ignore-quit          ignore `quit` (must be killed)
 //!   --hash-memory          scores depend on the position and on the searches made
 //!                          since the last `ucinewgame` (as a hash kept between them)
+//!   --searchmoves          honour `go ... searchmoves M...`: M's first move is the
+//!                          best move, scored 30 cp lower (a worse move)
+//!   --shallow N MOVE       `go nodes n` with n < N (no `searchmoves`): MOVE is the
+//!                          best move (a shallow search choosing another move)
 //!
 //! Protocol violations by the GUI (`position`/`go`/`setoption`/`ucinewgame`
 //! during a search) are reported as `info string ERROR ...`.
@@ -54,6 +58,8 @@ struct Cfg {
     mate: bool,
     ignore_quit: bool,
     hash_memory: bool,
+    searchmoves: bool,
+    shallow: Option<(u64, String)>,
 }
 
 fn parse_args() -> Cfg {
@@ -83,6 +89,11 @@ fn parse_args() -> Cfg {
             "--mate" => c.mate = true,
             "--ignore-quit" => c.ignore_quit = true,
             "--hash-memory" => c.hash_memory = true,
+            "--searchmoves" => c.searchmoves = true,
+            "--shallow" => {
+                let n = num(args.next());
+                c.shallow = args.next().map(|m| (n, m));
+            }
             other => {
                 eprintln!("fake_uci: unknown flag {other}");
                 std::process::exit(2);
@@ -281,14 +292,34 @@ fn main() {
                     // `go nodes N`: a short search that ends by itself, like a real one.
                     .or_else(|| toks.contains(&"nodes").then_some(3));
                 since_new_game += 1;
-                let bias = if cfg.hash_memory {
+                let mut bias = if cfg.hash_memory {
                     let of_position = marker.bytes().map(i32::from).sum::<i32>() % 97;
                     of_position + 1000 * since_new_game
                 } else {
                     0
                 };
+                let among = toks
+                    .iter()
+                    .position(|&t| t == "searchmoves")
+                    .and_then(|p| toks.get(p + 1));
+                let nodes: Option<u64> = toks
+                    .iter()
+                    .position(|&t| t == "nodes")
+                    .and_then(|p| toks.get(p + 1))
+                    .and_then(|v| v.parse().ok());
+                let mut shown = marker.clone();
+                match (among, &cfg.shallow) {
+                    (Some(m), _) if cfg.searchmoves => {
+                        shown = (*m).to_owned();
+                        bias -= 30;
+                    }
+                    (None, Some((below, best))) if nodes.is_some_and(|n| n < *below) => {
+                        shown = best.clone();
+                    }
+                    _ => {}
+                }
                 search = Some(Search {
-                    marker: marker.clone(),
+                    marker: shown,
                     depth: 0,
                     max_depth,
                     bias,

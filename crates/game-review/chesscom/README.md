@@ -17,6 +17,10 @@ cargo run --release -p game-review --example chesscom_check -- <stockfish>
   повторный прогон после правки правил идёт без движка.
 - `CP_REVIEW_NODES=N` — другое число узлов, только для подбора константы (кэш в
   `target/chesscom-check/v<версия>-N/`); программа так не считает.
+- `CP_SHALLOW_NODES`, `CP_GREAT_HARD`, `CP_BRILLIANT_HARD`, `CP_GREAT_GAP`,
+  `CP_BRILLIANT_GAP`, `CP_GREAT_BANS`, `CP_HARD_DEPTH` — опыты с «трудностью» хода
+  (неглубокий поиск, `Hardness`; 2026-10-29, программа их пока не использует), см.
+  `examples/chesscom_check.rs`. Неглубокие поиски хранятся в том же кэше.
 - Новую партию от владельца — сюда же, с источником в теге `Annotator`.
 
 ## Порядок калибровки

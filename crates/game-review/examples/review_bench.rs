@@ -2,11 +2,14 @@
 //! number of engine processes: prints the time and a digest of every evaluation.
 //!
 //! `cargo run --release -p game-review --example review_bench -- <engine> <pgn> <processes>...`
+//!
+//! `CP_SHALLOW_NODES=S` adds the shallow searches of S nodes (for how hard a move was to
+//! find, `game_review::Hardness`), as rules that use them would.
 
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-use game_review::{GameAnalysis, JobSettings};
+use game_review::{GameAnalysis, Hardness, JobSettings};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -16,13 +19,23 @@ fn main() {
     }
     let text = std::fs::read_to_string(&args[2]).expect("pgn");
     let game = chess_core::parse_str(&text).game;
+    let shallow: Option<u64> = std::env::var("CP_SHALLOW_NODES")
+        .ok()
+        .map(|n| n.parse().expect("CP_SHALLOW_NODES: a number"));
     let mut digests = Vec::new();
     for p in &args[3..] {
         let processes: usize = p.parse().expect("processes");
         let mut a = GameAnalysis::new(&game, None);
+        if let Some(nodes) = shallow {
+            a.set_shallow_nodes(nodes);
+            a.set_hardness(Hardness {
+                brilliant: Some(100.0),
+                ..Hardness::default()
+            });
+        }
         let targets = a.begin(&game, true);
         let positions = targets.len();
-        let mut searches = 0;
+        let (mut searches, mut shallows) = (0, 0);
         let started = Instant::now();
         game_review::run(
             uci::EngineConfig::new(&args[1]),
@@ -32,6 +45,9 @@ fn main() {
             &mut |e| {
                 if let game_review::JobEvent::Eval { eval, .. } = &e {
                     searches += 1 + usize::from(eval.second.is_some());
+                    if let Some(s) = &eval.shallow {
+                        shallows += 1 + usize::from(s.best != s.played);
+                    }
                 }
                 a.apply(e);
             },
@@ -45,8 +61,8 @@ fn main() {
             (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
         });
         println!(
-            "processes {processes:>2}: {positions} positions, {searches} searches, {secs:.1} s, \
-             evaluations {digest:016x}"
+            "processes {processes:>2}: {positions} positions, {searches} searches \
+             (+{shallows} shallow), {secs:.1} s, evaluations {digest:016x}"
         );
         digests.push(digest);
     }

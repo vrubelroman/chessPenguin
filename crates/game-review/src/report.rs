@@ -166,6 +166,75 @@ mod good {
     pub const SECOND_FROM: f64 = GREAT_AFTER - NEAR_BEST;
 }
 
+/// How hard a move is to find, in the mover's win %, from a shallow search
+/// ([`crate::SHALLOW_NODES`]) of the engine's own best move. A move the strong search
+/// plays and a weak one underrates is what people call brilliant (Zaidi & Guerzhoy 2024,
+/// arXiv 2406.11895); an obvious only move (10.Be2 of an online game, 32.Kd2 of Tal —
+/// Larsen) the shallow search finds too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Measure {
+    /// How much worse than its own best move the shallow search finds the move played
+    /// (0 when it finds this move best).
+    #[default]
+    Choice,
+    /// How much worse the shallow search finds the move played than the deep one.
+    Depth,
+}
+
+impl Measure {
+    /// The difficulty of a move the deep search finds `deep`, the shallow search
+    /// `played` and its own best move `best`.
+    pub fn difficulty(self, deep: Eval, best: Eval, played: Eval, mover: Color) -> f64 {
+        let top = match self {
+            Measure::Choice => best,
+            Measure::Depth => deep,
+        };
+        (top.win_percent(mover) - played.win_percent(mover)).max(0.0)
+    }
+}
+
+/// The say of a move's difficulty ([`Measure`]) in !! and ! ([`Rules::ChessCom`] only),
+/// being tried out (2026-10-29) and off by default: the default is the rules without it,
+/// and no shallow search is made for them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hardness {
+    /// !: only a move at least this hard to find (win %).
+    pub great: Option<f64>,
+    /// !: every other move loses at least this much (win %).
+    pub gap: f64,
+    /// !: never a capture nor an attacked piece stepping quietly away (the rules of
+    /// 2026-10-28 and 2026-10-29 against obvious !).
+    pub bans: bool,
+    /// !!: also the only good move (as for !, with [`Self::brilliant_gap`]) at least this
+    /// hard to find, sacrifice or not (in the check set at 5 000 nodes: 17…Be6!! of
+    /// Byrne — Fischer, 33.c3+!! of Kasparov — Topalov).
+    pub brilliant: Option<f64>,
+    /// !! of a hard move: every other move loses at least this much (win %).
+    pub brilliant_gap: f64,
+    /// How the difficulty is measured.
+    pub measure: Measure,
+}
+
+impl Default for Hardness {
+    fn default() -> Hardness {
+        Hardness {
+            great: None,
+            gap: good::GAP_CHESSCOM,
+            bans: true,
+            brilliant: None,
+            brilliant_gap: good::GAP_CHESSCOM,
+            measure: Measure::Choice,
+        }
+    }
+}
+
+impl Hardness {
+    /// The rules ask how hard a move was to find: the shallow search is wanted.
+    pub fn uses_shallow(&self) -> bool {
+        self.great.is_some() || self.brilliant.is_some()
+    }
+}
+
 /// Whether the best other move is worth searching for: the move played was the engine's
 /// best (`eval` the position's evaluation), and the position is good enough for !! or !.
 pub fn worth_second(eval: Eval, mover: Color) -> bool {
@@ -185,7 +254,7 @@ fn outcome(win: f64) -> u8 {
 
 /// Brilliant or great, from the evaluations around the move (before the combination rule
 /// of [`Rules::Strict`]).
-fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement> {
+fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules, hard: Hardness) -> Option<Judgement> {
     let f = ply.features?;
     let (wb, wa) = (before.win_percent(ply.mover), after.win_percent(ply.mover));
     let loss = wb - wa;
@@ -220,33 +289,46 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules) -> Option<Judgement>
         return Some(Judgement::Brilliant);
     }
     let w2 = second?;
+    let bans = rules == Rules::Strict || hard.bans;
     // [`Rules::ChessCom`]: a capture is the natural move, never great (12…Nxc3, 13…Nxe4 of
     // Byrne — Fischer, 22…Nbxd5, 26.Qxd4+ of Kasparov — Topalov are not chess.com's !; the
     // few captures it marks — 20.Rxe7+, 18.fxe6 — are given up for fewer wrong ones).
-    if rules == Rules::ChessCom && f.capture {
+    if rules == Rules::ChessCom && bans && f.capture {
         return None;
     }
     // The engine's own best move loses nothing: a drop to the next position is the noise
     // of two searches (9.Nf5! of the Immortal game, −0.51 then −0.82 at 3M nodes); the
     // first rules still count it.
-    let only_move = ply.best
-        && (rules == Rules::ChessCom || loss <= good::NEAR_BEST)
-        && wb - w2
-            >= match rules {
-                Rules::Strict => good::GAP,
-                Rules::ChessCom => good::GAP_CHESSCOM,
-            }
-        && (rules == Rules::ChessCom || outcome(wa) > outcome(w2))
-        && wa >= good::GREAT_AFTER
-        && w2
-            < match rules {
-                Rules::Strict => good::GREAT_ALT,
-                Rules::ChessCom => good::GREAT_ALT_CHESSCOM,
-            };
+    let only_move = |gap: f64| {
+        ply.best
+            && (rules == Rules::ChessCom || loss <= good::NEAR_BEST)
+            && wb - w2 >= gap
+            && (rules == Rules::ChessCom || outcome(wa) > outcome(w2))
+            && wa >= good::GREAT_AFTER
+            && w2
+                < match rules {
+                    Rules::Strict => good::GREAT_ALT,
+                    Rules::ChessCom => good::GREAT_ALT_CHESSCOM,
+                }
+    };
     // Tried and dropped (2026-10-28): a pawn offered as the only good move brilliant too —
     // finds 33.c3+!! of Kasparov — Topalov, but also marks 17.d5 of Steinitz — von
     // Bardeleben, which chess.com leaves unmarked.
-    (only_move && f.great_shape(rules)).then_some(Judgement::Great)
+    if !f.great_shape(rules, bans) {
+        return None;
+    }
+    if rules == Rules::Strict {
+        return only_move(good::GAP).then_some(Judgement::Great);
+    }
+    // How hard the move was to find: unknown (no shallow search) is not hard.
+    let at_least = |t: Option<f64>| t.is_some_and(|t| ply.difficulty.is_some_and(|d| d >= t));
+    if at_least(hard.brilliant) && only_move(hard.brilliant_gap) {
+        Some(Judgement::Brilliant)
+    } else if only_move(hard.gap) && (hard.great.is_none() || at_least(hard.great)) {
+        Some(Judgement::Great)
+    } else {
+        None
+    }
 }
 
 /// `after` (the move played) mates `mover`'s opponent in fewer moves than `other` (the
@@ -371,6 +453,9 @@ pub struct Ply {
     pub features: Option<crate::MoveFeatures>,
     /// The best other move's evaluation, when the move played was the best.
     pub second: Option<Eval>,
+    /// How hard the move was to find ([`Hardness::measure`]), when a shallow search was
+    /// made.
+    pub difficulty: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -418,6 +503,17 @@ impl Report {
         phases: Phases,
         rules: Rules,
     ) -> Report {
+        Self::build_tuned(evals, plies, phases, rules, Hardness::default())
+    }
+
+    /// [`Report::build_with`] where the difficulty of a move counts as `hard` says.
+    pub fn build_tuned(
+        evals: &[Option<Eval>],
+        plies: &[Ply],
+        phases: Phases,
+        rules: Rules,
+        hard: Hardness,
+    ) -> Report {
         let n = plies.len().min(evals.len().saturating_sub(1));
         let mut report = Report {
             judgements: vec![None; plies.len()],
@@ -454,7 +550,7 @@ impl Report {
                 judge(before, after, ply.mover)
             };
             let good = if error.is_none() {
-                note(before, after, &ply, rules)
+                note(before, after, &ply, rules, hard)
             } else {
                 None
             };
@@ -596,6 +692,7 @@ mod tests {
             best: false,
             features: None,
             second: None,
+            difficulty: None,
         }
     }
 
@@ -776,6 +873,7 @@ mod tests {
                 ..Default::default()
             }),
             second,
+            difficulty: None,
         }
     }
 
