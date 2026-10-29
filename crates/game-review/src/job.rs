@@ -560,6 +560,11 @@ mod tests {
             n
         };
         let mut a = GameAnalysis::new(&game, None);
+        // Rules that do not ask how hard a move was: no shallow search.
+        a.set_hardness(crate::Hardness {
+            brilliant: None,
+            ..Default::default()
+        });
         assert_eq!(job(&mut a, true), 3);
         let e = a.eval_at(0).expect("evaluated").clone();
         assert_eq!(e.pv.first().map(String::as_str), Some("e2e4"));

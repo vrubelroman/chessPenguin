@@ -50,10 +50,14 @@ fn main() {
     };
     let defaults = Hardness::default();
     let hardness = Hardness {
-        great: number("CP_GREAT_HARD"),
+        great: number("CP_GREAT_HARD").or(defaults.great),
         gap: number("CP_GREAT_GAP").unwrap_or(defaults.gap),
         bans: number("CP_GREAT_BANS").is_none_or(|b| b != 0.0),
-        brilliant: number("CP_BRILLIANT_HARD"),
+        // `CP_BRILLIANT_HARD=0`: off.
+        brilliant: number("CP_BRILLIANT_HARD")
+            .map(Some)
+            .unwrap_or(defaults.brilliant)
+            .filter(|p| *p > 0.0),
         brilliant_gap: number("CP_BRILLIANT_GAP").unwrap_or(defaults.brilliant_gap),
         measure: if number("CP_HARD_DEPTH").is_some_and(|d| d != 0.0) {
             Measure::Depth
@@ -85,6 +89,7 @@ fn main() {
     files.sort();
 
     let (mut agree, mut differ) = (0, 0);
+    let mut owner_wrong = 0;
     // Per mark ("!!", "!"): chess.com's, found by us, ours chess.com has not.
     let mut tally = [Tally::default(), Tally::default()];
     for file in files {
@@ -103,6 +108,26 @@ fn main() {
             file.file_name().unwrap().to_string_lossy(),
         );
         let line = a.line().to_vec();
+        // The owner's verdict, no chess.com marks: these moves (SAN, as in the game) must
+        // not get ! or !! — obvious moves the owner called out ("10.Be2 — какой же это !").
+        if let Some(plain) = game.tag("OwnerPlain") {
+            let plain: Vec<&str> = plain.split_whitespace().collect();
+            for (i, j) in a.report.judgements.iter().enumerate() {
+                let Some(j @ (Judgement::Brilliant | Judgement::Great)) = j else {
+                    continue;
+                };
+                let label = game.move_label(line[i + 1]).unwrap_or_default();
+                let san = label.rsplit(' ').next().unwrap_or_default();
+                let mark = if *j == Judgement::Brilliant { "!!" } else { "!" };
+                if plain.contains(&san) {
+                    owner_wrong += 1;
+                    println!("   OWNER {label:<14} ours {mark}, the owner: plain");
+                } else {
+                    println!("   ours  {label:<14} {mark}");
+                }
+            }
+            continue;
+        }
         // Only chess.com's totals are known ("white !! 0 ! 1, black !! 2 ! 1"): compare
         // counts, list our marks, leave the game out of the shares.
         if let Some(counts) = game.tag("ChessComCounts") {
@@ -189,7 +214,7 @@ fn main() {
             }
         }
     }
-    println!("\nagree {agree}, differ {differ}");
+    println!("\nagree {agree}, differ {differ}, owner's plain moves marked {owner_wrong}");
     for (t, mark) in tally.iter().zip(["!!", "!"]) {
         println!(
             "{mark:<2}  chess.com {:>3}  found {:>3} ({})  ours not chess.com's {:>3}  (ours {}, {} of them chess.com's)",

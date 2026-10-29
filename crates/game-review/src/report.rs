@@ -221,8 +221,11 @@ impl Default for Hardness {
             great: None,
             gap: good::GAP_CHESSCOM,
             bans: true,
-            brilliant: None,
-            brilliant_gap: good::GAP_CHESSCOM,
+            // On by the owner's word (2026-10-29): +2 !! of chess.com's in the check set
+            // (90 % found, 95 % right), no wrong one added; the same over 2 000–5 000
+            // nodes and thresholds 20–40 %.
+            brilliant: Some(30.0),
+            brilliant_gap: 10.0,
             measure: Measure::Choice,
         }
     }
