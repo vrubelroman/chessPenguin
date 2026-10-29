@@ -323,18 +323,11 @@ fn note(before: Eval, after: Eval, ply: &Ply, rules: Rules, hard: Hardness) -> O
     if rules == Rules::Strict {
         return only_move(good::GAP).then_some(Judgement::Great);
     }
-    // A check that wins a piece whatever the reply is a textbook blow, plain (90.Ra4+ of the
-    // owner's son's game, a skewer: «канеш это очевидный ход») — unless it mates: the checks
-    // of a mating attack stay (22.Bf5+! 23.Bd7+! of the Evergreen game, chess.com's).
-    let blow = bans && f.check_wins_piece && after.mate_for(ply.mover) != Some(true);
     // How hard the move was to find: unknown (no shallow search) is not hard.
     let at_least = |t: Option<f64>| t.is_some_and(|t| ply.difficulty.is_some_and(|d| d >= t));
     if at_least(hard.brilliant) && only_move(hard.brilliant_gap) {
         Some(Judgement::Brilliant)
-    } else if only_move(hard.gap)
-        && !blow
-        && (hard.great.is_none() || at_least(hard.great))
-    {
+    } else if only_move(hard.gap) && (hard.great.is_none() || at_least(hard.great)) {
         Some(Judgement::Great)
     } else {
         None

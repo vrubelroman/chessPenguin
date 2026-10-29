@@ -43,9 +43,6 @@ pub struct MoveFeatures {
     pub gives_check: bool,
     /// The king moves.
     pub king_move: bool,
-    /// A check after which every reply loses a piece at once (a skewer or a fork with
-    /// check): a textbook blow.
-    pub check_wins_piece: bool,
 }
 
 /// Which rules decide !! and !. Both stay, to compare them and to go back.
@@ -131,7 +128,6 @@ impl MoveFeatures {
             book: chess_openings::in_book(chess_openings::key(&after)),
             gives_check: after.is_check(),
             king_move: m.role() == Role::King,
-            check_wins_piece: check_wins_piece(&after),
         }
     }
 
@@ -280,21 +276,6 @@ fn taking_loses(before: &Board, pos: &Chess, sq: Square, threat: i32) -> bool {
             && pseudo_threat(pos.board(), t.2, mover) >= threat
             && pseudo_threat(before, t.2, mover) < threat
     })
-}
-
-/// `pos` (after the mover's move) is check, and after every legal reply the mover can win
-/// a piece (a knight or more, three points or more by exchange) at once.
-fn check_wins_piece(pos: &Chess) -> bool {
-    if !pos.is_check() {
-        return false;
-    }
-    let replies = pos.legal_moves();
-    !replies.is_empty()
-        && replies.iter().all(|r| {
-            let mut after = pos.clone();
-            after.play_unchecked(*r);
-            threats(&after).iter().any(|t| t.0 >= 3)
-        })
 }
 
 /// What `by` would win taking on `sq`, whoever is to move (a piece already hanging).
@@ -520,16 +501,6 @@ mod tests {
             f.great_shape(Rules::Strict, true),
             "the first rules stay: {f:?}"
         );
-    }
-
-    #[test]
-    fn a_check_that_wins_a_piece_is_plain() {
-        // A skewer: the rook checks the king and wins the rook behind it.
-        let f = features("8/8/8/8/2k2r2/8/R7/4K3 w - - 0 1", "Ra4+");
-        assert!(f.check_wins_piece, "{f:?}");
-        // A plain check that wins nothing.
-        let f = features("8/8/8/8/2k5/8/R7/4K3 w - - 0 1", "Ra4+");
-        assert!(!f.check_wins_piece, "{f:?}");
     }
 
     #[test]
