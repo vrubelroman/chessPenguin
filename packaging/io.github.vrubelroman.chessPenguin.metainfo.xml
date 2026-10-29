@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.1.1" date="2026-10-29">
+      <description>
+        <p>Brilliant moves also for a hard only move that a shallow search misses; great moves are surer, with no mark for a piece simply stepping away or the king stepping out of check.</p>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-10-28">
       <description>
         <p>Preparing against an opponent: their opening repertoire by colour with opening names, and their opening mistakes found by the engine. The game review uses one fixed engine search everywhere, so the same game gets the same marks on every computer and phone. Brilliant and great moves recalibrated on chess.com; 100 classic sample games instead of 38.</p>

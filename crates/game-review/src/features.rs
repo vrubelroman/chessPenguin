@@ -497,7 +497,10 @@ mod tests {
         let f = features("4k3/8/8/8/8/8/8/r3K3 w - - 0 1", "Ke2");
         assert!(f.check && f.king_move, "{f:?}");
         assert!(!f.great_shape(Rules::ChessCom, true), "{f:?}");
-        assert!(f.great_shape(Rules::Strict, true), "the first rules stay: {f:?}");
+        assert!(
+            f.great_shape(Rules::Strict, true),
+            "the first rules stay: {f:?}"
+        );
     }
 
     #[test]

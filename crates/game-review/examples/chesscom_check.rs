@@ -118,7 +118,11 @@ fn main() {
                 };
                 let label = game.move_label(line[i + 1]).unwrap_or_default();
                 let san = label.rsplit(' ').next().unwrap_or_default();
-                let mark = if *j == Judgement::Brilliant { "!!" } else { "!" };
+                let mark = if *j == Judgement::Brilliant {
+                    "!!"
+                } else {
+                    "!"
+                };
                 if plain.contains(&san) {
                     owner_wrong += 1;
                     println!("   OWNER {label:<14} ours {mark}, the owner: plain");

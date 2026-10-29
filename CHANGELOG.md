@@ -4,6 +4,17 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-10-29
+
+- Brilliant moves (!!) also for the only good move that a shallow search misses, sacrifice
+  or not (as people see brilliance: a move a weak engine rates lower and a strong one
+  best). The game review adds a short search for the moves that could be such (1–2 %
+  longer). On chess.com's marks of 20 famous games: 90 % of their !! found, 95 % of ours
+  are theirs.
+- Great moves (!) are surer: no ! for an attacked piece stepping quietly to its one good
+  square, nor for the king stepping out of check — 27 of our 28 ! are chess.com's.
+- Website statistics count a file downloaded again the same day by the same visitor once.
+
 ## [2.1.0] — 2026-10-28
 
 - Desktop: preparing against an opponent. Pick a player of a database (similar names
