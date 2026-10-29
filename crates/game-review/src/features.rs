@@ -41,6 +41,8 @@ pub struct MoveFeatures {
     pub book: bool,
     /// The move gives check.
     pub gives_check: bool,
+    /// The king moves.
+    pub king_move: bool,
 }
 
 /// Which rules decide !! and !. Both stay, to compare them and to go back.
@@ -125,6 +127,7 @@ impl MoveFeatures {
             escape: lost_anyway && from_threat < 900 && gain >= 0,
             book: chess_openings::in_book(chess_openings::key(&after)),
             gives_check: after.is_check(),
+            king_move: m.role() == Role::King,
         }
     }
 
@@ -156,6 +159,9 @@ impl MoveFeatures {
             // great (10.Be2 of an online game, the owner: «какой же это !»); stepping away
             // with check is an attack (19…Ne2+ of Byrne — Fischer, chess.com's !).
             && !(rules == Rules::ChessCom && bans && self.escape && !self.gives_check)
+            // The king stepping out of check is plain too (the owner, 2026-10-29: 23.Kd3 of
+            // Capablanca — Marshall, 20…Ka7 of Kasparov — Topalov, 32.Kd2 of Tal — Larsen).
+            && !(rules == Rules::ChessCom && bans && self.check && self.king_move)
     }
 
     /// Worth asking the engine for the best other move (under either rules: one analysis
@@ -483,6 +489,15 @@ mod tests {
             f.escape && f.gives_check && f.great_shape(Rules::ChessCom, true),
             "{f:?}"
         );
+    }
+
+    #[test]
+    fn the_king_out_of_check_is_not_great() {
+        // The king in check from the rook steps to the side: plain.
+        let f = features("4k3/8/8/8/8/8/8/r3K3 w - - 0 1", "Ke2");
+        assert!(f.check && f.king_move, "{f:?}");
+        assert!(!f.great_shape(Rules::ChessCom, true), "{f:?}");
+        assert!(f.great_shape(Rules::Strict, true), "the first rules stay: {f:?}");
     }
 
     #[test]
