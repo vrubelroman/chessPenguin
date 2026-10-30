@@ -22,6 +22,10 @@ const check = (ok, what) => {
 const DOWNLOAD = [Number(process.env.DOWNLOAD_X || 1263), Number(process.env.DOWNLOAD_Y || 24)];
 const E2 = [519, 703];
 const E4 = [519, 505];
+// The card of «Test games» on the shelf after a reload (the draft's strip above it) and
+// «Allow reading» on its pane.
+const TEST_CARD = [300, 88];
+const ALLOW = [70, 232];
 
 const s = await session(appDir, 18766);
 const { t } = s;
@@ -131,6 +135,20 @@ try {
   if (await t.evaluate(`typeof window.showOpenFilePicker === 'function'`)) {
     // Chrome, Edge: the file chosen before the reload is read again by itself.
     check(s.logs.some((l) => /remembered file read again: .*Test games\.pgn/.test(l)), 'the chosen file is remembered (File System Access)');
+    // When the browser asks first (its permission not kept): the card offers «Allow
+    // reading», the browser's question is answered «Allow», the file is read.
+    await t.beforeLoad(`FileSystemHandle.prototype.queryPermission = async () => 'prompt';
+      FileSystemHandle.prototype.requestPermission = async () => 'granted';`);
+    await t.navigate(`${s.base}?lang=en`);
+    await started();
+    await sleep(2500);
+    await t.click(...TEST_CARD);
+    await sleep(1500);
+    await shot('web-10-allow.png');
+    await t.click(...ALLOW);
+    await sleep(2500);
+    await shot('web-11-allowed.png');
+    check(s.logs.some((l) => /remembered file allowed again: .*Test games\.pgn/.test(l)), '«Allow reading» reads the remembered file again');
   }
 } finally {
   await s.stop();

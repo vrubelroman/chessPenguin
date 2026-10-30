@@ -7,6 +7,7 @@
 //   t.navigate(url) · t.evaluate(js) · t.waitFor(js, ms) · t.screenshot()
 //   t.click(x, y, {double, right}) · t.key(key, mods, times) · t.setFiles(inputId, paths)
 //   t.choose(paths, open): the user chooses the files in the dialog open() brings up
+//   t.beforeLoad(js): js runs in every page loaded later, before its scripts
 import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -67,6 +68,8 @@ async function firefox(port) {
         waitFor: waitFor(evaluate),
         navigate: t.navigate,
         screenshot: t.screenshot,
+        // `js` runs in every page loaded from now on, before the page's own scripts.
+        beforeLoad: (js) => ff.browser.send('script.addPreloadScript', { functionDeclaration: `() => { ${js} }`, contexts: [t.context] }),
         click: async (x, y, { double = false, right = false } = {}) => {
           const acts = [{ type: 'pointerMove', x, y }];
           for (let i = 0; i < (double ? 2 : 1); i++) {
@@ -181,6 +184,7 @@ async function chromium(port) {
         send: s,
         evaluate,
         waitFor: waitFor(evaluate),
+        beforeLoad: (js) => s('Page.addScriptToEvaluateOnNewDocument', { source: js }),
         navigate: async (url) => {
           await s('Page.navigate', { url });
           await waitFor(evaluate)(`document.readyState === 'complete'`, 30000);

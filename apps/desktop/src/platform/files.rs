@@ -113,6 +113,15 @@ pub fn pick_databases(then: impl FnOnce(Picked) + Send + 'static) {
     }
 }
 
+/// The browser remembers the files chosen in its dialog for the next visit (Chrome,
+/// Edge); the others, and a computer, have no need or no way.
+pub fn remembers_chosen() -> bool {
+    #[cfg(web)]
+    return super::web::remembered::supported();
+    #[cfg(not(web))]
+    false
+}
+
 /// The browser remembers the file `path` of an earlier visit and asks the user before
 /// the page reads it again ([`allow_reading`]). Never on a computer.
 pub fn waiting_to_read(path: &std::path::Path) -> bool {

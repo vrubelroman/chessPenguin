@@ -2884,6 +2884,7 @@ impl App {
                         *d = copy.clone();
                     }
                     self.library.forget(&path);
+                    crate::platform::files::forget(&path);
                     self.library.select_db(&copy, ctx);
                     self.settings_dirty = true;
                     let ctx2 = ctx.clone();

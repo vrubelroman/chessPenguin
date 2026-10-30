@@ -1304,7 +1304,12 @@ impl Library {
                 // A browser keeps no way back to a file the user chose (Firefox, Safari).
                 ui.vertical_centered(|ui| {
                     ui.add_space(40.0);
-                    ui.label(tr("This browser doesn't remember files: after a reload, choose the file again or keep a copy in the browser."));
+                    // Chrome and Edge remember chosen files, not dropped ones.
+                    ui.label(if crate::platform::files::remembers_chosen() {
+                        tr("A dropped file is not remembered: after a reload, choose the file again or keep a copy in the browser.")
+                    } else {
+                        tr("This browser doesn't remember files: after a reload, choose the file again or keep a copy in the browser.")
+                    });
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button(tr("↻ Choose the file again")).clicked() {

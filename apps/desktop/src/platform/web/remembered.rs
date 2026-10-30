@@ -181,6 +181,7 @@ pub fn allow(path: &Path, then: impl FnOnce(bool) + 'static) {
         };
         let back = bytes.is_some();
         if let Some(bytes) = bytes {
+            log::info!("remembered file allowed again: {}", path.display());
             WAITING.with_borrow_mut(|w| w.remove(&path));
             super::vfs::put_opened(&path, bytes);
         }

@@ -218,6 +218,17 @@ pub fn trf(key: &'static str, args: &[(&str, &dyn Display)]) -> String {
 const ROWS: &[[&str; 9]] = &[
     // --- the web version ---
     [
+        "A dropped file is not remembered: after a reload, choose the file again or keep a copy in the browser.",
+        "Перетащенный файл не запоминается: после перезагрузки выберите его снова или сохраните копию в браузере.",
+        "Un fichier déposé n'est pas mémorisé : après un rechargement, choisissez-le à nouveau ou gardez-en une copie dans le navigateur.",
+        "Eine hineingezogene Datei wird nicht gemerkt: Wählen Sie sie nach dem Neuladen erneut oder behalten Sie eine Kopie im Browser.",
+        "Un archivo arrastrado no se recuerda: tras recargar, elíjalo de nuevo o guarde una copia en el navegador.",
+        "Un file trascinato non viene ricordato: dopo il ricaricamento sceglilo di nuovo o conserva una copia nel browser.",
+        "Um arquivo arrastado não é lembrado: após recarregar, escolha-o novamente ou guarde uma cópia no navegador.",
+        "Sudrab tashlangan fayl eslab qolinmaydi: qayta yuklangandan keyin uni yana tanlang yoki brauzerda nusxasini saqlang.",
+        "Сүйреп әкелінген файл есте сақталмайды: қайта жүктегеннен кейін оны қайта таңдаңыз немесе браузерде көшірмесін сақтаңыз.",
+    ],
+    [
         "🔒 Allow reading",
         "🔒 Разрешить чтение",
         "🔒 Autoriser la lecture",
