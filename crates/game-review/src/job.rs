@@ -153,8 +153,8 @@ pub enum JobFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GameAnalysis;
     use crate::Eval;
+    use crate::GameAnalysis;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     /// The fake engine of the `uci` crate (`cargo build -p uci --bin fake_uci`).

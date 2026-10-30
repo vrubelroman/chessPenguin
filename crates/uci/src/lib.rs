@@ -31,9 +31,9 @@ pub use error::EngineError;
 pub use events::{EngineEvent, TerminationReason, Waker};
 #[cfg(not(target_family = "wasm"))]
 pub use process::{Engine, EngineConfig, EngineHandle};
-#[cfg(target_family = "wasm")]
-pub use worker::{Engine, EngineHandle, Starting, WorkerConfig};
 pub use types::{
     EngineInfo, EngineOption, EnginePosition, EngineScore, OptionKind, PositionBase, Score,
     ScoreBound, SearchId, SearchInfo, SearchLimits, Side, Timeouts, WhiteEval, WhiteScore,
 };
+#[cfg(target_family = "wasm")]
+pub use worker::{Engine, EngineHandle, Starting, WorkerConfig};

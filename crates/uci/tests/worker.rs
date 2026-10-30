@@ -135,7 +135,7 @@ async fn handshake_then_analysis_and_stop() {
     let h = h.expect("started");
     assert_eq!(h.info().name.as_deref(), Some("Fake Worker"));
     assert_eq!(h.info().options.len(), 2);
-    assert!(woke > 0,"the waker was not called");
+    assert!(woke > 0, "the waker was not called");
     h.set_multipv(2).unwrap();
     assert!(matches!(
         h.set_multipv(11),
@@ -170,7 +170,13 @@ async fn rapid_requests_start_only_the_latest_and_never_mix_output() {
         h.analyze(fen(m), SearchId(id)).unwrap();
     }
     let evs = until(&h, 3000, |e| {
-        matches!(e, EngineEvent::Info { search_id: SearchId(4), .. })
+        matches!(
+            e,
+            EngineEvent::Info {
+                search_id: SearchId(4),
+                ..
+            }
+        )
     })
     .await;
     for id in [2, 3] {
@@ -191,7 +197,13 @@ async fn rapid_requests_start_only_the_latest_and_never_mix_output() {
     h.search(fen("n"), SearchId(5), SearchLimits::Nodes(1000))
         .unwrap();
     let evs = until(&h, 2000, |e| {
-        matches!(e, EngineEvent::BestMove { search_id: SearchId(5), .. })
+        matches!(
+            e,
+            EngineEvent::BestMove {
+                search_id: SearchId(5),
+                ..
+            }
+        )
     })
     .await;
     assert!(matches!(evs.last(), Some(EngineEvent::BestMove { best: Some(b), .. }) if b == "n"));
@@ -232,7 +244,10 @@ async fn a_crash_ends_the_session() {
 #[wasm_bindgen_test]
 async fn handshake_failures_are_named() {
     let (silent, _) = start("silent: true").await;
-    assert!(matches!(silent, Err(EngineError::NotUci { .. })), "{silent:?}");
+    assert!(
+        matches!(silent, Err(EngineError::NotUci { .. })),
+        "{silent:?}"
+    );
     let (no_uciok, _) = start("noUciok: true").await;
     assert!(
         matches!(

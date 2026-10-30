@@ -202,7 +202,9 @@ impl Inner {
             self.port.worker.terminate();
             self.phase = Phase::Ended;
             self.port
-                .emit(EngineEvent::Terminated(TerminationReason::Quit { status: None }));
+                .emit(EngineEvent::Terminated(TerminationReason::Quit {
+                    status: None,
+                }));
         } else {
             self.port.worker.terminate();
             self.phase = Phase::Ended;

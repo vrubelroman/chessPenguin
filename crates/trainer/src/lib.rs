@@ -11,7 +11,8 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use chess_core::shakmaty::fen::Fen;
 use chess_core::shakmaty::{CastlingMode, Chess, EnPassantMode, Move, Square};

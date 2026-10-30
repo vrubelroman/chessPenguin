@@ -269,10 +269,11 @@ pub(super) fn build(
         // The header last: a file without the count is never taken for a booster.
         let mut header = [0u8; CBB_RECORD];
         header[..4].copy_from_slice(&(count as u32).to_be_bytes());
-        let file = File::options().write(true).open(part)?;
-        write_all_at(&file, &header, 0)?;
-        file.sync_all()?;
-        drop(file);
+        {
+            let file = File::options().write(true).open(part)?;
+            write_all_at(&file, &header, 0)?;
+            file.sync_all()?;
+        } // Closed before the rename.
         std::fs::rename(part, out)?;
     }
     if let (Some(out), Some(sink)) = (openings, sink) {

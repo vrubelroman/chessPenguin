@@ -1,17 +1,16 @@
 //! A game against the computer (docs/design/play-mode.md, android-play.md §31): how it
 //! ends, how long the opponent "thinks", its resignation judged by an engine, and Rodent
 //! (`rodent`). Shared by the desktop and the Android apps; nothing here draws. The
-//! engines that play or judge run as processes, each driven from a thread: not built
-//! for a browser.
+//! engines that play or judge run as processes, each driven from a thread: a browser
+//! cannot start them.
 
 pub mod rodent;
 mod rodent4_files;
 
-#[cfg(not(target_family = "wasm"))]
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 #[cfg(not(target_family = "wasm"))]
-use std::time::Instant;
+use std::{sync::mpsc::channel, time::Instant};
 
 use shakmaty::zobrist::Zobrist64;
 use shakmaty::{Chess, Color, EnPassantMode, Position};
@@ -247,7 +246,6 @@ pub fn hopeless(score: uci::Score) -> bool {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
 /// The engine (Stockfish, unseen by the user) judging the positions where Maia is to
 /// move, in its own thread for the whole game: the newest request is searched, older
 /// ones are dropped; an engine that does not start or dies leaves the game without
@@ -262,10 +260,11 @@ pub struct Judge {
     refused_at: Option<usize>,
 }
 
-#[cfg(not(target_family = "wasm"))]
 impl Judge {
     /// The engine of `config` with `options` set (an Android Stockfish: its `EvalFile`);
     /// `wake` is called when an answer comes (the app draws again).
+    /// (A process driven from a thread: not in a browser.)
+    #[cfg(not(target_family = "wasm"))]
     pub fn start(
         config: uci::EngineConfig,
         options: Vec<(String, String)>,
