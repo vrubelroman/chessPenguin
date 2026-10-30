@@ -298,7 +298,7 @@ impl SettingsWindow {
                         )
                         .on_hover_text(p.display().to_string());
                     } else if let Some(p) = crate::engine_download::installed() {
-                        let mb = std::fs::metadata(&p).map_or(0, |m| m.len() / 1_000_000);
+                        let mb = crate::engine_download::installed_mb();
                         ui.label(
                             RichText::new(trf(
                                 "Downloaded by ChessPenguin · {mb} MB",
@@ -307,7 +307,7 @@ impl SettingsWindow {
                             .small()
                             .weak(),
                         )
-                        .on_hover_text(p.display().to_string());
+                        .on_hover_text(p.to_string());
                     } else {
                         ui.horizontal(|ui| {
                             ui.label(
@@ -333,9 +333,7 @@ impl SettingsWindow {
             let mut answer = None;
             let modal = egui::Modal::new(egui::Id::new("remove_engine")).show(ui.ctx(), |ui| {
                 ui.set_width(360.0);
-                let mb = crate::engine_download::installed()
-                    .and_then(|p| std::fs::metadata(p).ok())
-                    .map_or(0, |m| m.len() / 1_000_000);
+                let mb = crate::engine_download::installed_mb();
                 ui.label(trf(
                     "Remove Stockfish 19? This frees {mb} MB. You can download it again at any time.",
                     &[("mb", &mb)],
@@ -383,9 +381,8 @@ impl SettingsWindow {
             ui.label(RichText::new(tr("Found on this computer:")).strong());
             for cfg in found {
                 ui.horizontal(|ui| {
-                    let path = cfg.executable().unwrap_or_default();
-                    ui.label(&cfg.name)
-                        .on_hover_text(path.display().to_string());
+                    let path = cfg.executable().map(|l| l.to_string()).unwrap_or_default();
+                    ui.label(&cfg.name).on_hover_text(path);
                     if ui.button(tr("Add")).clicked() {
                         s.engines.push(cfg);
                         if s.active_engine.is_none() {

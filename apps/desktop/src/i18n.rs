@@ -218,6 +218,17 @@ pub fn trf(key: &'static str, args: &[(&str, &dyn Display)]) -> String {
 const ROWS: &[[&str; 9]] = &[
     // --- the web version ---
     [
+        "There is an unsaved game: {title}, {n} moves.",
+        "Есть несохранённая партия: {title}, {n} ходов.",
+        "Il y a une partie non enregistrée : {title}, {n} coups.",
+        "Es gibt eine nicht gespeicherte Partie: {title}, {n} Züge.",
+        "Hay una partida sin guardar: {title}, {n} jugadas.",
+        "C'è una partita non salvata: {title}, {n} mosse.",
+        "Há uma partida não salva: {title}, {n} lances.",
+        "Saqlanmagan partiya bor: {title}, {n} yurish.",
+        "Сақталмаған партия бар: {title}, {n} жүріс.",
+    ],
+    [
         "📋 Keep a copy in the browser",
         "📋 Оставить копию в браузере",
         "📋 Garder une copie dans le navigateur",

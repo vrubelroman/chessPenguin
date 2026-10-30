@@ -27,9 +27,47 @@ pub fn bundled_stockfish() -> Option<PathBuf> {
     candidates.into_iter().flatten().find(|p| is_executable(p))
 }
 
+/// Where an engine starts from: its program on a computer; in a browser, which runs no
+/// programs, the address of its Web Worker's script.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EngineLocation {
+    #[cfg(not(web))]
+    Program(PathBuf),
+    #[cfg(web)]
+    Worker(String),
+}
+
+impl EngineLocation {
+    /// Whether the engine is there to start (its program's file; a worker always).
+    pub fn present(&self) -> bool {
+        match self {
+            #[cfg(not(web))]
+            EngineLocation::Program(p) => p.is_file(),
+            #[cfg(web)]
+            EngineLocation::Worker(_) => true,
+        }
+    }
+}
+
+impl std::fmt::Display for EngineLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(not(web))]
+            EngineLocation::Program(p) => write!(f, "{}", p.display()),
+            #[cfg(web)]
+            EngineLocation::Worker(script) => write!(f, "{script}"),
+        }
+    }
+}
+
 /// ChessPenguin's Stockfish: the bundled one, or else the downloaded one.
-pub fn own_stockfish() -> Option<PathBuf> {
-    bundled_stockfish().or_else(crate::engine_download::installed)
+pub fn own_stockfish() -> Option<EngineLocation> {
+    #[cfg(not(web))]
+    return bundled_stockfish()
+        .map(EngineLocation::Program)
+        .or_else(crate::engine_download::installed);
+    #[cfg(web)]
+    crate::engine_download::installed()
 }
 
 /// `stockfish` from `PATH` (for example, the distribution package). On macOS an app

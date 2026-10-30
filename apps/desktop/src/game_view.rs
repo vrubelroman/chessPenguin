@@ -233,6 +233,11 @@ impl GameView {
         self.translation.suspend();
     }
 
+    /// The whole-game analysis is running.
+    pub fn review_running(&self) -> bool {
+        self.review.running()
+    }
+
     /// Copying the PGN always copies the original comments; say so when the translation is shown.
     fn copy_pgn(&self) -> GameAction {
         let note = if self.translation.shown().is_some() {
@@ -2209,7 +2214,7 @@ impl GameView {
         &mut self,
         start: crate::play::Start,
         (engine, file): (crate::play::Engine, std::path::PathBuf),
-        judge: Option<std::path::PathBuf>,
+        judge: Option<crate::engines::EngineLocation>,
         record: Option<std::path::PathBuf>,
         ctx: &egui::Context,
     ) {
@@ -2319,7 +2324,7 @@ impl GameView {
         saved: &crate::play::Saved,
         to_move_left: Option<std::time::Duration>,
         engine: (crate::play::Engine, std::path::PathBuf),
-        judge: Option<std::path::PathBuf>,
+        judge: Option<crate::engines::EngineLocation>,
         journal: crate::player_games::Journal,
         ctx: &egui::Context,
     ) {
@@ -2362,7 +2367,7 @@ impl GameView {
         &mut self,
         start: crate::play::Start,
         (engine, file): (crate::play::Engine, std::path::PathBuf),
-        judge: Option<std::path::PathBuf>,
+        judge: Option<crate::engines::EngineLocation>,
         journal: Option<crate::player_games::Journal>,
         clock: Option<crate::play::Clock>,
         floor: NodeId,

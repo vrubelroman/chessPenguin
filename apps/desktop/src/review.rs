@@ -95,7 +95,7 @@ pub fn processes() -> usize {
 /// through `tx`, each waking `ctx`.
 pub fn spawn_job(
     name: &str,
-    path: PathBuf,
+    engine: crate::engines::EngineLocation,
     settings: JobSettings,
     targets: Vec<game_review::Target>,
     cancel: Arc<AtomicBool>,
@@ -104,6 +104,7 @@ pub fn spawn_job(
 ) -> std::io::Result<JobRunner> {
     #[cfg(not(web))]
     {
+        let crate::engines::EngineLocation::Program(path) = engine;
         std::thread::Builder::new()
             .name(name.to_owned())
             .spawn(move || {
@@ -125,8 +126,9 @@ pub fn spawn_job(
     #[cfg(web)]
     {
         let _ = name;
+        let crate::engines::EngineLocation::Worker(script) = engine;
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || ctx.request_repaint());
-        game_review::Dispatcher::start(&path.to_string_lossy(), &settings, targets, wake)
+        game_review::Dispatcher::start(&script, &settings, targets, wake)
             .map(|dispatcher| JobRunner {
                 dispatcher,
                 tx,
@@ -229,7 +231,13 @@ impl Review {
     /// Starts the engine job with the engine at `path` (ChessPenguin's Stockfish). `full`
     /// discards earlier results; otherwise only positions without an evaluation are
     /// analysed (all of them for a stale analysis). Returns false if there is nothing to do.
-    pub fn start(&mut self, game: &Game, path: &Path, full: bool, ctx: &egui::Context) -> bool {
+    pub fn start(
+        &mut self,
+        game: &Game,
+        engine: &crate::engines::EngineLocation,
+        full: bool,
+        ctx: &egui::Context,
+    ) -> bool {
         self.job = None;
         self.error = None;
         let targets = self.analysis.begin(game, full);
@@ -242,7 +250,7 @@ impl Review {
         let settings = JobSettings::new(processes(), None);
         let spawned = spawn_job(
             "game-review",
-            path.to_owned(),
+            engine.clone(),
             settings,
             targets,
             cancel.clone(),

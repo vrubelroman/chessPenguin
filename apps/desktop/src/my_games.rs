@@ -65,3 +65,34 @@ pub fn count() -> usize {
 pub fn size() -> u64 {
     crate::platform::fs::meta(&path()).map_or(0, |m| m.len)
 }
+
+/// A game left unsaved when the page was closed (docs/design/web-version.md §2.6): one,
+/// the last, written every few seconds while it has changes. It guards against a
+/// closed tab; it is not a save: offered at the next start, opened or deleted.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Draft {
+    pub title: String,
+    pub moves: usize,
+    pub pgn: String,
+}
+
+fn draft_path() -> PathBuf {
+    crate::platform::data_dir()
+        .unwrap_or_default()
+        .join("draft.json")
+}
+
+pub fn write_draft(draft: &Draft) {
+    if let Ok(json) = serde_json::to_vec(draft) {
+        let _ = crate::platform::fs::write_atomic(&draft_path(), &json);
+    }
+}
+
+pub fn read_draft() -> Option<Draft> {
+    let bytes = crate::platform::fs::read(&draft_path()).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+pub fn delete_draft() {
+    let _ = crate::platform::fs::remove_file(&draft_path());
+}

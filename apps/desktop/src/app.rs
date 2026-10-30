@@ -221,6 +221,12 @@ pub struct App {
     pasting: Option<crate::platform::clipboard::Reading>,
     /// A file of the last visit being chosen again (a browser's).
     choosing_again: Option<PathBuf>,
+    /// The web version's draft of an unsaved game: the one left at the last visit
+    /// (offered), and when this visit's was last written (egui time; `None`: none).
+    #[cfg(web)]
+    draft_offer: Option<crate::my_games::Draft>,
+    #[cfg(web)]
+    draft_at: Option<f64>,
     confirm_close: Option<CloseIntent>,
     /// Close the game once the pending "save as" succeeds.
     close_after_save: Option<CloseIntent>,
@@ -457,6 +463,10 @@ impl App {
             rx,
             pasting: None,
             choosing_again: None,
+            #[cfg(web)]
+            draft_offer: crate::my_games::read_draft(),
+            #[cfg(web)]
+            draft_at: None,
             confirm_close: None,
             close_after_save: None,
             find_after_close: None,
@@ -1786,7 +1796,7 @@ impl App {
             self.settings
                 .active_engine()
                 .and_then(|e| e.executable())
-                .filter(|p| p.is_file())
+                .filter(|l| l.present())
         });
         let Some(aside) = self.put_aside.take() else {
             return;
@@ -2024,7 +2034,7 @@ impl App {
             self.settings
                 .active_engine()
                 .and_then(|e| e.executable())
-                .filter(|p| p.is_file())
+                .filter(|l| l.present())
         });
         match &start.from {
             Some(from) => self.game_from(from),
@@ -2763,6 +2773,66 @@ impl App {
         }
     }
 
+    /// The page's side of the frame: the game on the screen as an entry of the browser's
+    /// history, the browser's question on leaving with unsaved work, the draft of an
+    /// unsaved game. Nothing of it on a computer.
+    fn page_frame(&mut self, ctx: &egui::Context) {
+        crate::platform::page::game_shown(ctx, self.game.is_some());
+        let modified = self.game.as_ref().is_some_and(|g| g.game.is_modified());
+        let reviewing = self.game.as_ref().is_some_and(|g| g.review_running());
+        crate::platform::page::warn_on_leave(modified || reviewing);
+        #[cfg(web)]
+        {
+            const EVERY: f64 = 5.0;
+            let now = ctx.input(|i| i.time);
+            match self.game.as_ref().filter(|g| g.game.is_modified()) {
+                Some(g) if self.draft_at.is_none_or(|t| now - t >= EVERY) => {
+                    crate::my_games::write_draft(&crate::my_games::Draft {
+                        title: g.title(),
+                        moves: g.game.mainline().len().div_ceil(2),
+                        pgn: g.game.to_pgn(),
+                    });
+                    self.draft_at = Some(now);
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(EVERY));
+                }
+                Some(_) => {}
+                // Saved, or left without saving: no draft of this visit is kept.
+                None if self.draft_at.take().is_some() => crate::my_games::delete_draft(),
+                None => {}
+            }
+        }
+    }
+
+    /// «There is an unsaved game» over the library, with Open and Delete.
+    #[cfg(web)]
+    fn draft_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(d) = self.draft_offer.clone() else {
+            return;
+        };
+        let mut open = false;
+        let mut delete = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(trf(
+                    "There is an unsaved game: {title}, {n} moves.",
+                    &[("title", &d.title), ("n", &d.moves)],
+                ))
+                .color(ui.visuals().warn_fg_color),
+            );
+            open = ui.button(tr("Open")).clicked();
+            delete = ui.button(tr("Delete")).clicked();
+        });
+        ui.separator();
+        if open {
+            self.draft_offer = None;
+            self.open_pgn_text(ctx, d.pgn, false);
+            crate::my_games::delete_draft();
+        } else if delete {
+            self.draft_offer = None;
+            crate::my_games::delete_draft();
+        }
+    }
+
     /// Files dropped on the window open as databases, like chosen ones; while files are
     /// dragged over it, the window says so.
     fn dropped_files(&mut self, ctx: &egui::Context) {
@@ -3164,6 +3234,10 @@ impl eframe::App for App {
         }
         self.dropped_files(&ctx);
         self.handle_async(&ctx);
+        // The browser's «Back» in a game: «← Library».
+        if crate::platform::page::take_back() && self.game.is_some() {
+            self.request_close(&ctx, CloseIntent::BackToLibrary);
+        }
         // Dev hook (screenshots): the engine offer as on pressing L without an engine.
         if std::env::var("CP_ENGINE_OFFER").is_ok() && !self.offer_hook_done {
             self.offer_hook_done = true;
@@ -3174,6 +3248,7 @@ impl eframe::App for App {
             }
         }
         self.offer_events(&ctx);
+        self.page_frame(&ctx);
         self.debug_step(&ctx);
         self.debug_keys(&ctx);
         self.debug_screenshot(&ctx);
@@ -3458,6 +3533,8 @@ impl eframe::App for App {
                 self.library.online_busy = d.online.busy();
                 self.library.online_running = d.online.running();
             }
+            #[cfg(web)]
+            self.draft_strip(ui, &ctx);
             for a in self.library.show(ui, &dbs, &self.settings) {
                 match a {
                     LibraryAction::OpenGame { path, index, at } => {

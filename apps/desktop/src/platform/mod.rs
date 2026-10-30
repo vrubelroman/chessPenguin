@@ -23,6 +23,7 @@ use web as imp;
 pub mod clipboard;
 pub mod files;
 pub mod fs;
+pub mod page;
 pub mod pgn_store;
 
 /// What the platform offers the interface: a feature it lacks is not shown.

@@ -461,9 +461,10 @@ struct Request {
 /// The engine judging a game (Stockfish at `exe`), waking `ctx` with its answers.
 /// A browser starts no engine processes: there is no judge there, and the game goes
 /// without resignations, as when the engine does not start.
-pub fn start_judge(exe: std::path::PathBuf, ctx: &egui::Context) -> Option<Judge> {
+pub fn start_judge(exe: crate::engines::EngineLocation, ctx: &egui::Context) -> Option<Judge> {
     #[cfg(not(web))]
     {
+        let crate::engines::EngineLocation::Program(exe) = exe;
         let ctx = ctx.clone();
         Some(Judge::start(
             uci::EngineConfig::new(exe),

@@ -81,7 +81,8 @@ web-sys = { version = "0.3", features = [
     "IdbTransactionMode", "IdbObjectStore", "DomStringList", "HtmlAudioElement",
     "HtmlMediaElement", "HtmlCanvasElement", "console", "CacheStorage", "Cache",
     "Request", "Response", "ResponseInit", "Headers", "ReadableStream",
-    "ReadableStreamDefaultReader", "StorageManager", "StorageEstimate",
+    "ReadableStreamDefaultReader", "StorageManager", "StorageEstimate", "History",
+    "BeforeUnloadEvent",
 ] }
 
 [build-dependencies]

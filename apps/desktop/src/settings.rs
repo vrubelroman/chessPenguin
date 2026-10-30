@@ -53,22 +53,22 @@ impl EngineConfig {
 
     /// Executable to start; `None` if ChessPenguin's Stockfish is neither bundled nor
     /// downloaded yet (it is offered for download then).
-    pub fn executable(&self) -> Option<PathBuf> {
+    pub fn executable(&self) -> Option<crate::engines::EngineLocation> {
         if self.builtin {
             crate::engines::own_stockfish()
         } else {
-            Some(self.path.clone())
+            // A browser runs no engine programs: there are none but its own.
+            #[cfg(not(web))]
+            return Some(crate::engines::EngineLocation::Program(self.path.clone()));
+            #[cfg(web)]
+            None
         }
     }
 
     /// Whether the engine can be started: ChessPenguin's Stockfish is there (in a
     /// browser: downloaded into it), or the file of another engine.
     pub fn present(&self) -> bool {
-        if self.builtin {
-            crate::engines::own_stockfish().is_some()
-        } else {
-            self.path.is_file()
-        }
+        self.executable().is_some_and(|l| l.present())
     }
 }
 

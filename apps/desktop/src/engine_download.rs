@@ -101,15 +101,31 @@ pub fn clean_leftovers() {
     }
 }
 
-/// The downloaded engine, if it is there (in a browser: the address of its worker).
-pub fn installed() -> Option<PathBuf> {
+/// The downloaded engine, if it is there.
+pub fn installed() -> Option<crate::engines::EngineLocation> {
     #[cfg(web)]
-    return crate::platform::web::engine::worker_script().map(PathBuf::from);
+    return crate::platform::web::engine::worker_script()
+        .map(crate::engines::EngineLocation::Worker);
     #[cfg(not(web))]
     {
         let p = dir()?.join(EXE);
-        p.is_file().then_some(p)
+        p.is_file()
+            .then_some(crate::engines::EngineLocation::Program(p))
     }
+}
+
+/// The size of the downloaded engine, in MB (0 when it is not there).
+pub fn installed_mb() -> u64 {
+    #[cfg(web)]
+    return if crate::platform::web::engine::ready() {
+        crate::platform::web::engine::WASM_BYTES / 1_000_000
+    } else {
+        0
+    };
+    #[cfg(not(web))]
+    dir()
+        .and_then(|d| std::fs::metadata(d.join(EXE)).ok())
+        .map_or(0, |m| m.len() / 1_000_000)
 }
 
 /// Removes the downloaded engine (frees its space).
@@ -188,10 +204,8 @@ impl Download {
                 match engine::download(|done, total| report(Stage::Downloading { done, total }), c)
                     .await
                 {
-                    Ok(()) => match installed() {
-                        Some(p) => Stage::Done(p),
-                        None => Stage::Failed(Failure::Disk("not kept".into())),
-                    },
+                    // The engine's file: its worker's script.
+                    Ok(()) => Stage::Done(PathBuf::from(engine::SCRIPT)),
                     Err(Fetch::Cancelled) => Stage::Cancelled,
                     Err(Fetch::Network(e)) => Stage::Failed(Failure::Network(e)),
                     Err(Fetch::Server(code)) => Stage::Failed(Failure::Server(code)),

@@ -1971,7 +1971,7 @@ impl PrepScreen {
         let processes = job_settings.processes;
         let spawned = review::spawn_job(
             "prep-engine",
-            path.clone(),
+            path,
             job_settings,
             targets,
             cancel.clone(),

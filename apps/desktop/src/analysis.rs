@@ -86,7 +86,7 @@ pub struct Analysis {
     /// The current search ended (time limit reached); lines stay as the final result.
     pub finished: bool,
     /// Executable of the running engine (to detect a switch of the active engine).
-    pub engine_path: Option<std::path::PathBuf>,
+    pub engine_path: Option<crate::engines::EngineLocation>,
 }
 
 impl Analysis {
@@ -296,10 +296,11 @@ impl Analysis {
 /// Starts the engine of `cfg` at `path` with its options.
 #[cfg(not(web))]
 fn launch(
-    path: std::path::PathBuf,
+    location: crate::engines::EngineLocation,
     cfg: EngineConfig,
     ctx: &egui::Context,
 ) -> Result<Launch, String> {
+    let crate::engines::EngineLocation::Program(path) = location;
     let (tx, rx) = std::sync::mpsc::channel();
     let ctx_w = ctx.clone();
     let ctx_done = ctx.clone();
@@ -318,16 +319,17 @@ fn launch(
         .map_err(|e| e.to_string())
 }
 
-/// Starts the engine of `cfg` in a worker: `path` is its script's address on the site.
+/// Starts the engine of `cfg` in its Web Worker.
 #[cfg(web)]
 fn launch(
-    path: std::path::PathBuf,
+    location: crate::engines::EngineLocation,
     cfg: EngineConfig,
     ctx: &egui::Context,
 ) -> Result<Launch, String> {
+    let crate::engines::EngineLocation::Worker(script) = location;
     let ctx = ctx.clone();
     uci::Engine::start_worker(
-        uci::WorkerConfig::new(path.to_string_lossy()),
+        uci::WorkerConfig::new(script),
         Box::new(move || ctx.request_repaint()),
     )
     .map(|s| Launch::Worker(s, cfg))
