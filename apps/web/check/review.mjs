@@ -26,7 +26,8 @@ const stored = `new Promise((ok, no) => {
     values.onsuccess = () => ok(keys.result.map((k, i) => [k, new TextDecoder().decode(values.result[i])])
       .filter(([k]) => k.startsWith('/cache/analysis/')));
   };
-})`;
+}).then((r) => JSON.stringify(r))`;
+const readStored = async () => JSON.parse(await t.evaluate(stored));
 let failed = 0;
 try {
   await s.run({ url: '?lang=en' }, outDir);
@@ -41,7 +42,7 @@ try {
   await sleep(3000);
   await s.run({ shot: 'review-0-opened.png' }, outDir);
   for (let i = 0; i < games.length; i++) {
-    const before = (await t.evaluate(stored)).length;
+    const before = (await readStored()).length;
     await s.run({ click: [300, 214 + 27 * i], double: true }, outDir);
     await sleep(1500);
     await s.run({ key: 'a', mods: ['shift'] }, outDir);
@@ -56,7 +57,7 @@ try {
     const t0 = Date.now();
     for (;;) {
       await sleep(2000);
-      if ((await t.evaluate(stored)).length > before) break;
+      if ((await readStored()).length > before) break;
       if (Date.now() - t0 > 600000) throw new Error(`no review of ${games[i]}`);
     }
     console.log(`${basename(games[i])}: reviewed in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
@@ -65,7 +66,7 @@ try {
     await sleep(1000);
   }
   // The comparison.
-  const fromBrowser = await t.evaluate(stored);
+  const fromBrowser = await readStored();
   for (const [key, text] of fromBrowser) {
     const name = basename(key);
     writeFileSync(join(outDir, name), text);

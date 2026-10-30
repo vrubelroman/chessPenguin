@@ -5067,13 +5067,16 @@ fn engine_settings(ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<GameA
                 2 => format!("{} / {cores}", idx + 1),
                 _ => format_mb(hash_steps[idx]),
             };
+            // In a browser threads and memory are the platform's: one thread (the
+            // single-threaded engine), its memory (design §1.5).
+            let shown = if crate::platform::CAPS.engine_programs { 4 } else { 2 };
             if slider >= 100.0 {
                 ui.spacing_mut().slider_width = slider;
                 egui::Grid::new("engine_settings_grid")
                     .num_columns(3)
                     .spacing(vec2(gap, 8.0))
                     .show(ui, |ui| {
-                        for (i, (name, idx, len)) in rows.iter_mut().enumerate() {
+                        for (i, (name, idx, len)) in rows.iter_mut().enumerate().take(shown) {
                             ui.label(*name);
                             settled |= index_slider(ui, idx, *len);
                             ui.label(value(i, **idx));
@@ -5082,7 +5085,7 @@ fn engine_settings(ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<GameA
                     });
             } else {
                 ui.spacing_mut().slider_width = ui.available_width().floor();
-                for (i, (name, idx, len)) in rows.iter_mut().enumerate() {
+                for (i, (name, idx, len)) in rows.iter_mut().enumerate().take(shown) {
                     ui.horizontal(|ui| {
                         ui.label(*name);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
