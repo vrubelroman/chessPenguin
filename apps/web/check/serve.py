@@ -23,7 +23,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def translate_path(self, path):
         path = path.split("?", 1)[0].split("#", 1)[0]
-        for prefix, base in (("/app/", APP), ("/static/", STATIC)):
+        for prefix, base in (("/app/", APP), ("/static/", STATIC), ("/screenshots/", STATIC / "screenshots")):
             if path.startswith(prefix):
                 target = (base / path[len(prefix):]).resolve()
                 if target == base or base in target.parents:

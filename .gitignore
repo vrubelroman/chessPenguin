@@ -10,3 +10,6 @@
 
 # A local run of the website from the repository root (website/README.md runs it from server/).
 /data-dev/
+
+# The web version built for the site (apps/web/build.sh website/static/app)
+website/static/app/

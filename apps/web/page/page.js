@@ -92,7 +92,7 @@
 
   function shots(names) {
     return el("div", { class: "shots" }, names.map(function (n) {
-      return el("img", { src: "../static/screenshots/" + n, alt: "", loading: "lazy" });
+      return el("img", { src: "/screenshots/" + n, alt: "", loading: "lazy" });
     }));
   }
 
