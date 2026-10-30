@@ -406,11 +406,12 @@ impl App {
             let _ = settings.save();
         }
         let engines_found = crate::engines::first_run_setup(&mut settings);
-        #[cfg(web)]
-        if crate::my_games::setup(&mut settings) {
+        if crate::examples::setup(&mut settings) || engines_found {
             let _ = settings.save();
         }
-        if crate::examples::setup(&mut settings) || engines_found {
+        // After the samples: a new library opens on the classics.
+        #[cfg(web)]
+        if crate::my_games::setup(&mut settings) {
             let _ = settings.save();
         }
         // PGN files passed on the command line (e.g. "Open with…") join the library, first one selected.

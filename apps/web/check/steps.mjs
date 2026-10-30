@@ -15,10 +15,10 @@ import { sleep, tab } from './bidi.mjs';
 
 export const KEYS = { ctrl: '', shift: '', alt: '', esc: '', right: '', left: '', enter: '' };
 
-export async function session(appDir, port = 18767) {
+export async function session(appDir, port = Number(process.env.CP_CHECK_PORT || 18767)) {
   const root = fileURLToPath(new URL('../../..', import.meta.url));
   const server = spawn('python3', ['-I', join(root, 'apps/web/check/serve.py'), resolve(appDir), join(root, 'website/static'), String(port)], { stdio: 'ignore' });
-  const ff = await launch(19224);
+  const ff = await launch(port + 457);
   const errors = [];
   const t = await tab(ff.browser, 1400, 860, (line) => {
     if (/panicked|RuntimeError|\[error\]/.test(line)) errors.push(line);
