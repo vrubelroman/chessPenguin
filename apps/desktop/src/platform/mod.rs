@@ -121,16 +121,25 @@ pub fn storage_free() -> Option<u64> {
     None
 }
 
-/// A size for people: "340 KB", "96 MB", "9.6 GB".
+/// A size for people in the interface's language: "340 KB", "96 MB", "9.6 GB"
+/// («9,6 ГБ», «9,6 Go»: its units and its decimal sign).
 pub fn size_text(bytes: u64) -> String {
+    use crate::i18n::{tr, trf};
     let b = bytes as f64;
-    if b >= 1e9 {
-        format!("{:.1} GB", b / 1e9)
+    let (n, unit) = if b >= 1e9 {
+        (format!("{:.1}", b / 1e9), "{n} GB")
     } else if b >= 1e6 {
-        format!("{:.0} MB", b / 1e6)
+        (format!("{:.0}", b / 1e6), "{n} MB")
     } else {
-        format!("{:.0} KB", (b / 1e3).max(1.0))
-    }
+        (format!("{:.0}", (b / 1e3).max(1.0)), "{n} KB")
+    };
+    // The key's own text where the language writes a decimal point.
+    let n = if tr("decimal comma") == "," {
+        n.replace('.', ",")
+    } else {
+        n
+    };
+    trf(unit, &[("n", &n)])
 }
 
 /// A line for the program's log (`chesspenguin.log`; in a browser its console).

@@ -28,7 +28,7 @@ const read = (name) => s.logs.filter((l) => l.includes(`database read: ${name}`)
 const cbh = readdirSync(baseDir).find((n) => n.toLowerCase().endsWith('.cbh'));
 const stem = cbh.slice(0, -4);
 try {
-  await t.navigate(`${s.base}?lang=en`);
+  await t.navigate(`${s.base}?lang=${process.env.CP_LANG || "en"}`);
   await started();
   await sleep(2500);
 
@@ -64,7 +64,7 @@ try {
   }
 
   // The next visit: Chrome reads the remembered folder's database again by itself.
-  await t.navigate(`${s.base}?lang=en`);
+  await t.navigate(`${s.base}?lang=${process.env.CP_LANG || "en"}`);
   await started();
   await sleep(3000);
   await shot('cb-5-reloaded.png');
