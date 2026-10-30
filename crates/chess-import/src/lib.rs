@@ -66,6 +66,9 @@ pub enum Unsupported {
     Encrypted,
     #[error("the ChessBase 2CBH format is not supported; export the database as CBH or PGN")]
     ChessBase2,
+    /// A ChessBase database's `.cbh` given alone: its other files are needed too.
+    #[error("a ChessBase database is several files: open its folder")]
+    ChessBaseFiles,
 }
 
 /// What a database was read from.
@@ -572,11 +575,7 @@ pub fn open_bytes(
     match ext.as_str() {
         "cbz" => return Err(ImportError::Unsupported(Unsupported::Encrypted)),
         "2cbh" => return Err(ImportError::Unsupported(Unsupported::ChessBase2)),
-        "cbh" => {
-            return Err(ImportError::Corrupt(
-                "a ChessBase database is several files: open its folder".into(),
-            ));
-        }
+        "cbh" => return Err(ImportError::Unsupported(Unsupported::ChessBaseFiles)),
         _ => {}
     }
     if let Some(kind) = archive::sniff(&bytes) {
@@ -620,6 +619,93 @@ pub fn open_chessbase_files(
     );
     let part = convert_chessbase(&members)?;
     finish(part.pgn, Format::ChessBase, part.notes, progress, cancel)
+}
+
+/// [`open_chessbase_files`] taking the contents: each file's bytes are let go once
+/// the database is converted (the browser reads databases near its memory's limit).
+pub fn open_chessbase_owned(
+    cbh_name: &str,
+    files: Vec<(String, Vec<u8>)>,
+    progress: &mut dyn FnMut(ScanProgress),
+    cancel: &AtomicBool,
+) -> Result<Opened, ImportError> {
+    let members = chessbase::Files::from_owned(cbh_name, files);
+    let part = convert_chessbase(&members)?;
+    drop(members);
+    finish(part.pgn, Format::ChessBase, part.notes, progress, cancel)
+}
+
+/// What files the user chose (or found in a chosen folder) make: databases, each its
+/// files' places in the list (the database's own file first: its `.cbh` for a
+/// ChessBase one, with the files the reader uses after it), and ChessBase databases
+/// some files of which are not among them.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Chosen {
+    pub databases: Vec<Vec<usize>>,
+    /// The database's name (the `.cbh` file's, or a part's when it is not there).
+    pub incomplete: Vec<String>,
+}
+
+/// Groups the files `names` into databases (see [`Chosen`]). A ChessBase database is
+/// its `.cbh` and the files of the same name beside it; files of other kinds are
+/// databases of their own — in a folder only those of [`EXTENSIONS`], when the user
+/// chose them, any (the content decides, as in [`open`]).
+pub fn group_chosen(names: &[&str], folder: bool) -> Chosen {
+    let lower: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    let ext = |i: usize| {
+        lower[i]
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_owned())
+            .unwrap_or_default()
+    };
+    let stem = |i: usize| {
+        lower[i]
+            .rsplit_once('.')
+            .map_or(lower[i].as_str(), |(s, _)| s)
+            .to_owned()
+    };
+    let bases: Vec<usize> = (0..names.len()).filter(|&i| ext(i) == "cbh").collect();
+    let mut chosen = Chosen::default();
+    let mut taken = vec![false; names.len()];
+    for &cbh in &bases {
+        let parts: Vec<usize> = (0..names.len())
+            .filter(|&j| j != cbh && stem(j) == stem(cbh))
+            .collect();
+        for &j in &parts {
+            taken[j] = true;
+        }
+        taken[cbh] = true;
+        let has = |e: &str| e == "cbh" || parts.iter().any(|&j| ext(j) == e);
+        if chessbase::REQUIRED.iter().all(|e| has(e)) {
+            let mut db = vec![cbh];
+            db.extend(
+                parts
+                    .into_iter()
+                    .filter(|&j| chessbase::USED.contains(&ext(j).as_str())),
+            );
+            chosen.databases.push(db);
+        } else {
+            chosen.incomplete.push(names[cbh].to_owned());
+        }
+    }
+    for i in 0..names.len() {
+        if taken[i] {
+            continue;
+        }
+        let e = ext(i);
+        if chessbase::USED.contains(&e.as_str()) {
+            // A part of a ChessBase database without its .cbh: one note per database.
+            taken[i] = true;
+            let own = names[i].rsplit_once('.').map_or(names[i], |(s, _)| s);
+            let name = format!("{own}.cbh");
+            if !chosen.incomplete.contains(&name) {
+                chosen.incomplete.push(name);
+            }
+        } else if !folder || EXTENSIONS.contains(&e.as_str()) {
+            chosen.databases.push(vec![i]);
+        }
+    }
+    chosen
 }
 
 /// A converted part of a database: UTF-8 PGN and notes.
@@ -755,4 +841,40 @@ fn finish(
         format,
         notes,
     })
+}
+
+#[cfg(test)]
+mod chosen_tests {
+    use super::*;
+
+    #[test]
+    fn files_chosen_make_databases() {
+        // A whole ChessBase set (case of Windows copies), a PGN, a text file.
+        let names = [
+            "Base.CBH",
+            "base.cbg",
+            "Base.cba",
+            "Base.cbj",
+            "Base.ini",
+            "games.pgn",
+            "x.txt",
+        ];
+        let c = group_chosen(&names, false);
+        // The settings file is the database's (ignored); a file chosen opens by content.
+        assert_eq!(c.databases, vec![vec![0, 1, 2], vec![5], vec![6]]);
+        assert!(c.incomplete.is_empty());
+        // In a folder only databases: no text files.
+        let c = group_chosen(&names, true);
+        assert_eq!(c.databases, vec![vec![0, 1, 2], vec![5]]);
+    }
+
+    #[test]
+    fn a_cbh_alone_or_parts_alone_are_incomplete() {
+        let c = group_chosen(&["Mega Database 2026.cbh"], false);
+        assert!(c.databases.is_empty());
+        assert_eq!(c.incomplete, vec!["Mega Database 2026.cbh".to_owned()]);
+        let c = group_chosen(&["Mega.cbg", "Mega.cba"], false);
+        assert!(c.databases.is_empty());
+        assert_eq!(c.incomplete, vec!["Mega.cbh".to_owned()]);
+    }
 }

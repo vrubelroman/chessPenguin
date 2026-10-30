@@ -5,8 +5,12 @@ use std::cell::RefCell;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-/// The element through which files are chosen (one for the page; checks give it files).
+/// The elements through which files and a folder are chosen (one each for the page;
+/// checks give them files).
 pub const OPEN_INPUT_ID: &str = "cp-open-files";
+pub const OPEN_FOLDER_ID: &str = "cp-open-folder";
+/// The program's canvas (`page/index.html`).
+const CANVAS_ID: &str = "cp-canvas";
 
 fn document() -> Option<web_sys::Document> {
     web_sys::window()?.document()
@@ -22,32 +26,30 @@ pub async fn next_task() {
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
-type Picked = Box<dyn FnOnce(Read)>;
-
-/// Files read: their names and contents, and the ones too big to read (name, bytes).
-pub struct Read {
-    pub read: Vec<(String, Vec<u8>)>,
-    pub too_big: Vec<(String, u64)>,
-}
+type Picked = Box<dyn FnOnce(Vec<web_sys::File>)>;
 
 thread_local! {
     /// What to do with the files chosen next.
     static ON_PICKED: RefCell<Option<Picked>> = const { RefCell::new(None) };
 }
 
-/// The page's file input, made once: hidden, several files, `accept` the extensions.
-fn open_input(accept: &str) -> Result<web_sys::HtmlInputElement, JsValue> {
+/// The page's file input `id`, made once: hidden, several files, `accept` the
+/// extensions; `folder`: it chooses a folder (`webkitdirectory`, every browser has it).
+fn open_input(id: &str, accept: &str, folder: bool) -> Result<web_sys::HtmlInputElement, JsValue> {
     let doc = document().ok_or("no document")?;
-    if let Some(el) = doc.get_element_by_id(OPEN_INPUT_ID) {
+    if let Some(el) = doc.get_element_by_id(id) {
         let input: web_sys::HtmlInputElement = el.dyn_into()?;
         input.set_accept(accept);
         return Ok(input);
     }
     let input: web_sys::HtmlInputElement = doc.create_element("input")?.dyn_into()?;
-    input.set_id(OPEN_INPUT_ID);
+    input.set_id(id);
     input.set_type("file");
     input.set_multiple(true);
     input.set_accept(accept);
+    if folder {
+        input.set_attribute("webkitdirectory", "")?;
+    }
     input.style().set_property("display", "none")?;
     let on_change = Closure::<dyn FnMut(web_sys::Event)>::new(move |ev: web_sys::Event| {
         let Some(input) = ev
@@ -62,12 +64,30 @@ fn open_input(accept: &str) -> Result<web_sys::HtmlInputElement, JsValue> {
             .unwrap_or_default();
         // The same file chosen again is a change too.
         input.set_value("");
-        let Some(then) = ON_PICKED.with_borrow_mut(Option::take) else {
-            return;
+        // The keys go to the program again, not to the hidden input.
+        if let Some(canvas) = document()
+            .and_then(|d| d.get_element_by_id(CANVAS_ID))
+            .and_then(|c| c.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = canvas.focus();
+        }
+        let files = if folder {
+            // The folder's own files: a database's folder, not what is below it.
+            files
+                .into_iter()
+                .filter(|f| {
+                    js_sys::Reflect::get(f, &"webkitRelativePath".into())
+                        .ok()
+                        .and_then(|p| p.as_string())
+                        .is_none_or(|p| p.matches('/').count() <= 1)
+                })
+                .collect()
+        } else {
+            files
         };
-        wasm_bindgen_futures::spawn_local(async move {
-            then(read_files(files).await);
-        });
+        if let Some(then) = ON_PICKED.with_borrow_mut(Option::take) {
+            then(files);
+        }
     });
     input.add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())?;
     // The input lives as long as the page.
@@ -76,34 +96,21 @@ fn open_input(accept: &str) -> Result<web_sys::HtmlInputElement, JsValue> {
     Ok(input)
 }
 
-/// The contents of `files`, with their names (a file that cannot be read is left
-/// out; one larger than [`crate::platform::files::TOO_BIG`] is not read).
-pub async fn read_files(files: Vec<web_sys::File>) -> Read {
-    let mut out = Read {
-        read: Vec::with_capacity(files.len()),
-        too_big: Vec::new(),
-    };
-    for f in files {
-        let size = f.size() as u64;
-        if size > crate::platform::files::TOO_BIG {
-            out.too_big.push((f.name(), size));
-            continue;
-        }
-        match wasm_bindgen_futures::JsFuture::from(f.array_buffer()).await {
-            Ok(buf) => out
-                .read
-                .push((f.name(), js_sys::Uint8Array::new(&buf).to_vec())),
-            Err(e) => log::warn!("cannot read {}: {e:?}", f.name()),
-        }
-    }
-    out
+/// Asks the user for files (the browser's dialog); `then` gets them once chosen (not
+/// read: the page's reader reads them). Must run soon after the user's click or key (a
+/// browser opens the dialog only then: egui handles input in the next frame, well
+/// within that time).
+pub fn pick_files(accept: &str, then: impl FnOnce(Vec<web_sys::File>) + 'static) {
+    pick(OPEN_INPUT_ID, accept, false, then);
 }
 
-/// Asks the user for files (the browser's dialog); `then` gets their contents once
-/// chosen. Must run soon after the user's click or key (a browser opens the dialog
-/// only then: egui handles input in the next frame, well within that time).
-pub fn pick_files(accept: &str, then: impl FnOnce(Read) + 'static) {
-    match open_input(accept) {
+/// Asks the user for a folder; `then` gets the files right in it.
+pub fn pick_folder(then: impl FnOnce(Vec<web_sys::File>) + 'static) {
+    pick(OPEN_FOLDER_ID, "", true, then);
+}
+
+fn pick(id: &str, accept: &str, folder: bool, then: impl FnOnce(Vec<web_sys::File>) + 'static) {
+    match open_input(id, accept, folder) {
         Ok(input) => {
             ON_PICKED.with_borrow_mut(|p| *p = Some(Box::new(then)));
             input.click();

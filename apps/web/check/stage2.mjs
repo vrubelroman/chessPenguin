@@ -66,7 +66,7 @@ try {
     await sleep(2000);
     await step({ shot: 's2-6-kept.png' });
     f = await files();
-    check([...f.keys()].some((k) => k.startsWith('/data/copies/Kept games')), 'a copy of the file is kept in the browser');
+    check([...f.keys()].some((k) => /^\/data\/copies\/[0-9]+\/Kept games\.pgn$/.test(k)), 'a copy of the file is kept in the browser');
   }
   // After a reload: «My games» and the copy are there, the other file is to be chosen again.
   await step({ url: '?lang=en' });

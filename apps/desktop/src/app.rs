@@ -26,6 +26,7 @@ use crate::sound::SoundPlayer;
 enum Async {
     DatabasesPicked(Vec<PathBuf>),
     /// Files not opened: too big for a browser (name, bytes).
+    #[cfg(web)]
     TooBig(Vec<(String, u64)>),
     SavePicked(PathBuf),
     SaveCancelled,
@@ -35,6 +36,24 @@ enum Async {
     /// A remembered file the browser let the page read again.
     #[cfg(web)]
     ReadAllowed(PathBuf),
+    /// ChessBase databases not all files of which were chosen (their `.cbh` names).
+    #[cfg(web)]
+    Incomplete(Vec<String>),
+    /// A folder was chosen with no database in it.
+    #[cfg(web)]
+    EmptyFolder,
+    /// A copy of the visit's database `.0` kept in the browser, or why not.
+    #[cfg(web)]
+    CopyKept(PathBuf, Result<PathBuf, crate::platform::files::KeepCopy>),
+}
+
+/// What the web version tells in a window of its own about the files chosen.
+#[cfg(web)]
+enum WebNotice {
+    /// Databases too big for a browser (name, bytes).
+    TooBig(Vec<(String, u64)>),
+    /// A ChessBase database's `.cbh` chosen without its other files (its name).
+    Incomplete(String),
 }
 
 /// A passing message at the bottom; `undo`: with the button that puts a deleted game back.
@@ -230,6 +249,8 @@ pub struct App {
     draft_offer: Option<crate::my_games::Draft>,
     #[cfg(web)]
     draft_at: Option<f64>,
+    #[cfg(web)]
+    web_notice: Option<WebNotice>,
     confirm_close: Option<CloseIntent>,
     /// Close the game once the pending "save as" succeeds.
     close_after_save: Option<CloseIntent>,
@@ -470,6 +491,8 @@ impl App {
             draft_offer: crate::my_games::read_draft(),
             #[cfg(web)]
             draft_at: None,
+            #[cfg(web)]
+            web_notice: None,
             confirm_close: None,
             close_after_save: None,
             find_after_close: None,
@@ -2179,7 +2202,13 @@ impl App {
                             self.settings.last_target = Some(dest.clone());
                             self.settings_dirty = true;
                             self.library.select_db(&dest, ctx);
-                            self.toast(ctx, trf("Copy made: {path}", &[("path", &dest.display())]));
+                            self.toast(
+                                ctx,
+                                trf(
+                                    "Copy made: {path}",
+                                    &[("path", &crate::platform::files::shown(&dest))],
+                                ),
+                            );
                         }
                         Err(e) => {
                             self.toast(ctx, trf("Could not make the copy: {e}", &[("e", &e)]))
@@ -2438,16 +2467,23 @@ impl App {
         self.pasted(ctx);
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                Async::TooBig(files) => {
-                    for (_, size) in files {
-                        let size = crate::platform::size_text(size);
-                        self.toast_for(
-                            ctx,
-                            trf("This database is too big for the web version ({size}). Open it in the desktop program — it has no such limit.", &[("size", &size)]),
-                            8.0,
-                        );
+                #[cfg(web)]
+                Async::TooBig(files) => self.web_notice = Some(WebNotice::TooBig(files)),
+                #[cfg(web)]
+                Async::Incomplete(names) => {
+                    if let Some(name) = names.into_iter().next() {
+                        self.web_notice = Some(WebNotice::Incomplete(name));
                     }
                 }
+                #[cfg(web)]
+                Async::EmptyFolder => {
+                    self.toast(
+                        ctx,
+                        tr("There is no database in this folder (.pgn, .cbh, .cbv, .zip, .7z)."),
+                    );
+                }
+                #[cfg(web)]
+                Async::CopyKept(path, kept) => self.copy_kept(ctx, path, kept),
                 Async::DatabasesPicked(paths) => {
                     // The file chosen again takes the place of the one gone.
                     if let Some(old) = self.choosing_again.take() {
@@ -2527,7 +2563,13 @@ impl App {
         match chess_core::pgn::store::write_atomic(&path, pgn.as_bytes()) {
             Ok(()) => {
                 g.game.mark_saved();
-                self.toast(ctx, trf("Saved: {path}", &[("path", &path.display())]));
+                self.toast(
+                    ctx,
+                    trf(
+                        "Saved: {path}",
+                        &[("path", &crate::platform::files::shown(&path))],
+                    ),
+                );
                 if let Some(intent) = self.close_after_save.take() {
                     self.finish_close(ctx, intent);
                 }
@@ -2876,9 +2918,28 @@ impl App {
     fn keep_copy(&mut self, ctx: &egui::Context, path: PathBuf) {
         #[cfg(web)]
         {
+            let (tx, wake) = (self.tx.clone(), ctx.clone());
+            crate::platform::files::keep_copy(&path.clone(), move |kept| {
+                let _ = tx.send(Async::CopyKept(path, kept));
+                wake.request_repaint();
+            });
+        }
+        #[cfg(not(web))]
+        let _ = (ctx, path);
+    }
+
+    /// The copy of `path` is kept (or not): it takes the file's place on the shelf.
+    #[cfg(web)]
+    fn copy_kept(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        kept: Result<PathBuf, crate::platform::files::KeepCopy>,
+    ) {
+        {
             use crate::platform::files::KeepCopy;
             use crate::platform::size_text;
-            match crate::platform::files::keep_copy(&path) {
+            match kept {
                 Ok(copy) => {
                     for d in self.settings.databases.iter_mut().filter(|d| **d == path) {
                         *d = copy.clone();
@@ -2905,8 +2966,96 @@ impl App {
                 Err(KeepCopy::Failed(e)) => self.toast(ctx, e),
             }
         }
-        #[cfg(not(web))]
-        let _ = (ctx, path);
+    }
+
+    /// The window of [`WebNotice`]: a database too big for a browser (with the way to
+    /// the program for the computer), or a ChessBase database's other files to choose.
+    #[cfg(web)]
+    fn web_notice(&mut self, ctx: &egui::Context) {
+        let Some(notice) = &self.web_notice else {
+            return;
+        };
+        let mut close = false;
+        let mut folder = false;
+        let mut files = false;
+        let modal = egui::Modal::new(egui::Id::new("web_notice")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            match notice {
+                WebNotice::TooBig(dbs) => {
+                    for (name, size) in dbs {
+                        ui.label(RichText::new(name.as_str()).strong());
+                        ui.label(trf(
+                            "This database is too big for the browser ({size}, the limit is {limit}). Sorry — open it in the desktop program.",
+                            &[
+                                ("size", &crate::platform::size_text(*size)),
+                                ("limit", &crate::platform::size_text(crate::platform::files::TOO_BIG)),
+                            ],
+                        ));
+                    }
+                    ui.add_space(6.0);
+                    let lang = match crate::i18n::current() {
+                        crate::i18n::Lang::En => "",
+                        crate::i18n::Lang::Ru => "ru/",
+                        crate::i18n::Lang::Fr => "fr/",
+                        crate::i18n::Lang::De => "de/",
+                        crate::i18n::Lang::Es => "es/",
+                        crate::i18n::Lang::It => "it/",
+                        crate::i18n::Lang::Pt => "pt/",
+                        crate::i18n::Lang::Uz => "uz/",
+                        crate::i18n::Lang::Kk => "kk/",
+                    };
+                    ui.hyperlink_to(
+                        tr("Download ChessPenguin for the computer"),
+                        format!("/{lang}#download"),
+                    );
+                    ui.add_space(8.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close = ui.button(tr("Close")).clicked();
+                    });
+                }
+                WebNotice::Incomplete(name) => {
+                    ui.label(RichText::new(name.as_str()).strong());
+                    ui.label(tr(
+                        "A ChessBase database is several files (.cbh, .cbg, .cba…). Choose its folder or all its files at once.",
+                    ));
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(if crate::platform::files::remembers_chosen() {
+                            tr("Allow access to the database's folder — its other files will be found by themselves.")
+                        } else {
+                            tr("Choose the database's folder — its other files will be found by themselves.")
+                        })
+                        .weak(),
+                    );
+                    ui.add_space(8.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        folder = ui.button(tr("📁 Choose the database's folder")).clicked();
+                        files = ui.button(tr("Choose the database's files")).clicked();
+                        close = ui.button(tr("Cancel")).clicked();
+                    });
+                }
+            }
+        });
+        if close || modal.should_close() {
+            self.web_notice = None;
+        }
+        if folder {
+            self.web_notice = None;
+            self.pick_database_folder(ctx);
+        }
+        if files {
+            self.web_notice = None;
+            self.pick_databases(ctx);
+        }
+    }
+
+    #[cfg(web)]
+    fn pick_database_folder(&self, ctx: &egui::Context) {
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        crate::platform::files::pick_database_folder(move |picked| {
+            send_picked(&tx, picked);
+            ctx.request_repaint();
+        });
     }
 
     /// The open game's PGN, downloaded as a file named after the game.
@@ -3261,6 +3410,8 @@ impl eframe::App for App {
         }
         self.offer_events(&ctx);
         self.page_frame(&ctx);
+        #[cfg(web)]
+        self.web_notice(&ctx);
         self.debug_step(&ctx);
         self.debug_keys(&ctx);
         self.debug_screenshot(&ctx);
@@ -3591,7 +3742,7 @@ impl eframe::App for App {
                         self.toast = Some(Toast {
                             text: trf(
                                 "Removed from the shelf; the file stays: {path}",
-                                &[("path", &p.display())],
+                                &[("path", &crate::platform::files::shown(&p))],
                             ),
                             until: ctx.input(|i| i.time) + 6.0,
                             undo: false,
@@ -3610,6 +3761,11 @@ impl eframe::App for App {
                     LibraryAction::ChooseAgain(p) => {
                         self.choosing_again = Some(p);
                         self.pick_databases(&ctx);
+                    }
+                    #[cfg(web)]
+                    LibraryAction::ChooseFolderAgain(p) => {
+                        self.choosing_again = Some(p);
+                        self.pick_database_folder(&ctx);
                     }
                     LibraryAction::KeepCopy(p) => self.keep_copy(&ctx, p),
                     LibraryAction::OpenSettings => self.settings_ui.open = true,
@@ -3827,8 +3983,17 @@ fn send_picked(tx: &Sender<Async>, picked: crate::platform::files::Picked) {
     if !picked.paths.is_empty() {
         let _ = tx.send(Async::DatabasesPicked(picked.paths));
     }
-    if !picked.too_big.is_empty() {
-        let _ = tx.send(Async::TooBig(picked.too_big));
+    #[cfg(web)]
+    {
+        if !picked.too_big.is_empty() {
+            let _ = tx.send(Async::TooBig(picked.too_big));
+        }
+        if !picked.incomplete.is_empty() {
+            let _ = tx.send(Async::Incomplete(picked.incomplete));
+        }
+        if picked.empty_folder {
+            let _ = tx.send(Async::EmptyFolder);
+        }
     }
 }
 

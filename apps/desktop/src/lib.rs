@@ -94,12 +94,17 @@ pub async fn start_web(
         .await
 }
 
-/// The page's reader (`import-worker.js`, a worker with an instance of its own): reads
-/// the file `name` and answers with its text and index, or only how many games it holds
-/// (`count`; `platform::web::import`).
+/// The page's reader (`import-worker.js`, a worker with an instance of its own): takes
+/// the files of a database one by one ([`reader_give`]), reads it and answers with its
+/// text and index, or only how many games it holds (`count`; `platform::web::import`).
 #[cfg(web)]
-pub fn read_database(name: &str, bytes: Vec<u8>, count: bool) -> wasm_bindgen::JsValue {
-    platform::web::import::answer(name, bytes, count)
+pub fn reader_give(name: String, bytes: Vec<u8>) {
+    platform::web::import::give(name, bytes);
+}
+
+#[cfg(web)]
+pub fn reader_read(count: bool) -> wasm_bindgen::JsValue {
+    platform::web::import::answer(count)
 }
 
 /// The desktop program: `chesspenguin [--bench <database> [report.txt]]`.

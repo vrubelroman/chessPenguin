@@ -7,9 +7,10 @@
 //   t.navigate(url) · t.evaluate(js) · t.waitFor(js, ms) · t.screenshot()
 //   t.click(x, y, {double, right}) · t.key(key, mods, times) · t.setFiles(inputId, paths)
 //   t.choose(paths, open): the user chooses the files in the dialog open() brings up
+//   t.chooseFolder(dir, open): … the folder
 //   t.beforeLoad(js): js runs in every page loaded later, before its scripts
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { launch as launchFirefox } from './firefox.mjs';
@@ -94,6 +95,15 @@ async function firefox(port) {
           await open();
           await this.waitFor(`!!document.getElementById('cp-open-files')`, 5000);
           await this.setFiles('cp-open-files', files);
+        },
+        // The user chooses the folder `dir` (the page's folder input, webkitdirectory).
+        // WebDriver gives such an input no folder in Firefox ("Is directory"): the
+        // folder's own files are given, as the browser would give them.
+        async chooseFolder(dir, open) {
+          await open();
+          await this.waitFor(`!!document.getElementById('cp-open-folder')`, 5000);
+          const files = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(dir, e.name));
+          await this.setFiles('cp-open-folder', files);
         },
       };
     },
@@ -243,6 +253,34 @@ async function chromium(port) {
                 handles.push(h);
               }
               return handles;
+            };
+            return true;
+          })()`);
+          await open();
+        },
+        // The user chooses the folder `dir`: in Chromium showDirectoryPicker, its files
+        // put into a folder of the site's private file system (as for choose()).
+        async chooseFolder(dir, open) {
+          const picker = await this.evaluate(`typeof window.showDirectoryPicker === 'function'`);
+          if (!picker) {
+            await open();
+            await this.waitFor(`!!document.getElementById('cp-open-folder')`, 5000);
+            return this.setFiles('cp-open-folder', [dir]);
+          }
+          const given = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile())
+            .map((e) => ({ name: e.name, b64: readFileSync(join(dir, e.name)).toString('base64') }));
+          await this.evaluate(`(() => {
+            const given = ${JSON.stringify(given)};
+            window.showDirectoryPicker = async () => {
+              const root = await navigator.storage.getDirectory();
+              const d = await root.getDirectoryHandle(${JSON.stringify(basename(dir))}, { create: true });
+              for (const g of given) {
+                const h = await d.getFileHandle(g.name, { create: true });
+                const w = await h.createWritable();
+                await w.write(Uint8Array.from(atob(g.b64), (c) => c.charCodeAt(0)));
+                await w.close();
+              }
+              return d;
             };
             return true;
           })()`);

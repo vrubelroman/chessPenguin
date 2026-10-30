@@ -62,6 +62,22 @@ impl Files {
         Ok(files)
     }
 
+    /// The database whose `.cbh` file is `cbh_name` from files given as (name, content),
+    /// taking the contents (others are left out).
+    pub fn from_owned(cbh_name: &str, members: Vec<(String, Vec<u8>)>) -> Files {
+        let stem = stem_of(cbh_name).to_owned();
+        let mut files = Files {
+            name: stem.rsplit('/').next().unwrap_or(&stem).to_owned(),
+            files: HashMap::new(),
+        };
+        for (name, data) in members {
+            if let Some(ext) = part_of(&name, &stem) {
+                files.files.insert(ext, data);
+            }
+        }
+        files
+    }
+
     /// Picks the files of the database whose `.cbh` member is `cbh_name` from archive
     /// members (`name`, bytes).
     pub fn from_members<'a>(
@@ -74,11 +90,7 @@ impl Files {
             files: HashMap::new(),
         };
         for (name, data) in members {
-            // Names differ in case in sets copied from Windows ("Base.CBH", "base.cbg").
-            if let Some(ext) = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase())
-                && stem_of(name).to_lowercase() == stem.to_lowercase()
-                && USED.contains(&ext.as_str())
-            {
+            if let Some(ext) = part_of(name, &stem) {
                 files.files.insert(ext, data.to_vec());
             }
         }
@@ -100,7 +112,18 @@ impl Files {
 }
 
 /// Files the reader uses; the others (search boosters, settings, media) are ignored.
-const USED: [&str; 6] = ["cbh", "cbg", "cba", "cbp", "cbt", "cbc"];
+pub const USED: [&str; 6] = ["cbh", "cbg", "cba", "cbp", "cbt", "cbc"];
+
+/// The files a database cannot be read without (the others hold names and comments).
+pub const REQUIRED: [&str; 2] = ["cbh", "cbg"];
+
+/// The extension of `name` when it is a file of the database `stem` the reader uses
+/// (names differ in case in sets copied from Windows: "Base.CBH", "base.cbg").
+fn part_of(name: &str, stem: &str) -> Option<String> {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase())?;
+    (stem_of(name).to_lowercase() == stem.to_lowercase() && USED.contains(&ext.as_str()))
+        .then_some(ext)
+}
 
 fn stem_of(name: &str) -> &str {
     name.rsplit_once('.').map_or(name, |(s, _)| s)

@@ -12,16 +12,87 @@ const DATABASES: [&str; 10] = [
     "pgn", "PGN", "cbh", "CBH", "cbv", "CBV", "zip", "ZIP", "7z", "7Z",
 ];
 
-/// Files a browser does not open: larger than this (decisions «Веб-версия»: a warning
-/// above 1 GB — the program for the computer opens them).
-pub const TOO_BIG: u64 = 1 << 30;
+/// Databases a browser does not open: their files together larger than this (the
+/// program for the computer opens them).
+pub const TOO_BIG: u64 = 2_000_000_000;
 
-/// What the user chose or dropped: the databases to open, and the files left out
-/// because they are too big for a browser (name, bytes).
+/// What the user chose or dropped: the databases to open, the ones left out because
+/// they are too big for a browser (name, bytes of their files), the ChessBase
+/// databases not all files of which were given (the name of their `.cbh`), and
+/// whether a chosen folder held no database.
 #[derive(Default)]
 pub struct Picked {
     pub paths: Vec<PathBuf>,
     pub too_big: Vec<(String, u64)>,
+    pub incomplete: Vec<String>,
+    pub empty_folder: bool,
+}
+
+/// The files the user gave the page, made databases: the ChessBase ones of their
+/// several files (`chess_import::group_chosen`), each kept for the session in a folder
+/// of its own. Also the files of each database kept (its path, their places in
+/// `files`), for the browser to remember.
+#[cfg(web)]
+pub(super) fn gather(
+    files: &[web_sys::File],
+    folder: bool,
+) -> (Picked, Vec<(PathBuf, Vec<usize>)>) {
+    let names: Vec<String> = files.iter().map(|f| f.name()).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let chosen = chess_import::group_chosen(&refs, folder);
+    let mut picked = Picked {
+        incomplete: chosen.incomplete,
+        ..Picked::default()
+    };
+    let mut kept = Vec::new();
+    for db in chosen.databases {
+        let size: u64 = db.iter().map(|&i| files[i].size() as u64).sum();
+        if size > TOO_BIG {
+            picked.too_big.push((names[db[0]].clone(), size));
+            continue;
+        }
+        let path = super::web::vfs::add_opened(db.iter().map(|&i| files[i].clone()).collect());
+        picked.paths.push(path.clone());
+        kept.push((path, db));
+    }
+    picked.empty_folder = folder
+        && picked.paths.is_empty()
+        && picked.too_big.is_empty()
+        && picked.incomplete.is_empty();
+    (picked, kept)
+}
+
+/// A ChessBase database's `.cbh` given without the files it cannot be read without
+/// (a browser has only the files the user gave it).
+pub fn chessbase_incomplete(path: &std::path::Path) -> bool {
+    #[cfg(web)]
+    {
+        let cbh = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("cbh"));
+        cbh && super::web::vfs::database_files(path).is_ok_and(|files| {
+            !files
+                .iter()
+                .any(|(name, _)| name.to_lowercase().ends_with(".cbg"))
+        })
+    }
+    #[cfg(not(web))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// How the user's file `path` is named to the user: on a computer its path, in a
+/// browser its name (the page's own places, `/opened/…`, mean nothing to the user).
+pub fn shown(path: &std::path::Path) -> String {
+    #[cfg(web)]
+    return path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    #[cfg(not(web))]
+    path.display().to_string()
 }
 
 /// A file the browser holds for this visit only (one the user chose or dropped): after
@@ -36,36 +107,53 @@ pub fn session_only(path: &std::path::Path) -> bool {
     }
 }
 
-/// Keeps a copy of the session file `path` in the browser's storage, where it stays
-/// between visits; the copy's path. Refused when the browser gives the site too little
-/// room (the size and what is free, for the message).
+/// Keeps a copy of the session database `path` (all its files) in the browser's
+/// storage, where it stays between visits; `then` gets the copy's path. Refused when
+/// the browser gives the site too little room (the size and what is free, for the
+/// message).
 #[cfg(web)]
-pub fn keep_copy(path: &std::path::Path) -> Result<PathBuf, KeepCopy> {
-    let bytes = super::fs::read(path).map_err(|e| KeepCopy::Failed(e.to_string()))?;
-    let need = bytes.len() as u64;
+pub fn keep_copy(path: &std::path::Path, then: impl FnOnce(Result<PathBuf, KeepCopy>) + 'static) {
+    use wasm_bindgen::JsCast;
+    let parts = match super::web::vfs::database_files(path) {
+        Ok(p) => p,
+        Err(e) => return then(Err(KeepCopy::Failed(e.to_string()))),
+    };
+    let need: u64 = parts
+        .iter()
+        .map(|(_, s)| match s.dyn_ref::<web_sys::Blob>() {
+            Some(b) => b.size() as u64,
+            None => js_sys::Reflect::get(s, &"length".into())
+                .ok()
+                .and_then(|l| l.as_f64())
+                .unwrap_or(0.0) as u64,
+        })
+        .sum();
     if let Some(free) = super::storage_free()
         && need + need / 10 > free
     {
-        return Err(KeepCopy::NoRoom { need, free });
+        return then(Err(KeepCopy::NoRoom { need, free }));
     }
-    let name = path.file_name().map(|n| n.to_owned()).unwrap_or_default();
-    let dir = super::data_dir().unwrap_or_default().join("copies");
-    let mut copy = dir.join(&name);
-    let mut n = 1;
-    while super::fs::exists(&copy) {
-        n += 1;
-        let stem = std::path::Path::new(&name)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let ext = std::path::Path::new(&name)
-            .extension()
-            .map(|e| e.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        copy = dir.join(format!("{stem} ({n}).{ext}"));
-    }
-    super::fs::write_atomic(&copy, &bytes).map_err(|e| KeepCopy::Failed(e.to_string()))?;
-    Ok(copy)
+    // A folder of its own, as the database had: the names stay as they were.
+    let dir = super::data_dir()
+        .unwrap_or_default()
+        .join("copies")
+        .join((js_sys::Date::now() as u64).to_string());
+    let first = dir.join(&parts[0].0);
+    wasm_bindgen_futures::spawn_local(async move {
+        for (name, source) in parts {
+            let bytes = match source.dyn_into::<web_sys::Blob>() {
+                Ok(blob) => match wasm_bindgen_futures::JsFuture::from(blob.array_buffer()).await {
+                    Ok(buf) => js_sys::Uint8Array::new(&buf).to_vec(),
+                    Err(e) => return then(Err(KeepCopy::Failed(format!("{e:?}")))),
+                },
+                Err(array) => js_sys::Uint8Array::new(&array).to_vec(),
+            };
+            if let Err(e) = super::fs::write_atomic(&dir.join(name), &bytes) {
+                return then(Err(KeepCopy::Failed(e.to_string())));
+            }
+        }
+        then(Ok(first));
+    });
 }
 
 /// Why no copy was kept.
@@ -92,7 +180,7 @@ pub fn pick_databases(then: impl FnOnce(Picked) + Send + 'static) {
                     .pick_files();
                 then(Picked {
                     paths: picked.unwrap_or_default(),
-                    too_big: Vec::new(),
+                    ..Picked::default()
                 });
             });
     }
@@ -104,12 +192,23 @@ pub fn pick_databases(then: impl FnOnce(Picked) + Send + 'static) {
             .map(|e| format!(".{e}"))
             .collect();
         if super::web::remembered::supported() {
-            super::web::remembered::pick(&extensions, move |paths, too_big| {
-                then(Picked { paths, too_big })
-            });
+            super::web::remembered::pick(&extensions, then);
         } else {
-            super::web::page::pick_files(&extensions.join(","), move |files| then(opened(files)));
+            super::web::page::pick_files(&extensions.join(","), move |files| {
+                then(gather(&files, false).0)
+            });
         }
+    }
+}
+
+/// Asks the user for a database's folder (a ChessBase database is several files): its
+/// databases are found by their files' names. Chrome and Edge remember the folder.
+#[cfg(web)]
+pub fn pick_database_folder(then: impl FnOnce(Picked) + Send + 'static) {
+    if super::web::remembered::supported_folder() {
+        super::web::remembered::pick_folder(then);
+    } else {
+        super::web::page::pick_folder(move |files| then(gather(&files, true).0));
     }
 }
 
@@ -169,22 +268,7 @@ pub fn take_dropped(ctx: &egui::Context, then: impl FnOnce(Picked) + Send + 'sta
         if files.is_empty() {
             return;
         }
-        wasm_bindgen_futures::spawn_local(async move {
-            then(opened(super::web::page::read_files(files).await));
-        });
-    }
-}
-
-/// The files read, kept for the session.
-#[cfg(web)]
-fn opened(files: super::web::page::Read) -> Picked {
-    Picked {
-        paths: files
-            .read
-            .into_iter()
-            .map(|(name, bytes)| super::web::vfs::add_opened(&name, bytes))
-            .collect(),
-        too_big: files.too_big,
+        then(gather(&files, false).0);
     }
 }
 

@@ -6,11 +6,17 @@
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-/// The reader worker's work (`page/import-worker.js`): the database in the file `name`,
-/// read and indexed away from the page (or only its games counted).
+/// The reader worker's work (`page/import-worker.js`): one more file of the database
+/// to read (its own file first) …
 #[wasm_bindgen]
-pub fn read_database(name: String, bytes: Vec<u8>, count: bool) -> JsValue {
-    chesspenguin_app::read_database(&name, bytes, count)
+pub fn reader_give(name: String, bytes: Vec<u8>) {
+    chesspenguin_app::reader_give(name, bytes);
+}
+
+/// … and the database read and indexed away from the page (or only its games counted).
+#[wasm_bindgen]
+pub fn reader_read(count: bool) -> JsValue {
+    chesspenguin_app::reader_read(count)
 }
 
 /// Starts ChessPenguin in the page's canvas `canvas_id`. Resolves once the interface

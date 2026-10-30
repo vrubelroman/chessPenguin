@@ -63,6 +63,9 @@ pub enum LibraryAction {
     /// Let the page read the remembered file again (the browser asks the user).
     #[cfg(web)]
     AllowReading(PathBuf),
+    /// Choose the folder of the ChessBase database whose `.cbh` alone is there.
+    #[cfg(web)]
+    ChooseFolderAgain(PathBuf),
     /// Keep a copy of a file in the browser (it opens then without choosing it).
     KeepCopy(PathBuf),
     OpenSettings,
@@ -1099,6 +1102,9 @@ impl Library {
                 });
                 trf("loading… {n}", &[("n", &p.games)])
             }
+            Some(Slot::Failed(_)) if crate::platform::files::chessbase_incomplete(path) => {
+                tr("📁 Choose the database's folder").into()
+            }
             Some(Slot::Failed(_)) | None if crate::platform::files::waiting_to_read(path) => {
                 tr("🔒 Allow reading").into()
             }
@@ -1170,9 +1176,9 @@ impl Library {
                         &[("name", name)],
                     )
                 };
-                resp.on_hover_text(format!("{whose}\n{}", path.display()))
+                resp.on_hover_text(format!("{whose}\n{}", crate::platform::files::shown(path)))
             }
-            None => resp.on_hover_text(path.display().to_string()),
+            None => resp.on_hover_text(crate::platform::files::shown(path)),
         };
         if resp.clicked() {
             self.select_db(path, ui.ctx());
@@ -1268,12 +1274,39 @@ impl Library {
                     ui.add_space(40.0);
                     ui.label(trf(
                         "Reading {path} — games found: {n}",
-                        &[("path", &path.display()), ("n", &p.games)],
+                        &[
+                            ("path", &crate::platform::files::shown(&path)),
+                            ("n", &p.games),
+                        ],
                     ));
                     ui.add(egui::ProgressBar::new(frac).desired_width(400.0));
                     if ui.button(tr("Cancel")).clicked() {
                         cancel.store(true, Ordering::Relaxed);
                     }
+                });
+                return;
+            }
+            #[cfg(web)]
+            Some(Slot::Failed(_)) if crate::platform::files::chessbase_incomplete(&path) => {
+                // A ChessBase database's .cbh without its other files (one chosen
+                // alone at an earlier visit): its folder or all its files.
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(tr(
+                        "A ChessBase database is several files (.cbh, .cbg, .cba…). Choose its folder or all its files at once.",
+                    ));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr("📁 Choose the database's folder")).clicked() {
+                            actions.push(LibraryAction::ChooseFolderAgain(path.clone()));
+                        }
+                        if ui.button(tr("Choose the database's files")).clicked() {
+                            actions.push(LibraryAction::ChooseAgain(path.clone()));
+                        }
+                        if ui.button(tr("Remove from list")).clicked() {
+                            actions.push(LibraryAction::RemoveDatabase(path.clone()));
+                        }
+                    });
                 });
                 return;
             }
@@ -1329,7 +1362,7 @@ impl Library {
                     ui.label(
                         RichText::new(trf(
                             "Could not open {path}: {e}",
-                            &[("path", &path.display()), ("e", &e)],
+                            &[("path", &crate::platform::files::shown(&path)), ("e", &e)],
                         ))
                         .color(ui.visuals().error_fg_color),
                     );
@@ -1439,6 +1472,17 @@ fn import_error(e: &ImportError) -> String {
             "The ChessBase 2CBH format is not supported: export the database from ChessBase as CBH or PGN",
         )
         .into(),
+        ImportError::Unsupported(Unsupported::ChessBaseFiles) => tr(
+            "A ChessBase database is several files (.cbh, .cbg, .cba…). Choose its folder or all its files at once.",
+        )
+        .into(),
+        ImportError::Io { source, .. } if source.kind() == std::io::ErrorKind::OutOfMemory => tr(
+            "The browser doesn't have enough memory for this database. Open it in the desktop program.",
+        )
+        .into(),
+        // A browser's places of files mean nothing to the user: only what happened.
+        #[cfg(web)]
+        ImportError::Io { source, .. } => source.to_string(),
         e => e.to_string(),
     }
 }

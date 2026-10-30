@@ -1701,7 +1701,7 @@ impl LargeView {
                     .weak(),
                 );
                 ui.add_space(6.0);
-                ui.label(RichText::new(trf("File: {path}", &[("path", &path.display())])).weak());
+                ui.label(RichText::new(trf("File: {path}", &[("path", &crate::platform::files::shown(path))])).weak());
             });
             return open_notes;
         }

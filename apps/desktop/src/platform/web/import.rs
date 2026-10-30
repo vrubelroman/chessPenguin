@@ -35,6 +35,7 @@ enum Failure {
     Corrupt(String),
     Encrypted,
     ChessBase2,
+    ChessBaseFiles,
     Empty,
     Cancelled,
 }
@@ -46,6 +47,7 @@ impl Failure {
             ImportError::Corrupt(s) => Failure::Corrupt(s),
             ImportError::Unsupported(Unsupported::Encrypted) => Failure::Encrypted,
             ImportError::Unsupported(Unsupported::ChessBase2) => Failure::ChessBase2,
+            ImportError::Unsupported(Unsupported::ChessBaseFiles) => Failure::ChessBaseFiles,
             ImportError::Empty => Failure::Empty,
             ImportError::Cancelled => Failure::Cancelled,
         }
@@ -57,6 +59,7 @@ impl Failure {
             Failure::Corrupt(s) => ImportError::Corrupt(s),
             Failure::Encrypted => ImportError::Unsupported(Unsupported::Encrypted),
             Failure::ChessBase2 => ImportError::Unsupported(Unsupported::ChessBase2),
+            Failure::ChessBaseFiles => ImportError::Unsupported(Unsupported::ChessBaseFiles),
             Failure::Empty => ImportError::Empty,
             Failure::Cancelled => ImportError::Cancelled,
         }
@@ -74,13 +77,44 @@ fn set(object: &js_sys::Object, key: &str, value: &JsValue) {
     let _ = js_sys::Reflect::set(object, &key.into(), value);
 }
 
-/// The worker's side: reads `bytes` of the file `name`. The answer: `{text, index}`
+thread_local! {
+    /// The worker's side: the files of the database being given, one by one (so that
+    /// the worker holds each file's bytes once: in the program, not also in the page's
+    /// script).
+    static GIVEN: RefCell<Vec<(String, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The worker's side: one more file of the database to read (its own file first).
+pub fn give(name: String, bytes: Vec<u8>) {
+    // The reader's panics to the console (the page's own hook is eframe's).
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            web_sys::console::error_1(&format!("the reader: {info}").into());
+        }));
+    });
+    GIVEN.with_borrow_mut(|g| g.push((name, bytes)));
+}
+
+/// The worker's side: reads the database given ([`give`]). The answer: `{text, index}`
 /// (the text and the index in JSON), only `{games}` when `count` is asked, or `{error}`
 /// (a [`Failure`] in JSON).
-pub fn answer(name: &str, bytes: Vec<u8>, count: bool) -> JsValue {
+pub fn answer(count: bool) -> JsValue {
     let never = std::sync::atomic::AtomicBool::new(false);
     let answer = js_sys::Object::new();
-    let read = chess_import::open_bytes(name, bytes, &mut |_| {}, &never).and_then(|opened| {
+    let mut files = GIVEN.with_borrow_mut(std::mem::take);
+    if files.is_empty() {
+        files.push((String::new(), Vec::new()));
+    }
+    let name = files[0].0.clone();
+    let chessbase = name.to_lowercase().ends_with(".cbh");
+    let opened = if chessbase {
+        chess_import::open_chessbase_owned(&name, files, &mut |_| {}, &never)
+    } else {
+        let bytes = files.swap_remove(0).1;
+        chess_import::open_bytes(&name, bytes, &mut |_| {}, &never)
+    };
+    let read = opened.and_then(|opened| {
         // Read from bytes, a database is always converted to PGN.
         let Database::Pgn(pgn) = opened.db else {
             return Err(ImportError::Corrupt("not a PGN database".into()));
@@ -115,6 +149,16 @@ enum Waiting {
 }
 
 impl Waiting {
+    fn out_of_memory(self) {
+        match self {
+            Waiting::Open(path, done) => done(Err(ImportError::Io {
+                path,
+                source: std::io::Error::from(std::io::ErrorKind::OutOfMemory),
+            })),
+            Waiting::Count(done) => done(None),
+        }
+    }
+
     fn failed(self, e: impl ToString) {
         match self {
             Waiting::Open(path, done) => done(Err(io_error(&path, e))),
@@ -133,6 +177,23 @@ thread_local! {
 fn answered(data: JsValue) {
     let get = |k: &str| js_sys::Reflect::get(&data, &k.into()).unwrap_or(JsValue::UNDEFINED);
     let id = get("id").as_f64().unwrap_or(-1.0) as u32;
+    if let Some(e) = get("crashed").as_string() {
+        // The worker's program stopped (out of its memory, most likely: a browser gives
+        // a page at most 4 GB): this database cannot be read here; the others waiting
+        // go to a new worker's program — they fail too, to be opened again.
+        log::warn!("the reader stopped: {e}");
+        if let Some(w) = WORKER.with_borrow_mut(Option::take) {
+            w.terminate();
+        }
+        for (n, waiting) in WAITING.with_borrow_mut(std::mem::take) {
+            if n == id {
+                waiting.out_of_memory();
+            } else {
+                waiting.failed(&e);
+            }
+        }
+        return;
+    }
     let (path, done) = match WAITING.with_borrow_mut(|w| w.remove(&id)) {
         Some(Waiting::Open(path, done)) => (path, done),
         Some(Waiting::Count(done)) => {
@@ -160,8 +221,14 @@ fn answered(data: JsValue) {
         )));
         return;
     };
+    let db = PgnDatabase::from_index(text, read.index);
+    log::info!(
+        "database read: {} ({} games)",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        db.len()
+    );
     done(Ok(Opened {
-        db: Database::Pgn(PgnDb::new(PgnDatabase::from_index(text, read.index))),
+        db: Database::Pgn(PgnDb::new(db)),
         format: Format::ALL.get(read.format).copied().unwrap_or(Format::Pgn),
         notes: read.notes,
     }))
@@ -211,32 +278,36 @@ pub fn count(path: &Path, done: impl FnOnce(Option<usize>) + 'static) {
 }
 
 fn ask(path: &Path, count: bool, waiting: Waiting) {
-    let bytes = match super::vfs::read(path) {
-        Ok(b) => b,
+    let files = match super::vfs::database_files(path) {
+        Ok(f) => f,
         Err(e) => return waiting.failed(e),
     };
     let w = match worker() {
         Ok(w) => w,
         Err(e) => return waiting.failed(format!("{e:?}")),
     };
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let id = NEXT.with_borrow_mut(|n| {
         *n += 1;
         *n
     });
     WAITING.with_borrow_mut(|m| m.insert(id, waiting));
-    let array = js_sys::Uint8Array::from(bytes.as_slice());
-    drop(bytes);
+    let names = js_sys::Array::new();
+    let parts = js_sys::Array::new();
+    // The bytes the page holds go over without a copy; the user's files are the
+    // browser's, read by the worker.
+    let transfer = js_sys::Array::new();
+    for (name, source) in files {
+        names.push(&JsValue::from_str(&name));
+        if let Some(array) = source.dyn_ref::<js_sys::Uint8Array>() {
+            transfer.push(&array.buffer());
+        }
+        parts.push(&source);
+    }
     let message = js_sys::Object::new();
     set(&message, "id", &JsValue::from(id));
-    set(&message, "name", &JsValue::from_str(&name));
-    set(&message, "bytes", &array);
+    set(&message, "names", &names);
+    set(&message, "parts", &parts);
     set(&message, "count", &JsValue::from_bool(count));
-    // The copy goes to the worker, not copied again.
-    let transfer = js_sys::Array::of1(&array.buffer());
     if let Err(e) = w.post_message_with_transfer(&message, &transfer)
         && let Some(waiting) = WAITING.with_borrow_mut(|m| m.remove(&id))
     {

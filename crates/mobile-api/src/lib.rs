@@ -71,6 +71,11 @@ impl From<chess_import::ImportError> for ApiError {
             E::Io { source, .. } => ApiError::Io {
                 detail: source.to_string(),
             },
+            // A .cbh alone: reported as before (the app opens a ChessBase database
+            // by all its files, `open_chessbase`).
+            E::Unsupported(u @ chess_import::Unsupported::ChessBaseFiles) => ApiError::Corrupt {
+                detail: u.to_string(),
+            },
             E::Unsupported(u) => ApiError::Unsupported {
                 detail: u.to_string(),
             },
