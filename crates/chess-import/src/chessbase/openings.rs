@@ -578,22 +578,17 @@ impl Index {
         }
         // Millions of games for an early position: tallied in parallel, each part
         // keeping its order.
-        let threads = std::thread::available_parallelism()
-            .map_or(1, |n| n.get())
+        let threads = crate::parallel::threads(1)
             .min(games.len().div_ceil(1 << 16))
             .max(1);
         let chunk = games.len().div_ceil(threads).max(1);
         let line = &line;
-        let parts: Vec<Collector> = std::thread::scope(|s| {
-            let handles: Vec<_> = games
-                .chunks(chunk)
-                .map(|part| s.spawn(move || self.tally(base, part, line)))
-                .collect();
-            handles
-                .into_iter()
-                .map(|h| h.join().unwrap_or_default())
-                .collect()
-        });
+        let parts: Vec<Collector> = crate::parallel::map(games.chunks(chunk).collect(), |part| {
+            self.tally(base, part, line)
+        })
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect();
         let mut out = Collector::default();
         for part in parts {
             out.merge(part);

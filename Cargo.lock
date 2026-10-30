@@ -4680,6 +4680,7 @@ version = "2.1.1"
 dependencies = [
  "libc",
  "thiserror 2.0.21",
+ "web-time",
 ]
 
 [[package]]

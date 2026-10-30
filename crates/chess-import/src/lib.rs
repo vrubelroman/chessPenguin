@@ -8,10 +8,13 @@
 //! records and a game is converted to PGN when it is opened. Sources are only read.
 
 mod archive;
+// Timings of a database on disk: a command of the desktop program.
+#[cfg(not(target_family = "wasm"))]
 pub mod bench;
 pub mod cbv;
 pub mod chessbase;
 pub mod memory;
+mod parallel;
 pub mod pgn_catalog;
 pub mod pgn_positions;
 pub mod position;

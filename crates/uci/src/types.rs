@@ -253,7 +253,8 @@ impl EnginePosition {
         Ok(())
     }
 
-    pub(crate) fn to_command(&self) -> String {
+    /// The `position …` line for this position.
+    pub fn to_command(&self) -> String {
         let mut s = match &self.base {
             PositionBase::StartPos => "position startpos".to_string(),
             PositionBase::Fen(fen) => format!("position fen {}", fen.trim()),
@@ -290,7 +291,8 @@ pub enum SearchLimits {
 }
 
 impl SearchLimits {
-    pub(crate) fn to_command(self) -> String {
+    /// The `go …` line for these limits.
+    pub fn to_command(self) -> String {
         match self {
             SearchLimits::Infinite => "go infinite".into(),
             SearchLimits::Depth(d) => format!("go depth {d}"),

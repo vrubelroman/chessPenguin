@@ -143,6 +143,15 @@ fn write_all_at(f: &File, buf: &[u8], at: u64) -> io::Result<()> {
         }
         Ok(())
     }
+    // Elsewhere (WebAssembly) through the cursor: such a target has no threads to
+    // share it with.
+    #[cfg(not(any(unix, windows)))]
+    {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = f;
+        f.seek(SeekFrom::Start(at))?;
+        f.write_all(buf)
+    }
 }
 
 /// One pass over the main lines of `base`, in parallel, writing the booster to
@@ -171,75 +180,70 @@ pub(super) fn build(
         None => None,
     };
     let next = AtomicUsize::new(0);
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
+    let threads = crate::parallel::threads(4)
         .min(total.div_ceil(BLOCK))
         .max(1);
     let failure: Mutex<Option<io::Error>> = Mutex::new(None);
-    std::thread::scope(|s| {
-        for _ in 0..threads {
-            s.spawn(|| {
-                let run = || -> io::Result<()> {
-                    let cbg = File::open(base.cbg_path())?;
-                    let file = part
-                        .as_ref()
-                        .map(|p| File::options().write(true).open(p))
-                        .transpose()?;
-                    let mut games: Vec<(u32, u32)> = Vec::new();
-                    let (mut span, mut single) = (Vec::new(), Vec::new());
-                    let mut block = vec![0u8; BLOCK * CBB_RECORD];
-                    let mut entries: Vec<GameEntry> = Vec::new();
-                    let mut set_up: Vec<u32> = Vec::new();
-                    loop {
-                        if cancel.load(Ordering::Relaxed) {
-                            return Ok(());
-                        }
-                        let from = next.fetch_add(BLOCK, Ordering::Relaxed);
-                        if from >= total {
-                            return Ok(());
-                        }
-                        let to = (from + BLOCK).min(total);
-                        let bytes = &mut block[..(to - from) * CBB_RECORD];
-                        bytes.fill(0);
-                        entries.clear();
-                        set_up.clear();
-                        games.clear();
-                        for i in from..to {
-                            // Texts and Chess960 games (ECO field ≥ 64576) have no
-                            // record, like in ChessBase's own file.
-                            if base.kind(i) == RecordKind::Game
-                                && be(base.record(i), 0x23, 2).is_some_and(|eco| eco < 64576)
-                            {
-                                games.push((i as u32, base.moves_offset(i)));
-                            }
-                        }
-                        read_games(&cbg, &games, &mut span, &mut single, |index, data, rel| {
-                            let opening = sink.is_some().then_some(index);
-                            if let Some(d) = game_data(data, rel, opening) {
-                                let at = (index as usize - from) * CBB_RECORD;
-                                bytes[at..at + CBB_RECORD].copy_from_slice(&d.record);
-                                entries.extend(d.opening);
-                                if d.set_up {
-                                    set_up.push(index);
-                                }
-                            }
-                        });
-                        if let Some(f) = &file {
-                            write_all_at(f, bytes, ((from + 1) * CBB_RECORD) as u64)?;
-                        }
-                        if let Some(sink) = &sink {
-                            sink.add(&entries, &set_up)?;
-                        }
-                        progress.fetch_add(to - from, Ordering::Relaxed);
-                    }
-                };
-                if let Err(e) = run() {
-                    cancel.store(true, Ordering::Relaxed);
-                    if let Ok(mut f) = failure.lock() {
-                        f.get_or_insert(e);
+    crate::parallel::map(vec![(); threads], |()| {
+        let run = || -> io::Result<()> {
+            let cbg = File::open(base.cbg_path())?;
+            let file = part
+                .as_ref()
+                .map(|p| File::options().write(true).open(p))
+                .transpose()?;
+            let mut games: Vec<(u32, u32)> = Vec::new();
+            let (mut span, mut single) = (Vec::new(), Vec::new());
+            let mut block = vec![0u8; BLOCK * CBB_RECORD];
+            let mut entries: Vec<GameEntry> = Vec::new();
+            let mut set_up: Vec<u32> = Vec::new();
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                let from = next.fetch_add(BLOCK, Ordering::Relaxed);
+                if from >= total {
+                    return Ok(());
+                }
+                let to = (from + BLOCK).min(total);
+                let bytes = &mut block[..(to - from) * CBB_RECORD];
+                bytes.fill(0);
+                entries.clear();
+                set_up.clear();
+                games.clear();
+                for i in from..to {
+                    // Texts and Chess960 games (ECO field ≥ 64576) have no
+                    // record, like in ChessBase's own file.
+                    if base.kind(i) == RecordKind::Game
+                        && be(base.record(i), 0x23, 2).is_some_and(|eco| eco < 64576)
+                    {
+                        games.push((i as u32, base.moves_offset(i)));
                     }
                 }
-            });
+                read_games(&cbg, &games, &mut span, &mut single, |index, data, rel| {
+                    let opening = sink.is_some().then_some(index);
+                    if let Some(d) = game_data(data, rel, opening) {
+                        let at = (index as usize - from) * CBB_RECORD;
+                        bytes[at..at + CBB_RECORD].copy_from_slice(&d.record);
+                        entries.extend(d.opening);
+                        if d.set_up {
+                            set_up.push(index);
+                        }
+                    }
+                });
+                if let Some(f) = &file {
+                    write_all_at(f, bytes, ((from + 1) * CBB_RECORD) as u64)?;
+                }
+                if let Some(sink) = &sink {
+                    sink.add(&entries, &set_up)?;
+                }
+                progress.fetch_add(to - from, Ordering::Relaxed);
+            }
+        };
+        if let Err(e) = run() {
+            cancel.store(true, Ordering::Relaxed);
+            if let Ok(mut f) = failure.lock() {
+                f.get_or_insert(e);
+            }
         }
     });
     let clean = || {

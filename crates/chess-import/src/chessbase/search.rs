@@ -78,51 +78,43 @@ fn collect(
         .cbb_path()
         .filter(|p| booster_helps(p, &target.signature));
     let next = AtomicUsize::new(0);
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
+    let threads = crate::parallel::threads(4)
         .min(total.div_ceil(BLOCK))
         .max(1);
     // Per thread: its collector and, per block, (first candidate, first match).
     type Part = (Collector, Vec<(usize, usize)>);
-    let parts: Vec<Option<Part>> = std::thread::scope(|s| {
-        let handles: Vec<_> = (0..threads)
-            .map(|_| {
-                s.spawn(|| {
-                    let mut worker = Worker {
-                        base,
-                        target: &target,
-                        cbg: File::open(base.cbg_path()).ok()?,
-                        cbb: cbb.and_then(|p| File::open(p).ok()),
-                        games: Vec::new(),
-                        span: Vec::new(),
-                        single: Vec::new(),
-                        out: Collector::default(),
-                    };
-                    let mut blocks = Vec::new();
-                    loop {
-                        if cancel.load(Ordering::Relaxed) {
-                            return None;
-                        }
-                        let from = next.fetch_add(BLOCK, Ordering::Relaxed);
-                        if from >= total {
-                            return Some((worker.out, blocks));
-                        }
-                        let to = (from + BLOCK).min(total);
-                        blocks.push((from, worker.out.matches.len()));
-                        match candidates {
-                            Some(c) => worker.block(c[from..to].iter().copied()),
-                            None => worker.block(from as u32..to as u32),
-                        }
-                        scanned.fetch_add(to - from, Ordering::Relaxed);
-                    }
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().ok().flatten())
-            .collect()
-    });
+    let parts: Vec<Option<Part>> = crate::parallel::map(vec![(); threads], |()| {
+        let mut worker = Worker {
+            base,
+            target: &target,
+            cbg: File::open(base.cbg_path()).ok()?,
+            cbb: cbb.and_then(|p| File::open(p).ok()),
+            games: Vec::new(),
+            span: Vec::new(),
+            single: Vec::new(),
+            out: Collector::default(),
+        };
+        let mut blocks = Vec::new();
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return None;
+            }
+            let from = next.fetch_add(BLOCK, Ordering::Relaxed);
+            if from >= total {
+                return Some((worker.out, blocks));
+            }
+            let to = (from + BLOCK).min(total);
+            blocks.push((from, worker.out.matches.len()));
+            match candidates {
+                Some(c) => worker.block(c[from..to].iter().copied()),
+                None => worker.block(from as u32..to as u32),
+            }
+            scanned.fetch_add(to - from, Ordering::Relaxed);
+        }
+    })
+    .into_iter()
+    .map(Option::flatten)
+    .collect();
     if cancel.load(Ordering::Relaxed) {
         return None;
     }
@@ -491,6 +483,15 @@ fn read_at(f: &File, buf: &mut [u8], at: u64) -> std::io::Result<usize> {
     #[cfg(windows)]
     {
         std::os::windows::fs::FileExt::seek_read(f, buf, at)
+    }
+    // Elsewhere (WebAssembly) through the cursor: such a target has no threads to
+    // share it with.
+    #[cfg(not(any(unix, windows)))]
+    {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = f;
+        f.seek(SeekFrom::Start(at))?;
+        f.read(buf)
     }
 }
 

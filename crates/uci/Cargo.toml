@@ -8,6 +8,7 @@ description = "UCI chess engine process supervisor (no UI dependencies)"
 
 [dependencies]
 thiserror.workspace = true
+web-time.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # nice(2) for EngineConfig::nice (std has no way to lower a child's priority).
