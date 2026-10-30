@@ -5069,7 +5069,11 @@ fn engine_settings(ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<GameA
             };
             // In a browser threads and memory are the platform's: one thread (the
             // single-threaded engine), its memory (design §1.5).
-            let shown = if crate::platform::CAPS.engine_programs { 4 } else { 2 };
+            let shown = if crate::platform::CAPS.engine_programs {
+                4
+            } else {
+                2
+            };
             if slider >= 100.0 {
                 ui.spacing_mut().slider_width = slider;
                 egui::Grid::new("engine_settings_grid")

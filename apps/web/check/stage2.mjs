@@ -50,7 +50,7 @@ try {
   await step({ key: ',', mods: ['ctrl'] });
   await sleep(1000);
   await step({ shot: 's2-4-settings.png' });
-  await step({ key: 'esc' });
+  await step({ click: [1366, 77] });
   // Two files opened; one kept as a copy.
   const a = join(s.ff.profile, 'Kept games.pgn');
   const b = join(s.ff.profile, 'Visit games.pgn');

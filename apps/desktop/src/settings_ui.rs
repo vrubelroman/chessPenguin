@@ -167,6 +167,8 @@ impl SettingsWindow {
                             RichText::new(tr("Written as the annotator of the games you add"))
                                 .weak(),
                         );
+                        // A browser has no folders for databases.
+                        #[cfg(not(web))]
                         ui.horizontal(|ui| {
                             ui.label(tr("Folder for new databases:"));
                             let dir =
@@ -183,7 +185,6 @@ impl SettingsWindow {
                             ui.label(RichText::new(short).weak())
                                 .on_hover_text(dir.display().to_string());
                             if ui.button(tr("Change…")).clicked() {
-                                #[cfg(not(web))]
                                 actions.push(SettingsAction::PickBaseFolder);
                             }
                         });
@@ -242,8 +243,9 @@ impl SettingsWindow {
                     {
                         actions.push(SettingsAction::DownloadEngine);
                     }
+                    // A browser has no engine programs.
+                    #[cfg(not(web))]
                     if ui.button(tr("Choose engine file…")).clicked() {
-                        #[cfg(not(web))]
                         actions.push(SettingsAction::AddEngine);
                     }
                 });
@@ -423,6 +425,8 @@ impl SettingsWindow {
             });
         }
         ui.add_space(6.0);
+        // A browser has no engine programs.
+        #[cfg(not(web))]
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -431,7 +435,6 @@ impl SettingsWindow {
                 )
                 .clicked()
             {
-                #[cfg(not(web))]
                 actions.push(SettingsAction::AddEngine);
             }
             if self.checking_engine {
