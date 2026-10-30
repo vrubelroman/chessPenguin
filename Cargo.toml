@@ -14,6 +14,7 @@ members = [
     "crates/play",
     "crates/prep",
     "apps/desktop",
+    "apps/web",
 ]
 
 [workspace.package]
@@ -30,6 +31,8 @@ shakmaty = "0.30.2"
 pgn-reader = "0.29.1"
 encoding_rs = "0.8"
 thiserror = "2"
+# `Instant`/`SystemTime` that also work in a browser (std's panic there).
+web-time = "1.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 egui = "=0.36.2"
@@ -54,3 +57,11 @@ prep = { path = "crates/prep" }
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# The web version (apps/web/build.sh): small to download, the release otherwise.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"

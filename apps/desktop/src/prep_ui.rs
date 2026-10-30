@@ -15,7 +15,7 @@ use chess_import::Database;
 use chess_import::chessbase::base::{Side, fold};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
-use game_review::{JobEvent, JobFailure, JobSettings, Judgement};
+use game_review::{JobEvent, JobSettings, Judgement};
 use prep::{
     BookExit, BookOptions, Candidate, ErrorCounts, GameInfo, Options, Player, PositionCache,
     PrepReport, Tally,
@@ -946,13 +946,10 @@ struct ListRow {
     event: String,
 }
 
-enum JobMsg {
-    Event(JobEvent),
-    Done,
-    Failed(String),
-}
+use crate::review::JobMsg;
 
 struct EngineJob {
+    runner: crate::review::JobRunner,
     rx: Receiver<JobMsg>,
     cancel: Arc<AtomicBool>,
     total: usize,
@@ -1972,35 +1969,24 @@ impl PrepScreen {
         let total = targets.len();
         let job_settings = JobSettings::new(review::processes(), None);
         let processes = job_settings.processes;
-        let (cancel_w, ctx_w) = (cancel.clone(), ctx.clone());
-        let spawned = std::thread::Builder::new()
-            .name("prep-engine".into())
-            .spawn(move || {
-                let result = game_review::run(
-                    review::engine_config(&path),
-                    &job_settings,
-                    targets,
-                    &cancel_w,
-                    &mut |e| {
-                        let _ = tx.send(JobMsg::Event(e));
-                        ctx_w.request_repaint();
-                    },
-                );
-                let msg = match result {
-                    Ok(()) => JobMsg::Done,
-                    Err(JobFailure::Start(e) | JobFailure::Engine(e)) => JobMsg::Failed(e),
-                    Err(JobFailure::Terminated(reason)) => {
-                        JobMsg::Failed(crate::analysis::termination_message(&reason))
-                    }
-                };
-                let _ = tx.send(msg);
-                ctx_w.request_repaint();
-            });
-        if let Err(e) = spawned {
-            self.error = Some(e.to_string());
-            return;
-        }
+        let spawned = review::spawn_job(
+            "prep-engine",
+            path,
+            job_settings,
+            targets,
+            cancel.clone(),
+            tx,
+            ctx.clone(),
+        );
+        let runner = match spawned {
+            Ok(r) => r,
+            Err(e) => {
+                self.error = Some(e.to_string());
+                return;
+            }
+        };
         self.job = Some(EngineJob {
+            runner,
             rx,
             cancel,
             total,
@@ -2019,6 +2005,7 @@ impl PrepScreen {
         };
         let mut ended = false;
         let mut got = false;
+        job.runner.pump();
         while let Ok(msg) = job.rx.try_recv() {
             match msg {
                 JobMsg::Event(e) => {

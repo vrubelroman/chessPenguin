@@ -4,7 +4,8 @@
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use chess_core::shakmaty::{Chess, Color, Move, Position};
 use serde::{Deserialize, Serialize};
@@ -457,6 +458,27 @@ struct Request {
     pause: Duration,
 }
 
+/// The engine judging a game (Stockfish at `exe`), waking `ctx` with its answers.
+/// A browser starts no engine processes: there is no judge there, and the game goes
+/// without resignations, as when the engine does not start.
+pub fn start_judge(exe: crate::engines::EngineLocation, ctx: &egui::Context) -> Option<Judge> {
+    #[cfg(not(web))]
+    {
+        let crate::engines::EngineLocation::Program(exe) = exe;
+        let ctx = ctx.clone();
+        Some(Judge::start(
+            uci::EngineConfig::new(exe),
+            Vec::new(),
+            Box::new(move || ctx.request_repaint()),
+        ))
+    }
+    #[cfg(web)]
+    {
+        let _ = (exe, ctx);
+        None
+    }
+}
+
 /// What computes the opponent's moves.
 enum Worker {
     /// Maia in a thread of her own; her error, if loading failed.
@@ -466,7 +488,8 @@ enum Worker {
         generation: u64,
         error: Arc<Mutex<Option<String>>>,
     },
-    /// Rodent, a UCI engine (the shared crate's player).
+    /// Rodent, a UCI engine (the shared crate's player): a process, not in a browser.
+    #[cfg(not(web))]
     Rodent(::play::rodent::RodentPlayer),
 }
 
@@ -551,6 +574,7 @@ impl Opponent {
                     pause,
                 });
             }
+            #[cfg(not(web))]
             Worker::Rodent(player) => {
                 if let (Some(pos), Some(now)) = (engine_pos, positions.last().cloned()) {
                     player.ask(pos, now, pause);
@@ -561,6 +585,7 @@ impl Opponent {
 
     /// Rodent (`exe` in its folder) playing in `style` at `uci_elo` (none: full
     /// strength), with its opening book.
+    #[cfg(not(web))]
     pub fn start_rodent(
         exe: std::path::PathBuf,
         style: String,
@@ -585,10 +610,28 @@ impl Opponent {
         }
     }
 
+    /// An opponent that did not start, for `why`: the game ends at once with it (in a
+    /// browser, which starts no engine processes, Rodent).
+    #[cfg(web)]
+    pub fn not_started(why: String) -> Opponent {
+        let (tx, _) = channel();
+        let (_, rx) = channel();
+        Opponent {
+            worker: Worker::Maia {
+                tx,
+                rx,
+                generation: 0,
+                error: Arc::new(Mutex::new(Some(why))),
+            },
+            thinking: false,
+        }
+    }
+
     /// Forgets what was asked (its answer will be dropped).
     pub fn forget(&mut self) {
         match &mut self.worker {
             Worker::Maia { generation, .. } => *generation += 1,
+            #[cfg(not(web))]
             Worker::Rodent(player) => player.forget(),
         }
         self.thinking = false;
@@ -607,6 +650,7 @@ impl Opponent {
                     }
                 }
             }
+            #[cfg(not(web))]
             Worker::Rodent(player) => {
                 if let Some((m, pause)) = player.answer() {
                     self.thinking = false;
@@ -618,13 +662,13 @@ impl Opponent {
     }
 
     pub fn failed(&self) -> Option<String> {
-        use ::play::rodent::Failure;
         match &self.worker {
             Worker::Maia { error, .. } => error.lock().ok().and_then(|g| g.clone()),
+            #[cfg(not(web))]
             Worker::Rodent(player) => player.failure().map(|f| match f {
-                Failure::Start(e) => start_failure(&e),
-                Failure::Stopped => tr("it stopped while playing").to_owned(),
-                Failure::Search(e) => e,
+                ::play::rodent::Failure::Start(e) => start_failure(&e),
+                ::play::rodent::Failure::Stopped => tr("it stopped while playing").to_owned(),
+                ::play::rodent::Failure::Search(e) => e,
             }),
         }
     }

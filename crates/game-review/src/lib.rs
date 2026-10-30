@@ -8,7 +8,7 @@
 //! are used without an engine.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use chess_core::shakmaty::san::SanPlus;
 use chess_core::shakmaty::uci::UciMove;
@@ -22,9 +22,13 @@ mod job;
 pub mod report;
 
 pub use features::{MoveFeatures, Rules};
+#[cfg(target_family = "wasm")]
+pub use job::Dispatcher;
+#[cfg(not(target_family = "wasm"))]
+pub use job::run;
 pub use job::{
     JobEvent, JobFailure, JobSettings, MAX_PROCESSES, PHONE_PROCESSES, SEARCH_HASH_MB,
-    SEARCH_NODES, SEARCH_VERSION, SHALLOW_NODES, Target, estimate_secs, processes, run,
+    SEARCH_NODES, SEARCH_VERSION, SHALLOW_NODES, Target, estimate_secs, processes,
 };
 pub use report::{
     Eval, Hardness, Judgement, Measure, Phase, Phases, Ply, Report, SideStats, judge,
@@ -155,11 +159,37 @@ pub struct GameAnalysis {
     shallow_nodes: u64,
 }
 
+/// Where cached analyses are kept, one file per main line by name: a folder (`Path`),
+/// or whatever else a program keeps files in (the web version's browser storage).
+pub trait CacheStore {
+    fn read(&self, name: &str) -> Option<Vec<u8>>;
+    fn write(&self, name: &str, bytes: &[u8]) -> std::io::Result<()>;
+}
+
+/// The cache in a folder of the disk.
+pub struct CacheDir<'a>(pub &'a Path);
+
+impl CacheStore for CacheDir<'_> {
+    fn read(&self, name: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.0.join(name)).ok()
+    }
+
+    fn write(&self, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+        write_atomic(&self.0.join(name), bytes)
+    }
+}
+
 impl GameAnalysis {
     /// The analysis of `game`: from the cache in `cache_dir` (the folder of the cached
     /// analyses) when this main line was analysed before, else from `[%eval]` comments
     /// when every move has one, else empty.
     pub fn new(game: &Game, cache_dir: Option<&Path>) -> Self {
+        let dir = cache_dir.map(CacheDir);
+        Self::with_store(game, dir.as_ref().map(|d| d as &dyn CacheStore))
+    }
+
+    /// [`Self::new`] with the cache in `store`.
+    pub fn with_store(game: &Game, store: Option<&dyn CacheStore>) -> Self {
         let mut a = GameAnalysis {
             evals: HashMap::new(),
             meta: None,
@@ -179,7 +209,7 @@ impl GameAnalysis {
             shallow_nodes: SHALLOW_NODES,
         };
         a.rebuild(game);
-        if cache_dir.is_some_and(|d| a.load_cache(d)) || a.load_pgn_evals(game) {
+        if store.is_some_and(|s| a.load_cache(s)) || a.load_pgn_evals(game) {
             a.rebuild(game);
         }
         a
@@ -554,8 +584,8 @@ impl GameAnalysis {
 
     // ----- cache -----------------------------------------------------------------
 
-    /// The cache file of this main line in `dir`.
-    fn cache_path(&self, dir: &Path) -> PathBuf {
+    /// The name of the cache file of this main line.
+    fn cache_name(&self) -> String {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for k in &self.keys {
             for b in k.bytes().chain(std::iter::once(b'\n')) {
@@ -563,11 +593,16 @@ impl GameAnalysis {
                 h = h.wrapping_mul(0x0100_0000_01b3);
             }
         }
-        dir.join(format!("{h:016x}.json"))
+        format!("{h:016x}.json")
     }
 
     /// Keeps engine results in `dir` (nothing for evaluations read from the PGN).
     pub fn save_cache(&self, dir: &Path) -> std::io::Result<()> {
+        self.save_to(&CacheDir(dir))
+    }
+
+    /// Keeps engine results in `store` (nothing for evaluations read from the PGN).
+    pub fn save_to(&self, store: &dyn CacheStore) -> std::io::Result<()> {
         let Some(meta) = self.meta.clone().filter(|m| m.nodes > 0) else {
             return Ok(());
         };
@@ -586,11 +621,11 @@ impl GameAnalysis {
                 .collect(),
         };
         let bytes = serde_json::to_vec(&file).map_err(std::io::Error::other)?;
-        write_atomic(&self.cache_path(dir), &bytes)
+        store.write(&self.cache_name(), &bytes)
     }
 
-    fn load_cache(&mut self, dir: &Path) -> bool {
-        let Ok(bytes) = std::fs::read(self.cache_path(dir)) else {
+    fn load_cache(&mut self, store: &dyn CacheStore) -> bool {
+        let Some(bytes) = store.read(&self.cache_name()) else {
             return false;
         };
         let Ok(file) = serde_json::from_slice::<CacheFile>(&bytes) else {
@@ -835,7 +870,7 @@ mod tests {
         let targets = a.begin(&g, false);
         fake_results(&mut a, targets);
         a.refresh(&g);
-        let path = a.cache_path(&dir);
+        let path = dir.join(a.cache_name());
         a.save_cache(&dir).expect("saved");
         // The file as 1.x wrote it: no `search` in the meta, 3M nodes.
         let mut json: serde_json::Value =

@@ -314,13 +314,12 @@ impl Sink {
         let keys_len = keys.len() as u64;
         file.write_all(&keys)?;
         drop(keys);
-        let mut games = games.into_inner().map_err(|e| e.into_error())?;
         {
             use std::io::Seek;
+            let mut games = games.into_inner().map_err(|e| e.into_error())?;
             games.seek(io::SeekFrom::Start(0))?;
             io::copy(&mut games, &mut file)?;
-        }
-        drop(games);
+        } // Closed before it is removed.
         let _ = std::fs::remove_file(&games_path);
         // The games from a set-up position, ascending.
         let mut set_up =
@@ -330,17 +329,16 @@ impl Sink {
             file.write_all(&g.to_le_bytes())?;
         }
         let set_up_len = set_up.len() as u64 * 4;
-        let mut file = file.into_inner().map_err(|e| e.into_error())?;
         {
             use std::io::Seek;
+            let mut file = file.into_inner().map_err(|e| e.into_error())?;
             file.seek(io::SeekFrom::Start(16))?;
             file.write_all(&prefix_len.to_le_bytes())?;
             file.write_all(&keys_len.to_le_bytes())?;
             file.write_all(&games_len.to_le_bytes())?;
             file.write_all(&set_up_len.to_le_bytes())?;
-        }
-        file.sync_all()?;
-        drop(file);
+            file.sync_all()?;
+        } // Closed before the rename.
         std::fs::rename(&part, out)?;
         Ok(true)
     }
@@ -578,22 +576,17 @@ impl Index {
         }
         // Millions of games for an early position: tallied in parallel, each part
         // keeping its order.
-        let threads = std::thread::available_parallelism()
-            .map_or(1, |n| n.get())
+        let threads = crate::parallel::threads(1)
             .min(games.len().div_ceil(1 << 16))
             .max(1);
         let chunk = games.len().div_ceil(threads).max(1);
         let line = &line;
-        let parts: Vec<Collector> = std::thread::scope(|s| {
-            let handles: Vec<_> = games
-                .chunks(chunk)
-                .map(|part| s.spawn(move || self.tally(base, part, line)))
-                .collect();
-            handles
-                .into_iter()
-                .map(|h| h.join().unwrap_or_default())
-                .collect()
-        });
+        let parts: Vec<Collector> = crate::parallel::map(games.chunks(chunk).collect(), |part| {
+            self.tally(base, part, line)
+        })
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect();
         let mut out = Collector::default();
         for part in parts {
             out.merge(part);

@@ -1,7 +1,7 @@
-//! Engine analysis controller: owns the UCI process, binds results to the analysed position.
+//! Engine analysis controller: owns the engine (a UCI process; in a browser a Web
+//! Worker), binds results to the analysed position.
 
 use crate::i18n::{tr, trf};
-use std::sync::mpsc::{Receiver, channel};
 
 use shakmaty::san::SanPlus;
 use shakmaty::uci::UciMove;
@@ -38,9 +38,39 @@ struct Target {
     engine_pos: EnginePosition,
 }
 
+/// An engine on its way: its process started on a thread of its own (the handshake
+/// blocks for up to ~20 s); in a browser its worker, the handshake by its messages.
+enum Launch {
+    #[cfg(not(web))]
+    Thread(std::sync::mpsc::Receiver<Result<EngineHandle, uci::EngineError>>),
+    /// The worker and the options to set once it answered.
+    #[cfg(web)]
+    Worker(uci::Starting, EngineConfig),
+}
+
+impl Launch {
+    /// The engine once it answered, its options set (or why it did not answer).
+    fn poll(&mut self) -> Option<Result<EngineHandle, uci::EngineError>> {
+        match self {
+            #[cfg(not(web))]
+            Launch::Thread(rx) => rx.try_recv().ok(),
+            #[cfg(web)]
+            Launch::Worker(s, cfg) => s.poll().map(|r| r.inspect(|h| set_options(h, cfg))),
+        }
+    }
+}
+
+/// Threads, hash and lines of `cfg` (unknown options are not fatal: some engines lack
+/// Threads/Hash/MultiPV).
+fn set_options(h: &EngineHandle, cfg: &EngineConfig) {
+    let _ = h.set_threads(cfg.threads);
+    let _ = h.set_hash_mb(cfg.hash_mb);
+    let _ = h.set_multipv(cfg.multipv.max(1));
+}
+
 pub struct Analysis {
     engine: Option<EngineHandle>,
-    spawning: Option<Receiver<Result<EngineHandle, uci::EngineError>>>,
+    spawning: Option<Launch>,
     pub status: Status,
     pub engine_name: String,
     next_id: u64,
@@ -56,7 +86,7 @@ pub struct Analysis {
     /// The current search ended (time limit reached); lines stay as the final result.
     pub finished: bool,
     /// Executable of the running engine (to detect a switch of the active engine).
-    pub engine_path: Option<std::path::PathBuf>,
+    pub engine_path: Option<crate::engines::EngineLocation>,
 }
 
 impl Analysis {
@@ -90,7 +120,7 @@ impl Analysis {
         matches!(self.status, Status::Starting | Status::Running)
     }
 
-    /// Starts the engine in a background thread (handshake blocks for up to ~20 s).
+    /// Starts the engine in the background: its options are set once it answered.
     pub fn start(&mut self, cfg: &EngineConfig, ctx: &egui::Context) {
         self.stop();
         let Some(path) = cfg.executable() else {
@@ -98,48 +128,32 @@ impl Analysis {
                 Status::Failed(tr("The built-in engine is not part of this build").into());
             return;
         };
-        let (tx, rx) = channel();
-        let ctx_w = ctx.clone();
-        let ctx_done = ctx.clone();
-        let cfg = cfg.clone();
         self.engine_name = cfg.name.clone();
         self.multipv = cfg.multipv.max(1);
         self.limit = cfg.search_secs;
         self.engine_path = Some(path.clone());
-        let spawned = std::thread::Builder::new()
-            .name("engine-spawn".into())
-            .spawn(move || {
-                let res = uci::Engine::spawn_with(
-                    uci::EngineConfig::new(&path),
-                    Box::new(move || ctx_w.request_repaint()),
-                )
-                .inspect(|h| {
-                    // Unknown options are not fatal: some engines lack Threads/Hash/MultiPV.
-                    let _ = h.set_threads(cfg.threads);
-                    let _ = h.set_hash_mb(cfg.hash_mb);
-                    let _ = h.set_multipv(cfg.multipv.max(1));
-                });
-                let _ = tx.send(res);
-                ctx_done.request_repaint();
-            });
-        match spawned {
-            Ok(_) => {
-                self.spawning = Some(rx);
+        match launch(path, cfg.clone(), ctx) {
+            Ok(l) => {
+                self.spawning = Some(l);
                 self.status = Status::Starting;
             }
-            Err(e) => self.status = Status::Failed(e.to_string()),
+            Err(e) => self.status = Status::Failed(e),
         }
     }
 
-    /// Stops analysis and terminates the engine process.
+    /// Stops analysis and terminates the engine.
     pub fn stop(&mut self) {
         if let Some(e) = self.engine.take() {
-            // quit() may wait up to the quit timeout; do it off the UI thread.
+            // quit() may wait up to the quit timeout; do it off the UI thread. A worker
+            // stops at once.
+            #[cfg(not(web))]
             let _ = std::thread::Builder::new()
                 .name("engine-quit".into())
                 .spawn(move || {
                     e.quit();
                 });
+            #[cfg(web)]
+            e.quit();
         }
         self.spawning = None;
         self.current = None;
@@ -212,9 +226,7 @@ impl Analysis {
 
     /// Drains engine events; call once per frame.
     pub fn poll(&mut self) {
-        if let Some(rx) = &self.spawning
-            && let Ok(res) = rx.try_recv()
-        {
+        if let Some(res) = self.spawning.as_mut().and_then(Launch::poll) {
             self.spawning = None;
             match res {
                 Ok(h) => {
@@ -279,6 +291,49 @@ impl Analysis {
             None
         }
     }
+}
+
+/// Starts the engine of `cfg` at `path` with its options.
+#[cfg(not(web))]
+fn launch(
+    location: crate::engines::EngineLocation,
+    cfg: EngineConfig,
+    ctx: &egui::Context,
+) -> Result<Launch, String> {
+    let crate::engines::EngineLocation::Program(path) = location;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let ctx_w = ctx.clone();
+    let ctx_done = ctx.clone();
+    std::thread::Builder::new()
+        .name("engine-spawn".into())
+        .spawn(move || {
+            let res = uci::Engine::spawn_with(
+                uci::EngineConfig::new(&path),
+                Box::new(move || ctx_w.request_repaint()),
+            )
+            .inspect(|h| set_options(h, &cfg));
+            let _ = tx.send(res);
+            ctx_done.request_repaint();
+        })
+        .map(|_| Launch::Thread(rx))
+        .map_err(|e| e.to_string())
+}
+
+/// Starts the engine of `cfg` in its Web Worker.
+#[cfg(web)]
+fn launch(
+    location: crate::engines::EngineLocation,
+    cfg: EngineConfig,
+    ctx: &egui::Context,
+) -> Result<Launch, String> {
+    let crate::engines::EngineLocation::Worker(script) = location;
+    let ctx = ctx.clone();
+    uci::Engine::start_worker(
+        uci::WorkerConfig::new(script),
+        Box::new(move || ctx.request_repaint()),
+    )
+    .map(|s| Launch::Worker(s, cfg))
+    .map_err(|e| e.to_string())
 }
 
 impl Drop for Analysis {

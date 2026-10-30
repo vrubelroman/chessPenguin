@@ -80,13 +80,15 @@ pub struct GameView {
     play_start: Option<crate::play::Start>,
     /// «The game is on» asked (leaving during a game); the clocks wait meanwhile.
     /// Where leaving goes, and since when the question is open.
-    play_leave: Option<(crate::app::CloseIntent, std::time::Instant)>,
+    play_leave: Option<(crate::app::CloseIntent, web_time::Instant)>,
     /// Learning an opening (this screen is the training).
     pub train: Option<crate::train::Training>,
     /// A line from the clipboard that would go elsewhere than the user stands: asked.
     paste_pending: Option<chess_core::paste::PastePlan>,
     /// Text to paste on the next frame (dev hook `CP_PASTE_LINE`).
     paste_request: Option<String>,
+    /// The menu's «Paste a line»: the clipboard being read.
+    clipboard: Option<crate::platform::clipboard::Reading>,
     show_diagnostics: bool,
     engine_settings_open: bool,
     review: Review,
@@ -170,7 +172,11 @@ pub enum GameAction {
     /// Back to the game this one was opened from.
     ReturnToPrevious,
     /// The window offering a newer version.
+    #[cfg(not(web))]
     OpenUpdate,
+    /// The game's PGN as a downloaded file (the web version saves so).
+    #[cfg(web)]
+    DownloadPgn,
     /// Settings → Translation.
     OpenTranslationSettings,
 }
@@ -200,6 +206,7 @@ impl GameView {
             paste_pending: None,
             train: None,
             paste_request: None,
+            clipboard: None,
             show_diagnostics: false,
             engine_settings_open: false,
             review,
@@ -224,6 +231,11 @@ impl GameView {
     /// The game is put aside (another one opened): its translation stops.
     pub fn suspend(&mut self) {
         self.translation.suspend();
+    }
+
+    /// The whole-game analysis is running.
+    pub fn review_running(&self) -> bool {
+        self.review.running()
     }
 
     /// Copying the PGN always copies the original comments; say so when the translation is shown.
@@ -796,6 +808,10 @@ impl GameView {
         }
 
         // A line from the clipboard: pasted, or asked about.
+        if let Some(text) = self.clipboard.as_ref().and_then(|r| r.poll()) {
+            self.clipboard = None;
+            self.paste_request = Some(text.unwrap_or_default());
+        }
         if let Some(text) = self.paste_request.take() {
             self.paste_text(&text, &mut actions);
         }
@@ -958,15 +974,31 @@ impl GameView {
         let right = |compact: bool| {
             button(ui, if compact { "⚙" } else { tr("⚙ Settings") })
                 + self.update.as_deref().map_or(0.0, |v| button(ui, v))
-                + button(ui, "⏷")
-                + button(
-                    ui,
-                    if compact {
-                        "🔍"
-                    } else {
-                        tr("🔍 Find in database")
-                    },
-                )
+                + if cfg!(web) {
+                    button(
+                        ui,
+                        if compact {
+                            "⇩"
+                        } else {
+                            tr("⇩ Download PGN")
+                        },
+                    )
+                } else {
+                    0.0
+                }
+                + if crate::platform::CAPS.reference {
+                    button(ui, "⏷")
+                        + button(
+                            ui,
+                            if compact {
+                                "🔍"
+                            } else {
+                                tr("🔍 Find in database")
+                            },
+                        )
+                } else {
+                    0.0
+                }
                 + notes.as_ref().map_or(0.0, |n| button(ui, n.text()))
         };
         // The result, or during a game against the computer its time control («5+3», «∞»)
@@ -1085,17 +1117,28 @@ impl GameView {
                 {
                     actions.push(GameAction::OpenSettings);
                 }
+                #[cfg(not(web))]
                 if let Some(v) = &self.update
                     && crate::widgets::update_button(ui, v).clicked()
                 {
                     actions.push(GameAction::OpenUpdate);
+                }
+                #[cfg(web)]
+                if ui
+                    .button(if compact { "⇩" } else { tr("⇩ Download PGN") })
+                    .on_hover_text(tr(
+                        "Download the game as a PGN file: the browser puts it where it puts downloads",
+                    ))
+                    .clicked()
+                {
+                    actions.push(GameAction::DownloadPgn);
                 }
                 // Find the position in a database: the last chosen one, or another.
                 let searchable = self.search_line().is_some();
                 let why = tr("After a null move (--) this is a teaching scheme, not a position of a game: it is not searched");
                 // Not during a game against Maia: it would leave the game.
                 let playing = self.play.is_some() || self.train.is_some();
-                if !playing { ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
+                if !playing && crate::platform::CAPS.reference { ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
                     ui.menu_button("⏷", |ui| {
                         for db in databases {
                             let name = db
@@ -1411,8 +1454,10 @@ impl GameView {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.side_tab, SideTab::Notation, tr("Notation"));
-                ui.selectable_value(&mut self.side_tab, SideTab::Reference, tr("Reference"))
-                    .on_hover_text(tr("What was played in this position in a database"));
+                if crate::platform::CAPS.reference {
+                    ui.selectable_value(&mut self.side_tab, SideTab::Reference, tr("Reference"))
+                        .on_hover_text(tr("What was played in this position in a database"));
+                }
                 if report {
                     ui.selectable_value(&mut self.side_tab, SideTab::Report, tr("Report"));
                 }
@@ -1467,7 +1512,12 @@ impl GameView {
                 }
                 return;
             }
-            match self.translation.strip(ui, settings, hub) {
+            let strip = if crate::platform::CAPS.translation {
+                self.translation.strip(ui, settings, hub)
+            } else {
+                None
+            };
+            match strip {
                 Some(crate::translate_ui::StripAction::OpenSettings) => {
                     actions.push(GameAction::OpenTranslationSettings)
                 }
@@ -1538,7 +1588,7 @@ impl GameView {
                         });
                     }
                     if let Some((_, NotationCommand::Paste)) = resp.context {
-                        self.paste_clipboard(actions);
+                        self.paste_clipboard(ui.ctx());
                     } else if let Some((id, NotationCommand::PlayFrom)) = resp.context {
                         self.play_from(id, actions);
                     } else if let Some((id, NotationCommand::Train)) = resp.context {
@@ -1925,13 +1975,20 @@ impl GameView {
                     actions.push(GameAction::Save);
                     ui.close();
                 }
-                if ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked() {
+                if crate::platform::CAPS.own_databases
+                    && ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked()
+                {
                     actions.push(GameAction::AddToDatabase);
                     ui.close();
                 }
                 ui.separator();
                 if ui.button(tr("Copy PGN")).clicked() {
                     actions.push(self.copy_pgn());
+                    ui.close();
+                }
+                #[cfg(web)]
+                if ui.button(tr("⇩ Download PGN")).clicked() {
+                    actions.push(GameAction::DownloadPgn);
                     ui.close();
                 }
                 if ui.button(tr("Copy FEN")).clicked() {
@@ -1945,10 +2002,10 @@ impl GameView {
                         .button(tr("Paste a line from the clipboard (Ctrl+V)"))
                         .clicked()
                 {
-                    self.paste_clipboard(actions);
+                    self.paste_clipboard(ui.ctx());
                     ui.close();
                 }
-                if self.play.is_none() {
+                if self.play.is_none() && crate::platform::CAPS.play {
                     ui.separator();
                     if ui.button(tr("Play on from here… (Ctrl+G)")).clicked() {
                         let at = self.cursor;
@@ -1978,7 +2035,9 @@ impl GameView {
                     ui.close();
                 }
                 ui.separator();
-                if self.translation.can_translate() && ui.button(tr("Translate comments")).clicked()
+                if crate::platform::CAPS.translation
+                    && self.translation.can_translate()
+                    && ui.button(tr("Translate comments")).clicked()
                 {
                     self.translate_now = true;
                     self.side_tab = SideTab::Notation;
@@ -2111,7 +2170,9 @@ impl GameView {
     }
 
     pub fn show_reference_tab(&mut self) {
-        self.side_tab = SideTab::Reference;
+        if crate::platform::CAPS.reference {
+            self.side_tab = SideTab::Reference;
+        }
     }
 
     pub fn search_line(&self) -> Option<(Chess, Vec<shakmaty::Move>, bool)> {
@@ -2153,7 +2214,7 @@ impl GameView {
         &mut self,
         start: crate::play::Start,
         (engine, file): (crate::play::Engine, std::path::PathBuf),
-        judge: Option<std::path::PathBuf>,
+        judge: Option<crate::engines::EngineLocation>,
         record: Option<std::path::PathBuf>,
         ctx: &egui::Context,
     ) {
@@ -2263,7 +2324,7 @@ impl GameView {
         saved: &crate::play::Saved,
         to_move_left: Option<std::time::Duration>,
         engine: (crate::play::Engine, std::path::PathBuf),
-        judge: Option<std::path::PathBuf>,
+        judge: Option<crate::engines::EngineLocation>,
         journal: crate::player_games::Journal,
         ctx: &egui::Context,
     ) {
@@ -2286,7 +2347,7 @@ impl GameView {
         let left = crate::play::times_left(&self.game, saved.floor, to_move_left);
         let clock = start
             .clock
-            .map(|tc| Clock::resumed(tc, left, to_move, std::time::Instant::now()));
+            .map(|tc| Clock::resumed(tc, left, to_move, web_time::Instant::now()));
         self.goto(end);
         self.begin_play(start, engine, judge, Some(journal), clock, floor, ctx);
     }
@@ -2306,7 +2367,7 @@ impl GameView {
         &mut self,
         start: crate::play::Start,
         (engine, file): (crate::play::Engine, std::path::PathBuf),
-        judge: Option<std::path::PathBuf>,
+        judge: Option<crate::engines::EngineLocation>,
         journal: Option<crate::player_games::Journal>,
         clock: Option<crate::play::Clock>,
         floor: NodeId,
@@ -2320,7 +2381,7 @@ impl GameView {
         // it was heard before.
         let low_time_heard = clock
             .as_ref()
-            .is_some_and(|c| c.left(start.user, std::time::Instant::now()) <= c.low());
+            .is_some_and(|c| c.left(start.user, web_time::Instant::now()) <= c.low());
         self.play = Some(Session {
             journal,
             user: start.user,
@@ -2331,20 +2392,18 @@ impl GameView {
             clock,
             opponent: match engine {
                 crate::play::Engine::Maia(_) => Opponent::start(file, ctx),
+                #[cfg(not(web))]
                 crate::play::Engine::Rodent(_) => {
                     Opponent::start_rodent(file, start.style.clone(), Some(start.strength), ctx)
+                }
+                #[cfg(web)]
+                crate::play::Engine::Rodent(_) => {
+                    Opponent::not_started(tr("a browser cannot start it").to_owned())
                 }
             },
             resign_asked: false,
             low_time_heard,
-            judge: judge.map(|p| {
-                let ctx = ctx.clone();
-                crate::play::Judge::start(
-                    uci::EngineConfig::new(p),
-                    Vec::new(),
-                    Box::new(move || ctx.request_repaint()),
-                )
-            }),
+            judge: judge.and_then(|p| crate::play::start_judge(p, ctx)),
             hopeless: 0,
             resign_offer: None,
             play_on: false,
@@ -2514,7 +2573,7 @@ impl GameView {
             }
             return;
         }
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         let clock = s
             .clock
             .as_ref()
@@ -2551,7 +2610,7 @@ impl GameView {
         let Ok(id) = self.game.add_move(end, m) else {
             return;
         };
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         if let Some(s) = self.play.as_mut() {
             s.resign_asked = false;
             if let Some(c) = s.clock.as_mut() {
@@ -2631,7 +2690,7 @@ impl GameView {
                 && s.opponent.thinking
             {
                 s.opponent.forget();
-                s.resign_offer = Some(std::time::Instant::now());
+                s.resign_offer = Some(web_time::Instant::now());
                 self.scroll_to_cursor = true;
                 actions.push(GameAction::Sound(Sound::Defeat));
                 return;
@@ -2671,7 +2730,7 @@ impl GameView {
                 self.play_add(m, None, actions);
             }
         }
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         let end_pos = self.game.position(self.play_end_node()).cloned();
         let Some(s) = self.play.as_mut() else { return };
         if let Some(c) = &s.clock
@@ -2703,7 +2762,7 @@ impl GameView {
         };
         s.opponent.forget();
         self.board.clear_premove();
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         let left = s.clock.as_mut().map(|c| {
             c.stop(now);
             (c.left(s.user, now), c.left(!s.user, now))
@@ -2805,7 +2864,7 @@ impl GameView {
         let left = s
             .clock
             .as_ref()
-            .map(|c| c.left(to_move, std::time::Instant::now()));
+            .map(|c| c.left(to_move, web_time::Instant::now()));
         let aside = s
             .journal
             .take()
@@ -3006,7 +3065,7 @@ impl GameView {
             self.goto(parent);
             let moved = self.user_moved(user);
             if let Some(c) = self.play.as_mut().and_then(|s| s.clock.as_mut()) {
-                c.take_back(user, moved, std::time::Instant::now());
+                c.take_back(user, moved, web_time::Instant::now());
             }
         }
         self.keep_journal();
@@ -3108,7 +3167,7 @@ impl GameView {
     pub fn ask_leave(&mut self, intent: crate::app::CloseIntent) {
         self.board.clear_premove();
         if self.play_leave.is_none() {
-            self.play_leave = Some((intent, std::time::Instant::now()));
+            self.play_leave = Some((intent, web_time::Instant::now()));
         }
     }
 
@@ -3326,7 +3385,7 @@ impl GameView {
             .into_iter()
             .chain(s.resign_offer)
             .min()
-            .unwrap_or_else(std::time::Instant::now);
+            .unwrap_or_else(web_time::Instant::now);
         let turn = self.play_turn();
         let active = turn == side;
         let left = s.clock.as_ref().map(|c| c.left(side, now));
@@ -3821,7 +3880,7 @@ impl GameView {
         if let Some(t) = self.train.as_mut()
             && let Some(f) = &t.flash
         {
-            let now = std::time::Instant::now();
+            let now = web_time::Instant::now();
             if now >= f.until {
                 t.flash = None;
             } else {
@@ -3870,7 +3929,7 @@ impl GameView {
                 after,
                 from: m.from().unwrap_or(m.to()),
                 to: crate::board::ui_target(&m),
-                until: std::time::Instant::now() + crate::train::WRONG_SHOWN,
+                until: web_time::Instant::now() + crate::train::WRONG_SHOWN,
             });
             actions.push(GameAction::Sound(Sound::Wrong));
         }
@@ -4404,12 +4463,10 @@ impl GameView {
 
     // ----- a line from the clipboard (docs/design/paste-variation.md) ----------------
 
-    /// The menu's «Paste a line from the clipboard»: the clipboard read now.
-    fn paste_clipboard(&mut self, actions: &mut Vec<GameAction>) {
-        let text = arboard::Clipboard::new()
-            .and_then(|mut c| c.get_text())
-            .unwrap_or_default();
-        self.paste_text(&text, actions);
+    /// The menu's «Paste a line from the clipboard»: the clipboard is read, the line
+    /// pasted once it is there (at once on a computer).
+    fn paste_clipboard(&mut self, ctx: &egui::Context) {
+        self.clipboard = Some(crate::platform::clipboard::read_text(ctx));
     }
 
     /// Pastes `text` as a line: at once where the user stands, a question when it
@@ -4721,6 +4778,16 @@ impl GameView {
             if i.consume_shortcut(&ctrl(Key::W)) {
                 cmds.push("back");
             }
+            // A browser keeps Ctrl+W, Ctrl+1…6 and Ctrl+Shift+C for itself
+            // (docs/design/web-version.md §4): Alt+←, plain 1…6 and Ctrl+C there.
+            if cfg!(web) {
+                if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::ALT, Key::ArrowLeft)) {
+                    cmds.push("back");
+                }
+                if i.consume_shortcut(&ctrl(Key::C)) {
+                    cmds.push("copy");
+                }
+            }
             if i.consume_shortcut(&ctrl(Key::G)) {
                 cmds.push("play_from");
             }
@@ -4744,7 +4811,9 @@ impl GameView {
                 (Key::Num5, "nag5"),
                 (Key::Num6, "nag6"),
             ] {
-                if i.consume_shortcut(&ctrl(key)) {
+                if i.consume_shortcut(&ctrl(key))
+                    || (cfg!(web) && i.consume_key(Modifiers::NONE, key))
+                {
                     cmds.push(cmd);
                 }
             }
@@ -4797,14 +4866,16 @@ impl GameView {
                 }
                 "copy" => actions.push(self.copy_pgn()),
                 "save" => actions.push(GameAction::Save),
-                "play_from" => {
+                "play_from" if crate::platform::CAPS.play => {
                     let at = self.cursor;
                     self.play_from(at, actions);
                 }
-                "add_to_db" => actions.push(GameAction::AddToDatabase),
+                "add_to_db" if crate::platform::CAPS.own_databases => {
+                    actions.push(GameAction::AddToDatabase)
+                }
                 "game_data" => actions.push(GameAction::EditGameData),
                 "back" => actions.push(GameAction::BackKey),
-                "find" if self.search_line().is_some() => {
+                "find" if crate::platform::CAPS.reference && self.search_line().is_some() => {
                     actions.push(GameAction::FindPosition(None))
                 }
                 "back1" => self.step_back(),
@@ -4829,7 +4900,7 @@ impl GameView {
                     self.goto(end);
                 }
                 "flip" => self.flipped = !self.flipped,
-                "translate" => {
+                "translate" if crate::platform::CAPS.translation => {
                     if self.translation.has_translation() {
                         self.translation.toggle();
                     } else if self.translation.can_translate() {
@@ -5001,13 +5072,20 @@ fn engine_settings(ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<GameA
                 2 => format!("{} / {cores}", idx + 1),
                 _ => format_mb(hash_steps[idx]),
             };
+            // In a browser threads and memory are the platform's: one thread (the
+            // single-threaded engine), its memory (design §1.5).
+            let shown = if crate::platform::CAPS.engine_programs {
+                4
+            } else {
+                2
+            };
             if slider >= 100.0 {
                 ui.spacing_mut().slider_width = slider;
                 egui::Grid::new("engine_settings_grid")
                     .num_columns(3)
                     .spacing(vec2(gap, 8.0))
                     .show(ui, |ui| {
-                        for (i, (name, idx, len)) in rows.iter_mut().enumerate() {
+                        for (i, (name, idx, len)) in rows.iter_mut().enumerate().take(shown) {
                             ui.label(*name);
                             settled |= index_slider(ui, idx, *len);
                             ui.label(value(i, **idx));
@@ -5016,7 +5094,7 @@ fn engine_settings(ui: &mut Ui, settings: &mut Settings, actions: &mut Vec<GameA
                     });
             } else {
                 ui.spacing_mut().slider_width = ui.available_width().floor();
-                for (i, (name, idx, len)) in rows.iter_mut().enumerate() {
+                for (i, (name, idx, len)) in rows.iter_mut().enumerate().take(shown) {
                     ui.horizontal(|ui| {
                         ui.label(*name);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

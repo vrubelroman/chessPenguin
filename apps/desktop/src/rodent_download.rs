@@ -7,7 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use crate::engine_download::{Asset, Download, Failure, Stage, disk, fetch};
+#[cfg(not(web))]
+use crate::engine_download::fetch;
+use crate::engine_download::{Asset, Download, Failure, Stage, disk};
 
 const TAG: &str = "Rodent_v_1.2";
 
@@ -77,10 +79,18 @@ pub fn remove() -> std::io::Result<()> {
     }
 }
 
+#[cfg(not(web))]
 pub fn start(ctx: &egui::Context) -> Download {
     Download::spawn(ctx, ARCHIVE.size, run)
 }
 
+/// A browser downloads no engine programs.
+#[cfg(web)]
+pub fn start(_ctx: &egui::Context) -> Download {
+    Download::unsupported()
+}
+
+#[cfg(not(web))]
 fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> {
     let bin = binary().ok_or(Failure::Unsupported)?;
     let dir = dir().ok_or_else(|| Failure::Disk("no data directory".into()))?;
@@ -108,6 +118,7 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
     result
 }
 
+#[cfg(not(web))]
 /// Takes this platform's engine and the folders it reads (personalities, nets, books)
 /// out of the archive; the other builds and the pictures of the manual stay out.
 fn unpack(archive: &Path, dir: &Path, bin: &str) -> Result<PathBuf, Failure> {
@@ -152,6 +163,7 @@ fn unpack(archive: &Path, dir: &Path, bin: &str) -> Result<PathBuf, Failure> {
 
 /// Starts the engine once from its folder and waits for its name: it runs here (the
 /// release needs AVX2: an older processor fails this).
+#[cfg(not(web))]
 pub(crate) fn check_runs(exe: &Path) -> Result<(), Failure> {
     use std::io::Write;
     let mut cmd = std::process::Command::new(exe);

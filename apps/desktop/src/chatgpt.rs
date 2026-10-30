@@ -12,7 +12,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -20,7 +21,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::translate::{Failure, agent, update_credentials, with_waits};
+use crate::translate::{Failure, update_credentials};
+#[cfg(not(web))]
+use crate::translate::{agent, with_waits};
 
 const AUTHORIZE: &str = "https://auth.openai.com/api/accounts/authorize";
 const TOKEN: &str = "https://auth.openai.com/api/accounts/oauth/token";
@@ -148,6 +151,13 @@ pub struct SignIn {
 }
 
 impl SignIn {
+    /// The web version does not sign in to ChatGPT (it would listen on a port).
+    #[cfg(web)]
+    pub fn start(_ctx: &egui::Context, _host_id: &str, _client_id: &str) -> Result<SignIn, String> {
+        Err("the web version does not sign in to ChatGPT".into())
+    }
+
+    #[cfg(not(web))]
     /// Starts listening for the callback and returns the address to open in the browser.
     pub fn start(ctx: &egui::Context, host_id: &str, client_id: &str) -> Result<SignIn, String> {
         let listener = PORTS
@@ -217,6 +227,7 @@ impl Drop for SignIn {
     }
 }
 
+#[cfg(not(web))]
 /// The page the browser tab shows after the sign-in.
 fn page(ok: bool) -> String {
     let (title, text) = if ok {
@@ -240,6 +251,7 @@ fn page(ok: bool) -> String {
     )
 }
 
+#[cfg(not(web))]
 fn reply(stream: &mut TcpStream, status: &str, body: &str) {
     let _ = write!(
         stream,
@@ -248,6 +260,7 @@ fn reply(stream: &mut TcpStream, status: &str, body: &str) {
     );
 }
 
+#[cfg(not(web))]
 /// Waits for the browser to come back to the callback: (code, issued client id).
 fn wait_for_callback(
     listener: &TcpListener,
@@ -310,6 +323,7 @@ fn wait_for_callback(
     }
 }
 
+#[cfg(not(web))]
 fn token_request(body: &str) -> Result<Value, (u16, String)> {
     let mut resp = agent(Duration::from_secs(30))
         .post(TOKEN)
@@ -340,6 +354,7 @@ fn tokens_from(v: &Value, client_id: &str, old_refresh: &str) -> Tokens {
     }
 }
 
+#[cfg(not(web))]
 fn exchange(
     code: &str,
     verifier: &str,
@@ -380,9 +395,11 @@ fn exchange(
     })
 }
 
+#[cfg(not(web))]
 /// Refreshes are one at a time: the refresh token rotates.
 static REFRESH: Mutex<()> = Mutex::new(());
 
+#[cfg(not(web))]
 /// A valid access token, refreshed when it is about to expire.
 fn access_token() -> Result<String, Failure> {
     let _one = REFRESH.lock().unwrap_or_else(|e| e.into_inner());
@@ -398,6 +415,7 @@ fn access_token() -> Result<String, Failure> {
     refresh(&t)
 }
 
+#[cfg(not(web))]
 fn refresh(t: &Tokens) -> Result<String, Failure> {
     let body = form(&[
         ("grant_type", "refresh_token"),
@@ -459,11 +477,15 @@ pub fn sign_out() {
         return;
     };
     update_credentials(|c| c.chatgpt = None);
+    #[cfg(not(web))]
     let _ = std::thread::Builder::new()
         .name("chatgpt-sign-out".into())
         .spawn(move || revoke(&t));
+    #[cfg(web)]
+    let _ = t;
 }
 
+#[cfg(not(web))]
 fn revoke(t: &Tokens) -> bool {
     let body = form(&[
         ("token", &t.refresh),
@@ -489,6 +511,22 @@ fn revoke(t: &Tokens) -> bool {
 
 // --- Requests ------------------------------------------------------------------------------
 
+#[cfg(web)]
+pub fn models() -> Result<Vec<String>, Failure> {
+    Err(crate::translate::no_requests())
+}
+
+#[cfg(web)]
+pub fn respond(
+    _model: &str,
+    _system: &str,
+    _user: &str,
+    _cancel: &AtomicBool,
+) -> Result<String, Failure> {
+    Err(crate::translate::no_requests())
+}
+
+#[cfg(not(web))]
 /// The models this account may use (`visibility: list`).
 pub fn models() -> Result<Vec<String>, Failure> {
     let token = access_token()?;
@@ -594,6 +632,7 @@ fn failure(status: u16, body: &str) -> Failure {
     }
 }
 
+#[cfg(not(web))]
 /// One answer of the model, read from the event stream.
 pub fn respond(
     model: &str,
@@ -655,6 +694,7 @@ pub fn respond(
     })
 }
 
+#[cfg(not(web))]
 /// The text of a Responses event stream: the deltas until `response.completed`.
 fn read_stream(reader: impl BufRead, cancel: &AtomicBool) -> Result<String, Failure> {
     let mut text = String::new();

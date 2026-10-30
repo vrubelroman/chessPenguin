@@ -1,0 +1,23 @@
+[package]
+name = "chesspenguin-web"
+description = "ChessPenguin in a browser: the entry point of the web version (the interface is apps/desktop's)"
+version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Built for WebAssembly only (apps/web/build.sh); elsewhere the crate is empty.
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+chesspenguin = { path = "../desktop" }
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "Location", "UrlSearchParams"] }
+log = "0.4"
+eframe.workspace = true

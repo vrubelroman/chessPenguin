@@ -15,10 +15,20 @@ pub enum Tab {
     Sound,
     Interface,
     Translation,
+    /// What the web version keeps in the browser.
+    #[cfg(web)]
+    BrowserData,
     About,
 }
 
 pub enum SettingsAction {
+    /// All of «My games» as a downloaded PGN.
+    #[cfg(web)]
+    DownloadMyGames,
+    /// Ask the browser to keep the site's data for good.
+    #[cfg(web)]
+    KeepData,
+    #[cfg(not(web))]
     AddEngine,
     /// Download the official Stockfish (decision 14).
     DownloadEngine,
@@ -29,10 +39,13 @@ pub enum SettingsAction {
     /// The active engine (or its options) changed; a running analysis should restart.
     EngineChanged,
     /// Ask now whether a newer version is out.
+    #[cfg(not(web))]
     CheckUpdates,
     /// Choose the folder for new databases.
+    #[cfg(not(web))]
     PickBaseFolder,
     /// Open the update window.
+    #[cfg(not(web))]
     OpenUpdate,
 }
 
@@ -86,7 +99,11 @@ impl SettingsWindow {
                     ui.selectable_value(&mut self.tab, Tab::Board, tr("Board & pieces"));
                     ui.selectable_value(&mut self.tab, Tab::Sound, tr("Sound"));
                     ui.selectable_value(&mut self.tab, Tab::Interface, tr("Interface"));
-                    ui.selectable_value(&mut self.tab, Tab::Translation, tr("Translation"));
+                    if crate::platform::CAPS.translation {
+                        ui.selectable_value(&mut self.tab, Tab::Translation, tr("Translation"));
+                    }
+                    #[cfg(web)]
+                    ui.selectable_value(&mut self.tab, Tab::BrowserData, tr("Browser data"));
                     ui.selectable_value(&mut self.tab, Tab::About, tr("About"));
                 });
                 ui.separator();
@@ -94,40 +111,19 @@ impl SettingsWindow {
                     Tab::Engines => self.engines(ui, s, &mut actions, &mut changed),
                     Tab::Board => board_tab(ui, s, &mut changed),
                     Tab::Translation => changed |= translation.settings_tab(ui, s),
+                    #[cfg(web)]
+                    Tab::BrowserData => browser_data(ui, &mut actions),
                     Tab::Sound => sound_tab(ui, s, &mut actions, &mut changed),
                     Tab::About => {
                         let (status, available) =
                             (self.update_status.clone(), self.update_available.clone());
                         about_tab(ui, s.language, |ui| {
-                            // Updates, right under the version.
-                            ui.add_space(4.0);
-                            ui.horizontal_wrapped(|ui| {
-                                match (&available, &status) {
-                                    (Some(v), _) => {
-                                        let label = RichText::new(trf(
-                                            "⬆ Update to {v}…",
-                                            &[("v", v)],
-                                        ))
-                                        .color(ui.visuals().hyperlink_color);
-                                        if ui.button(label).clicked() {
-                                            actions.push(SettingsAction::OpenUpdate);
-                                        }
-                                    }
-                                    (None, Some(st)) => {
-                                        ui.label(RichText::new(st).weak());
-                                    }
-                                    (None, None) => {}
-                                }
-                                if ui.button(tr("Check now")).clicked() {
-                                    actions.push(SettingsAction::CheckUpdates);
-                                }
-                            });
-                            changed |= ui
-                                .checkbox(&mut s.check_updates, tr("Check for updates at start"))
-                                .on_hover_text(tr(
-                                    "ChessPenguin asks its site which version is the latest; the site counts installations that run: only a random number of this installation, the version and the system are sent",
-                                ))
-                                .changed();
+                            // Updates, right under the version (the web version is
+                            // always the latest: a reload brings it).
+                            #[cfg(not(web))]
+                            updates(ui, s, &status, &available, &mut actions, &mut changed);
+                            #[cfg(web)]
+                            let _ = (ui, &status, &available);
                         });
                     }
                     Tab::Interface => {
@@ -171,16 +167,19 @@ impl SettingsWindow {
                             RichText::new(tr("Written as the annotator of the games you add"))
                                 .weak(),
                         );
+                        // A browser has no folders for databases.
+                        #[cfg(not(web))]
                         ui.horizontal(|ui| {
                             ui.label(tr("Folder for new databases:"));
                             let dir =
                                 crate::own_db::default_base_dir(s.new_database_dir.as_deref());
                             // Short, under the home folder; the whole path on hover.
-                            let home = directories::UserDirs::new()
-                                .map(|u| u.home_dir().to_path_buf());
-                            let short = match home.as_ref().and_then(|h| dir.strip_prefix(h).ok())
-                            {
-                                Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+                            let home =
+                                directories::UserDirs::new().map(|u| u.home_dir().to_path_buf());
+                            let short = match home.as_ref().and_then(|h| dir.strip_prefix(h).ok()) {
+                                Some(rest) => {
+                                    format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
+                                }
                                 None => dir.display().to_string(),
                             };
                             ui.label(RichText::new(short).weak())
@@ -244,6 +243,8 @@ impl SettingsWindow {
                     {
                         actions.push(SettingsAction::DownloadEngine);
                     }
+                    // A browser has no engine programs.
+                    #[cfg(not(web))]
                     if ui.button(tr("Choose engine file…")).clicked() {
                         actions.push(SettingsAction::AddEngine);
                     }
@@ -297,7 +298,7 @@ impl SettingsWindow {
                         )
                         .on_hover_text(p.display().to_string());
                     } else if let Some(p) = crate::engine_download::installed() {
-                        let mb = std::fs::metadata(&p).map_or(0, |m| m.len() / 1_000_000);
+                        let mb = crate::engine_download::installed_mb();
                         ui.label(
                             RichText::new(trf(
                                 "Downloaded by ChessPenguin · {mb} MB",
@@ -306,7 +307,7 @@ impl SettingsWindow {
                             .small()
                             .weak(),
                         )
-                        .on_hover_text(p.display().to_string());
+                        .on_hover_text(p.to_string());
                     } else {
                         ui.horizontal(|ui| {
                             ui.label(
@@ -332,9 +333,7 @@ impl SettingsWindow {
             let mut answer = None;
             let modal = egui::Modal::new(egui::Id::new("remove_engine")).show(ui.ctx(), |ui| {
                 ui.set_width(360.0);
-                let mb = crate::engine_download::installed()
-                    .and_then(|p| std::fs::metadata(p).ok())
-                    .map_or(0, |m| m.len() / 1_000_000);
+                let mb = crate::engine_download::installed_mb();
                 ui.label(trf(
                     "Remove Stockfish 19? This frees {mb} MB. You can download it again at any time.",
                     &[("mb", &mb)],
@@ -382,9 +381,8 @@ impl SettingsWindow {
             ui.label(RichText::new(tr("Found on this computer:")).strong());
             for cfg in found {
                 ui.horizontal(|ui| {
-                    let path = cfg.executable().unwrap_or_default();
-                    ui.label(&cfg.name)
-                        .on_hover_text(path.display().to_string());
+                    let path = cfg.executable().map(|l| l.to_string()).unwrap_or_default();
+                    ui.label(&cfg.name).on_hover_text(path);
                     if ui.button(tr("Add")).clicked() {
                         s.engines.push(cfg);
                         if s.active_engine.is_none() {
@@ -424,6 +422,8 @@ impl SettingsWindow {
             });
         }
         ui.add_space(6.0);
+        // A browser has no engine programs.
+        #[cfg(not(web))]
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -766,4 +766,105 @@ fn sound_tab(ui: &mut Ui, s: &mut Settings, actions: &mut Vec<SettingsAction>, c
             }
         });
     });
+}
+
+/// Updates in the About tab: the version out, «Check now», the check at start.
+#[cfg(not(web))]
+fn updates(
+    ui: &mut Ui,
+    s: &mut Settings,
+    status: &Option<String>,
+    available: &Option<String>,
+    actions: &mut Vec<SettingsAction>,
+    changed: &mut bool,
+) {
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        match (available, status) {
+            (Some(v), _) => {
+                let label = RichText::new(trf("⬆ Update to {v}…", &[("v", v)]))
+                    .color(ui.visuals().hyperlink_color);
+                if ui.button(label).clicked() {
+                    actions.push(SettingsAction::OpenUpdate);
+                }
+            }
+            (None, Some(st)) => {
+                ui.label(RichText::new(st).weak());
+            }
+            (None, None) => {}
+        }
+        if ui.button(tr("Check now")).clicked() {
+            actions.push(SettingsAction::CheckUpdates);
+        }
+    });
+    *changed |= ui
+        .checkbox(&mut s.check_updates, tr("Check for updates at start"))
+        .on_hover_text(tr(
+            "ChessPenguin asks its site which version is the latest; the site counts installations that run: only a random number of this installation, the version and the system are sent",
+        ))
+        .changed();
+}
+
+/// Settings → Browser data (docs/design/web-version.md §2.3): what is kept only in this
+/// browser, how much room it takes and is left, and the way to take «My games» along.
+#[cfg(web)]
+fn browser_data(ui: &mut Ui, actions: &mut Vec<SettingsAction>) {
+    use crate::platform::{size_text, web};
+    ui.label(tr(
+        "Everything below is stored only here, on this device. Files on disk are not changed.",
+    ));
+    ui.add_space(6.0);
+    if let Some((used, quota)) = web::storage::usage() {
+        ui.label(trf(
+            "Used {used} · free for the site {free}",
+            &[
+                ("used", &size_text(used)),
+                ("free", &size_text(quota.saturating_sub(used))),
+            ],
+        ));
+    }
+    ui.horizontal(|ui| match web::storage::persisted() {
+        Some(true) => {
+            ui.label(tr("Persistent storage: on"));
+        }
+        _ => {
+            ui.label(
+                RichText::new(tr("Persistent storage: not allowed by the browser"))
+                    .color(ui.visuals().warn_fg_color),
+            );
+            if ui.button(tr("Ask the browser")).clicked() {
+                actions.push(SettingsAction::KeepData);
+            }
+        }
+    });
+    ui.add_space(8.0);
+    egui::Grid::new("browser data")
+        .num_columns(3)
+        .spacing([16.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(trf(
+                "My games · {n}",
+                &[("n", &crate::i18n::games(crate::my_games::count()))],
+            ));
+            ui.label(size_text(crate::my_games::size()));
+            if ui.button(tr("Download all as PGN")).clicked() {
+                actions.push(SettingsAction::DownloadMyGames);
+            }
+            ui.end_row();
+            if web::engine::ready() {
+                ui.label(tr("Stockfish 19 engine"));
+                ui.label(size_text(web::engine::WASM_BYTES));
+                if ui.button(tr("Delete")).clicked() {
+                    actions.push(SettingsAction::RemoveDownloaded);
+                }
+                ui.end_row();
+            }
+        });
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new(tr(
+            "If you clear the site's data in the browser, all of this is lost. Download your games as PGN to keep them.",
+        ))
+        .weak(),
+    );
 }

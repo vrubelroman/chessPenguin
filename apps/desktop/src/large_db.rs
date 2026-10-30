@@ -193,6 +193,8 @@ pub struct Header {
     pub format_hint: String,
     /// A database downloaded from Lichess and Chess.com: its "⟳ New games".
     pub online: Option<OnlineButton>,
+    /// A file the browser holds only for this visit: "Keep a copy in the browser".
+    pub keep_copy: bool,
 }
 
 pub struct OnlineButton {
@@ -969,6 +971,10 @@ impl LargeView {
                 filters_shown,
             ),
         ] {
+            // The search by position is not in every version.
+            if pane == Pane::Board && !crate::platform::CAPS.reference {
+                continue;
+            }
             let hint = if on { tr("Hide the panel") } else { hint };
             if ui.selectable_label(on, label).on_hover_text(hint).clicked() {
                 match (pane, on) {
@@ -1695,7 +1701,7 @@ impl LargeView {
                     .weak(),
                 );
                 ui.add_space(6.0);
-                ui.label(RichText::new(trf("File: {path}", &[("path", &path.display())])).weak());
+                ui.label(RichText::new(trf("File: {path}", &[("path", &crate::platform::files::shown(path))])).weak());
             });
             return open_notes;
         }
@@ -1835,6 +1841,14 @@ impl LargeView {
             if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
                 open_notes = true;
             }
+            if header.keep_copy
+                && ui
+                    .add(egui::Button::new(tr("📋 Keep a copy in the browser")).small())
+                    .on_hover_text(tr("The copy opens right away, without choosing the file. It is stored in this browser on this device and is lost if you clear the site's data. The file on disk is not changed."))
+                    .clicked()
+            {
+                actions.push(LibraryAction::KeepCopy(path.to_path_buf()));
+            }
             // A database from Lichess and Chess.com: its new games.
             if let Some(online) = &header.online {
                 if online.busy {
@@ -1846,6 +1860,7 @@ impl LargeView {
                     .on_disabled_hover_text(&online.hint)
                     .clicked()
                 {
+                    #[cfg(not(web))]
                     actions.push(LibraryAction::UpdateOnline(path.to_path_buf()));
                 }
             }
@@ -1912,7 +1927,9 @@ impl LargeView {
                 self.focus_search = true;
             }
         }
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::B)) {
+        if crate::platform::CAPS.reference
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::B))
+        {
             self.pane = Pane::Board;
         }
         // Ctrl+Shift+Backspace: all conditions, the quick search and the position included.

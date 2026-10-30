@@ -66,11 +66,14 @@ fn asset() -> Option<Asset> {
 
 /// Whether a download is offered on this platform at all.
 pub fn available() -> bool {
-    asset().is_some()
+    cfg!(web) || asset().is_some()
 }
 
 /// Size of the download in megabytes (rounded), for the offer.
 pub fn size_mb() -> u64 {
+    #[cfg(web)]
+    return crate::platform::web::engine::DOWNLOAD_MB;
+    #[cfg(not(web))]
     asset().map_or(0, |a| a.size.div_ceil(1_000_000))
 }
 
@@ -99,13 +102,40 @@ pub fn clean_leftovers() {
 }
 
 /// The downloaded engine, if it is there.
-pub fn installed() -> Option<PathBuf> {
-    let p = dir()?.join(EXE);
-    p.is_file().then_some(p)
+pub fn installed() -> Option<crate::engines::EngineLocation> {
+    #[cfg(web)]
+    return crate::platform::web::engine::worker_script()
+        .map(crate::engines::EngineLocation::Worker);
+    #[cfg(not(web))]
+    {
+        let p = dir()?.join(EXE);
+        p.is_file()
+            .then_some(crate::engines::EngineLocation::Program(p))
+    }
+}
+
+/// The size of the downloaded engine, in MB (0 when it is not there).
+pub fn installed_mb() -> u64 {
+    #[cfg(web)]
+    return if crate::platform::web::engine::ready() {
+        crate::platform::web::engine::WASM_BYTES / 1_000_000
+    } else {
+        0
+    };
+    #[cfg(not(web))]
+    dir()
+        .and_then(|d| std::fs::metadata(d.join(EXE)).ok())
+        .map_or(0, |m| m.len() / 1_000_000)
 }
 
 /// Removes the downloaded engine (frees its space).
 pub fn remove() -> std::io::Result<()> {
+    #[cfg(web)]
+    {
+        crate::platform::web::engine::remove();
+        Ok(())
+    }
+    #[cfg(not(web))]
     match dir() {
         Some(d) if d.exists() => std::fs::remove_dir_all(d),
         _ => Ok(()),
@@ -148,9 +178,52 @@ pub struct Download {
 }
 
 impl Download {
+    #[cfg(not(web))]
     pub fn start(ctx: &egui::Context) -> Download {
         let total = asset().map_or(0, |a| a.size);
         Download::spawn(ctx, total, run)
+    }
+
+    /// The browser's engine: Stockfish 19 in WebAssembly from our site, into the
+    /// browser's cache (`platform::web::engine`).
+    #[cfg(web)]
+    pub fn start(ctx: &egui::Context) -> Download {
+        use crate::platform::web::engine::{self, Fetch};
+        let total = engine::WASM_BYTES;
+        let stage = Arc::new(Mutex::new(Stage::Downloading { done: 0, total }));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (s, c, ctx) = (stage.clone(), cancel.clone(), ctx.clone());
+        wasm_bindgen_futures::spawn_local(async move {
+            let report = |st: Stage| {
+                if let Ok(mut g) = s.lock() {
+                    *g = st;
+                }
+                ctx.request_repaint();
+            };
+            let end =
+                match engine::download(|done, total| report(Stage::Downloading { done, total }), c)
+                    .await
+                {
+                    // The engine's file: its worker's script.
+                    Ok(()) => Stage::Done(PathBuf::from(engine::SCRIPT)),
+                    Err(Fetch::Cancelled) => Stage::Cancelled,
+                    Err(Fetch::Network(e)) => Stage::Failed(Failure::Network(e)),
+                    Err(Fetch::Server(code)) => Stage::Failed(Failure::Server(code)),
+                    Err(Fetch::Checksum) => Stage::Failed(Failure::Checksum),
+                    Err(Fetch::Storage(e)) => Stage::Failed(Failure::Disk(e)),
+                };
+            report(end);
+        });
+        Download { stage, cancel }
+    }
+
+    /// The download of a platform that has none (Rodent and the like in a browser).
+    #[cfg(web)]
+    pub fn unsupported() -> Download {
+        Download {
+            stage: Arc::new(Mutex::new(Stage::Failed(Failure::Unsupported))),
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Runs `job` (a download and what follows it) in a thread of its own; `total`: the
@@ -205,6 +278,7 @@ impl Drop for Download {
     }
 }
 
+#[cfg(not(web))]
 fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> {
     let asset = asset().ok_or(Failure::Unsupported)?;
     let dir = dir().ok_or_else(|| Failure::Disk("no data directory".into()))?;
@@ -228,6 +302,7 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
     result
 }
 
+#[cfg(not(web))]
 /// Downloads `url` into `to`, checking the size and the SHA-256 on the way. The file is
 /// written beside and put in place once checked: a new file, never the old one rewritten
 /// (macOS on Apple silicon kills an executable rewritten in place after it once ran: it
@@ -250,6 +325,7 @@ pub fn fetch(
     result
 }
 
+#[cfg(not(web))]
 fn fetch_into(
     url: &str,
     to: &Path,
@@ -328,6 +404,7 @@ pub fn already(file: &Path, asset: &Asset) -> bool {
 }
 
 /// Takes the engine executable and its license files out of the archive.
+#[cfg(not(web))]
 fn unpack(archive: &Path, dir: &Path, zip: bool) -> Result<PathBuf, Failure> {
     let exe = dir.join(EXE);
     let wanted = |name: &str| -> Option<PathBuf> {
@@ -382,6 +459,7 @@ fn unpack(archive: &Path, dir: &Path, zip: bool) -> Result<PathBuf, Failure> {
     Ok(exe)
 }
 
+#[cfg(not(web))]
 /// Starts the engine once and waits for its name: the binary runs on this computer.
 fn check_runs(exe: &Path) -> Result<(), Failure> {
     let mut cmd = std::process::Command::new(exe);
@@ -455,7 +533,10 @@ mod tests {
             .output()
             .expect("runs");
         assert!(String::from_utf8_lossy(&out.stdout).contains("Stockfish"));
-        assert_eq!(installed(), Some(exe));
+        assert_eq!(
+            installed(),
+            Some(crate::engines::EngineLocation::Program(exe))
+        );
     }
 
     #[test]

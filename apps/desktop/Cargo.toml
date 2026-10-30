@@ -9,6 +9,16 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# The interface, shared with the web version (apps/web); src/main.rs starts it in a
+# window.
+[lib]
+name = "chesspenguin_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "chesspenguin"
+path = "src/main.rs"
+
 [dependencies]
 chess-core.workspace = true
 maia.workspace = true
@@ -21,23 +31,15 @@ egui.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true
 image.workspace = true
-rfd.workspace = true
-arboard.workspace = true
-rodio.workspace = true
 directories.workspace = true
 trainer.workspace = true
 play.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 online-games.workspace = true
-releases.workspace = true
-# Downloading the official Stockfish on request (decision 14).
-ureq = "3.4"
-flate2 = "1.1"
-tar = "0.4"
+web-time.workspace = true
 sha2 = "0.11"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-
 # The system language for the first start.
 sys-locale = "0.3"
 whatlang = "0.18.0"
@@ -48,6 +50,42 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 log = "0.4"
 base64 = "0.22"
 form_urlencoded = "1"
+
+# The desktop program: native dialogs, the clipboard, sound, the network (updates,
+# engines and Maia on request, online games, translation).
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+rfd.workspace = true
+arboard.workspace = true
+rodio.workspace = true
+releases.workspace = true
+# Downloading the official Stockfish on request (decision 14).
+ureq = "3.4"
+flate2 = "1.1"
+tar = "0.4"
+
+# The web version: the page, its files and storage (apps/web starts it).
+[target.'cfg(target_family = "wasm")'.dependencies]
+# The reader worker gives the page a database's index (platform::web::import).
+chess-core = { workspace = true, features = ["serde"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+# The browser's languages for the first start.
+sys-locale = { version = "0.3", features = ["js"] }
+# Today's date from the browser's clock.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "wasmbind"] }
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window", "Document", "Element", "HtmlElement", "HtmlInputElement", "HtmlAnchorElement",
+    "File", "FileList", "Blob", "BlobPropertyBag", "Url", "Event", "Location", "Navigator",
+    "Storage", "UrlSearchParams", "EventTarget", "CssStyleDeclaration", "Clipboard",
+    "IdbFactory", "IdbDatabase", "IdbOpenDbRequest", "IdbRequest", "IdbTransaction",
+    "IdbTransactionMode", "IdbObjectStore", "DomStringList", "HtmlAudioElement",
+    "HtmlMediaElement", "HtmlCanvasElement", "console", "CacheStorage", "Cache",
+    "Request", "Response", "ResponseInit", "Headers", "ReadableStream",
+    "ReadableStreamDefaultReader", "StorageManager", "StorageEstimate", "History",
+    "BeforeUnloadEvent", "WorkerOptions", "WorkerType",
+] }
 
 [build-dependencies]
 winresource = "0.1"

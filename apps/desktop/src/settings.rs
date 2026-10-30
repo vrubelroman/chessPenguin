@@ -53,12 +53,22 @@ impl EngineConfig {
 
     /// Executable to start; `None` if ChessPenguin's Stockfish is neither bundled nor
     /// downloaded yet (it is offered for download then).
-    pub fn executable(&self) -> Option<PathBuf> {
+    pub fn executable(&self) -> Option<crate::engines::EngineLocation> {
         if self.builtin {
             crate::engines::own_stockfish()
         } else {
-            Some(self.path.clone())
+            // A browser runs no engine programs: there are none but its own.
+            #[cfg(not(web))]
+            return Some(crate::engines::EngineLocation::Program(self.path.clone()));
+            #[cfg(web)]
+            None
         }
+    }
+
+    /// Whether the engine can be started: ChessPenguin's Stockfish is there (in a
+    /// browser: downloaded into it), or the file of another engine.
+    pub fn present(&self) -> bool {
+        self.executable().is_some_and(|l| l.present())
     }
 }
 
@@ -222,14 +232,12 @@ impl Default for Settings {
 
 impl Settings {
     pub fn config_dir() -> Option<PathBuf> {
-        directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
-            .map(|d| d.config_dir().to_path_buf())
+        crate::platform::config_dir()
     }
 
     /// `~/.cache/chesspenguin` (derived data that can be deleted at any time).
     pub fn cache_dir() -> Option<PathBuf> {
-        directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
-            .map(|d| d.cache_dir().to_path_buf())
+        crate::platform::cache_dir()
     }
 
     fn file() -> Option<PathBuf> {
@@ -241,7 +249,7 @@ impl Settings {
             return Self::first_start();
         };
         migrate_legacy_config(&path);
-        match std::fs::read(&path) {
+        match crate::platform::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
                 eprintln!(
                     "settings: cannot parse {}: {e}; using defaults",
@@ -283,7 +291,7 @@ impl Settings {
 
 /// Copies settings of the pre-rename build (`chessbase-linux`) once, if the new file is absent.
 fn migrate_legacy_config(new_file: &Path) {
-    if new_file.exists() {
+    if crate::platform::fs::exists(new_file) {
         return;
     }
     let legacy = directories::ProjectDirs::from("org", "chessbase-linux", "chessbase-linux")
@@ -297,14 +305,7 @@ fn migrate_legacy_config(new_file: &Path) {
 
 /// Writes via a temp file in the same directory and renames over the target.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
+    crate::platform::fs::write_atomic(path, bytes)
 }
 
 #[cfg(test)]

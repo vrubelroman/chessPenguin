@@ -25,11 +25,35 @@ use crate::sound::SoundPlayer;
 /// Results of work done off the UI thread (file dialogs, engine checks).
 enum Async {
     DatabasesPicked(Vec<PathBuf>),
+    /// Files not opened: too big for a browser (name, bytes).
+    #[cfg(web)]
+    TooBig(Vec<(String, u64)>),
     SavePicked(PathBuf),
     SaveCancelled,
     EngineChecked(Result<(PathBuf, String), String>),
     /// The folder for new databases (`None`: the dialog was cancelled).
     FolderPicked(Option<PathBuf>),
+    /// A remembered file the browser let the page read again.
+    #[cfg(web)]
+    ReadAllowed(PathBuf),
+    /// ChessBase databases not all files of which were chosen (their `.cbh` names).
+    #[cfg(web)]
+    Incomplete(Vec<String>),
+    /// A folder was chosen with no database in it.
+    #[cfg(web)]
+    EmptyFolder,
+    /// A copy of the visit's database `.0` kept in the browser, or why not.
+    #[cfg(web)]
+    CopyKept(PathBuf, Result<PathBuf, crate::platform::files::KeepCopy>),
+}
+
+/// What the web version tells in a window of its own about the files chosen.
+#[cfg(web)]
+enum WebNotice {
+    /// Databases too big for a browser (name, bytes).
+    TooBig(Vec<(String, u64)>),
+    /// A ChessBase database's `.cbh` chosen without its other files (its name).
+    Incomplete(String),
 }
 
 /// A passing message at the bottom; `undo`: with the button that puts a deleted game back.
@@ -215,19 +239,27 @@ pub struct App {
     play_next: Option<PlayNext>,
     tx: Sender<Async>,
     rx: Receiver<Async>,
+    /// «Paste PGN»: the clipboard being read.
+    pasting: Option<crate::platform::clipboard::Reading>,
+    /// A file of the last visit being chosen again (a browser's).
+    choosing_again: Option<PathBuf>,
+    /// The web version's draft of an unsaved game: the one left at the last visit
+    /// (offered), and when this visit's was last written (egui time; `None`: none).
+    #[cfg(web)]
+    draft_offer: Option<crate::my_games::Draft>,
+    #[cfg(web)]
+    draft_at: Option<f64>,
+    #[cfg(web)]
+    web_notice: Option<WebNotice>,
     confirm_close: Option<CloseIntent>,
     /// Close the game once the pending "save as" succeeds.
     close_after_save: Option<CloseIntent>,
     /// The offer to download Stockfish when an action needs an engine.
     engine_offer: crate::engine_offer::EngineOffer,
     offer_hook_done: bool,
-    /// Lichess / Chess.com: which answered at start, and the download window.
-    online_probe: crate::online::Probe,
-    /// When the online databases were last updated on their own (egui time, s), and
-    /// whether the window had the focus in the last frame.
-    online_updated_at: f64,
-    was_focused: bool,
-    online: crate::online_ui::OnlineDialog,
+    /// What only the desktop program has: online games, updates.
+    #[cfg(not(web))]
+    desktop: Desktop,
     /// Translating comments: the setup and consent windows, the ChatGPT sign-in.
     translation: crate::translate_ui::Hub,
     /// A position to find in a database once the game is closed.
@@ -237,11 +269,7 @@ pub struct App {
     previous_games: Vec<GameView>,
     /// The last game showed the reference tab: the next one opens with it too.
     reference_tab: bool,
-    /// Updates: the release check, how this copy is installed, the window, and the
-    /// executable to start after quitting (a restart into the new version).
-    update_check: crate::update::Check,
-    update_kind: crate::update::Install,
-    update_ui: crate::update_ui::UpdateDialog,
+    /// The executable to start after quitting (a restart into the new version).
     restart_to: Option<PathBuf>,
     /// The reference tab of games (kept across games: its results stay cached).
     reference: crate::reference::Reference,
@@ -255,6 +283,52 @@ pub struct App {
     allow_quit: bool,
     applied_dark: Option<bool>,
     debug: DebugStartup,
+}
+
+/// What only the desktop program has.
+#[cfg(not(web))]
+struct Desktop {
+    /// Lichess / Chess.com: which answered at start, and the download window.
+    online_probe: crate::online::Probe,
+    /// When the online databases were last updated on their own (egui time, s), and
+    /// whether the window had the focus in the last frame.
+    online_updated_at: f64,
+    was_focused: bool,
+    online: crate::online_ui::OnlineDialog,
+    /// Updates: the release check, how this copy is installed, the window.
+    update_check: crate::update::Check,
+    update_kind: crate::update::Install,
+    update_ui: crate::update_ui::UpdateDialog,
+}
+
+#[cfg(not(web))]
+impl Desktop {
+    fn new(ctx: &egui::Context, settings: &Settings) -> Desktop {
+        let online_dbs: Vec<PathBuf> = settings
+            .databases
+            .iter()
+            .filter(|p| crate::online::is_online(p))
+            .cloned()
+            .collect();
+        Desktop {
+            online_probe: crate::online::Probe::start(ctx),
+            online_updated_at: 0.0,
+            was_focused: true,
+            online: {
+                // Every downloaded database gets the games played since, at each start.
+                let mut d = crate::online_ui::OnlineDialog::from_env();
+                d.update_quietly(online_dbs);
+                d
+            },
+            update_check: if settings.check_updates {
+                crate::update::Check::start(ctx)
+            } else {
+                crate::update::Check::idle()
+            },
+            update_kind: crate::update::detect(),
+            update_ui: crate::update_ui::UpdateDialog::from_env(),
+        }
+    }
 }
 
 /// Dev-only startup automation for screenshots/manual QA (see docs/dev/desktop.md):
@@ -343,24 +417,31 @@ impl App {
         // Before the samples, which are named in this language.
         crate::i18n::set_lang(settings.language);
         crate::engine_download::clean_leftovers();
-        crate::update::clean_leftovers();
-        let settings_check_updates = settings.check_updates;
-        // "Updated to …" once, when this version runs for the first time after another.
         let current = env!("CARGO_PKG_VERSION");
-        let updated_from = settings
-            .last_version
-            .clone()
-            .filter(|v| crate::update::parse_version(v) < crate::update::parse_version(current));
-        if settings.install_id.is_empty() {
-            settings.install_id = crate::update::new_install_id();
-        }
-        crate::update::set_install_id(&settings.install_id);
+        #[cfg(not(web))]
+        let updated_from = {
+            crate::update::clean_leftovers();
+            // "Updated to …" once, when this version runs for the first time after another.
+            let from = settings.last_version.clone().filter(|v| {
+                crate::update::parse_version(v) < crate::update::parse_version(current)
+            });
+            if settings.install_id.is_empty() {
+                settings.install_id = crate::update::new_install_id();
+            }
+            crate::update::set_install_id(&settings.install_id);
+            from
+        };
         if settings.last_version.as_deref() != Some(current) {
             settings.last_version = Some(current.to_owned());
             let _ = settings.save();
         }
         let engines_found = crate::engines::first_run_setup(&mut settings);
         if crate::examples::setup(&mut settings) || engines_found {
+            let _ = settings.save();
+        }
+        // After the samples: a new library opens on the classics.
+        #[cfg(web)]
+        if crate::my_games::setup(&mut settings) {
             let _ = settings.save();
         }
         // PGN files passed on the command line (e.g. "Open with…") join the library, first one selected.
@@ -376,12 +457,8 @@ impl App {
         if !args.is_empty() {
             let _ = settings.save();
         }
-        let online_dbs: Vec<PathBuf> = settings
-            .databases
-            .iter()
-            .filter(|p| crate::online::is_online(p))
-            .cloned()
-            .collect();
+        #[cfg(not(web))]
+        let desktop = Desktop::new(ctx, &settings);
         let (tx, rx) = channel();
         let mut library = Library::new(ctx);
         // Read in the background: a missing file says so there (a lost network drive
@@ -408,18 +485,19 @@ impl App {
             play_next: None,
             tx,
             rx,
+            pasting: None,
+            choosing_again: None,
+            #[cfg(web)]
+            draft_offer: crate::my_games::read_draft(),
+            #[cfg(web)]
+            draft_at: None,
+            #[cfg(web)]
+            web_notice: None,
             confirm_close: None,
             close_after_save: None,
             find_after_close: None,
             previous_games: Vec::new(),
             reference_tab: false,
-            update_check: if settings_check_updates {
-                crate::update::Check::start(ctx)
-            } else {
-                crate::update::Check::idle()
-            },
-            update_kind: crate::update::detect(),
-            update_ui: crate::update_ui::UpdateDialog::from_env(),
             restart_to: None,
             reference: Default::default(),
             prep_dialog: None,
@@ -428,21 +506,15 @@ impl App {
             prep_quit_ok: false,
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
-            online_probe: crate::online::Probe::start(ctx),
-            online_updated_at: 0.0,
-            was_focused: true,
-            online: {
-                // Every downloaded database gets the games played since, at each start.
-                let mut d = crate::online_ui::OnlineDialog::from_env();
-                d.update_quietly(online_dbs);
-                d
-            },
+            #[cfg(not(web))]
+            desktop,
             translation: Default::default(),
             allow_quit: false,
             applied_dark: None,
             debug: DebugStartup::from_env(),
         }
         .with_debug_settings();
+        #[cfg(not(web))]
         if let Some(from) = updated_from {
             let msg = trf(
                 "ChessPenguin is updated: {from} → {to}",
@@ -957,6 +1029,16 @@ impl App {
         let target = self.current_target();
         let Some(g) = &self.game else { return };
         self.own.then_close = then_close;
+        // The web version keeps the user's games in «My games»: a game from anywhere
+        // else (a file, which is only read, a sample, a new one) goes there, no question.
+        #[cfg(web)]
+        if !matches!(&g.source, Some(src) if src.block.is_none()) {
+            if crate::platform::web::storage::persisted() != Some(true) {
+                crate::platform::web::storage::persist(|_| {});
+            }
+            self.add_current_to(ctx, crate::my_games::path());
+            return;
+        }
         match &g.source {
             Some(src) if src.block.is_none() => {
                 if !g.game.is_modified() {
@@ -1004,7 +1086,7 @@ impl App {
         };
         let Some(pgn) = db.as_pgn() else { return };
         let text = g.game.to_pgn();
-        match chess_core::pgn::store::replace(pgn, src.index, &text) {
+        match crate::platform::pgn_store::replace(pgn, &src.path, src.index, &text) {
             Ok(()) => {
                 let name = own_db::base_name(&src.path);
                 if let Some(g) = self.game.as_mut() {
@@ -1145,7 +1227,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::append(pgn, &text) {
+        match crate::platform::pgn_store::append(pgn, &target, &text) {
             Ok(_) => {
                 let index = pgn.len();
                 let name = own_db::base_name(&target);
@@ -1184,7 +1266,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::replace(pgn, index, &text) {
+        match crate::platform::pgn_store::replace(pgn, &target, index, &text) {
             Ok(()) => {
                 let name = own_db::base_name(&target);
                 if let Some(g) = self.game.as_mut() {
@@ -1279,7 +1361,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::append(pgn, &text) {
+        match crate::platform::pgn_store::append(pgn, &target, &text) {
             Ok(_) => {
                 let n = pgn.len();
                 let name = own_db::base_name(&target);
@@ -1325,7 +1407,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::replace(pgn, at, &text) {
+        match crate::platform::pgn_store::replace(pgn, &target, at, &text) {
             Ok(()) => {
                 let name = own_db::base_name(&target);
                 self.settings.last_target = Some(target.clone());
@@ -1480,7 +1562,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::remove(pgn, index) {
+        match crate::platform::pgn_store::remove(pgn, &path, index) {
             Ok(removed) => {
                 // Games open from this file: their records moved up by one.
                 let mut open = None;
@@ -1537,7 +1619,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::restore(pgn, &undo.removed) {
+        match crate::platform::pgn_store::restore(pgn, &undo.path, &undo.removed) {
             Ok(()) => {
                 let index = undo.removed.index;
                 for g in self.game.iter_mut().chain(self.previous_games.iter_mut()) {
@@ -1740,7 +1822,7 @@ impl App {
             self.settings
                 .active_engine()
                 .and_then(|e| e.executable())
-                .filter(|p| p.is_file())
+                .filter(|l| l.present())
         });
         let Some(aside) = self.put_aside.take() else {
             return;
@@ -1978,7 +2060,7 @@ impl App {
             self.settings
                 .active_engine()
                 .and_then(|e| e.executable())
-                .filter(|p| p.is_file())
+                .filter(|l| l.present())
         });
         match &start.from {
             Some(from) => self.game_from(from),
@@ -2052,6 +2134,7 @@ impl App {
         self.own.editor = Some((editor, EditorThen::Done));
     }
 
+    #[cfg(not(web))]
     fn pick_folder(&self, ctx: &egui::Context, start: PathBuf) {
         self.spawn_dialog(ctx, move || {
             let picked = rfd::FileDialog::new()
@@ -2119,7 +2202,13 @@ impl App {
                             self.settings.last_target = Some(dest.clone());
                             self.settings_dirty = true;
                             self.library.select_db(&dest, ctx);
-                            self.toast(ctx, trf("Copy made: {path}", &[("path", &dest.display())]));
+                            self.toast(
+                                ctx,
+                                trf(
+                                    "Copy made: {path}",
+                                    &[("path", &crate::platform::files::shown(&dest))],
+                                ),
+                            );
                         }
                         Err(e) => {
                             self.toast(ctx, trf("Could not make the copy: {e}", &[("e", &e)]))
@@ -2217,7 +2306,11 @@ impl App {
                 }
                 ChooserOutcome::SaveAsFile => {
                     self.close_after_save = self.own.then_close.take();
+                    #[cfg(not(web))]
                     self.pick_save(ctx);
+                    // A file of its own in a browser: a download.
+                    #[cfg(web)]
+                    self.download_pgn(ctx);
                 }
                 ChooserOutcome::Cancel => {
                     if let Some(intent) = self.own.then_close.take() {
@@ -2231,9 +2324,13 @@ impl App {
             && let Some(outcome) = dialog.show(ctx)
         {
             match outcome {
+                // A browser has no folders: there are no new databases there.
                 NewBaseOutcome::PickFolder => {
-                    let start = dialog.dir.clone();
-                    self.pick_folder(ctx, start);
+                    #[cfg(not(web))]
+                    {
+                        let start = dialog.dir.clone();
+                        self.pick_folder(ctx, start);
+                    }
                 }
                 NewBaseOutcome::Cancel => {
                     self.own.new_base = None;
@@ -2294,6 +2391,7 @@ impl App {
         }
     }
 
+    #[cfg(not(web))]
     fn spawn_dialog(
         &self,
         ctx: &egui::Context,
@@ -2312,22 +2410,14 @@ impl App {
     }
 
     fn pick_databases(&self, ctx: &egui::Context) {
-        self.spawn_dialog(ctx, || {
-            rfd::FileDialog::new()
-                .set_title(tr("Open database"))
-                .add_filter(
-                    tr("Chess databases"),
-                    &[
-                        "pgn", "PGN", "cbh", "CBH", "cbv", "CBV", "zip", "ZIP", "7z", "7Z",
-                    ],
-                )
-                .add_filter("PGN", &["pgn", "PGN"])
-                .add_filter(tr("All files"), &["*"])
-                .pick_files()
-                .map(Async::DatabasesPicked)
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        crate::platform::files::pick_databases(move |picked| {
+            send_picked(&tx, picked);
+            ctx.request_repaint();
         });
     }
 
+    #[cfg(not(web))]
     fn pick_save(&self, ctx: &egui::Context) {
         let Some(g) = &self.game else { return };
         let name = sanitize(&g.title()) + ".pgn";
@@ -2341,6 +2431,7 @@ impl App {
         });
     }
 
+    #[cfg(not(web))]
     fn pick_engine(&mut self, ctx: &egui::Context) {
         self.settings_ui.checking_engine = true;
         let tx = self.tx.clone();
@@ -2373,9 +2464,33 @@ impl App {
     }
 
     fn handle_async(&mut self, ctx: &egui::Context) {
+        self.pasted(ctx);
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
+                #[cfg(web)]
+                Async::TooBig(files) => self.web_notice = Some(WebNotice::TooBig(files)),
+                #[cfg(web)]
+                Async::Incomplete(names) => {
+                    if let Some(name) = names.into_iter().next() {
+                        self.web_notice = Some(WebNotice::Incomplete(name));
+                    }
+                }
+                #[cfg(web)]
+                Async::EmptyFolder => {
+                    self.toast(
+                        ctx,
+                        tr("There is no database in this folder (.pgn, .cbh, .cbv, .zip, .7z)."),
+                    );
+                }
+                #[cfg(web)]
+                Async::CopyKept(path, kept) => self.copy_kept(ctx, path, kept),
                 Async::DatabasesPicked(paths) => {
+                    // The file chosen again takes the place of the one gone.
+                    if let Some(old) = self.choosing_again.take() {
+                        self.settings.databases.retain(|d| *d != old);
+                        self.library.forget(&old);
+                        crate::platform::files::forget(&old);
+                    }
                     for p in paths.iter().rev() {
                         self.settings.touch_database(p);
                     }
@@ -2385,6 +2500,8 @@ impl App {
                     self.settings_dirty = true;
                 }
                 Async::SavePicked(path) => self.save_game(ctx, path),
+                #[cfg(web)]
+                Async::ReadAllowed(path) => self.library.reload(&path, ctx),
                 Async::SaveCancelled => {
                     self.close_after_save = None;
                     self.restart_to = None;
@@ -2446,7 +2563,13 @@ impl App {
         match chess_core::pgn::store::write_atomic(&path, pgn.as_bytes()) {
             Ok(()) => {
                 g.game.mark_saved();
-                self.toast(ctx, trf("Saved: {path}", &[("path", &path.display())]));
+                self.toast(
+                    ctx,
+                    trf(
+                        "Saved: {path}",
+                        &[("path", &crate::platform::files::shown(&path))],
+                    ),
+                );
                 if let Some(intent) = self.close_after_save.take() {
                     self.finish_close(ctx, intent);
                 }
@@ -2691,16 +2814,275 @@ impl App {
                     let cfg = crate::settings::EngineConfig::new("Stockfish".into(), path);
                     self.engine_arrived(ctx, cfg, pending)
                 }
+                #[cfg(not(web))]
                 crate::engine_offer::OfferEvent::ChooseFile => self.pick_engine(ctx),
                 crate::engine_offer::OfferEvent::Toast(m) => self.toast(ctx, m),
             }
         }
     }
 
+    /// The page's side of the frame: the game on the screen as an entry of the browser's
+    /// history, the browser's question on leaving with unsaved work, the draft of an
+    /// unsaved game. Nothing of it on a computer.
+    fn page_frame(&mut self, ctx: &egui::Context) {
+        crate::platform::page::game_shown(ctx, self.game.is_some());
+        let modified = self.game.as_ref().is_some_and(|g| g.game.is_modified());
+        let reviewing = self.game.as_ref().is_some_and(|g| g.review_running());
+        crate::platform::page::warn_on_leave(modified || reviewing);
+        #[cfg(web)]
+        {
+            const EVERY: f64 = 5.0;
+            let now = ctx.input(|i| i.time);
+            match self.game.as_ref().filter(|g| g.game.is_modified()) {
+                Some(g) if self.draft_at.is_none_or(|t| now - t >= EVERY) => {
+                    crate::my_games::write_draft(&crate::my_games::Draft {
+                        title: g.title(),
+                        moves: g.game.mainline().len().div_ceil(2),
+                        pgn: g.game.to_pgn(),
+                    });
+                    self.draft_at = Some(now);
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(EVERY));
+                }
+                Some(_) => {}
+                // Saved, or left without saving: no draft of this visit is kept.
+                None if self.draft_at.take().is_some() => crate::my_games::delete_draft(),
+                None => {}
+            }
+        }
+    }
+
+    /// «There is an unsaved game» over the library, with Open and Delete.
+    #[cfg(web)]
+    fn draft_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(d) = self.draft_offer.clone() else {
+            return;
+        };
+        let mut open = false;
+        let mut delete = false;
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(8, 6))
+            .fill(ui.visuals().faint_bg_color)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(trf(
+                            "There is an unsaved game: {title}, moves: {n}.",
+                            &[("title", &d.title), ("n", &d.moves)],
+                        ))
+                        .color(ui.visuals().warn_fg_color),
+                    );
+                    open = ui.button(tr("Open")).clicked();
+                    delete = ui.button(tr("Delete")).clicked();
+                });
+            });
+        if open {
+            self.draft_offer = None;
+            self.open_pgn_text(ctx, d.pgn, false);
+            crate::my_games::delete_draft();
+        } else if delete {
+            self.draft_offer = None;
+            crate::my_games::delete_draft();
+        }
+    }
+
+    /// Files dropped on the window open as databases, like chosen ones; while files are
+    /// dragged over it, the window says so.
+    fn dropped_files(&mut self, ctx: &egui::Context) {
+        let (tx, waker) = (self.tx.clone(), ctx.clone());
+        crate::platform::files::take_dropped(ctx, move |picked| {
+            send_picked(&tx, picked);
+            waker.request_repaint();
+        });
+        if crate::platform::files::dragging(ctx) {
+            let rect = ctx.content_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("dropping files"),
+            ));
+            let visuals = ctx.global_style().visuals.clone();
+            let accent = visuals.selection.bg_fill;
+            painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.12));
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                tr("Release to open"),
+                egui::FontId::proportional(22.0),
+                visuals.strong_text_color(),
+            );
+        }
+    }
+
+    /// A copy of a file of this visit kept in the browser: it takes the file's place on
+    /// the shelf. Only a browser has such files.
+    fn keep_copy(&mut self, ctx: &egui::Context, path: PathBuf) {
+        #[cfg(web)]
+        {
+            let (tx, wake) = (self.tx.clone(), ctx.clone());
+            crate::platform::files::keep_copy(&path.clone(), move |kept| {
+                let _ = tx.send(Async::CopyKept(path, kept));
+                wake.request_repaint();
+            });
+        }
+        #[cfg(not(web))]
+        let _ = (ctx, path);
+    }
+
+    /// The copy of `path` is kept (or not): it takes the file's place on the shelf.
+    #[cfg(web)]
+    fn copy_kept(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        kept: Result<PathBuf, crate::platform::files::KeepCopy>,
+    ) {
+        {
+            use crate::platform::files::KeepCopy;
+            use crate::platform::size_text;
+            match kept {
+                Ok(copy) => {
+                    for d in self.settings.databases.iter_mut().filter(|d| **d == path) {
+                        *d = copy.clone();
+                    }
+                    self.library.forget(&path);
+                    crate::platform::files::forget(&path);
+                    self.library.select_db(&copy, ctx);
+                    self.settings_dirty = true;
+                    let ctx2 = ctx.clone();
+                    crate::platform::web::storage::refresh(move || ctx2.request_repaint());
+                    if crate::platform::web::storage::persisted() != Some(true) {
+                        crate::platform::web::storage::persist(|_| {});
+                    }
+                    self.toast(ctx, tr("A copy is kept in the browser"));
+                }
+                Err(KeepCopy::NoRoom { need, free }) => self.toast_for(
+                    ctx,
+                    trf(
+                        "Doesn't fit: the copy needs {need}, and the browser gives the site only {free} more. Free up space in “Browser data” or open the file from disk.",
+                        &[("need", &size_text(need)), ("free", &size_text(free))],
+                    ),
+                    8.0,
+                ),
+                Err(KeepCopy::Failed(e)) => self.toast(ctx, e),
+            }
+        }
+    }
+
+    /// The window of [`WebNotice`]: a database too big for a browser (with the way to
+    /// the program for the computer), or a ChessBase database's other files to choose.
+    #[cfg(web)]
+    fn web_notice(&mut self, ctx: &egui::Context) {
+        let Some(notice) = &self.web_notice else {
+            return;
+        };
+        let mut close = false;
+        let mut folder = false;
+        let mut files = false;
+        let modal = egui::Modal::new(egui::Id::new("web_notice")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            match notice {
+                WebNotice::TooBig(dbs) => {
+                    for (name, size) in dbs {
+                        ui.label(RichText::new(name.as_str()).strong());
+                        ui.label(trf(
+                            "This database is too big for the browser ({size}, the limit is {limit}). Sorry — open it in the desktop program.",
+                            &[
+                                ("size", &crate::platform::size_text(*size)),
+                                ("limit", &crate::platform::size_text(crate::platform::files::TOO_BIG)),
+                            ],
+                        ));
+                    }
+                    ui.add_space(6.0);
+                    let lang = match crate::i18n::current() {
+                        crate::i18n::Lang::En => "",
+                        crate::i18n::Lang::Ru => "ru/",
+                        crate::i18n::Lang::Fr => "fr/",
+                        crate::i18n::Lang::De => "de/",
+                        crate::i18n::Lang::Es => "es/",
+                        crate::i18n::Lang::It => "it/",
+                        crate::i18n::Lang::Pt => "pt/",
+                        crate::i18n::Lang::Uz => "uz/",
+                        crate::i18n::Lang::Kk => "kk/",
+                    };
+                    ui.hyperlink_to(
+                        tr("Download ChessPenguin for the computer"),
+                        format!("/{lang}#download"),
+                    );
+                    ui.add_space(8.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close = ui.button(tr("Close")).clicked();
+                    });
+                }
+                WebNotice::Incomplete(name) => {
+                    ui.label(RichText::new(name.as_str()).strong());
+                    ui.label(tr(
+                        "A ChessBase database is several files (.cbh, .cbg, .cba…). Choose its folder or all its files at once.",
+                    ));
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(if crate::platform::files::remembers_chosen() {
+                            tr("Allow access to the database's folder — its other files will be found by themselves.")
+                        } else {
+                            tr("Choose the database's folder — its other files will be found by themselves.")
+                        })
+                        .weak(),
+                    );
+                    ui.add_space(8.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        folder = ui.button(tr("📁 Choose the database's folder")).clicked();
+                        files = ui.button(tr("Choose the database's files")).clicked();
+                        close = ui.button(tr("Cancel")).clicked();
+                    });
+                }
+            }
+        });
+        if close || modal.should_close() {
+            self.web_notice = None;
+        }
+        if folder {
+            self.web_notice = None;
+            self.pick_database_folder(ctx);
+        }
+        if files {
+            self.web_notice = None;
+            self.pick_databases(ctx);
+        }
+    }
+
+    #[cfg(web)]
+    fn pick_database_folder(&self, ctx: &egui::Context) {
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        crate::platform::files::pick_database_folder(move |picked| {
+            send_picked(&tx, picked);
+            ctx.request_repaint();
+        });
+    }
+
+    /// The open game's PGN, downloaded as a file named after the game.
+    #[cfg(web)]
+    fn download_pgn(&mut self, ctx: &egui::Context) {
+        let Some(g) = &self.game else { return };
+        let name = sanitize(&g.title()) + ".pgn";
+        if let Err(e) = crate::platform::files::download_pgn(&name, &g.game.to_pgn()) {
+            self.toast(
+                ctx,
+                trf("The PGN could not be downloaded: {e}", &[("e", &e)]),
+            );
+        }
+    }
+
     fn paste_pgn(&mut self, ctx: &egui::Context) {
-        let text = arboard::Clipboard::new().and_then(|mut c| c.get_text());
+        self.pasting = Some(crate::platform::clipboard::read_text(ctx));
+    }
+
+    /// The clipboard read for «Paste PGN», once it is there.
+    fn pasted(&mut self, ctx: &egui::Context) {
+        let Some(text) = self.pasting.as_ref().and_then(|r| r.poll()) else {
+            return;
+        };
+        self.pasting = None;
         match text {
-            Ok(t) if !t.trim().is_empty() => self.open_pgn_text(ctx, t, false),
+            Some(t) if !t.trim().is_empty() => self.open_pgn_text(ctx, t, false),
             _ => self.toast(ctx, tr("The clipboard is empty or unavailable")),
         }
     }
@@ -2840,12 +3222,108 @@ impl App {
             _ => {}
         }
     }
+
+    /// Online games and updates, each frame (the desktop program's).
+    #[cfg(not(web))]
+    fn desktop_frame(&mut self, ctx: &egui::Context) {
+        // Back to the window after a while: the downloaded databases get the games
+        // played since (at the start they did already).
+        let now = ctx.input(|i| i.time);
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+        if focused
+            && !self.desktop.was_focused
+            && now - self.desktop.online_updated_at > ONLINE_EVERY
+        {
+            self.desktop.online_updated_at = now;
+            self.desktop.online.update_quietly(
+                self.settings
+                    .databases
+                    .iter()
+                    .filter(|p| crate::online::is_online(p))
+                    .cloned(),
+            );
+        }
+        self.desktop.was_focused = focused;
+        let events = self.desktop.online.show(ctx, &self.desktop.online_probe);
+        for e in events {
+            match e {
+                crate::online_ui::OnlineEvent::Added(p) => {
+                    let known = self.settings.databases.contains(&p);
+                    self.settings.touch_database(&p);
+                    if known {
+                        self.library.reload(&p, ctx);
+                    }
+                    self.library.select_db(&p, ctx);
+                    self.settings_dirty = true;
+                }
+                crate::online_ui::OnlineEvent::Updated(p) => self.library.reload(&p, ctx),
+                crate::online_ui::OnlineEvent::Open(p) => {
+                    self.settings.touch_database(&p);
+                    self.library.select_db(&p, ctx);
+                    self.settings_dirty = true;
+                }
+                crate::online_ui::OnlineEvent::Message(t) => self.toast(ctx, t),
+            }
+        }
+        // Updates: the badge next to Settings, the window, the status in Settings → About.
+        self.desktop.update_check.poll();
+        let skipped = self.settings.skipped_version.clone();
+        let badge = self
+            .desktop
+            .update_check
+            .newer()
+            .filter(|r| {
+                self.desktop.update_ui.active() || skipped.as_deref() != Some(r.version.as_str())
+            })
+            .map(|r| self.desktop.update_ui.badge(r));
+        self.library.update = badge.clone();
+        if let Some(g) = &mut self.game {
+            g.update = badge;
+        }
+        for e in self.desktop.update_ui.show(
+            ctx,
+            self.desktop.update_check.newer(),
+            &self.desktop.update_kind,
+        ) {
+            match e {
+                crate::update_ui::UpdateEvent::Restart(exe) => {
+                    self.restart_to = Some(exe);
+                    self.request_close(ctx, CloseIntent::QuitApp);
+                }
+                crate::update_ui::UpdateEvent::CopyText(t) => {
+                    ctx.copy_text(t);
+                    self.toast(ctx, tr("Copied"));
+                }
+                crate::update_ui::UpdateEvent::Quit => {
+                    self.request_close(ctx, CloseIntent::QuitApp);
+                }
+                crate::update_ui::UpdateEvent::Skip(v) => {
+                    self.settings.skipped_version = Some(v);
+                    self.settings_dirty = true;
+                }
+            }
+        }
+        self.settings_ui.update_available =
+            self.desktop.update_check.newer().map(|r| r.version.clone());
+        self.settings_ui.update_status = if self.desktop.update_check.running() {
+            Some(tr("Checking…").to_owned())
+        } else if let Some(r) = self.desktop.update_check.newer() {
+            Some(trf("Version {v} is out", &[("v", &r.version)]))
+        } else if self.desktop.update_check.release.is_some() {
+            Some(tr("This is the latest version").to_owned())
+        } else if self.desktop.update_check.error.is_some() {
+            Some(tr("Could not check for updates").to_owned())
+        } else {
+            None
+        };
+    }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         crate::san::set(self.settings.move_notation);
         // The window has shown its first frame: this graphics mode works.
+        #[cfg(not(web))]
         if ui.ctx().cumulative_frame_nr() >= 1 {
             crate::graphics::started();
         }
@@ -2915,7 +3393,12 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm_close = Some(CloseIntent::QuitApp);
         }
+        self.dropped_files(&ctx);
         self.handle_async(&ctx);
+        // The browser's «Back» in a game: «← Library».
+        if crate::platform::page::take_back() && self.game.is_some() {
+            self.request_close(&ctx, CloseIntent::BackToLibrary);
+        }
         // Dev hook (screenshots): the engine offer as on pressing L without an engine.
         if std::env::var("CP_ENGINE_OFFER").is_ok() && !self.offer_hook_done {
             self.offer_hook_done = true;
@@ -2926,6 +3409,9 @@ impl eframe::App for App {
             }
         }
         self.offer_events(&ctx);
+        self.page_frame(&ctx);
+        #[cfg(web)]
+        self.web_notice(&ctx);
         self.debug_step(&ctx);
         self.debug_keys(&ctx);
         self.debug_screenshot(&ctx);
@@ -2941,16 +3427,27 @@ impl eframe::App for App {
                 Key::N,
             ))
         }) && self.game.is_none()
+            && crate::platform::CAPS.own_databases
         {
             self.own.then_close = None;
             self.new_base_dialog(own_db::AfterCreate::Shelf);
         }
         // In the library a game from the start; on a game's screen the game plays on
         // from its position (the game view takes Ctrl+G there).
-        if self.game.is_none() && ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G))) {
+        if self.game.is_none()
+            && crate::platform::CAPS.play
+            && ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G)))
+        {
             self.play_new(&ctx, PlayNext::Dialog(None));
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))) && self.game.is_none() {
+        // A browser keeps Ctrl+N for its window: N in the library there (design §4).
+        let new_game_key = cfg!(web)
+            && self.game.is_none()
+            && !ctx.egui_wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::N));
+        if (new_game_key || ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))))
+            && self.game.is_none()
+        {
             self.new_game();
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::Comma))) {
@@ -3028,7 +3525,10 @@ impl eframe::App for App {
                             }
                         }
                     }
-                    GameAction::OpenUpdate => self.update_ui.open = true,
+                    #[cfg(not(web))]
+                    GameAction::OpenUpdate => self.desktop.update_ui.open = true,
+                    #[cfg(web)]
+                    GameAction::DownloadPgn => self.download_pgn(&ctx),
                     GameAction::ReturnToPrevious => {
                         if !self.previous_games.is_empty()
                             || self.prep.as_ref().is_some_and(|p| p.shown)
@@ -3188,10 +3688,16 @@ impl eframe::App for App {
             {
                 self.prep_dialog = Some(PrepDialog::new(path, entry.unwrap_or_default()));
             }
-            self.online_probe.poll();
-            self.library.online = self.online_probe.any();
-            self.library.online_busy = self.online.busy();
-            self.library.online_running = self.online.running();
+            #[cfg(not(web))]
+            {
+                let d = &mut self.desktop;
+                d.online_probe.poll();
+                self.library.online = d.online_probe.any();
+                self.library.online_busy = d.online.busy();
+                self.library.online_running = d.online.running();
+            }
+            #[cfg(web)]
+            self.draft_strip(ui, &ctx);
             for a in self.library.show(ui, &dbs, &self.settings) {
                 match a {
                     LibraryAction::OpenGame { path, index, at } => {
@@ -3221,23 +3727,47 @@ impl eframe::App for App {
                     }
                     LibraryAction::PastePgn => self.paste_pgn(&ctx),
                     LibraryAction::AddDatabases => self.pick_databases(&ctx),
-                    LibraryAction::OnlineGames => self.online.open(),
-                    LibraryAction::UpdateOnline(p) => self.online.update(&p, &ctx),
-                    LibraryAction::OpenUpdate => self.update_ui.open = true,
+                    #[cfg(not(web))]
+                    LibraryAction::OnlineGames => self.desktop.online.open(),
+                    #[cfg(not(web))]
+                    LibraryAction::UpdateOnline(p) => self.desktop.online.update(&p, &ctx),
+                    #[cfg(not(web))]
+                    LibraryAction::OpenUpdate => self.desktop.update_ui.open = true,
                     LibraryAction::RemoveDatabase(p) => {
                         self.settings.databases.retain(|d| *d != p);
                         self.library.forget(&p);
+                        crate::platform::files::forget(&p);
                         self.settings_dirty = true;
                         // The file stays where it is; said so, with the place.
                         self.toast = Some(Toast {
                             text: trf(
                                 "Removed from the shelf; the file stays: {path}",
-                                &[("path", &p.display())],
+                                &[("path", &crate::platform::files::shown(&p))],
                             ),
                             until: ctx.input(|i| i.time) + 6.0,
                             undo: false,
                         });
                     }
+                    #[cfg(web)]
+                    LibraryAction::AllowReading(p) => {
+                        let (tx, wake) = (self.tx.clone(), ctx.clone());
+                        crate::platform::files::allow_reading(&p.clone(), move |back| {
+                            if back {
+                                let _ = tx.send(Async::ReadAllowed(p));
+                            }
+                            wake.request_repaint();
+                        });
+                    }
+                    LibraryAction::ChooseAgain(p) => {
+                        self.choosing_again = Some(p);
+                        self.pick_databases(&ctx);
+                    }
+                    #[cfg(web)]
+                    LibraryAction::ChooseFolderAgain(p) => {
+                        self.choosing_again = Some(p);
+                        self.pick_database_folder(&ctx);
+                    }
+                    LibraryAction::KeepCopy(p) => self.keep_copy(&ctx, p),
                     LibraryAction::OpenSettings => self.settings_ui.open = true,
                     LibraryAction::NewDatabase => {
                         self.own.then_close = None;
@@ -3262,88 +3792,8 @@ impl eframe::App for App {
             }
         }
 
-        // Back to the window after a while: the downloaded databases get the games
-        // played since (at the start they did already).
-        let now = ctx.input(|i| i.time);
-        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
-        if focused && !self.was_focused && now - self.online_updated_at > ONLINE_EVERY {
-            self.online_updated_at = now;
-            self.online.update_quietly(
-                self.settings
-                    .databases
-                    .iter()
-                    .filter(|p| crate::online::is_online(p))
-                    .cloned(),
-            );
-        }
-        self.was_focused = focused;
-        let events = self.online.show(&ctx, &self.online_probe);
-        for e in events {
-            match e {
-                crate::online_ui::OnlineEvent::Added(p) => {
-                    let known = self.settings.databases.contains(&p);
-                    self.settings.touch_database(&p);
-                    if known {
-                        self.library.reload(&p, &ctx);
-                    }
-                    self.library.select_db(&p, &ctx);
-                    self.settings_dirty = true;
-                }
-                crate::online_ui::OnlineEvent::Updated(p) => self.library.reload(&p, &ctx),
-                crate::online_ui::OnlineEvent::Open(p) => {
-                    self.settings.touch_database(&p);
-                    self.library.select_db(&p, &ctx);
-                    self.settings_dirty = true;
-                }
-                crate::online_ui::OnlineEvent::Message(t) => self.toast(&ctx, t),
-            }
-        }
-        // Updates: the badge next to Settings, the window, the status in Settings → About.
-        self.update_check.poll();
-        let skipped = self.settings.skipped_version.clone();
-        let badge = self
-            .update_check
-            .newer()
-            .filter(|r| self.update_ui.active() || skipped.as_deref() != Some(r.version.as_str()))
-            .map(|r| self.update_ui.badge(r));
-        self.library.update = badge.clone();
-        if let Some(g) = &mut self.game {
-            g.update = badge;
-        }
-        for e in self
-            .update_ui
-            .show(&ctx, self.update_check.newer(), &self.update_kind)
-        {
-            match e {
-                crate::update_ui::UpdateEvent::Restart(exe) => {
-                    self.restart_to = Some(exe);
-                    self.request_close(&ctx, CloseIntent::QuitApp);
-                }
-                crate::update_ui::UpdateEvent::CopyText(t) => {
-                    ctx.copy_text(t);
-                    self.toast(&ctx, tr("Copied"));
-                }
-                crate::update_ui::UpdateEvent::Quit => {
-                    self.request_close(&ctx, CloseIntent::QuitApp);
-                }
-                crate::update_ui::UpdateEvent::Skip(v) => {
-                    self.settings.skipped_version = Some(v);
-                    self.settings_dirty = true;
-                }
-            }
-        }
-        self.settings_ui.update_available = self.update_check.newer().map(|r| r.version.clone());
-        self.settings_ui.update_status = if self.update_check.running() {
-            Some(tr("Checking…").to_owned())
-        } else if let Some(r) = self.update_check.newer() {
-            Some(trf("Version {v} is out", &[("v", &r.version)]))
-        } else if self.update_check.release.is_some() {
-            Some(tr("This is the latest version").to_owned())
-        } else if self.update_check.error.is_some() {
-            Some(tr("Could not check for updates").to_owned())
-        } else {
-            None
-        };
+        #[cfg(not(web))]
+        self.desktop_frame(&ctx);
 
         self.settings_ui.download = self.engine_offer.stage();
         self.settings_dirty |= self.translation.poll(&ctx, &mut self.settings);
@@ -3358,15 +3808,33 @@ impl eframe::App for App {
         self.settings_dirty |= changed;
         for a in actions {
             match a {
+                #[cfg(not(web))]
                 SettingsAction::AddEngine => self.pick_engine(&ctx),
+                #[cfg(not(web))]
                 SettingsAction::CheckUpdates => {
-                    self.update_check = self.update_check.again(&ctx);
+                    self.desktop.update_check = self.desktop.update_check.again(&ctx);
                 }
+                #[cfg(not(web))]
                 SettingsAction::PickBaseFolder => {
                     let start = own_db::default_base_dir(self.settings.new_database_dir.as_deref());
                     self.pick_folder(&ctx, start);
                 }
-                SettingsAction::OpenUpdate => self.update_ui.open = true,
+                #[cfg(not(web))]
+                SettingsAction::OpenUpdate => self.desktop.update_ui.open = true,
+                #[cfg(web)]
+                SettingsAction::DownloadMyGames => {
+                    if let Err(e) = crate::my_games::download_all() {
+                        self.toast(
+                            &ctx,
+                            trf("The PGN could not be downloaded: {e}", &[("e", &e)]),
+                        );
+                    }
+                }
+                #[cfg(web)]
+                SettingsAction::KeepData => {
+                    let ctx = ctx.clone();
+                    crate::platform::web::storage::persist(move |_| ctx.request_repaint());
+                }
                 SettingsAction::DownloadEngine => self.engine_offer.start(&ctx),
                 SettingsAction::CancelDownload => self.engine_offer.cancel(),
                 SettingsAction::RemoveDownloaded => {
@@ -3500,12 +3968,32 @@ impl eframe::App for App {
         }
         // Downloads of online games stop and save what they got; a new database goes on
         // the shelf with it (the next download continues it).
-        for p in self.online.stop_all() {
+        #[cfg(not(web))]
+        for p in self.desktop.online.stop_all() {
             if crate::online::State::load(&p).is_some_and(|s| s.games > 0) {
                 self.settings.touch_database(&p);
             }
         }
         let _ = self.settings.save();
+    }
+}
+
+/// What the user chose or dropped, to the screen.
+fn send_picked(tx: &Sender<Async>, picked: crate::platform::files::Picked) {
+    if !picked.paths.is_empty() {
+        let _ = tx.send(Async::DatabasesPicked(picked.paths));
+    }
+    #[cfg(web)]
+    {
+        if !picked.too_big.is_empty() {
+            let _ = tx.send(Async::TooBig(picked.too_big));
+        }
+        if !picked.incomplete.is_empty() {
+            let _ = tx.send(Async::Incomplete(picked.incomplete));
+        }
+        if picked.empty_folder {
+            let _ = tx.send(Async::EmptyFolder);
+        }
     }
 }
 

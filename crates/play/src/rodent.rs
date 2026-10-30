@@ -4,11 +4,15 @@
 //! thread of its own. Shared by the desktop and the Android apps; nothing here draws.
 
 use std::collections::BTreeMap;
-use std::sync::mpsc::{Sender, channel};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_family = "wasm"))]
+use std::{
+    sync::mpsc::{Sender, channel},
+    sync::{Arc, Condvar, Mutex, MutexGuard},
+    time::Instant,
+};
 
-use shakmaty::{Chess, Move};
+use shakmaty::Move;
 
 pub use crate::rodent4_files::{COMMIT, FILES, PERSONALITY_BOOKS};
 
@@ -556,17 +560,19 @@ pub enum Failure {
     Search(String),
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// A move asked for: the game for the engine, its position now, the pause.
 struct Request {
     generation: u64,
     pos: uci::EnginePosition,
-    now: Chess,
+    now: shakmaty::Chess,
     pause: Duration,
 }
 
 /// Rodent's move, or none (no legal move it gave), and the time it took.
 pub type Answer = (Option<Move>, Duration);
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Default)]
 struct State {
     /// The request asked last (bumped by `forget`).
@@ -577,12 +583,14 @@ struct State {
     failure: Option<Failure>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Default)]
 struct Shared {
     state: Mutex<State>,
     changed: Condvar,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
@@ -594,6 +602,7 @@ impl Shared {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 /// Rodent playing one game, in its own thread (a UCI child process): it thinks during
 /// the pause a move should take (a game's own clock is not its business: Maia's pause
 /// rule paces it) and answers after it. Only the newest request counts; the answer to
@@ -603,6 +612,7 @@ pub struct RodentPlayer {
     shared: Arc<Shared>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl RodentPlayer {
     /// The engine of `config` (its folder, or its home in the environment: Android)
     /// playing `style_id` at `uci_elo` (none: full strength), with its opening book when
@@ -709,7 +719,7 @@ impl RodentPlayer {
 
     /// Asks for a move in `now` (`pos`: the game to it for the engine) after `pause`;
     /// the request's number, for [`RodentPlayer::wait`].
-    pub fn ask(&self, pos: uci::EnginePosition, now: Chess, pause: Duration) -> u64 {
+    pub fn ask(&self, pos: uci::EnginePosition, now: shakmaty::Chess, pause: Duration) -> u64 {
         let generation = {
             let mut s = self.shared.lock();
             s.generation += 1;
@@ -842,14 +852,14 @@ mod tests {
         let start = || uci::EnginePosition::startpos(Vec::<String>::new());
         let pause = Duration::from_millis(400);
         // Asked twice: the first is passed over, the second answered with a legal move.
-        let first = player.ask(start(), Chess::default(), pause);
-        let second = player.ask(start(), Chess::default(), pause);
+        let first = player.ask(start(), shakmaty::Chess::default(), pause);
+        let second = player.ask(start(), shakmaty::Chess::default(), pause);
         assert_eq!(player.wait(first), None);
         let (m, spent) = player.wait(second).expect("an answer");
         assert!(m.is_some(), "{:?}", player.failure());
         assert!(spent >= pause);
         // A request forgotten ends its wait at once.
-        let third = player.ask(start(), Chess::default(), pause);
+        let third = player.ask(start(), shakmaty::Chess::default(), pause);
         player.forget();
         assert_eq!(player.wait(third), None);
         assert_eq!(player.failure(), None);

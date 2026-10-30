@@ -162,7 +162,7 @@ pub fn options(mode: Mode) -> WgpuConfiguration {
 /// and to stderr: a window that stops drawing says why there. One message repeated (a
 /// dropped frame each frame) is written once a minute with how many times it came.
 struct LibraryLog {
-    last: std::sync::Mutex<Option<(String, std::time::Instant, u32)>>,
+    last: std::sync::Mutex<Option<(String, web_time::Instant, u32)>>,
     /// `CP_LOG_FRAMES=1`: also how each frame reaches the screen (egui_wgpu's debug and
     /// trace messages: a frame skipped as "occluded" is said only there).
     frames: bool,
@@ -194,7 +194,7 @@ impl log::Log for LibraryLog {
         }
         eprintln!("{text}");
         log(&text);
-        *last = Some((text, std::time::Instant::now(), 0));
+        *last = Some((text, web_time::Instant::now(), 0));
     }
 
     fn flush(&self) {}
@@ -227,8 +227,8 @@ pub fn log(line: &str) {
     if std::fs::metadata(&f).is_ok_and(|m| m.len() > 1 << 20) {
         let _ = std::fs::remove_file(&f);
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let now = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)

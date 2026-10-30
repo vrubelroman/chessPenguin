@@ -883,7 +883,7 @@ pub fn ply_label(ply: u32) -> String {
     }
 }
 
-/// A position search running in a background thread.
+/// A position search (or other work with progress and cancelling) in the background.
 pub struct Background<T> {
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicUsize>,
@@ -902,14 +902,12 @@ impl<T: Send + 'static> Background<T> {
         let progress = Arc::new(AtomicUsize::new(0));
         let (tx, rx) = channel();
         let (c, p, ctx) = (cancel.clone(), progress.clone(), ctx.clone());
-        std::thread::Builder::new()
-            .name("position-search".into())
-            .spawn(move || {
-                let r = work(&p, &c);
-                let _ = tx.send(r);
-                ctx.request_repaint();
-            })
-            .ok()?;
+        crate::platform::spawn("position-search", move || {
+            let r = work(&p, &c);
+            let _ = tx.send(r);
+            ctx.request_repaint();
+        })
+        .ok()?;
         Some(Background {
             cancel,
             progress,

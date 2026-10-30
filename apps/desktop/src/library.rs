@@ -48,12 +48,26 @@ pub enum LibraryAction {
     PastePgn,
     AddDatabases,
     /// The window for downloading games from Lichess and Chess.com.
+    #[cfg(not(web))]
     OnlineGames,
     /// Fetch the new games of an online database.
+    #[cfg(not(web))]
     UpdateOnline(PathBuf),
     /// The window offering a newer version.
+    #[cfg(not(web))]
     OpenUpdate,
     RemoveDatabase(PathBuf),
+    /// A file the browser held for the last visit only: choose it again, the new one
+    /// taking its place on the shelf.
+    ChooseAgain(PathBuf),
+    /// Let the page read the remembered file again (the browser asks the user).
+    #[cfg(web)]
+    AllowReading(PathBuf),
+    /// Choose the folder of the ChessBase database whose `.cbh` alone is there.
+    #[cfg(web)]
+    ChooseFolderAgain(PathBuf),
+    /// Keep a copy of a file in the browser (it opens then without choosing it).
+    KeepCopy(PathBuf),
     OpenSettings,
     /// A new, empty PGN database (own-databases.md §2).
     NewDatabase,
@@ -106,18 +120,15 @@ fn button_w(ui: &Ui, text: &str) -> f32 {
 /// A PGN file whose beginning is in a legacy (single-byte) encoding: it takes games only
 /// through a UTF-8 copy. For a file not read yet (its card's menu).
 fn legacy_pgn(path: &Path) -> bool {
-    use std::io::Read;
     let pgn = path
         .extension()
         .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("pgn"));
     if !pgn || crate::online::is_online(path) || crate::examples::is_example(path) {
         return false;
     }
-    let mut head = Vec::with_capacity(64 << 10);
-    let read = std::fs::File::open(path).and_then(|f| f.take(64 << 10).read_to_end(&mut head));
-    if read.is_err() {
+    let Ok(head) = crate::platform::fs::read_head(path, 64 << 10) else {
         return false;
-    }
+    };
     let guess = chess_core::detect_encoding(&head);
     guess.encoding != chess_core::TextEncoding::Utf8 && !guess.ascii_only
 }
@@ -136,9 +147,14 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
             tr("♞ Play"),
         ]
     };
-    texts.iter().map(|t| button_w(ui, t)).sum::<f32>()
+    let play = crate::platform::CAPS.play;
+    let groups = if play { 2.0 } else { 1.0 };
+    texts[..if play { 4 } else { 3 }]
+        .iter()
+        .map(|t| button_w(ui, t))
+        .sum::<f32>()
         + update.map_or(0.0, |v| button_w(ui, v))
-        + 2.0 * GROUP_GAP
+        + groups * GROUP_GAP
 }
 
 /// A shelf button's tooltip: with icons only, its name first.
@@ -257,27 +273,20 @@ impl Library {
         }));
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
-        let (p, c, path_owned, ctx) = (
-            progress.clone(),
+        let (p, ctx, wake) = (progress.clone(), ctx.clone(), ctx.clone());
+        let spawned = crate::platform::open_database(
+            path,
+            move |sp| {
+                if let Ok(mut g) = p.lock() {
+                    *g = sp;
+                }
+                wake.request_repaint();
+            },
             cancel.clone(),
-            path.to_path_buf(),
-            ctx.clone(),
-        );
-        let spawned = std::thread::Builder::new()
-            .name("db-open".into())
-            .spawn(move || {
-                let res = chess_import::open(
-                    &path_owned,
-                    &mut |sp| {
-                        if let Ok(mut g) = p.lock() {
-                            *g = sp;
-                        }
-                        ctx.request_repaint();
-                    },
-                    &c,
-                );
+            move |res| {
                 // The filters' index of a PGN is built here, not on the screen's thread
-                // (a large download takes a second, §9.7).
+                // (a large download takes a second, §9.7; in a browser, which reads
+                // smaller files, it is the page's thread).
                 if let Ok(opened) = &res
                     && let Database::Pgn(pgn) = &opened.db
                 {
@@ -285,7 +294,8 @@ impl Library {
                 }
                 let _ = tx.send(res);
                 ctx.request_repaint();
-            });
+            },
+        );
         let slot = match spawned {
             Ok(_) => Slot::Loading {
                 progress,
@@ -337,6 +347,10 @@ impl Library {
         }
         if crate::examples::is_example(path) {
             return Some(Block::Example);
+        }
+        // In a browser the user's files are only read.
+        if cfg!(web) && crate::platform::fs::meta(path).is_ok_and(|m| m.readonly) {
+            return Some(Block::ReadOnly);
         }
         if !self.files.exists(path) {
             return Some(Block::Missing);
@@ -638,6 +652,7 @@ impl Library {
         if let Some(path) = self.selected_db.clone()
             && let Some(view) = self.large.get_mut(&path)
             && let Some(entry) = view.prepare.take()
+            && crate::platform::CAPS.prep
         {
             actions.push(LibraryAction::PrepareAgainst { path, entry });
         }
@@ -759,6 +774,7 @@ impl Library {
         {
             actions.push(LibraryAction::OpenSettings);
         }
+        #[cfg(not(web))]
         if let Some(v) = &self.update
             && crate::widgets::update_button(ui, v).clicked()
         {
@@ -772,8 +788,10 @@ impl Library {
         self.shelf_actions(ui, folded, actions);
         ui.separator();
         self.game_buttons(ui, icons, actions);
-        ui.separator();
-        self.play_button(ui, icons, actions);
+        if crate::platform::CAPS.play {
+            ui.separator();
+            self.play_button(ui, icons, actions);
+        }
     }
 
     /// "♞ Play": a game against Maia, a group of its own.
@@ -934,10 +952,11 @@ impl Library {
                     actions.push(LibraryAction::AddDatabases);
                     ui.close();
                 }
-                if ui
-                    .button(tr("New database…"))
-                    .on_hover_text(new_hint)
-                    .clicked()
+                if crate::platform::CAPS.own_databases
+                    && ui
+                        .button(tr("New database…"))
+                        .on_hover_text(new_hint)
+                        .clicked()
                 {
                     actions.push(LibraryAction::NewDatabase);
                     ui.close();
@@ -951,10 +970,11 @@ impl Library {
             {
                 actions.push(LibraryAction::AddDatabases);
             }
-            if ui
-                .button(tr("✚ New database"))
-                .on_hover_text(new_hint)
-                .clicked()
+            if crate::platform::CAPS.own_databases
+                && ui
+                    .button(tr("✚ New database"))
+                    .on_hover_text(new_hint)
+                    .clicked()
             {
                 actions.push(LibraryAction::NewDatabase);
             }
@@ -970,6 +990,7 @@ impl Library {
                 None => online_hint.to_owned(),
             };
             if ui.button(label).on_hover_text(hint).clicked() {
+                #[cfg(not(web))]
                 actions.push(LibraryAction::OnlineGames);
             }
             if let Some(n) = self.online_running {
@@ -1027,9 +1048,10 @@ impl Library {
             {
                 actions.push(LibraryAction::AddDatabases);
             }
-            if card(ui, new_w, tr("✚ New database"), None)
-                .on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)"))
-                .clicked()
+            if crate::platform::CAPS.own_databases
+                && card(ui, new_w, tr("✚ New database"), None)
+                    .on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)"))
+                    .clicked()
             {
                 actions.push(LibraryAction::NewDatabase);
             }
@@ -1043,6 +1065,7 @@ impl Library {
                 .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
                 .clicked()
             {
+                #[cfg(not(web))]
                 actions.push(LibraryAction::OnlineGames);
             }
         });
@@ -1078,6 +1101,17 @@ impl Library {
                     games: 0,
                 });
                 trf("loading… {n}", &[("n", &p.games)])
+            }
+            Some(Slot::Failed(_)) if crate::platform::files::chessbase_incomplete(path) => {
+                tr("📁 Choose the database's folder").into()
+            }
+            Some(Slot::Failed(_)) | None if crate::platform::files::waiting_to_read(path) => {
+                tr("🔒 Allow reading").into()
+            }
+            Some(Slot::Failed(_)) | None
+                if crate::platform::files::session_only(path) && !self.files.exists(path) =>
+            {
+                tr("↻ Choose the file again").into()
             }
             Some(Slot::Failed(_)) => tr("error").into(),
             None if !self.files.exists(path) => tr("file not found").into(),
@@ -1142,9 +1176,9 @@ impl Library {
                         &[("name", name)],
                     )
                 };
-                resp.on_hover_text(format!("{whose}\n{}", path.display()))
+                resp.on_hover_text(format!("{whose}\n{}", crate::platform::files::shown(path)))
             }
-            None => resp.on_hover_text(path.display().to_string()),
+            None => resp.on_hover_text(crate::platform::files::shown(path)),
         };
         if resp.clicked() {
             self.select_db(path, ui.ctx());
@@ -1240,12 +1274,84 @@ impl Library {
                     ui.add_space(40.0);
                     ui.label(trf(
                         "Reading {path} — games found: {n}",
-                        &[("path", &path.display()), ("n", &p.games)],
+                        &[
+                            ("path", &crate::platform::files::shown(&path)),
+                            ("n", &p.games),
+                        ],
                     ));
                     ui.add(egui::ProgressBar::new(frac).desired_width(400.0));
                     if ui.button(tr("Cancel")).clicked() {
                         cancel.store(true, Ordering::Relaxed);
                     }
+                });
+                return;
+            }
+            #[cfg(web)]
+            Some(Slot::Failed(_)) if crate::platform::files::chessbase_incomplete(&path) => {
+                // A ChessBase database's .cbh without its other files (one chosen
+                // alone at an earlier visit): its folder or all its files.
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(tr(
+                        "A ChessBase database is several files (.cbh, .cbg, .cba…). Choose its folder or all its files at once.",
+                    ));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr("📁 Choose the database's folder")).clicked() {
+                            actions.push(LibraryAction::ChooseFolderAgain(path.clone()));
+                        }
+                        if ui.button(tr("Choose the database's files")).clicked() {
+                            actions.push(LibraryAction::ChooseAgain(path.clone()));
+                        }
+                        if ui.button(tr("Remove from list")).clicked() {
+                            actions.push(LibraryAction::RemoveDatabase(path.clone()));
+                        }
+                    });
+                });
+                return;
+            }
+            #[cfg(web)]
+            Some(Slot::Failed(_)) if crate::platform::files::waiting_to_read(&path) => {
+                // Chrome, Edge: the file is remembered; the browser asks before the
+                // page reads it again.
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(tr(
+                        "The browser remembers this file and asks before the page reads it again.",
+                    ));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr("🔒 Allow reading")).clicked() {
+                            actions.push(LibraryAction::AllowReading(path.clone()));
+                        }
+                        if ui.button(tr("Remove from list")).clicked() {
+                            actions.push(LibraryAction::RemoveDatabase(path.clone()));
+                        }
+                    });
+                });
+                return;
+            }
+            Some(Slot::Failed(_))
+                if crate::platform::files::session_only(&path) && !self.files.exists(&path) =>
+            {
+                // A browser keeps no way back to a file the user chose (Firefox, Safari).
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    // Chrome and Edge remember chosen files, not dropped ones.
+                    ui.label(if crate::platform::files::remembers_chosen() {
+                        tr("A dropped file is not remembered: after a reload, choose the file again or keep a copy in the browser.")
+                    } else {
+                        tr("This browser doesn't remember files: after a reload, choose the file again or keep a copy in the browser.")
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr("↻ Choose the file again")).clicked() {
+                            actions.push(LibraryAction::ChooseAgain(path.clone()));
+                        }
+                        if ui.button(tr("Remove from list")).clicked() {
+                            actions.push(LibraryAction::RemoveDatabase(path.clone()));
+                        }
+                    });
                 });
                 return;
             }
@@ -1256,7 +1362,7 @@ impl Library {
                     ui.label(
                         RichText::new(trf(
                             "Could not open {path}: {e}",
-                            &[("path", &path.display()), ("e", &e)],
+                            &[("path", &crate::platform::files::shown(&path)), ("e", &e)],
                         ))
                         .color(ui.visuals().error_fg_color),
                     );
@@ -1337,6 +1443,7 @@ impl Library {
             format,
             format_hint,
             online,
+            keep_copy: crate::platform::files::session_only(path),
         }
     }
 }
@@ -1365,6 +1472,17 @@ fn import_error(e: &ImportError) -> String {
             "The ChessBase 2CBH format is not supported: export the database from ChessBase as CBH or PGN",
         )
         .into(),
+        ImportError::Unsupported(Unsupported::ChessBaseFiles) => tr(
+            "A ChessBase database is several files (.cbh, .cbg, .cba…). Choose its folder or all its files at once.",
+        )
+        .into(),
+        ImportError::Io { source, .. } if source.kind() == std::io::ErrorKind::OutOfMemory => tr(
+            "The browser doesn't have enough memory for this database. Open it in the desktop program.",
+        )
+        .into(),
+        // A browser's places of files mean nothing to the user: only what happened.
+        #[cfg(web)]
+        ImportError::Io { source, .. } => source.to_string(),
         e => e.to_string(),
     }
 }

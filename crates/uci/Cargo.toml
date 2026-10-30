@@ -4,10 +4,17 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "UCI chess engine process supervisor (no UI dependencies)"
+description = "UCI chess engine supervisor: a process, or a Web Worker in a browser (no UI dependencies)"
 
 [dependencies]
 thiserror.workspace = true
+web-time.workspace = true
+
+# The engine as a Web Worker in a browser.
+[target.'cfg(target_family = "wasm")'.dependencies]
+wasm-bindgen = "0.2.129"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Worker", "MessageEvent", "ErrorEvent"] }
 
 [target.'cfg(unix)'.dependencies]
 # nice(2) for EngineConfig::nice (std has no way to lower a child's priority).
@@ -19,3 +26,9 @@ name = "fake_uci"
 path = "src/bin/fake_uci.rs"
 test = false
 doc = false
+
+# tests/worker.rs: the worker transport in a browser (docs/dev/web.md).
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Blob", "BlobPropertyBag", "Url"] }

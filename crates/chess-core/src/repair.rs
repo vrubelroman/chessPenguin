@@ -45,6 +45,7 @@ impl LetterRepairCounts {
 }
 
 /// Source-level detection result.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct LetterRepairDetection {
     /// Substitution pattern found (see [`detect_letter_substitution`]).
@@ -73,37 +74,18 @@ pub fn detect_letter_substitution(bytes: &[u8], encoding: TextEncoding) -> Lette
     ) {
         return LetterRepairDetection::default();
     }
-    let (text, _) = encoding.decode(bytes);
-    let genuine_letters = text
-        .chars()
+    // The source's letters as they come, never all at once: a large file's text is
+    // twice its size in UTF-8, four times as `char`s (more than a browser's memory).
+    let chars = || source_chars(bytes, encoding);
+    let genuine_letters = chars()
         .filter(|c| matches!(c, 'ч' | 'Ч' | 'ю' | 'Ю'))
         .count();
-    let chars: Vec<char> = text.chars().collect();
-    let is_cyr =
-        |c: Option<&char>| c.is_some_and(|c| matches!(c, 'а'..='я' | 'А'..='Я' | 'ё' | 'Ё'));
-    let mut sequences = 0usize;
-    let mut i = 0;
-    while i + 1 < chars.len() {
-        let pair = [chars[i], chars[i + 1]];
-        if TABLE
-            .iter()
-            .any(|(s, _)| s.chars().eq(pair.iter().copied()))
-        {
-            let before = i.checked_sub(1).and_then(|p| chars.get(p));
-            let after = chars.get(i + 2);
-            if is_cyr(before) || is_cyr(after) {
-                sequences += 1;
-            }
-            i += 2;
-        } else {
-            i += 1;
-        }
-    }
-    let markers = chars.iter().filter(|c| matches!(c, '~' | '^')).count();
+    let sequences = sequences(chars());
+    let markers = chars().filter(|c| matches!(c, '~' | '^')).count();
     // Each `~~` has two markers, each `x^` one; `><` has none.
     let detected = sequences >= MIN_SEQUENCES
         && genuine_letters * 50 < sequences
-        && markers * 9 <= sequence_markers(&chars) * 10;
+        && markers * 9 <= sequence_markers(chars()) * 10;
     LetterRepairDetection {
         detected,
         sequences,
@@ -111,20 +93,53 @@ pub fn detect_letter_substitution(bytes: &[u8], encoding: TextEncoding) -> Lette
     }
 }
 
-fn sequence_markers(chars: &[char]) -> usize {
+/// The letters of `bytes` in a single-byte `encoding`, decoded a piece at a time (a
+/// byte is a letter: any place splits the text).
+fn source_chars(bytes: &[u8], encoding: TextEncoding) -> impl Iterator<Item = char> + '_ {
+    bytes.chunks(1 << 20).flat_map(move |piece| {
+        let (text, _) = encoding.decode(piece);
+        text.chars().collect::<Vec<char>>()
+    })
+}
+
+/// The sequences of the table next to a Cyrillic letter (a pair taken is not looked at
+/// again).
+fn sequences(chars: impl Iterator<Item = char>) -> usize {
+    let is_cyr =
+        |c: Option<char>| c.is_some_and(|c| matches!(c, 'а'..='я' | 'А'..='Я' | 'ё' | 'Ё'));
+    let mut chars = chars.peekable();
     let mut n = 0;
-    let mut i = 0;
-    while i + 1 < chars.len() {
-        match (chars[i], chars[i + 1]) {
+    let mut before = None;
+    while let Some(a) = chars.next() {
+        let Some(&b) = chars.peek() else { break };
+        if TABLE.iter().any(|(s, _)| s.chars().eq([a, b])) {
+            chars.next();
+            if is_cyr(before) || is_cyr(chars.peek().copied()) {
+                n += 1;
+            }
+            before = Some(b);
+        } else {
+            before = Some(a);
+        }
+    }
+    n
+}
+
+fn sequence_markers(chars: impl Iterator<Item = char>) -> usize {
+    let mut chars = chars.peekable();
+    let mut n = 0;
+    while let Some(a) = chars.next() {
+        let Some(&b) = chars.peek() else { break };
+        match (a, b) {
             ('~', '~') => {
                 n += 2;
-                i += 2;
+                chars.next();
             }
             ('o' | 'о' | 'O' | 'О', '^') => {
                 n += 1;
-                i += 2;
+                chars.next();
             }
-            _ => i += 1,
+            _ => {}
         }
     }
     n

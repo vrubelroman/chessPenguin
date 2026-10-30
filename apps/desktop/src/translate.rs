@@ -789,6 +789,7 @@ impl std::fmt::Display for Failure {
     }
 }
 
+#[cfg(not(web))]
 pub fn agent(body_timeout: Duration) -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .user_agent(format!(
@@ -883,6 +884,34 @@ impl Backend {
     }
 }
 
+/// Why nothing is asked of a service in a browser: the web version has no machine
+/// translation (its requests would block a thread the page does not have).
+#[cfg(web)]
+pub fn no_requests() -> Failure {
+    Failure::Offline("the web version makes no requests to translation services".into())
+}
+
+#[cfg(web)]
+pub fn list_models(_base: &str, _key: Option<&str>, _local: bool) -> Result<Vec<String>, Failure> {
+    Err(no_requests())
+}
+
+#[cfg(web)]
+#[allow(clippy::too_many_arguments)]
+fn chat(
+    _base: &str,
+    _key: Option<&str>,
+    _model: &str,
+    _json_mode: bool,
+    _local: bool,
+    _system: &str,
+    _user: &str,
+    _cancel: &AtomicBool,
+) -> Result<String, Failure> {
+    Err(no_requests())
+}
+
+#[cfg(not(web))]
 /// The models a key connection offers (`GET {base}/models`).
 pub fn list_models(base: &str, key: Option<&str>, local: bool) -> Result<Vec<String>, Failure> {
     let mut req = agent(Duration::from_secs(30)).get(format!("{base}/models"));
@@ -915,6 +944,7 @@ pub fn list_models(base: &str, key: Option<&str>, local: bool) -> Result<Vec<Str
     Ok(ids)
 }
 
+#[cfg(not(web))]
 fn net_failure(e: ureq::Error, local: bool) -> Failure {
     if local {
         Failure::LocalDown
@@ -939,6 +969,7 @@ fn status_failure(status: u16, body: &str, model: &str) -> Failure {
     }
 }
 
+#[cfg(not(web))]
 #[allow(clippy::too_many_arguments)]
 fn chat(
     base: &str,
@@ -1195,13 +1226,11 @@ impl Job {
         let cancel = Arc::new(AtomicBool::new(false));
         let c = cancel.clone();
         let ctx = ctx.clone();
-        let _ = std::thread::Builder::new()
-            .name("translate".into())
-            .spawn(move || {
-                run(&backend, target, &via, &context, texts, &c, &tx, &ctx);
-                let _ = tx.send(Event::Finished);
-                ctx.request_repaint();
-            });
+        let _ = crate::platform::spawn("translate", move || {
+            run(&backend, target, &via, &context, texts, &c, &tx, &ctx);
+            let _ = tx.send(Event::Finished);
+            ctx.request_repaint();
+        });
         Job { rx, cancel }
     }
 
@@ -1601,7 +1630,7 @@ mod tests {
         );
         let mut done = Vec::new();
         let mut bad = Vec::new();
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         'wait: while start.elapsed() < Duration::from_secs(20) {
             for e in job.poll() {
                 match e {
@@ -1653,7 +1682,7 @@ mod tests {
             texts.clone(),
         );
         let mut done = Vec::new();
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         'wait: while start.elapsed() < Duration::from_secs(20) {
             for e in job.poll() {
                 match e {

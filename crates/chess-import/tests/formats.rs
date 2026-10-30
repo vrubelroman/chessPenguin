@@ -61,10 +61,12 @@ fn pgn_and_archives_open_from_bytes() {
     let z = chess_import::open_bytes("games.zip", bytes, &mut |_| {}, &never).expect("opens");
     assert_eq!(z.format, Format::Zip);
     assert_eq!(z.db.raw_text(0), pgn.db.raw_text(0));
-    // A .cbh alone is not a database.
+    // A .cbh alone is not a database: its other files are needed.
     assert!(matches!(
         chess_import::open_bytes("base.cbh", vec![0; 46], &mut |_| {}, &never),
-        Err(ImportError::Corrupt(_))
+        Err(ImportError::Unsupported(
+            chess_import::Unsupported::ChessBaseFiles
+        ))
     ));
 }
 

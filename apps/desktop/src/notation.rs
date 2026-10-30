@@ -445,6 +445,10 @@ fn handle_move_response(
             out.context = Some((id, NotationCommand::Delete));
             ui.close();
         }
+        // Games against the computer and the trainer: not in every version.
+        if !crate::platform::CAPS.play {
+            return;
+        }
         ui.separator();
         // A finished position has nothing to play.
         let over = n.game.position(id).and_then(|p| {

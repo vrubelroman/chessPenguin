@@ -2,3 +2,8 @@
 # without the Visual C++ Redistributable (VCRUNTIME140.dll).
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# WebAssembly in a browser: random numbers from crypto.getRandomValues (getrandom 0.3
+# needs this as well as its `wasm_js` feature, enabled by apps/web).
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

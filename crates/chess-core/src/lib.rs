@@ -19,7 +19,7 @@ pub use comment::{
     Annotation, CommentPart, ShapeColor, comment_display_text, parse_comment, shapes, with_shapes,
     with_text,
 };
-pub use database::{OpenError, PgnDatabase, SourceFingerprint};
+pub use database::{OpenError, PgnDatabase, PgnIndex, SourceFingerprint};
 pub use diagnostic::{Diagnostic, DiagnosticCode, Severity, SourceLocation};
 pub use edit::{EditError, EditOutcome};
 pub use encoding::{Confidence, EncodingGuess, TextEncoding, detect_encoding};
