@@ -218,6 +218,17 @@ pub fn trf(key: &'static str, args: &[(&str, &dyn Display)]) -> String {
 const ROWS: &[[&str; 9]] = &[
     // --- the web version ---
     [
+        "Release to open",
+        "Отпустите, чтобы открыть",
+        "Relâchez pour ouvrir",
+        "Zum Öffnen loslassen",
+        "Suelta para abrir",
+        "Rilascia per aprire",
+        "Solte para abrir",
+        "Ochish uchun qo‘yib yuboring",
+        "Ашу үшін жіберіңіз",
+    ],
+    [
         "⇩ Download PGN",
         "⇩ Скачать PGN",
         "⇩ Télécharger le PGN",

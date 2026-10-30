@@ -90,7 +90,9 @@ impl SettingsWindow {
                     ui.selectable_value(&mut self.tab, Tab::Board, tr("Board & pieces"));
                     ui.selectable_value(&mut self.tab, Tab::Sound, tr("Sound"));
                     ui.selectable_value(&mut self.tab, Tab::Interface, tr("Interface"));
-                    ui.selectable_value(&mut self.tab, Tab::Translation, tr("Translation"));
+                    if crate::platform::CAPS.translation {
+                        ui.selectable_value(&mut self.tab, Tab::Translation, tr("Translation"));
+                    }
                     ui.selectable_value(&mut self.tab, Tab::About, tr("About"));
                 });
                 ui.separator();

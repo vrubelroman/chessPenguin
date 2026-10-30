@@ -2730,6 +2730,35 @@ impl App {
         }
     }
 
+    /// Files dropped on the window open as databases, like chosen ones; while files are
+    /// dragged over it, the window says so.
+    fn dropped_files(&mut self, ctx: &egui::Context) {
+        let (tx, waker) = (self.tx.clone(), ctx.clone());
+        crate::platform::files::take_dropped(ctx, move |paths| {
+            if !paths.is_empty() {
+                let _ = tx.send(Async::DatabasesPicked(paths));
+            }
+            waker.request_repaint();
+        });
+        if crate::platform::files::dragging(ctx) {
+            let rect = ctx.content_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("dropping files"),
+            ));
+            let visuals = ctx.global_style().visuals.clone();
+            let accent = visuals.selection.bg_fill;
+            painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.12));
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                tr("Release to open"),
+                egui::FontId::proportional(22.0),
+                visuals.strong_text_color(),
+            );
+        }
+    }
+
     /// The open game's PGN, downloaded as a file named after the game.
     #[cfg(web)]
     fn download_pgn(&mut self, ctx: &egui::Context) {
@@ -3065,6 +3094,7 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm_close = Some(CloseIntent::QuitApp);
         }
+        self.dropped_files(&ctx);
         self.handle_async(&ctx);
         // Dev hook (screenshots): the engine offer as on pressing L without an engine.
         if std::env::var("CP_ENGINE_OFFER").is_ok() && !self.offer_hook_done {
@@ -3091,13 +3121,17 @@ impl eframe::App for App {
                 Key::N,
             ))
         }) && self.game.is_none()
+            && crate::platform::CAPS.own_databases
         {
             self.own.then_close = None;
             self.new_base_dialog(own_db::AfterCreate::Shelf);
         }
         // In the library a game from the start; on a game's screen the game plays on
         // from its position (the game view takes Ctrl+G there).
-        if self.game.is_none() && ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G))) {
+        if self.game.is_none()
+            && crate::platform::CAPS.play
+            && ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G)))
+        {
             self.play_new(&ctx, PlayNext::Dialog(None));
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))) && self.game.is_none() {

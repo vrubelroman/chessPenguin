@@ -1959,7 +1959,9 @@ impl GameView {
                     actions.push(GameAction::Save);
                     ui.close();
                 }
-                if ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked() {
+                if crate::platform::CAPS.own_databases
+                    && ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked()
+                {
                     actions.push(GameAction::AddToDatabase);
                     ui.close();
                 }
@@ -1987,7 +1989,7 @@ impl GameView {
                     self.paste_clipboard(ui.ctx());
                     ui.close();
                 }
-                if self.play.is_none() {
+                if self.play.is_none() && crate::platform::CAPS.play {
                     ui.separator();
                     if ui.button(tr("Play on from here… (Ctrl+G)")).clicked() {
                         let at = self.cursor;
@@ -2017,7 +2019,9 @@ impl GameView {
                     ui.close();
                 }
                 ui.separator();
-                if self.translation.can_translate() && ui.button(tr("Translate comments")).clicked()
+                if crate::platform::CAPS.translation
+                    && self.translation.can_translate()
+                    && ui.button(tr("Translate comments")).clicked()
                 {
                     self.translate_now = true;
                     self.side_tab = SideTab::Notation;
@@ -4832,11 +4836,13 @@ impl GameView {
                 }
                 "copy" => actions.push(self.copy_pgn()),
                 "save" => actions.push(GameAction::Save),
-                "play_from" => {
+                "play_from" if crate::platform::CAPS.play => {
                     let at = self.cursor;
                     self.play_from(at, actions);
                 }
-                "add_to_db" => actions.push(GameAction::AddToDatabase),
+                "add_to_db" if crate::platform::CAPS.own_databases => {
+                    actions.push(GameAction::AddToDatabase)
+                }
                 "game_data" => actions.push(GameAction::EditGameData),
                 "back" => actions.push(GameAction::BackKey),
                 "find" if self.search_line().is_some() => {
@@ -4864,7 +4870,7 @@ impl GameView {
                     self.goto(end);
                 }
                 "flip" => self.flipped = !self.flipped,
-                "translate" => {
+                "translate" if crate::platform::CAPS.translation => {
                     if self.translation.has_translation() {
                         self.translation.toggle();
                     } else if self.translation.can_translate() {

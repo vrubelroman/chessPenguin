@@ -136,9 +136,14 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
             tr("♞ Play"),
         ]
     };
-    texts.iter().map(|t| button_w(ui, t)).sum::<f32>()
+    let play = crate::platform::CAPS.play;
+    let groups = if play { 2.0 } else { 1.0 };
+    texts[..if play { 4 } else { 3 }]
+        .iter()
+        .map(|t| button_w(ui, t))
+        .sum::<f32>()
         + update.map_or(0.0, |v| button_w(ui, v))
-        + 2.0 * GROUP_GAP
+        + groups * GROUP_GAP
 }
 
 /// A shelf button's tooltip: with icons only, its name first.
@@ -636,6 +641,7 @@ impl Library {
         if let Some(path) = self.selected_db.clone()
             && let Some(view) = self.large.get_mut(&path)
             && let Some(entry) = view.prepare.take()
+            && crate::platform::CAPS.prep
         {
             actions.push(LibraryAction::PrepareAgainst { path, entry });
         }
@@ -771,8 +777,10 @@ impl Library {
         self.shelf_actions(ui, folded, actions);
         ui.separator();
         self.game_buttons(ui, icons, actions);
-        ui.separator();
-        self.play_button(ui, icons, actions);
+        if crate::platform::CAPS.play {
+            ui.separator();
+            self.play_button(ui, icons, actions);
+        }
     }
 
     /// "♞ Play": a game against Maia, a group of its own.
@@ -933,10 +941,11 @@ impl Library {
                     actions.push(LibraryAction::AddDatabases);
                     ui.close();
                 }
-                if ui
-                    .button(tr("New database…"))
-                    .on_hover_text(new_hint)
-                    .clicked()
+                if crate::platform::CAPS.own_databases
+                    && ui
+                        .button(tr("New database…"))
+                        .on_hover_text(new_hint)
+                        .clicked()
                 {
                     actions.push(LibraryAction::NewDatabase);
                     ui.close();
@@ -950,10 +959,11 @@ impl Library {
             {
                 actions.push(LibraryAction::AddDatabases);
             }
-            if ui
-                .button(tr("✚ New database"))
-                .on_hover_text(new_hint)
-                .clicked()
+            if crate::platform::CAPS.own_databases
+                && ui
+                    .button(tr("✚ New database"))
+                    .on_hover_text(new_hint)
+                    .clicked()
             {
                 actions.push(LibraryAction::NewDatabase);
             }
@@ -1027,9 +1037,10 @@ impl Library {
             {
                 actions.push(LibraryAction::AddDatabases);
             }
-            if card(ui, new_w, tr("✚ New database"), None)
-                .on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)"))
-                .clicked()
+            if crate::platform::CAPS.own_databases
+                && card(ui, new_w, tr("✚ New database"), None)
+                    .on_hover_text(tr("An empty PGN file for your own games (Ctrl+Shift+N)"))
+                    .clicked()
             {
                 actions.push(LibraryAction::NewDatabase);
             }

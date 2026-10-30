@@ -2,7 +2,8 @@
 // then); a phone or a tablet gets the page about the apps (docs/design/web-version.md
 // §3.6, decisions «Веб-версия»), with a quiet way to open the web version anyway.
 //
-//   ?phone=1  the device page on any device (checks, screenshots of the site)
+//   ?phone=1  the device page on any device (checks, screenshots of the site);
+//             ?phone=android, ?phone=ios: that variant of it
 //   ?phone=0  the program on any device
 //   ?lang=xx  the language (also of the program)
 (function () {
@@ -200,6 +201,8 @@
   var kind = CPDevice.deviceClass();
   if (asked === "1") {
     showDevicePage(kind === "computer" ? "phone" : kind);
+  } else if (asked === "android" || asked === "ios") {
+    showDevicePage(asked === "android" ? "android-phone" : "iphone");
   } else if (asked === "0" || kind === "computer" || storage(true) === "1") {
     startApp();
   } else {
