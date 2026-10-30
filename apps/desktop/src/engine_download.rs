@@ -533,7 +533,10 @@ mod tests {
             .output()
             .expect("runs");
         assert!(String::from_utf8_lossy(&out.stdout).contains("Stockfish"));
-        assert_eq!(installed(), Some(exe));
+        assert_eq!(
+            installed(),
+            Some(crate::engines::EngineLocation::Program(exe))
+        );
     }
 
     #[test]

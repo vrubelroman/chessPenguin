@@ -57,9 +57,7 @@ try {
   // Open a PGN by the button's shortcut: the browser's file chooser gets the file.
   const pgn = join(s.b.profile, 'Test games.pgn');
   copyFileSync(join(root, 'examples/alekhine.pgn'), pgn);
-  await t.key('o', ['ctrl']);
-  await t.waitFor(`!!document.getElementById('cp-open-files')`, 5000);
-  await t.setFiles('cp-open-files', [pgn]);
+  await t.choose([pgn], () => t.key('o', ['ctrl']));
   await sleep(3000);
   await shot('web-2-opened.png');
 
@@ -109,11 +107,31 @@ try {
   await sleep(1000);
   await shot('web-8-e4.png');
 
-  // The settings and the shelf after a reload (the browser's storage).
+  // An unsaved game: the browser asks before the page is left, and its draft is kept.
+  check(await t.evaluate(`typeof window.onbeforeunload === 'function'`), 'unsaved: the browser asks before leaving');
+  await sleep(1500);
+  const draft = () => t.evaluate(`new Promise((ok) => {
+    const q = indexedDB.open('chesspenguin');
+    q.onsuccess = () => {
+      const r = q.result.transaction('files').objectStore('files').get('/data/draft.json');
+      r.onsuccess = () => ok(r.result ? JSON.parse(new TextDecoder().decode(r.result)).pgn : '');
+    };
+    q.onerror = () => ok('');
+  })`);
+  check(/1\. e4/.test(await draft()), 'the draft of the unsaved game is kept');
+
+  // The settings and the shelf after a reload (the browser's storage). The question on
+  // leaving is answered «Leave».
+  await t.evaluate(`(window.onbeforeunload = null, true)`);
   await t.navigate(`${s.base}?lang=en`);
   await started();
   await sleep(2500);
   await shot('web-9-reloaded.png');
+  check(/1\. e4/.test(await draft()), 'the draft is there after the reload (offered over the library)');
+  if (await t.evaluate(`typeof window.showOpenFilePicker === 'function'`)) {
+    // Chrome, Edge: the file chosen before the reload is read again by itself.
+    check(s.logs.some((l) => /remembered file read again: .*Test games\.pgn/.test(l)), 'the chosen file is remembered (File System Access)');
+  }
 } finally {
   await s.stop();
 }

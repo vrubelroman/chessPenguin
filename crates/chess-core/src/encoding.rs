@@ -8,6 +8,7 @@
 use std::borrow::Cow;
 
 /// Encodings supported for PGN sources.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TextEncoding {
     Utf8,
@@ -65,6 +66,7 @@ impl TextEncoding {
 }
 
 /// How sure the detector is.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Confidence {
     /// Valid UTF-8 (or pure ASCII), or a UTF-8 BOM.
@@ -74,6 +76,7 @@ pub enum Confidence {
 }
 
 /// Result of [`detect_encoding`].
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncodingGuess {
     pub encoding: TextEncoding,

@@ -71,6 +71,7 @@ pub async fn start_web(
     lang: Option<String>,
 ) -> Result<(), wasm_bindgen::JsValue> {
     platform::web::vfs::load().await;
+    platform::web::remembered::restore().await;
     platform::web::engine::probe().await;
     platform::web::storage::refresh(|| {});
     let mut settings = settings::Settings::load();
@@ -91,6 +92,14 @@ pub async fn start_web(
             }),
         )
         .await
+}
+
+/// The page's reader (`import-worker.js`, a worker with an instance of its own): reads
+/// the file `name` and answers with its text and index, or only how many games it holds
+/// (`count`; `platform::web::import`).
+#[cfg(web)]
+pub fn read_database(name: &str, bytes: Vec<u8>, count: bool) -> wasm_bindgen::JsValue {
+    platform::web::import::answer(name, bytes, count)
 }
 
 /// The desktop program: `chesspenguin [--bench <database> [report.txt]]`.

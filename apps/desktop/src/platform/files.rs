@@ -1,7 +1,8 @@
 //! The files the user opens and saves: the system's dialogs on a computer; in a
 //! browser its file chooser, files dropped on the page, and downloads. A file the user
 //! gives the page is only read (decisions «Веб-версия»): it gets a path of the page's
-//! file tree for the session and is opened by that path like a file on a disk.
+//! file tree for the session and is opened by that path like a file on a disk. Chrome
+//! and Edge remember a chosen file for the next visit ([`super::web::remembered`]).
 
 use std::path::PathBuf;
 
@@ -97,14 +98,46 @@ pub fn pick_databases(then: impl FnOnce(Picked) + Send + 'static) {
     }
     #[cfg(web)]
     {
-        let accept = DATABASES
+        let extensions: Vec<String> = DATABASES
             .iter()
             .step_by(2)
             .map(|e| format!(".{e}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        super::web::page::pick_files(&accept, move |files| then(opened(files)));
+            .collect();
+        if super::web::remembered::supported() {
+            super::web::remembered::pick(&extensions, move |paths, too_big| {
+                then(Picked { paths, too_big })
+            });
+        } else {
+            super::web::page::pick_files(&extensions.join(","), move |files| then(opened(files)));
+        }
     }
+}
+
+/// The browser remembers the file `path` of an earlier visit and asks the user before
+/// the page reads it again ([`allow_reading`]). Never on a computer.
+pub fn waiting_to_read(path: &std::path::Path) -> bool {
+    #[cfg(web)]
+    return super::web::remembered::waiting(path);
+    #[cfg(not(web))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Asks the browser to let the page read the remembered file `path` again (soon after
+/// the user's click); `then`: whether it is back.
+#[cfg(web)]
+pub fn allow_reading(path: &std::path::Path, then: impl FnOnce(bool) + 'static) {
+    super::web::remembered::allow(path, then);
+}
+
+/// The file `path` left the library: a browser forgets it too.
+pub fn forget(path: &std::path::Path) {
+    #[cfg(web)]
+    super::web::remembered::forget(path);
+    #[cfg(not(web))]
+    let _ = path;
 }
 
 /// The files dropped on the window in this frame, as databases to open: `then` gets

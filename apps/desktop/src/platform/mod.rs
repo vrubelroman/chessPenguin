@@ -141,12 +141,15 @@ pub fn log(line: &str) {
     log::info!("{line}");
 }
 
-/// Opens a database the library shows: its file on the disk, or in a browser the file
-/// the user gave the page (or a sample built in).
+/// Reads a database the library shows away from the screen's thread: its file on the
+/// disk on a thread of its own (`progress` follows the reading), or in a browser the
+/// file the user gave the page (or a sample built in) in the page's reader, a worker
+/// (no progress). `done` gets the database: on that thread, or on the page's.
 pub fn open_database(
     path: &std::path::Path,
-    progress: &mut dyn FnMut(chess_core::ScanProgress),
-    cancel: &std::sync::atomic::AtomicBool,
-) -> Result<chess_import::Opened, chess_import::ImportError> {
-    imp::open_database(path, progress, cancel)
+    progress: impl FnMut(chess_core::ScanProgress) + Send + 'static,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    done: impl FnOnce(Result<chess_import::Opened, chess_import::ImportError>) + Send + 'static,
+) -> std::io::Result<()> {
+    imp::open_database(path, progress, cancel, done)
 }

@@ -33,9 +33,7 @@ try {
   await s.run({ url: '?lang=en' }, outDir);
   await sleep(2000);
   // The games in one file, reviewed one by one.
-  await s.run({ key: 'o', mods: ['ctrl'] }, outDir);
-  await t.waitFor(`!!document.getElementById('cp-open-files')`, 5000);
-  await t.setFiles('cp-open-files', [all]);
+  await t.choose([all], () => s.run({ key: 'o', mods: ['ctrl'] }, outDir));
   await sleep(3000);
   await s.run({ shot: 'review-0-opened.png' }, outDir);
   for (let i = 0; i < games.length; i++) {

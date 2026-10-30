@@ -45,6 +45,7 @@ impl LetterRepairCounts {
 }
 
 /// Source-level detection result.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct LetterRepairDetection {
     /// Substitution pattern found (see [`detect_letter_substitution`]).

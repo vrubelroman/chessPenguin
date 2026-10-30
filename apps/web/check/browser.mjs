@@ -6,10 +6,11 @@
 //   const b = await open(port); const t = await b.tab(1400, 860, log);
 //   t.navigate(url) · t.evaluate(js) · t.waitFor(js, ms) · t.screenshot()
 //   t.click(x, y, {double, right}) · t.key(key, mods, times) · t.setFiles(inputId, paths)
+//   t.choose(paths, open): the user chooses the files in the dialog open() brings up
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { launch as launchFirefox } from './firefox.mjs';
 import { sleep, tab as bidiTab } from './bidi.mjs';
 
@@ -84,6 +85,12 @@ async function firefox(port) {
             expression: `document.getElementById(${JSON.stringify(id)})`, target: { context: t.context }, awaitPromise: false,
           });
           await ff.browser.send('input.setFiles', { context: t.context, element: { sharedId: node.result.sharedId }, files });
+        },
+        // The user chooses `files` in the dialog `open()` brings up (the page's file input).
+        async choose(files, open) {
+          await open();
+          await this.waitFor(`!!document.getElementById('cp-open-files')`, 5000);
+          await this.setFiles('cp-open-files', files);
         },
       };
     },
@@ -206,6 +213,36 @@ async function chromium(port) {
         setFiles: async (id, files) => {
           const { result } = await s('Runtime.evaluate', { expression: `document.getElementById(${JSON.stringify(id)})` });
           await s('DOM.setFileInputFiles', { objectId: result.objectId, files });
+        },
+        // The user chooses `files` in the dialog `open()` brings up. Chrome's own dialog
+        // (showOpenFilePicker, the files remembered) cannot be driven headless: the files
+        // are put into the site's private file system and its handles are what the
+        // dialog gives — the same kind of handle, kept and read again the same way.
+        async choose(files, open) {
+          const picker = await this.evaluate(`typeof window.showOpenFilePicker === 'function'`);
+          if (!picker) {
+            await open();
+            await this.waitFor(`!!document.getElementById('cp-open-files')`, 5000);
+            return this.setFiles('cp-open-files', files);
+          }
+          const given = files.map((f) => ({ name: basename(f), b64: readFileSync(f).toString('base64') }));
+          await this.evaluate(`(() => {
+            const given = ${JSON.stringify(given)};
+            window.showOpenFilePicker = async () => {
+              const root = await navigator.storage.getDirectory();
+              const handles = [];
+              for (const g of given) {
+                const h = await root.getFileHandle(g.name, { create: true });
+                const w = await h.createWritable();
+                await w.write(Uint8Array.from(atob(g.b64), (c) => c.charCodeAt(0)));
+                await w.close();
+                handles.push(h);
+              }
+              return handles;
+            };
+            return true;
+          })()`);
+          await open();
         },
       };
     },

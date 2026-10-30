@@ -19,7 +19,9 @@ export async function session(appDir, port = Number(process.env.CP_CHECK_PORT ||
   const server = spawn('python3', ['-I', join(root, 'apps/web/check/serve.py'), resolve(appDir), join(root, 'website/static'), String(port)], { stdio: 'ignore' });
   const b = await open(port + 457);
   const errors = [];
+  const logs = [];
   const t = await b.tab(1400, 860, (line) => {
+    logs.push(line);
     if (/panicked|RuntimeError|\[error\]/.test(line) && !/favicon|404/.test(line)) errors.push(line);
     if (process.env.CONSOLE) console.log(line);
   });
@@ -43,7 +45,7 @@ export async function session(appDir, port = Number(process.env.CP_CHECK_PORT ||
     if (step.shot) writeFileSync(join(outDir, step.shot), await t.screenshot());
   };
   return {
-    t, b, base, errors, run,
+    t, b, base, errors, logs, run,
     stop: async () => { await b.stop(); server.kill(); },
   };
 }

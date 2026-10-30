@@ -57,9 +57,7 @@ try {
   copyFileSync(join(root, 'examples/alekhine.pgn'), a);
   copyFileSync(join(root, 'examples/classics.pgn'), b);
   for (const file of [b, a]) {
-    await step({ key: 'o', mods: ['ctrl'] });
-    await t.waitFor(`!!document.getElementById('cp-open-files')`, 5000);
-    await t.setFiles('cp-open-files', [file]);
+    await t.choose([file], () => step({ key: 'o', mods: ['ctrl'] }));
     await sleep(2500);
   }
   await step({ shot: 's2-5-opened.png' });

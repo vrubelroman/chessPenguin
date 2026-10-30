@@ -8,7 +8,9 @@
 
 pub mod engine;
 pub mod idb;
+pub mod import;
 pub mod page;
+pub mod remembered;
 pub mod storage;
 pub mod vfs;
 
@@ -46,16 +48,16 @@ pub fn spawn(_name: &str, job: impl FnOnce() + Send + 'static) -> std::io::Resul
 
 pub fn open_database(
     path: &Path,
-    progress: &mut dyn FnMut(ScanProgress),
-    cancel: &AtomicBool,
-) -> Result<Opened, ImportError> {
-    let bytes = vfs::read(path).map_err(|source| ImportError::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    chess_import::open_bytes(&name, bytes, progress, cancel)
+    _progress: impl FnMut(ScanProgress) + Send + 'static,
+    cancel: std::sync::Arc<AtomicBool>,
+    done: impl FnOnce(Result<Opened, ImportError>) + Send + 'static,
+) -> std::io::Result<()> {
+    import::open(path, move |read| {
+        done(if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            Err(ImportError::Cancelled)
+        } else {
+            read
+        })
+    });
+    Ok(())
 }

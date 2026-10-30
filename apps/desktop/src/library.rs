@@ -60,6 +60,9 @@ pub enum LibraryAction {
     /// A file the browser held for the last visit only: choose it again, the new one
     /// taking its place on the shelf.
     ChooseAgain(PathBuf),
+    /// Let the page read the remembered file again (the browser asks the user).
+    #[cfg(web)]
+    AllowReading(PathBuf),
     /// Keep a copy of a file in the browser (it opens then without choosing it).
     KeepCopy(PathBuf),
     OpenSettings,
@@ -267,33 +270,29 @@ impl Library {
         }));
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
-        let (p, c, path_owned, ctx) = (
-            progress.clone(),
+        let (p, ctx, wake) = (progress.clone(), ctx.clone(), ctx.clone());
+        let spawned = crate::platform::open_database(
+            path,
+            move |sp| {
+                if let Ok(mut g) = p.lock() {
+                    *g = sp;
+                }
+                wake.request_repaint();
+            },
             cancel.clone(),
-            path.to_path_buf(),
-            ctx.clone(),
+            move |res| {
+                // The filters' index of a PGN is built here, not on the screen's thread
+                // (a large download takes a second, §9.7; in a browser, which reads
+                // smaller files, it is the page's thread).
+                if let Ok(opened) = &res
+                    && let Database::Pgn(pgn) = &opened.db
+                {
+                    pgn.catalog();
+                }
+                let _ = tx.send(res);
+                ctx.request_repaint();
+            },
         );
-        let spawned = crate::platform::spawn("db-open", move || {
-            let res = crate::platform::open_database(
-                &path_owned,
-                &mut |sp| {
-                    if let Ok(mut g) = p.lock() {
-                        *g = sp;
-                    }
-                    ctx.request_repaint();
-                },
-                &c,
-            );
-            // The filters' index of a PGN is built here, not on the screen's thread
-            // (a large download takes a second, §9.7).
-            if let Ok(opened) = &res
-                && let Database::Pgn(pgn) = &opened.db
-            {
-                pgn.catalog();
-            }
-            let _ = tx.send(res);
-            ctx.request_repaint();
-        });
         let slot = match spawned {
             Ok(_) => Slot::Loading {
                 progress,
@@ -1100,6 +1099,9 @@ impl Library {
                 });
                 trf("loading… {n}", &[("n", &p.games)])
             }
+            Some(Slot::Failed(_)) | None if crate::platform::files::waiting_to_read(path) => {
+                tr("🔒 Allow reading").into()
+            }
             Some(Slot::Failed(_)) | None
                 if crate::platform::files::session_only(path) && !self.files.exists(path) =>
             {
@@ -1272,6 +1274,27 @@ impl Library {
                     if ui.button(tr("Cancel")).clicked() {
                         cancel.store(true, Ordering::Relaxed);
                     }
+                });
+                return;
+            }
+            #[cfg(web)]
+            Some(Slot::Failed(_)) if crate::platform::files::waiting_to_read(&path) => {
+                // Chrome, Edge: the file is remembered; the browser asks before the
+                // page reads it again.
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(tr(
+                        "The browser remembers this file and asks before the page reads it again.",
+                    ));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr("🔒 Allow reading")).clicked() {
+                            actions.push(LibraryAction::AllowReading(path.clone()));
+                        }
+                        if ui.button(tr("Remove from list")).clicked() {
+                            actions.push(LibraryAction::RemoveDatabase(path.clone()));
+                        }
+                    });
                 });
                 return;
             }

@@ -32,6 +32,18 @@ impl From<Cancelled> for OpenError {
     }
 }
 
+/// What reading a database's text found: everything of a [`PgnDatabase`] but the text.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PgnIndex {
+    detected: EncodingGuess,
+    encoding: TextEncoding,
+    entries: Vec<GameEntry>,
+    content_hash: u64,
+    letter_repair: LetterRepairDetection,
+    repair_letters: bool,
+}
+
 /// Identity of the source content, for change detection and cache keys.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceFingerprint {
@@ -111,6 +123,39 @@ impl PgnDatabase {
             letter_repair,
             repair_letters: letter_repair.detected,
         })
+    }
+
+    /// The database taken apart: its text and its index (to rebuild it elsewhere —
+    /// the web version reads a database in a worker and gives it to the page).
+    pub fn into_index(self) -> (Vec<u8>, PgnIndex) {
+        let index = PgnIndex {
+            detected: self.detected,
+            encoding: self.encoding,
+            entries: self.entries,
+            content_hash: self.fingerprint.content_hash,
+            letter_repair: self.letter_repair,
+            repair_letters: self.repair_letters,
+        };
+        (self.bytes, index)
+    }
+
+    /// The database again from its text and the index [`Self::into_index`] gave,
+    /// without reading the text once more.
+    pub fn from_index(bytes: Vec<u8>, index: PgnIndex) -> Self {
+        PgnDatabase {
+            path: None,
+            fingerprint: SourceFingerprint {
+                len: bytes.len() as u64,
+                modified: None,
+                content_hash: index.content_hash,
+            },
+            bytes,
+            detected: index.detected,
+            encoding: index.encoding,
+            entries: index.entries,
+            letter_repair: index.letter_repair,
+            repair_letters: index.repair_letters,
+        }
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -222,6 +267,26 @@ impl PgnDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A database taken apart and put together again is the same database.
+    #[test]
+    fn index_round_trip() {
+        let text = "[White \"A\"]\n[Black \"B\"]\n\n1. e4 e5 *\n\n[White \"C\"]\n\n1. d4 {x} *\n";
+        let db = PgnDatabase::from_bytes(
+            text.as_bytes().to_vec(),
+            None,
+            &mut |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let (entries, hash) = (db.entries().to_vec(), db.fingerprint.content_hash);
+        let (bytes, index) = db.into_index();
+        let again = PgnDatabase::from_index(bytes, index);
+        assert_eq!(again.entries(), entries.as_slice());
+        assert_eq!(again.fingerprint.content_hash, hash);
+        assert_eq!(again.bytes(), text.as_bytes());
+        assert_eq!(again.load_game(1).unwrap().game.tag("White"), Some("C"));
+    }
 
     fn assert_send_sync<T: Send + Sync>() {}
 

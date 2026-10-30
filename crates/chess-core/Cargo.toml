@@ -9,6 +9,12 @@ license.workspace = true
 shakmaty.workspace = true
 encoding_rs.workspace = true
 thiserror.workspace = true
+# The index of a database in serde's terms: the web version reads a database in a
+# worker and gives its index to the page (`PgnIndex`).
+serde = { workspace = true, optional = true }
+
+[features]
+serde = ["dep:serde"]
 
 [dev-dependencies]
 # Independent oracle in corpus tests: the core uses its own lexer (byte offsets,

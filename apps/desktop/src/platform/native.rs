@@ -35,8 +35,12 @@ pub fn spawn(name: &str, job: impl FnOnce() + Send + 'static) -> std::io::Result
 
 pub fn open_database(
     path: &Path,
-    progress: &mut dyn FnMut(ScanProgress),
-    cancel: &AtomicBool,
-) -> Result<Opened, ImportError> {
-    chess_import::open(path, progress, cancel)
+    mut progress: impl FnMut(ScanProgress) + Send + 'static,
+    cancel: std::sync::Arc<AtomicBool>,
+    done: impl FnOnce(Result<Opened, ImportError>) + Send + 'static,
+) -> std::io::Result<()> {
+    let path = path.to_owned();
+    spawn("db-open", move || {
+        done(chess_import::open(&path, &mut progress, &cancel));
+    })
 }

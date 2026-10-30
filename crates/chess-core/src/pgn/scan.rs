@@ -7,6 +7,7 @@ use crate::encoding::TextEncoding;
 use crate::pgn::lexer::{Lexer, TokKind, parse_tag};
 
 /// Summary flags computed while scanning.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct EntryFlags {
     pub has_fen: bool,
@@ -28,6 +29,7 @@ pub struct EntryFlags {
 }
 
 /// One record of a PGN file.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameEntry {
     /// 0-based ordinal in the file.

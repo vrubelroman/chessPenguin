@@ -26,8 +26,9 @@ struct Entry {
 
 thread_local! {
     static FILES: RefCell<BTreeMap<PathBuf, Entry>> = const { RefCell::new(BTreeMap::new()) };
-    /// The number of the last file opened (each gets a folder of its own).
-    static OPENED_COUNT: RefCell<u32> = const { RefCell::new(0) };
+    /// The number of the last file opened (each gets a folder of its own; numbered from
+    /// the visit's start time, so that a file of an earlier visit keeps its own).
+    static OPENED_COUNT: RefCell<u64> = const { RefCell::new(0) };
 }
 
 fn now_ms() -> u64 {
@@ -133,15 +134,21 @@ pub fn list(dir: &Path) -> Vec<PathBuf> {
 /// Its path ends with its own name, in a folder of its own.
 pub fn add_opened(name: &str, bytes: Vec<u8>) -> PathBuf {
     let n = OPENED_COUNT.with_borrow_mut(|n| {
-        *n += 1;
+        *n = (*n + 1).max(now_ms());
         *n
     });
     // A name is a file's, not a path (a browser gives no folders; this makes sure).
     let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let path = Path::new(OPENED).join(n.to_string()).join(name);
+    put_opened(&path, bytes);
+    path
+}
+
+/// A file of an earlier visit the browser let the page read again, at its old path.
+pub fn put_opened(path: &Path, bytes: Vec<u8>) {
     FILES.with_borrow_mut(|files| {
         files.insert(
-            path.clone(),
+            path.to_owned(),
             Entry {
                 bytes,
                 modified_ms: now_ms(),
@@ -149,5 +156,4 @@ pub fn add_opened(name: &str, bytes: Vec<u8>) -> PathBuf {
             },
         );
     });
-    path
 }

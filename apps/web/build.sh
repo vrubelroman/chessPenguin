@@ -36,7 +36,7 @@ if command -v wasm-opt >/dev/null 2>&1; then
         "$out/chesspenguin_web_bg.wasm" -o "$out/chesspenguin_web_bg.wasm"
 fi
 
-cp "$here/page/device.js" "$here/page/page.js" "$out/"
+cp "$here/page/device.js" "$here/page/page.js" "$here/page/import-worker.js" "$out/"
 
 # The engine: Stockfish.js 19.0.1 (npm `stockfish`, GPL-3.0), its single-threaded build,
 # checked against the registry's integrity (THIRD_PARTY_NOTICES.md). STOCKFISH_TGZ= points

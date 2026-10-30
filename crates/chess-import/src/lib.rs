@@ -79,6 +79,14 @@ pub enum Format {
 }
 
 impl Format {
+    pub const ALL: [Format; 5] = [
+        Format::Pgn,
+        Format::ChessBase,
+        Format::ChessBaseArchive,
+        Format::Zip,
+        Format::SevenZip,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Format::Pgn => "PGN",

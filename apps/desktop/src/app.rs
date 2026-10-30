@@ -32,6 +32,9 @@ enum Async {
     EngineChecked(Result<(PathBuf, String), String>),
     /// The folder for new databases (`None`: the dialog was cancelled).
     FolderPicked(Option<PathBuf>),
+    /// A remembered file the browser let the page read again.
+    #[cfg(web)]
+    ReadAllowed(PathBuf),
 }
 
 /// A passing message at the bottom; `undo`: with the button that puts a deleted game back.
@@ -2450,6 +2453,7 @@ impl App {
                     if let Some(old) = self.choosing_again.take() {
                         self.settings.databases.retain(|d| *d != old);
                         self.library.forget(&old);
+                        crate::platform::files::forget(&old);
                     }
                     for p in paths.iter().rev() {
                         self.settings.touch_database(p);
@@ -2460,6 +2464,8 @@ impl App {
                     self.settings_dirty = true;
                 }
                 Async::SavePicked(path) => self.save_game(ctx, path),
+                #[cfg(web)]
+                Async::ReadAllowed(path) => self.library.reload(&path, ctx),
                 Async::SaveCancelled => {
                     self.close_after_save = None;
                     self.restart_to = None;
@@ -2811,18 +2817,23 @@ impl App {
         };
         let mut open = false;
         let mut delete = false;
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(trf(
-                    "There is an unsaved game: {title}, {n} moves.",
-                    &[("title", &d.title), ("n", &d.moves)],
-                ))
-                .color(ui.visuals().warn_fg_color),
-            );
-            open = ui.button(tr("Open")).clicked();
-            delete = ui.button(tr("Delete")).clicked();
-        });
-        ui.separator();
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(8, 6))
+            .fill(ui.visuals().faint_bg_color)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(trf(
+                            "There is an unsaved game: {title}, moves: {n}.",
+                            &[("title", &d.title), ("n", &d.moves)],
+                        ))
+                        .color(ui.visuals().warn_fg_color),
+                    );
+                    open = ui.button(tr("Open")).clicked();
+                    delete = ui.button(tr("Delete")).clicked();
+                });
+            });
         if open {
             self.draft_offer = None;
             self.open_pgn_text(ctx, d.pgn, false);
@@ -3573,6 +3584,7 @@ impl eframe::App for App {
                     LibraryAction::RemoveDatabase(p) => {
                         self.settings.databases.retain(|d| *d != p);
                         self.library.forget(&p);
+                        crate::platform::files::forget(&p);
                         self.settings_dirty = true;
                         // The file stays where it is; said so, with the place.
                         self.toast = Some(Toast {
@@ -3582,6 +3594,16 @@ impl eframe::App for App {
                             ),
                             until: ctx.input(|i| i.time) + 6.0,
                             undo: false,
+                        });
+                    }
+                    #[cfg(web)]
+                    LibraryAction::AllowReading(p) => {
+                        let (tx, wake) = (self.tx.clone(), ctx.clone());
+                        crate::platform::files::allow_reading(&p.clone(), move |back| {
+                            if back {
+                                let _ = tx.send(Async::ReadAllowed(p));
+                            }
+                            wake.request_repaint();
                         });
                     }
                     LibraryAction::ChooseAgain(p) => {

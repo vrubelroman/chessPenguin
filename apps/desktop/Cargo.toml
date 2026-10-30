@@ -65,6 +65,8 @@ tar = "0.4"
 
 # The web version: the page, its files and storage (apps/web starts it).
 [target.'cfg(target_family = "wasm")'.dependencies]
+# The reader worker gives the page a database's index (platform::web::import).
+chess-core = { workspace = true, features = ["serde"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 # The browser's languages for the first start.
 sys-locale = { version = "0.3", features = ["js"] }
@@ -82,7 +84,7 @@ web-sys = { version = "0.3", features = [
     "HtmlMediaElement", "HtmlCanvasElement", "console", "CacheStorage", "Cache",
     "Request", "Response", "ResponseInit", "Headers", "ReadableStream",
     "ReadableStreamDefaultReader", "StorageManager", "StorageEstimate", "History",
-    "BeforeUnloadEvent",
+    "BeforeUnloadEvent", "WorkerOptions", "WorkerType",
 ] }
 
 [build-dependencies]
