@@ -6,7 +6,8 @@
 //! feeds the machine. The UI talks to it through the non-blocking
 //! [`EngineHandle`] and polls [`EngineEvent`]s every frame; the [`Waker`]
 //! callback is invoked after each new event. WebAssembly in a browser has no
-//! processes, so there is no process transport there.
+//! processes: there the engine is a Web Worker, its handle the same, its start
+//! not blocking ([`Engine::start_worker`]).
 //!
 //! Search boundary: UCI has no request ids. A new `position`/`go` is written
 //! only after the previous search ended with `bestmove` and a subsequent
@@ -21,15 +22,17 @@ mod events;
 pub mod parse;
 #[cfg(not(target_family = "wasm"))]
 mod process;
-// The machine is built where a transport drives it.
-#[cfg(not(target_family = "wasm"))]
 mod protocol;
 mod types;
+#[cfg(target_family = "wasm")]
+mod worker;
 
 pub use error::EngineError;
 pub use events::{EngineEvent, TerminationReason, Waker};
 #[cfg(not(target_family = "wasm"))]
 pub use process::{Engine, EngineConfig, EngineHandle};
+#[cfg(target_family = "wasm")]
+pub use worker::{Engine, EngineHandle, Starting, WorkerConfig};
 pub use types::{
     EngineInfo, EngineOption, EnginePosition, EngineScore, OptionKind, PositionBase, Score,
     ScoreBound, SearchId, SearchInfo, SearchLimits, Side, Timeouts, WhiteEval, WhiteScore,

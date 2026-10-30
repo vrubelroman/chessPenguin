@@ -9,7 +9,7 @@ use web_time::Instant;
 use crate::error::EngineError;
 use crate::events::EngineEvent;
 use crate::parse::{EngineLine, parse_line};
-use crate::types::{EngineInfo, EnginePosition, SearchId, SearchLimits, Timeouts};
+use crate::types::{EngineInfo, EnginePosition, OptionKind, SearchId, SearchLimits, Timeouts};
 
 /// Maximum number of `Warning` events emitted per engine (flood protection).
 const MAX_WARNINGS: usize = 100;
@@ -25,6 +25,80 @@ pub(crate) enum Cmd {
     Stop,
     /// A complete `setoption ...` / `ucinewgame` line, applied while idle.
     Setup(String),
+}
+
+impl Cmd {
+    /// A search request, checked: a valid position, UCI moves to search among.
+    pub(crate) fn search(
+        position: EnginePosition,
+        id: SearchId,
+        limits: SearchLimits,
+        among: Vec<String>,
+    ) -> Result<Cmd, EngineError> {
+        position.validate()?;
+        if let Some(bad) = among.iter().find(|m| !crate::types::is_uci_move(m)) {
+            return Err(EngineError::InvalidInput(format!("not a move: {bad:?}")));
+        }
+        Ok(Cmd::Search {
+            position,
+            id,
+            limits,
+            among,
+        })
+    }
+}
+
+/// The `setoption` line for `name` = `value` (`None` for buttons), checked against
+/// the options the engine declared.
+pub(crate) fn option_line(
+    info: &EngineInfo,
+    name: &str,
+    value: Option<&str>,
+) -> Result<String, EngineError> {
+    let opt = info
+        .option(name)
+        .ok_or_else(|| EngineError::UnknownOption(name.to_string()))?;
+    let bad = |reason: String| EngineError::InvalidOptionValue {
+        name: opt.name.clone(),
+        reason,
+    };
+    if let Some(v) = value
+        && v.chars().any(char::is_control)
+    {
+        return Err(bad("control characters in value".into()));
+    }
+    let value = match (&opt.kind, value) {
+        (OptionKind::Button, None) => None,
+        (OptionKind::Button, Some(_)) => return Err(bad("button takes no value".into())),
+        (_, None) => return Err(bad("value required".into())),
+        (OptionKind::Check { .. }, Some(v)) => match v {
+            "true" | "false" => Some(v.to_string()),
+            _ => return Err(bad(format!("expected true/false, got {v:?}"))),
+        },
+        (OptionKind::Spin { min, max, .. }, Some(v)) => {
+            let n: i64 = v
+                .trim()
+                .parse()
+                .map_err(|_| bad(format!("not an integer: {v:?}")))?;
+            if min.is_some_and(|m| n < m) || max.is_some_and(|m| n > m) {
+                return Err(bad(format!("{n} outside {min:?}..={max:?}")));
+            }
+            Some(n.to_string())
+        }
+        (OptionKind::Combo { vars, .. }, Some(v)) => {
+            let var = vars
+                .iter()
+                .find(|x| x.eq_ignore_ascii_case(v))
+                .ok_or_else(|| bad(format!("{v:?} is not one of {vars:?}")))?;
+            Some(var.clone())
+        }
+        (OptionKind::String { .. }, Some(v)) => Some(v.to_string()),
+    };
+    let line = match value {
+        Some(v) => format!("setoption name {} value {}", opt.name, v),
+        None => format!("setoption name {}", opt.name),
+    };
+    Ok(line)
 }
 
 /// The engine could not be written to: it is gone.

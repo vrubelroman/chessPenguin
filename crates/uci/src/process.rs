@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use crate::error::EngineError;
 use crate::events::{EngineEvent, TerminationReason, Waker};
-use crate::protocol::{Cmd, Exit, Gone, Handshake, HandshakeStep, Link, Session};
-use crate::types::{EngineInfo, EnginePosition, OptionKind, SearchId, SearchLimits, Timeouts};
+use crate::protocol::{Cmd, Exit, Gone, Handshake, HandshakeStep, Link, Session, option_line};
+use crate::types::{EngineInfo, EnginePosition, SearchId, SearchLimits, Timeouts};
 
 /// Maximum stored length of one output line; longer lines are truncated.
 const MAX_LINE_BYTES: usize = 64 * 1024;
@@ -175,16 +175,7 @@ impl EngineHandle {
         limits: SearchLimits,
         among: Vec<String>,
     ) -> Result<(), EngineError> {
-        position.validate()?;
-        if let Some(bad) = among.iter().find(|m| !crate::types::is_uci_move(m)) {
-            return Err(EngineError::InvalidInput(format!("not a move: {bad:?}")));
-        }
-        self.send(Cmd::Search {
-            position,
-            id: search_id,
-            limits,
-            among,
-        })
+        self.send(Cmd::search(position, search_id, limits, among)?)
     }
 
     /// Stops the running search (its `BestMove` still arrives) and cancels a
@@ -198,51 +189,7 @@ impl EngineHandle {
     /// search boundary (UCI forbids `setoption` during a search) — to see the
     /// effect on the current analysis, call [`Self::analyze`] again.
     pub fn set_option(&self, name: &str, value: Option<&str>) -> Result<(), EngineError> {
-        let opt = self
-            .info
-            .option(name)
-            .ok_or_else(|| EngineError::UnknownOption(name.to_string()))?;
-        let bad = |reason: String| EngineError::InvalidOptionValue {
-            name: opt.name.clone(),
-            reason,
-        };
-        if let Some(v) = value
-            && v.chars().any(char::is_control)
-        {
-            return Err(bad("control characters in value".into()));
-        }
-        let value = match (&opt.kind, value) {
-            (OptionKind::Button, None) => None,
-            (OptionKind::Button, Some(_)) => return Err(bad("button takes no value".into())),
-            (_, None) => return Err(bad("value required".into())),
-            (OptionKind::Check { .. }, Some(v)) => match v {
-                "true" | "false" => Some(v.to_string()),
-                _ => return Err(bad(format!("expected true/false, got {v:?}"))),
-            },
-            (OptionKind::Spin { min, max, .. }, Some(v)) => {
-                let n: i64 = v
-                    .trim()
-                    .parse()
-                    .map_err(|_| bad(format!("not an integer: {v:?}")))?;
-                if min.is_some_and(|m| n < m) || max.is_some_and(|m| n > m) {
-                    return Err(bad(format!("{n} outside {min:?}..={max:?}")));
-                }
-                Some(n.to_string())
-            }
-            (OptionKind::Combo { vars, .. }, Some(v)) => {
-                let var = vars
-                    .iter()
-                    .find(|x| x.eq_ignore_ascii_case(v))
-                    .ok_or_else(|| bad(format!("{v:?} is not one of {vars:?}")))?;
-                Some(var.clone())
-            }
-            (OptionKind::String { .. }, Some(v)) => Some(v.to_string()),
-        };
-        let line = match value {
-            Some(v) => format!("setoption name {} value {}", opt.name, v),
-            None => format!("setoption name {}", opt.name),
-        };
-        self.send(Cmd::Setup(line))
+        self.send(Cmd::Setup(option_line(&self.info, name, value)?))
     }
 
     pub fn set_multipv(&self, lines: u32) -> Result<(), EngineError> {

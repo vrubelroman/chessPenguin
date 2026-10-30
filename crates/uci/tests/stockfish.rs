@@ -1,6 +1,8 @@
 //! Integration test with a real Stockfish binary. Ignored by default.
 //!
 //! Run: UCI_STOCKFISH=/path/to/stockfish cargo test -p uci --test stockfish -- --ignored
+// The process transport.
+#![cfg(not(target_family = "wasm"))]
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};

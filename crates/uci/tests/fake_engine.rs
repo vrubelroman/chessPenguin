@@ -1,4 +1,6 @@
 //! Supervisor tests against the deterministic fake engine (src/bin/fake_uci.rs).
+// The process transport.
+#![cfg(not(target_family = "wasm"))]
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;

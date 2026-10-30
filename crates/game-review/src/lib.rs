@@ -22,9 +22,11 @@ mod job;
 pub mod report;
 
 pub use features::{MoveFeatures, Rules};
+#[cfg(not(target_family = "wasm"))]
+pub use job::run;
 pub use job::{
     JobEvent, JobFailure, JobSettings, MAX_PROCESSES, PHONE_PROCESSES, SEARCH_HASH_MB,
-    SEARCH_NODES, SEARCH_VERSION, SHALLOW_NODES, Target, estimate_secs, processes, run,
+    SEARCH_NODES, SEARCH_VERSION, SHALLOW_NODES, Target, estimate_secs, processes,
 };
 pub use report::{
     Eval, Hardness, Judgement, Measure, Phase, Phases, Ply, Report, SideStats, judge,
