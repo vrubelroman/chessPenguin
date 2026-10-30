@@ -80,13 +80,15 @@ pub struct GameView {
     play_start: Option<crate::play::Start>,
     /// «The game is on» asked (leaving during a game); the clocks wait meanwhile.
     /// Where leaving goes, and since when the question is open.
-    play_leave: Option<(crate::app::CloseIntent, std::time::Instant)>,
+    play_leave: Option<(crate::app::CloseIntent, web_time::Instant)>,
     /// Learning an opening (this screen is the training).
     pub train: Option<crate::train::Training>,
     /// A line from the clipboard that would go elsewhere than the user stands: asked.
     paste_pending: Option<chess_core::paste::PastePlan>,
     /// Text to paste on the next frame (dev hook `CP_PASTE_LINE`).
     paste_request: Option<String>,
+    /// The menu's «Paste a line»: the clipboard being read.
+    clipboard: Option<crate::platform::clipboard::Reading>,
     show_diagnostics: bool,
     engine_settings_open: bool,
     review: Review,
@@ -170,7 +172,11 @@ pub enum GameAction {
     /// Back to the game this one was opened from.
     ReturnToPrevious,
     /// The window offering a newer version.
+    #[cfg(not(web))]
     OpenUpdate,
+    /// The game's PGN as a downloaded file (the web version saves so).
+    #[cfg(web)]
+    DownloadPgn,
     /// Settings → Translation.
     OpenTranslationSettings,
 }
@@ -200,6 +206,7 @@ impl GameView {
             paste_pending: None,
             train: None,
             paste_request: None,
+            clipboard: None,
             show_diagnostics: false,
             engine_settings_open: false,
             review,
@@ -796,6 +803,10 @@ impl GameView {
         }
 
         // A line from the clipboard: pasted, or asked about.
+        if let Some(text) = self.clipboard.as_ref().and_then(|r| r.poll()) {
+            self.clipboard = None;
+            self.paste_request = Some(text.unwrap_or_default());
+        }
         if let Some(text) = self.paste_request.take() {
             self.paste_text(&text, &mut actions);
         }
@@ -958,6 +969,18 @@ impl GameView {
         let right = |compact: bool| {
             button(ui, if compact { "⚙" } else { tr("⚙ Settings") })
                 + self.update.as_deref().map_or(0.0, |v| button(ui, v))
+                + if cfg!(web) {
+                    button(
+                        ui,
+                        if compact {
+                            "⇩"
+                        } else {
+                            tr("⇩ Download PGN")
+                        },
+                    )
+                } else {
+                    0.0
+                }
                 + button(ui, "⏷")
                 + button(
                     ui,
@@ -1085,10 +1108,21 @@ impl GameView {
                 {
                     actions.push(GameAction::OpenSettings);
                 }
+                #[cfg(not(web))]
                 if let Some(v) = &self.update
                     && crate::widgets::update_button(ui, v).clicked()
                 {
                     actions.push(GameAction::OpenUpdate);
+                }
+                #[cfg(web)]
+                if ui
+                    .button(if compact { "⇩" } else { tr("⇩ Download PGN") })
+                    .on_hover_text(tr(
+                        "Download the game as a PGN file: the browser puts it where it puts downloads",
+                    ))
+                    .clicked()
+                {
+                    actions.push(GameAction::DownloadPgn);
                 }
                 // Find the position in a database: the last chosen one, or another.
                 let searchable = self.search_line().is_some();
@@ -1538,7 +1572,7 @@ impl GameView {
                         });
                     }
                     if let Some((_, NotationCommand::Paste)) = resp.context {
-                        self.paste_clipboard(actions);
+                        self.paste_clipboard(ui.ctx());
                     } else if let Some((id, NotationCommand::PlayFrom)) = resp.context {
                         self.play_from(id, actions);
                     } else if let Some((id, NotationCommand::Train)) = resp.context {
@@ -1934,6 +1968,11 @@ impl GameView {
                     actions.push(self.copy_pgn());
                     ui.close();
                 }
+                #[cfg(web)]
+                if ui.button(tr("⇩ Download PGN")).clicked() {
+                    actions.push(GameAction::DownloadPgn);
+                    ui.close();
+                }
                 if ui.button(tr("Copy FEN")).clicked() {
                     if let Some(fen) = self.game.fen(self.cursor) {
                         actions.push(GameAction::CopyText(fen, tr("FEN copied")));
@@ -1945,7 +1984,7 @@ impl GameView {
                         .button(tr("Paste a line from the clipboard (Ctrl+V)"))
                         .clicked()
                 {
-                    self.paste_clipboard(actions);
+                    self.paste_clipboard(ui.ctx());
                     ui.close();
                 }
                 if self.play.is_none() {
@@ -2286,7 +2325,7 @@ impl GameView {
         let left = crate::play::times_left(&self.game, saved.floor, to_move_left);
         let clock = start
             .clock
-            .map(|tc| Clock::resumed(tc, left, to_move, std::time::Instant::now()));
+            .map(|tc| Clock::resumed(tc, left, to_move, web_time::Instant::now()));
         self.goto(end);
         self.begin_play(start, engine, judge, Some(journal), clock, floor, ctx);
     }
@@ -2320,7 +2359,7 @@ impl GameView {
         // it was heard before.
         let low_time_heard = clock
             .as_ref()
-            .is_some_and(|c| c.left(start.user, std::time::Instant::now()) <= c.low());
+            .is_some_and(|c| c.left(start.user, web_time::Instant::now()) <= c.low());
         self.play = Some(Session {
             journal,
             user: start.user,
@@ -2331,20 +2370,18 @@ impl GameView {
             clock,
             opponent: match engine {
                 crate::play::Engine::Maia(_) => Opponent::start(file, ctx),
+                #[cfg(not(web))]
                 crate::play::Engine::Rodent(_) => {
                     Opponent::start_rodent(file, start.style.clone(), Some(start.strength), ctx)
+                }
+                #[cfg(web)]
+                crate::play::Engine::Rodent(_) => {
+                    Opponent::not_started(tr("a browser cannot start it").to_owned())
                 }
             },
             resign_asked: false,
             low_time_heard,
-            judge: judge.map(|p| {
-                let ctx = ctx.clone();
-                crate::play::Judge::start(
-                    uci::EngineConfig::new(p),
-                    Vec::new(),
-                    Box::new(move || ctx.request_repaint()),
-                )
-            }),
+            judge: judge.and_then(|p| crate::play::start_judge(p, ctx)),
             hopeless: 0,
             resign_offer: None,
             play_on: false,
@@ -2514,7 +2551,7 @@ impl GameView {
             }
             return;
         }
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         let clock = s
             .clock
             .as_ref()
@@ -2551,7 +2588,7 @@ impl GameView {
         let Ok(id) = self.game.add_move(end, m) else {
             return;
         };
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         if let Some(s) = self.play.as_mut() {
             s.resign_asked = false;
             if let Some(c) = s.clock.as_mut() {
@@ -2631,7 +2668,7 @@ impl GameView {
                 && s.opponent.thinking
             {
                 s.opponent.forget();
-                s.resign_offer = Some(std::time::Instant::now());
+                s.resign_offer = Some(web_time::Instant::now());
                 self.scroll_to_cursor = true;
                 actions.push(GameAction::Sound(Sound::Defeat));
                 return;
@@ -2671,7 +2708,7 @@ impl GameView {
                 self.play_add(m, None, actions);
             }
         }
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         let end_pos = self.game.position(self.play_end_node()).cloned();
         let Some(s) = self.play.as_mut() else { return };
         if let Some(c) = &s.clock
@@ -2703,7 +2740,7 @@ impl GameView {
         };
         s.opponent.forget();
         self.board.clear_premove();
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         let left = s.clock.as_mut().map(|c| {
             c.stop(now);
             (c.left(s.user, now), c.left(!s.user, now))
@@ -2805,7 +2842,7 @@ impl GameView {
         let left = s
             .clock
             .as_ref()
-            .map(|c| c.left(to_move, std::time::Instant::now()));
+            .map(|c| c.left(to_move, web_time::Instant::now()));
         let aside = s
             .journal
             .take()
@@ -3006,7 +3043,7 @@ impl GameView {
             self.goto(parent);
             let moved = self.user_moved(user);
             if let Some(c) = self.play.as_mut().and_then(|s| s.clock.as_mut()) {
-                c.take_back(user, moved, std::time::Instant::now());
+                c.take_back(user, moved, web_time::Instant::now());
             }
         }
         self.keep_journal();
@@ -3108,7 +3145,7 @@ impl GameView {
     pub fn ask_leave(&mut self, intent: crate::app::CloseIntent) {
         self.board.clear_premove();
         if self.play_leave.is_none() {
-            self.play_leave = Some((intent, std::time::Instant::now()));
+            self.play_leave = Some((intent, web_time::Instant::now()));
         }
     }
 
@@ -3326,7 +3363,7 @@ impl GameView {
             .into_iter()
             .chain(s.resign_offer)
             .min()
-            .unwrap_or_else(std::time::Instant::now);
+            .unwrap_or_else(web_time::Instant::now);
         let turn = self.play_turn();
         let active = turn == side;
         let left = s.clock.as_ref().map(|c| c.left(side, now));
@@ -3821,7 +3858,7 @@ impl GameView {
         if let Some(t) = self.train.as_mut()
             && let Some(f) = &t.flash
         {
-            let now = std::time::Instant::now();
+            let now = web_time::Instant::now();
             if now >= f.until {
                 t.flash = None;
             } else {
@@ -3870,7 +3907,7 @@ impl GameView {
                 after,
                 from: m.from().unwrap_or(m.to()),
                 to: crate::board::ui_target(&m),
-                until: std::time::Instant::now() + crate::train::WRONG_SHOWN,
+                until: web_time::Instant::now() + crate::train::WRONG_SHOWN,
             });
             actions.push(GameAction::Sound(Sound::Wrong));
         }
@@ -4404,12 +4441,10 @@ impl GameView {
 
     // ----- a line from the clipboard (docs/design/paste-variation.md) ----------------
 
-    /// The menu's «Paste a line from the clipboard»: the clipboard read now.
-    fn paste_clipboard(&mut self, actions: &mut Vec<GameAction>) {
-        let text = arboard::Clipboard::new()
-            .and_then(|mut c| c.get_text())
-            .unwrap_or_default();
-        self.paste_text(&text, actions);
+    /// The menu's «Paste a line from the clipboard»: the clipboard is read, the line
+    /// pasted once it is there (at once on a computer).
+    fn paste_clipboard(&mut self, ctx: &egui::Context) {
+        self.clipboard = Some(crate::platform::clipboard::read_text(ctx));
     }
 
     /// Pastes `text` as a line: at once where the user stands, a question when it

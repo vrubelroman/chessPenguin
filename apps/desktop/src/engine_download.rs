@@ -148,9 +148,26 @@ pub struct Download {
 }
 
 impl Download {
+    #[cfg(not(web))]
     pub fn start(ctx: &egui::Context) -> Download {
         let total = asset().map_or(0, |a| a.size);
         Download::spawn(ctx, total, run)
+    }
+
+    /// A browser downloads no engine programs: there is no download for it, as for a
+    /// computer without a published build.
+    #[cfg(web)]
+    pub fn start(_ctx: &egui::Context) -> Download {
+        Download::unsupported()
+    }
+
+    /// The download of a platform that has none.
+    #[cfg(web)]
+    pub fn unsupported() -> Download {
+        Download {
+            stage: Arc::new(Mutex::new(Stage::Failed(Failure::Unsupported))),
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Runs `job` (a download and what follows it) in a thread of its own; `total`: the
@@ -205,6 +222,7 @@ impl Drop for Download {
     }
 }
 
+#[cfg(not(web))]
 fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> {
     let asset = asset().ok_or(Failure::Unsupported)?;
     let dir = dir().ok_or_else(|| Failure::Disk("no data directory".into()))?;
@@ -228,6 +246,7 @@ fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> 
     result
 }
 
+#[cfg(not(web))]
 /// Downloads `url` into `to`, checking the size and the SHA-256 on the way. The file is
 /// written beside and put in place once checked: a new file, never the old one rewritten
 /// (macOS on Apple silicon kills an executable rewritten in place after it once ran: it
@@ -250,6 +269,7 @@ pub fn fetch(
     result
 }
 
+#[cfg(not(web))]
 fn fetch_into(
     url: &str,
     to: &Path,
@@ -328,6 +348,7 @@ pub fn already(file: &Path, asset: &Asset) -> bool {
 }
 
 /// Takes the engine executable and its license files out of the archive.
+#[cfg(not(web))]
 fn unpack(archive: &Path, dir: &Path, zip: bool) -> Result<PathBuf, Failure> {
     let exe = dir.join(EXE);
     let wanted = |name: &str| -> Option<PathBuf> {
@@ -382,6 +403,7 @@ fn unpack(archive: &Path, dir: &Path, zip: bool) -> Result<PathBuf, Failure> {
     Ok(exe)
 }
 
+#[cfg(not(web))]
 /// Starts the engine once and waits for its name: the binary runs on this computer.
 fn check_runs(exe: &Path) -> Result<(), Failure> {
     let mut cmd = std::process::Command::new(exe);

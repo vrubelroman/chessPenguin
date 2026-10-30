@@ -24,8 +24,7 @@ const SAMPLES: [(&str, &str); 2] = [
 ];
 
 fn dir() -> Option<PathBuf> {
-    directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
-        .map(|d| d.data_local_dir().join("examples"))
+    crate::platform::examples_dir()
 }
 
 /// A sample database of the program: only read (games added there would end up in a
@@ -52,14 +51,14 @@ fn setup_in(dir: &Path, settings: &mut Settings) -> bool {
         // any language's name is it.
         for name in all_languages(key) {
             let path = dir.join(format!("{name}.pgn"));
-            let kept = path.exists() || settings.databases.contains(&path);
+            let kept = crate::platform::fs::exists(&path) || settings.databases.contains(&path);
             if (kept || (first && path == named))
                 && let Err(e) = bring_up_to_date(&path, text)
             {
                 eprintln!("examples: cannot write {}: {e}", path.display());
             }
         }
-        if first && named.exists() && !settings.databases.contains(&named) {
+        if first && crate::platform::fs::exists(&named) && !settings.databases.contains(&named) {
             settings.databases.push(named);
         }
     }
@@ -69,10 +68,10 @@ fn setup_in(dir: &Path, settings: &mut Settings) -> bool {
 /// Writes `text` to `path` unless the file holds it already. The new file takes the old
 /// one's place at once (a program started meanwhile reads one or the other whole).
 fn bring_up_to_date(path: &Path, text: &str) -> std::io::Result<()> {
-    if std::fs::read(path).is_ok_and(|on_disk| on_disk == text.as_bytes()) {
+    if crate::platform::fs::read(path).is_ok_and(|on_disk| on_disk == text.as_bytes()) {
         return Ok(());
     }
-    chess_core::pgn::store::write_atomic(path, text.as_bytes())
+    crate::platform::fs::write_atomic(path, text.as_bytes())
 }
 
 #[cfg(test)]

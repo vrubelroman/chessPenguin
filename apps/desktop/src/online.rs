@@ -1,14 +1,15 @@
 //! Games from Lichess and Chess.com on the desktop: the databases live in
 //! `<local data dir>/online/`; the downloads themselves are the `online-games` crate's
 //! (shared with the Android app). Both public APIs are probed at start; a platform that
-//! does not answer as expected (offline, the API changed) is simply not offered.
+//! does not answer as expected (offline, the API changed) is simply not offered. The
+//! web version has no online games: there only the names of such databases are known.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
+pub use online_games::{Account, Platform, State};
+#[cfg(not(web))]
 pub use online_games::{
-    Account, Done, Failure, LICHESS_RATE, Lookup, Platform, Progress, State, download, lookup,
-    probe_all, valid_nick,
+    Done, Failure, LICHESS_RATE, Lookup, Progress, download, lookup, probe_all, valid_nick,
 };
 
 /// Where the online databases live.
@@ -43,18 +44,20 @@ pub fn ago(t: i64) -> String {
     }
 }
 
+#[cfg(not(web))]
 /// The probe results and what the window shows, kept by the application.
 pub struct Probe {
     job: Option<std::sync::mpsc::Receiver<[bool; 2]>>,
     pub available: [bool; 2],
     /// When the last probe finished (a platform that did not answer is asked again
     /// after [`Probe::RETRY`]: the machine may have come online).
-    last: Option<std::time::Instant>,
+    last: Option<web_time::Instant>,
     ctx: egui::Context,
 }
 
+#[cfg(not(web))]
 impl Probe {
-    const RETRY: Duration = Duration::from_secs(300);
+    const RETRY: std::time::Duration = std::time::Duration::from_secs(300);
 
     /// Starts probing both platforms in the background.
     pub fn start(ctx: &egui::Context) -> Probe {
@@ -90,7 +93,7 @@ impl Probe {
                 *have |= now;
             }
             self.job = None;
-            self.last = Some(std::time::Instant::now());
+            self.last = Some(web_time::Instant::now());
         }
         if self.job.is_none() && !self.available.iter().all(|a| *a) {
             match self.last {

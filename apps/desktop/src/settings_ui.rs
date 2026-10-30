@@ -19,6 +19,7 @@ pub enum Tab {
 }
 
 pub enum SettingsAction {
+    #[cfg(not(web))]
     AddEngine,
     /// Download the official Stockfish (decision 14).
     DownloadEngine,
@@ -29,10 +30,13 @@ pub enum SettingsAction {
     /// The active engine (or its options) changed; a running analysis should restart.
     EngineChanged,
     /// Ask now whether a newer version is out.
+    #[cfg(not(web))]
     CheckUpdates,
     /// Choose the folder for new databases.
+    #[cfg(not(web))]
     PickBaseFolder,
     /// Open the update window.
+    #[cfg(not(web))]
     OpenUpdate,
 }
 
@@ -99,35 +103,12 @@ impl SettingsWindow {
                         let (status, available) =
                             (self.update_status.clone(), self.update_available.clone());
                         about_tab(ui, s.language, |ui| {
-                            // Updates, right under the version.
-                            ui.add_space(4.0);
-                            ui.horizontal_wrapped(|ui| {
-                                match (&available, &status) {
-                                    (Some(v), _) => {
-                                        let label = RichText::new(trf(
-                                            "⬆ Update to {v}…",
-                                            &[("v", v)],
-                                        ))
-                                        .color(ui.visuals().hyperlink_color);
-                                        if ui.button(label).clicked() {
-                                            actions.push(SettingsAction::OpenUpdate);
-                                        }
-                                    }
-                                    (None, Some(st)) => {
-                                        ui.label(RichText::new(st).weak());
-                                    }
-                                    (None, None) => {}
-                                }
-                                if ui.button(tr("Check now")).clicked() {
-                                    actions.push(SettingsAction::CheckUpdates);
-                                }
-                            });
-                            changed |= ui
-                                .checkbox(&mut s.check_updates, tr("Check for updates at start"))
-                                .on_hover_text(tr(
-                                    "ChessPenguin asks its site which version is the latest; the site counts installations that run: only a random number of this installation, the version and the system are sent",
-                                ))
-                                .changed();
+                            // Updates, right under the version (the web version is
+                            // always the latest: a reload brings it).
+                            #[cfg(not(web))]
+                            updates(ui, s, &status, &available, &mut actions, &mut changed);
+                            #[cfg(web)]
+                            let _ = (ui, &status, &available);
                         });
                     }
                     Tab::Interface => {
@@ -176,16 +157,18 @@ impl SettingsWindow {
                             let dir =
                                 crate::own_db::default_base_dir(s.new_database_dir.as_deref());
                             // Short, under the home folder; the whole path on hover.
-                            let home = directories::UserDirs::new()
-                                .map(|u| u.home_dir().to_path_buf());
-                            let short = match home.as_ref().and_then(|h| dir.strip_prefix(h).ok())
-                            {
-                                Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+                            let home =
+                                directories::UserDirs::new().map(|u| u.home_dir().to_path_buf());
+                            let short = match home.as_ref().and_then(|h| dir.strip_prefix(h).ok()) {
+                                Some(rest) => {
+                                    format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
+                                }
                                 None => dir.display().to_string(),
                             };
                             ui.label(RichText::new(short).weak())
                                 .on_hover_text(dir.display().to_string());
                             if ui.button(tr("Change…")).clicked() {
+                                #[cfg(not(web))]
                                 actions.push(SettingsAction::PickBaseFolder);
                             }
                         });
@@ -245,6 +228,7 @@ impl SettingsWindow {
                         actions.push(SettingsAction::DownloadEngine);
                     }
                     if ui.button(tr("Choose engine file…")).clicked() {
+                        #[cfg(not(web))]
                         actions.push(SettingsAction::AddEngine);
                     }
                 });
@@ -432,6 +416,7 @@ impl SettingsWindow {
                 )
                 .clicked()
             {
+                #[cfg(not(web))]
                 actions.push(SettingsAction::AddEngine);
             }
             if self.checking_engine {
@@ -766,4 +751,41 @@ fn sound_tab(ui: &mut Ui, s: &mut Settings, actions: &mut Vec<SettingsAction>, c
             }
         });
     });
+}
+
+/// Updates in the About tab: the version out, «Check now», the check at start.
+#[cfg(not(web))]
+fn updates(
+    ui: &mut Ui,
+    s: &mut Settings,
+    status: &Option<String>,
+    available: &Option<String>,
+    actions: &mut Vec<SettingsAction>,
+    changed: &mut bool,
+) {
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        match (available, status) {
+            (Some(v), _) => {
+                let label = RichText::new(trf("⬆ Update to {v}…", &[("v", v)]))
+                    .color(ui.visuals().hyperlink_color);
+                if ui.button(label).clicked() {
+                    actions.push(SettingsAction::OpenUpdate);
+                }
+            }
+            (None, Some(st)) => {
+                ui.label(RichText::new(st).weak());
+            }
+            (None, None) => {}
+        }
+        if ui.button(tr("Check now")).clicked() {
+            actions.push(SettingsAction::CheckUpdates);
+        }
+    });
+    *changed |= ui
+        .checkbox(&mut s.check_updates, tr("Check for updates at start"))
+        .on_hover_text(tr(
+            "ChessPenguin asks its site which version is the latest; the site counts installations that run: only a random number of this installation, the version and the system are sent",
+        ))
+        .changed();
 }

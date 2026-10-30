@@ -48,10 +48,13 @@ pub enum LibraryAction {
     PastePgn,
     AddDatabases,
     /// The window for downloading games from Lichess and Chess.com.
+    #[cfg(not(web))]
     OnlineGames,
     /// Fetch the new games of an online database.
+    #[cfg(not(web))]
     UpdateOnline(PathBuf),
     /// The window offering a newer version.
+    #[cfg(not(web))]
     OpenUpdate,
     RemoveDatabase(PathBuf),
     OpenSettings,
@@ -106,18 +109,15 @@ fn button_w(ui: &Ui, text: &str) -> f32 {
 /// A PGN file whose beginning is in a legacy (single-byte) encoding: it takes games only
 /// through a UTF-8 copy. For a file not read yet (its card's menu).
 fn legacy_pgn(path: &Path) -> bool {
-    use std::io::Read;
     let pgn = path
         .extension()
         .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("pgn"));
     if !pgn || crate::online::is_online(path) || crate::examples::is_example(path) {
         return false;
     }
-    let mut head = Vec::with_capacity(64 << 10);
-    let read = std::fs::File::open(path).and_then(|f| f.take(64 << 10).read_to_end(&mut head));
-    if read.is_err() {
+    let Ok(head) = crate::platform::fs::read_head(path, 64 << 10) else {
         return false;
-    }
+    };
     let guess = chess_core::detect_encoding(&head);
     guess.encoding != chess_core::TextEncoding::Utf8 && !guess.ascii_only
 }
@@ -263,29 +263,27 @@ impl Library {
             path.to_path_buf(),
             ctx.clone(),
         );
-        let spawned = std::thread::Builder::new()
-            .name("db-open".into())
-            .spawn(move || {
-                let res = chess_import::open(
-                    &path_owned,
-                    &mut |sp| {
-                        if let Ok(mut g) = p.lock() {
-                            *g = sp;
-                        }
-                        ctx.request_repaint();
-                    },
-                    &c,
-                );
-                // The filters' index of a PGN is built here, not on the screen's thread
-                // (a large download takes a second, §9.7).
-                if let Ok(opened) = &res
-                    && let Database::Pgn(pgn) = &opened.db
-                {
-                    pgn.catalog();
-                }
-                let _ = tx.send(res);
-                ctx.request_repaint();
-            });
+        let spawned = crate::platform::spawn("db-open", move || {
+            let res = crate::platform::open_database(
+                &path_owned,
+                &mut |sp| {
+                    if let Ok(mut g) = p.lock() {
+                        *g = sp;
+                    }
+                    ctx.request_repaint();
+                },
+                &c,
+            );
+            // The filters' index of a PGN is built here, not on the screen's thread
+            // (a large download takes a second, §9.7).
+            if let Ok(opened) = &res
+                && let Database::Pgn(pgn) = &opened.db
+            {
+                pgn.catalog();
+            }
+            let _ = tx.send(res);
+            ctx.request_repaint();
+        });
         let slot = match spawned {
             Ok(_) => Slot::Loading {
                 progress,
@@ -759,6 +757,7 @@ impl Library {
         {
             actions.push(LibraryAction::OpenSettings);
         }
+        #[cfg(not(web))]
         if let Some(v) = &self.update
             && crate::widgets::update_button(ui, v).clicked()
         {
@@ -970,6 +969,7 @@ impl Library {
                 None => online_hint.to_owned(),
             };
             if ui.button(label).on_hover_text(hint).clicked() {
+                #[cfg(not(web))]
                 actions.push(LibraryAction::OnlineGames);
             }
             if let Some(n) = self.online_running {
@@ -1043,6 +1043,7 @@ impl Library {
                 .on_hover_text(tr("Download any player's games by nickname into a database: yours, a pupil's, an opponent's"))
                 .clicked()
             {
+                #[cfg(not(web))]
                 actions.push(LibraryAction::OnlineGames);
             }
         });

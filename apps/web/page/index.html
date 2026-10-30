@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChessPenguin</title>
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="color-scheme" content="dark light">
+<style>
+  :root { --bg: #1b1b1b; --fg: #e6e6e6; --weak: #9a9a9a; --accent: #4f8fe6; --card: #262626; --line: #3a3a3a; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f7f7f7; --fg: #1d1d1d; --weak: #666; --accent: #1f6fd1; --card: #fff; --line: #ddd; }
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  /* The program: the whole page is its canvas. */
+  #cp-app { position: fixed; inset: 0; }
+  #cp-canvas { width: 100%; height: 100%; display: block; outline: none; }
+  #cp-status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: 16px; text-align: center; color: var(--weak); }
+  #cp-status.failed { color: var(--fg); }
+  [hidden] { display: none !important; }
+  /* The page for phones and tablets. */
+  #cp-device { max-width: 560px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+  #cp-device header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #cp-device .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  #cp-device .brand img { width: 28px; height: 28px; }
+  #cp-device h1 { font-size: 24px; line-height: 1.25; margin: 24px 0 12px; }
+  #cp-device .lead { font-size: 20px; margin: 0 0 12px; }
+  #cp-device p { margin: 0 0 12px; }
+  #cp-device .btn { display: block; box-sizing: border-box; width: 100%; padding: 14px 16px;
+    border-radius: 10px; background: var(--accent); color: #fff; text-decoration: none;
+    font-weight: 600; text-align: center; border: 0; font-size: 17px; cursor: pointer; }
+  #cp-device .btn small { display: block; font-weight: 400; opacity: .85; font-size: 14px; }
+  #cp-device .link { color: var(--accent); }
+  #cp-device .weak { color: var(--weak); font-size: 14px; }
+  #cp-device .shots { display: flex; gap: 8px; overflow-x: auto; margin: 16px 0; }
+  #cp-device .shots img { height: 300px; border-radius: 8px; border: 1px solid var(--line); }
+  #cp-device .contacts { display: flex; gap: 16px; margin-bottom: 12px; }
+  #cp-device hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0 12px; }
+  #cp-device .anyway { background: none; border: 0; padding: 0; font: inherit; color: var(--weak);
+    text-decoration: underline; cursor: pointer; }
+  #cp-device select { font: inherit; background: var(--card); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 6px; }
+</style>
+</head>
+<body>
+<noscript><p style="padding:16px">ChessPenguin needs JavaScript. · Для ChessPenguin нужен JavaScript.</p></noscript>
+<div id="cp-app" hidden><canvas id="cp-canvas"></canvas></div>
+<div id="cp-status" hidden></div>
+<main id="cp-device" hidden></main>
+<!-- The page's texts in the site's nine languages (website/site/i18n/*.json, put in by build.sh). -->
+<script>window.CP_TEXTS = {{TEXTS}};</script>
+<script src="device.js"></script>
+<script src="page.js"></script>
+</body>
+</html>

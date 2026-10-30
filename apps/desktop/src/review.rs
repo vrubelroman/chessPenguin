@@ -33,10 +33,57 @@ pub enum ReportAction {
     Analyse,
 }
 
-enum JobMsg {
+/// What an engine job sends to the screen.
+pub enum JobMsg {
     Event(JobEvent),
     Done,
     Failed(String),
+}
+
+/// Runs the engine job over `targets` with ChessPenguin's Stockfish at `path` on a
+/// thread named `name`: its events and its end come through `tx`, each waking `ctx`.
+/// A browser starts no engine processes: there the job cannot run (the error).
+pub fn spawn_job(
+    name: &str,
+    path: PathBuf,
+    settings: JobSettings,
+    targets: Vec<game_review::Target>,
+    cancel: Arc<AtomicBool>,
+    tx: std::sync::mpsc::Sender<JobMsg>,
+    ctx: egui::Context,
+) -> std::io::Result<()> {
+    #[cfg(not(web))]
+    {
+        std::thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || {
+                let result = game_review::run(
+                    engine_config(&path),
+                    &settings,
+                    targets,
+                    &cancel,
+                    &mut |e| {
+                        let _ = tx.send(JobMsg::Event(e));
+                        ctx.request_repaint();
+                    },
+                );
+                let msg = match result {
+                    Ok(()) => JobMsg::Done,
+                    Err(JobFailure::Start(e) | JobFailure::Engine(e)) => JobMsg::Failed(e),
+                    Err(JobFailure::Terminated(reason)) => {
+                        JobMsg::Failed(crate::analysis::termination_message(&reason))
+                    }
+                };
+                let _ = tx.send(msg);
+                ctx.request_repaint();
+            })
+            .map(drop)
+    }
+    #[cfg(web)]
+    {
+        let _ = (name, path, settings, targets, cancel, tx, ctx);
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
 }
 
 struct Job {
@@ -119,25 +166,15 @@ impl Review {
         let cancel = Arc::new(AtomicBool::new(false));
         let total = targets.len();
         let settings = JobSettings::new(processes(), None);
-        let config = engine_config(path);
-        let (cancel_w, ctx_w) = (cancel.clone(), ctx.clone());
-        let spawned = std::thread::Builder::new()
-            .name("game-review".into())
-            .spawn(move || {
-                let result = game_review::run(config, &settings, targets, &cancel_w, &mut |e| {
-                    let _ = tx.send(JobMsg::Event(e));
-                    ctx_w.request_repaint();
-                });
-                let msg = match result {
-                    Ok(()) => JobMsg::Done,
-                    Err(JobFailure::Start(e) | JobFailure::Engine(e)) => JobMsg::Failed(e),
-                    Err(JobFailure::Terminated(reason)) => {
-                        JobMsg::Failed(crate::analysis::termination_message(&reason))
-                    }
-                };
-                let _ = tx.send(msg);
-                ctx_w.request_repaint();
-            });
+        let spawned = spawn_job(
+            "game-review",
+            path.to_owned(),
+            settings,
+            targets,
+            cancel.clone(),
+            tx,
+            ctx.clone(),
+        );
         if let Err(e) = spawned {
             self.error = Some(e.to_string());
             return false;
@@ -728,7 +765,8 @@ pub fn processes() -> usize {
 
 /// ChessPenguin's Stockfish at `path` for an analysis job: below the program (nice 10),
 /// so that the program stays smooth while every CPU works.
-pub fn engine_config(path: &Path) -> uci::EngineConfig {
+#[cfg(not(web))]
+fn engine_config(path: &Path) -> uci::EngineConfig {
     uci::EngineConfig {
         nice: 10,
         ..uci::EngineConfig::new(path)

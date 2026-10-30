@@ -1846,6 +1846,7 @@ impl LargeView {
                     .on_disabled_hover_text(&online.hint)
                     .clicked()
                 {
+                    #[cfg(not(web))]
                     actions.push(LibraryAction::UpdateOnline(path.to_path_buf()));
                 }
             }

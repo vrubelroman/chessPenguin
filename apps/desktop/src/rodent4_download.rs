@@ -8,7 +8,9 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use crate::engine_download::{Asset, Download, Failure, Stage, already, disk, fetch};
+#[cfg(not(web))]
+use crate::engine_download::fetch;
+use crate::engine_download::{Asset, Download, Failure, Stage, already, disk};
 use ::play::rodent::{BOOK_NAMES, FILES, file_url};
 
 /// This platform's build: the release of our builds it is in (the macOS build of
@@ -104,10 +106,18 @@ pub fn remove() -> std::io::Result<()> {
     }
 }
 
+#[cfg(not(web))]
 pub fn start(ctx: &egui::Context) -> Download {
     Download::spawn(ctx, total(), run)
 }
 
+/// A browser downloads no engine programs.
+#[cfg(web)]
+pub fn start(_ctx: &egui::Context) -> Download {
+    Download::unsupported()
+}
+
+#[cfg(not(web))]
 fn run(report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, Failure> {
     let (tag, bin) = binary().ok_or(Failure::Unsupported)?;
     let dir = dir().ok_or_else(|| Failure::Disk("no data directory".into()))?;

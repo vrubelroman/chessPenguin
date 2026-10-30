@@ -15,7 +15,7 @@ use chess_import::Database;
 use chess_import::chessbase::base::{Side, fold};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Ui, vec2};
 use egui_extras::{Column, TableBuilder};
-use game_review::{JobEvent, JobFailure, JobSettings, Judgement};
+use game_review::{JobEvent, JobSettings, Judgement};
 use prep::{
     BookExit, BookOptions, Candidate, ErrorCounts, GameInfo, Options, Player, PositionCache,
     PrepReport, Tally,
@@ -946,11 +946,7 @@ struct ListRow {
     event: String,
 }
 
-enum JobMsg {
-    Event(JobEvent),
-    Done,
-    Failed(String),
-}
+use crate::review::JobMsg;
 
 struct EngineJob {
     rx: Receiver<JobMsg>,
@@ -1972,30 +1968,15 @@ impl PrepScreen {
         let total = targets.len();
         let job_settings = JobSettings::new(review::processes(), None);
         let processes = job_settings.processes;
-        let (cancel_w, ctx_w) = (cancel.clone(), ctx.clone());
-        let spawned = std::thread::Builder::new()
-            .name("prep-engine".into())
-            .spawn(move || {
-                let result = game_review::run(
-                    review::engine_config(&path),
-                    &job_settings,
-                    targets,
-                    &cancel_w,
-                    &mut |e| {
-                        let _ = tx.send(JobMsg::Event(e));
-                        ctx_w.request_repaint();
-                    },
-                );
-                let msg = match result {
-                    Ok(()) => JobMsg::Done,
-                    Err(JobFailure::Start(e) | JobFailure::Engine(e)) => JobMsg::Failed(e),
-                    Err(JobFailure::Terminated(reason)) => {
-                        JobMsg::Failed(crate::analysis::termination_message(&reason))
-                    }
-                };
-                let _ = tx.send(msg);
-                ctx_w.request_repaint();
-            });
+        let spawned = review::spawn_job(
+            "prep-engine",
+            path.clone(),
+            job_settings,
+            targets,
+            cancel.clone(),
+            tx,
+            ctx.clone(),
+        );
         if let Err(e) = spawned {
             self.error = Some(e.to_string());
             return;

@@ -37,7 +37,7 @@ struct Job {
     work: Background<Result<Done, Failure>>,
     /// When Stop was pressed: a download that does not stop soon (a stalled
     /// connection) leaves the list; its database stays claimed until it ends.
-    stopped: Option<std::time::Instant>,
+    stopped: Option<web_time::Instant>,
     /// Started on its own at the program's start: says something only when it added
     /// games (no "no new games" on every start, no error over a network that is off).
     quiet: bool,
@@ -198,7 +198,7 @@ impl OnlineDialog {
         for j in &self.jobs {
             j.work.cancel();
         }
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         while !self.jobs.is_empty() && start.elapsed() < std::time::Duration::from_secs(3) {
             self.jobs.retain(|j| j.work.poll().is_none());
             std::thread::sleep(std::time::Duration::from_millis(30));
@@ -642,7 +642,7 @@ impl OnlineDialog {
             self.jobs[k].work.cancel();
             self.jobs[k]
                 .stopped
-                .get_or_insert_with(std::time::Instant::now);
+                .get_or_insert_with(web_time::Instant::now);
         }
         ui.label(
             RichText::new(tr(

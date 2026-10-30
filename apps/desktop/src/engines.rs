@@ -35,6 +35,7 @@ pub fn own_stockfish() -> Option<PathBuf> {
 /// `stockfish` from `PATH` (for example, the distribution package). On macOS an app
 /// started from the Finder does not get the shell's `PATH`: Homebrew's directories are
 /// looked at too.
+#[cfg(not(web))]
 pub fn system_stockfish() -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let extra: &[&str] = if cfg!(target_os = "macos") {
@@ -46,6 +47,12 @@ pub fn system_stockfish() -> Option<PathBuf> {
         .chain(extra.iter().map(PathBuf::from))
         .map(|dir| dir.join(STOCKFISH))
         .find(|p| is_executable(p))
+}
+
+/// A browser has no programs of the system to find.
+#[cfg(web)]
+pub fn system_stockfish() -> Option<PathBuf> {
+    None
 }
 
 fn is_executable(p: &Path) -> bool {

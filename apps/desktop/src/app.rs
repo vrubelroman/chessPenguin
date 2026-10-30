@@ -215,19 +215,17 @@ pub struct App {
     play_next: Option<PlayNext>,
     tx: Sender<Async>,
     rx: Receiver<Async>,
+    /// «Paste PGN»: the clipboard being read.
+    pasting: Option<crate::platform::clipboard::Reading>,
     confirm_close: Option<CloseIntent>,
     /// Close the game once the pending "save as" succeeds.
     close_after_save: Option<CloseIntent>,
     /// The offer to download Stockfish when an action needs an engine.
     engine_offer: crate::engine_offer::EngineOffer,
     offer_hook_done: bool,
-    /// Lichess / Chess.com: which answered at start, and the download window.
-    online_probe: crate::online::Probe,
-    /// When the online databases were last updated on their own (egui time, s), and
-    /// whether the window had the focus in the last frame.
-    online_updated_at: f64,
-    was_focused: bool,
-    online: crate::online_ui::OnlineDialog,
+    /// What only the desktop program has: online games, updates.
+    #[cfg(not(web))]
+    desktop: Desktop,
     /// Translating comments: the setup and consent windows, the ChatGPT sign-in.
     translation: crate::translate_ui::Hub,
     /// A position to find in a database once the game is closed.
@@ -237,11 +235,7 @@ pub struct App {
     previous_games: Vec<GameView>,
     /// The last game showed the reference tab: the next one opens with it too.
     reference_tab: bool,
-    /// Updates: the release check, how this copy is installed, the window, and the
-    /// executable to start after quitting (a restart into the new version).
-    update_check: crate::update::Check,
-    update_kind: crate::update::Install,
-    update_ui: crate::update_ui::UpdateDialog,
+    /// The executable to start after quitting (a restart into the new version).
     restart_to: Option<PathBuf>,
     /// The reference tab of games (kept across games: its results stay cached).
     reference: crate::reference::Reference,
@@ -255,6 +249,52 @@ pub struct App {
     allow_quit: bool,
     applied_dark: Option<bool>,
     debug: DebugStartup,
+}
+
+/// What only the desktop program has.
+#[cfg(not(web))]
+struct Desktop {
+    /// Lichess / Chess.com: which answered at start, and the download window.
+    online_probe: crate::online::Probe,
+    /// When the online databases were last updated on their own (egui time, s), and
+    /// whether the window had the focus in the last frame.
+    online_updated_at: f64,
+    was_focused: bool,
+    online: crate::online_ui::OnlineDialog,
+    /// Updates: the release check, how this copy is installed, the window.
+    update_check: crate::update::Check,
+    update_kind: crate::update::Install,
+    update_ui: crate::update_ui::UpdateDialog,
+}
+
+#[cfg(not(web))]
+impl Desktop {
+    fn new(ctx: &egui::Context, settings: &Settings) -> Desktop {
+        let online_dbs: Vec<PathBuf> = settings
+            .databases
+            .iter()
+            .filter(|p| crate::online::is_online(p))
+            .cloned()
+            .collect();
+        Desktop {
+            online_probe: crate::online::Probe::start(ctx),
+            online_updated_at: 0.0,
+            was_focused: true,
+            online: {
+                // Every downloaded database gets the games played since, at each start.
+                let mut d = crate::online_ui::OnlineDialog::from_env();
+                d.update_quietly(online_dbs);
+                d
+            },
+            update_check: if settings.check_updates {
+                crate::update::Check::start(ctx)
+            } else {
+                crate::update::Check::idle()
+            },
+            update_kind: crate::update::detect(),
+            update_ui: crate::update_ui::UpdateDialog::from_env(),
+        }
+    }
 }
 
 /// Dev-only startup automation for screenshots/manual QA (see docs/dev/desktop.md):
@@ -343,18 +383,20 @@ impl App {
         // Before the samples, which are named in this language.
         crate::i18n::set_lang(settings.language);
         crate::engine_download::clean_leftovers();
-        crate::update::clean_leftovers();
-        let settings_check_updates = settings.check_updates;
-        // "Updated to …" once, when this version runs for the first time after another.
         let current = env!("CARGO_PKG_VERSION");
-        let updated_from = settings
-            .last_version
-            .clone()
-            .filter(|v| crate::update::parse_version(v) < crate::update::parse_version(current));
-        if settings.install_id.is_empty() {
-            settings.install_id = crate::update::new_install_id();
-        }
-        crate::update::set_install_id(&settings.install_id);
+        #[cfg(not(web))]
+        let updated_from = {
+            crate::update::clean_leftovers();
+            // "Updated to …" once, when this version runs for the first time after another.
+            let from = settings.last_version.clone().filter(|v| {
+                crate::update::parse_version(v) < crate::update::parse_version(current)
+            });
+            if settings.install_id.is_empty() {
+                settings.install_id = crate::update::new_install_id();
+            }
+            crate::update::set_install_id(&settings.install_id);
+            from
+        };
         if settings.last_version.as_deref() != Some(current) {
             settings.last_version = Some(current.to_owned());
             let _ = settings.save();
@@ -376,12 +418,8 @@ impl App {
         if !args.is_empty() {
             let _ = settings.save();
         }
-        let online_dbs: Vec<PathBuf> = settings
-            .databases
-            .iter()
-            .filter(|p| crate::online::is_online(p))
-            .cloned()
-            .collect();
+        #[cfg(not(web))]
+        let desktop = Desktop::new(ctx, &settings);
         let (tx, rx) = channel();
         let mut library = Library::new(ctx);
         // Read in the background: a missing file says so there (a lost network drive
@@ -408,18 +446,12 @@ impl App {
             play_next: None,
             tx,
             rx,
+            pasting: None,
             confirm_close: None,
             close_after_save: None,
             find_after_close: None,
             previous_games: Vec::new(),
             reference_tab: false,
-            update_check: if settings_check_updates {
-                crate::update::Check::start(ctx)
-            } else {
-                crate::update::Check::idle()
-            },
-            update_kind: crate::update::detect(),
-            update_ui: crate::update_ui::UpdateDialog::from_env(),
             restart_to: None,
             reference: Default::default(),
             prep_dialog: None,
@@ -428,21 +460,15 @@ impl App {
             prep_quit_ok: false,
             engine_offer: crate::engine_offer::EngineOffer::new(),
             offer_hook_done: false,
-            online_probe: crate::online::Probe::start(ctx),
-            online_updated_at: 0.0,
-            was_focused: true,
-            online: {
-                // Every downloaded database gets the games played since, at each start.
-                let mut d = crate::online_ui::OnlineDialog::from_env();
-                d.update_quietly(online_dbs);
-                d
-            },
+            #[cfg(not(web))]
+            desktop,
             translation: Default::default(),
             allow_quit: false,
             applied_dark: None,
             debug: DebugStartup::from_env(),
         }
         .with_debug_settings();
+        #[cfg(not(web))]
         if let Some(from) = updated_from {
             let msg = trf(
                 "ChessPenguin is updated: {from} → {to}",
@@ -2052,6 +2078,7 @@ impl App {
         self.own.editor = Some((editor, EditorThen::Done));
     }
 
+    #[cfg(not(web))]
     fn pick_folder(&self, ctx: &egui::Context, start: PathBuf) {
         self.spawn_dialog(ctx, move || {
             let picked = rfd::FileDialog::new()
@@ -2217,7 +2244,11 @@ impl App {
                 }
                 ChooserOutcome::SaveAsFile => {
                     self.close_after_save = self.own.then_close.take();
+                    #[cfg(not(web))]
                     self.pick_save(ctx);
+                    // A file of its own in a browser: a download.
+                    #[cfg(web)]
+                    self.download_pgn(ctx);
                 }
                 ChooserOutcome::Cancel => {
                     if let Some(intent) = self.own.then_close.take() {
@@ -2231,9 +2262,13 @@ impl App {
             && let Some(outcome) = dialog.show(ctx)
         {
             match outcome {
+                // A browser has no folders: there are no new databases there.
                 NewBaseOutcome::PickFolder => {
-                    let start = dialog.dir.clone();
-                    self.pick_folder(ctx, start);
+                    #[cfg(not(web))]
+                    {
+                        let start = dialog.dir.clone();
+                        self.pick_folder(ctx, start);
+                    }
                 }
                 NewBaseOutcome::Cancel => {
                     self.own.new_base = None;
@@ -2294,6 +2329,7 @@ impl App {
         }
     }
 
+    #[cfg(not(web))]
     fn spawn_dialog(
         &self,
         ctx: &egui::Context,
@@ -2312,22 +2348,16 @@ impl App {
     }
 
     fn pick_databases(&self, ctx: &egui::Context) {
-        self.spawn_dialog(ctx, || {
-            rfd::FileDialog::new()
-                .set_title(tr("Open database"))
-                .add_filter(
-                    tr("Chess databases"),
-                    &[
-                        "pgn", "PGN", "cbh", "CBH", "cbv", "CBV", "zip", "ZIP", "7z", "7Z",
-                    ],
-                )
-                .add_filter("PGN", &["pgn", "PGN"])
-                .add_filter(tr("All files"), &["*"])
-                .pick_files()
-                .map(Async::DatabasesPicked)
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        crate::platform::files::pick_databases(move |paths| {
+            if !paths.is_empty() {
+                let _ = tx.send(Async::DatabasesPicked(paths));
+            }
+            ctx.request_repaint();
         });
     }
 
+    #[cfg(not(web))]
     fn pick_save(&self, ctx: &egui::Context) {
         let Some(g) = &self.game else { return };
         let name = sanitize(&g.title()) + ".pgn";
@@ -2341,6 +2371,7 @@ impl App {
         });
     }
 
+    #[cfg(not(web))]
     fn pick_engine(&mut self, ctx: &egui::Context) {
         self.settings_ui.checking_engine = true;
         let tx = self.tx.clone();
@@ -2373,6 +2404,7 @@ impl App {
     }
 
     fn handle_async(&mut self, ctx: &egui::Context) {
+        self.pasted(ctx);
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Async::DatabasesPicked(paths) => {
@@ -2691,16 +2723,38 @@ impl App {
                     let cfg = crate::settings::EngineConfig::new("Stockfish".into(), path);
                     self.engine_arrived(ctx, cfg, pending)
                 }
+                #[cfg(not(web))]
                 crate::engine_offer::OfferEvent::ChooseFile => self.pick_engine(ctx),
                 crate::engine_offer::OfferEvent::Toast(m) => self.toast(ctx, m),
             }
         }
     }
 
+    /// The open game's PGN, downloaded as a file named after the game.
+    #[cfg(web)]
+    fn download_pgn(&mut self, ctx: &egui::Context) {
+        let Some(g) = &self.game else { return };
+        let name = sanitize(&g.title()) + ".pgn";
+        if let Err(e) = crate::platform::files::download_pgn(&name, &g.game.to_pgn()) {
+            self.toast(
+                ctx,
+                trf("The PGN could not be downloaded: {e}", &[("e", &e)]),
+            );
+        }
+    }
+
     fn paste_pgn(&mut self, ctx: &egui::Context) {
-        let text = arboard::Clipboard::new().and_then(|mut c| c.get_text());
+        self.pasting = Some(crate::platform::clipboard::read_text(ctx));
+    }
+
+    /// The clipboard read for «Paste PGN», once it is there.
+    fn pasted(&mut self, ctx: &egui::Context) {
+        let Some(text) = self.pasting.as_ref().and_then(|r| r.poll()) else {
+            return;
+        };
+        self.pasting = None;
         match text {
-            Ok(t) if !t.trim().is_empty() => self.open_pgn_text(ctx, t, false),
+            Some(t) if !t.trim().is_empty() => self.open_pgn_text(ctx, t, false),
             _ => self.toast(ctx, tr("The clipboard is empty or unavailable")),
         }
     }
@@ -2840,12 +2894,108 @@ impl App {
             _ => {}
         }
     }
+
+    /// Online games and updates, each frame (the desktop program's).
+    #[cfg(not(web))]
+    fn desktop_frame(&mut self, ctx: &egui::Context) {
+        // Back to the window after a while: the downloaded databases get the games
+        // played since (at the start they did already).
+        let now = ctx.input(|i| i.time);
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+        if focused
+            && !self.desktop.was_focused
+            && now - self.desktop.online_updated_at > ONLINE_EVERY
+        {
+            self.desktop.online_updated_at = now;
+            self.desktop.online.update_quietly(
+                self.settings
+                    .databases
+                    .iter()
+                    .filter(|p| crate::online::is_online(p))
+                    .cloned(),
+            );
+        }
+        self.desktop.was_focused = focused;
+        let events = self.desktop.online.show(ctx, &self.desktop.online_probe);
+        for e in events {
+            match e {
+                crate::online_ui::OnlineEvent::Added(p) => {
+                    let known = self.settings.databases.contains(&p);
+                    self.settings.touch_database(&p);
+                    if known {
+                        self.library.reload(&p, ctx);
+                    }
+                    self.library.select_db(&p, ctx);
+                    self.settings_dirty = true;
+                }
+                crate::online_ui::OnlineEvent::Updated(p) => self.library.reload(&p, ctx),
+                crate::online_ui::OnlineEvent::Open(p) => {
+                    self.settings.touch_database(&p);
+                    self.library.select_db(&p, ctx);
+                    self.settings_dirty = true;
+                }
+                crate::online_ui::OnlineEvent::Message(t) => self.toast(ctx, t),
+            }
+        }
+        // Updates: the badge next to Settings, the window, the status in Settings → About.
+        self.desktop.update_check.poll();
+        let skipped = self.settings.skipped_version.clone();
+        let badge = self
+            .desktop
+            .update_check
+            .newer()
+            .filter(|r| {
+                self.desktop.update_ui.active() || skipped.as_deref() != Some(r.version.as_str())
+            })
+            .map(|r| self.desktop.update_ui.badge(r));
+        self.library.update = badge.clone();
+        if let Some(g) = &mut self.game {
+            g.update = badge;
+        }
+        for e in self.desktop.update_ui.show(
+            ctx,
+            self.desktop.update_check.newer(),
+            &self.desktop.update_kind,
+        ) {
+            match e {
+                crate::update_ui::UpdateEvent::Restart(exe) => {
+                    self.restart_to = Some(exe);
+                    self.request_close(ctx, CloseIntent::QuitApp);
+                }
+                crate::update_ui::UpdateEvent::CopyText(t) => {
+                    ctx.copy_text(t);
+                    self.toast(ctx, tr("Copied"));
+                }
+                crate::update_ui::UpdateEvent::Quit => {
+                    self.request_close(ctx, CloseIntent::QuitApp);
+                }
+                crate::update_ui::UpdateEvent::Skip(v) => {
+                    self.settings.skipped_version = Some(v);
+                    self.settings_dirty = true;
+                }
+            }
+        }
+        self.settings_ui.update_available =
+            self.desktop.update_check.newer().map(|r| r.version.clone());
+        self.settings_ui.update_status = if self.desktop.update_check.running() {
+            Some(tr("Checking…").to_owned())
+        } else if let Some(r) = self.desktop.update_check.newer() {
+            Some(trf("Version {v} is out", &[("v", &r.version)]))
+        } else if self.desktop.update_check.release.is_some() {
+            Some(tr("This is the latest version").to_owned())
+        } else if self.desktop.update_check.error.is_some() {
+            Some(tr("Could not check for updates").to_owned())
+        } else {
+            None
+        };
+    }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         crate::san::set(self.settings.move_notation);
         // The window has shown its first frame: this graphics mode works.
+        #[cfg(not(web))]
         if ui.ctx().cumulative_frame_nr() >= 1 {
             crate::graphics::started();
         }
@@ -3028,7 +3178,10 @@ impl eframe::App for App {
                             }
                         }
                     }
-                    GameAction::OpenUpdate => self.update_ui.open = true,
+                    #[cfg(not(web))]
+                    GameAction::OpenUpdate => self.desktop.update_ui.open = true,
+                    #[cfg(web)]
+                    GameAction::DownloadPgn => self.download_pgn(&ctx),
                     GameAction::ReturnToPrevious => {
                         if !self.previous_games.is_empty()
                             || self.prep.as_ref().is_some_and(|p| p.shown)
@@ -3188,10 +3341,14 @@ impl eframe::App for App {
             {
                 self.prep_dialog = Some(PrepDialog::new(path, entry.unwrap_or_default()));
             }
-            self.online_probe.poll();
-            self.library.online = self.online_probe.any();
-            self.library.online_busy = self.online.busy();
-            self.library.online_running = self.online.running();
+            #[cfg(not(web))]
+            {
+                let d = &mut self.desktop;
+                d.online_probe.poll();
+                self.library.online = d.online_probe.any();
+                self.library.online_busy = d.online.busy();
+                self.library.online_running = d.online.running();
+            }
             for a in self.library.show(ui, &dbs, &self.settings) {
                 match a {
                     LibraryAction::OpenGame { path, index, at } => {
@@ -3221,9 +3378,12 @@ impl eframe::App for App {
                     }
                     LibraryAction::PastePgn => self.paste_pgn(&ctx),
                     LibraryAction::AddDatabases => self.pick_databases(&ctx),
-                    LibraryAction::OnlineGames => self.online.open(),
-                    LibraryAction::UpdateOnline(p) => self.online.update(&p, &ctx),
-                    LibraryAction::OpenUpdate => self.update_ui.open = true,
+                    #[cfg(not(web))]
+                    LibraryAction::OnlineGames => self.desktop.online.open(),
+                    #[cfg(not(web))]
+                    LibraryAction::UpdateOnline(p) => self.desktop.online.update(&p, &ctx),
+                    #[cfg(not(web))]
+                    LibraryAction::OpenUpdate => self.desktop.update_ui.open = true,
                     LibraryAction::RemoveDatabase(p) => {
                         self.settings.databases.retain(|d| *d != p);
                         self.library.forget(&p);
@@ -3262,88 +3422,8 @@ impl eframe::App for App {
             }
         }
 
-        // Back to the window after a while: the downloaded databases get the games
-        // played since (at the start they did already).
-        let now = ctx.input(|i| i.time);
-        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
-        if focused && !self.was_focused && now - self.online_updated_at > ONLINE_EVERY {
-            self.online_updated_at = now;
-            self.online.update_quietly(
-                self.settings
-                    .databases
-                    .iter()
-                    .filter(|p| crate::online::is_online(p))
-                    .cloned(),
-            );
-        }
-        self.was_focused = focused;
-        let events = self.online.show(&ctx, &self.online_probe);
-        for e in events {
-            match e {
-                crate::online_ui::OnlineEvent::Added(p) => {
-                    let known = self.settings.databases.contains(&p);
-                    self.settings.touch_database(&p);
-                    if known {
-                        self.library.reload(&p, &ctx);
-                    }
-                    self.library.select_db(&p, &ctx);
-                    self.settings_dirty = true;
-                }
-                crate::online_ui::OnlineEvent::Updated(p) => self.library.reload(&p, &ctx),
-                crate::online_ui::OnlineEvent::Open(p) => {
-                    self.settings.touch_database(&p);
-                    self.library.select_db(&p, &ctx);
-                    self.settings_dirty = true;
-                }
-                crate::online_ui::OnlineEvent::Message(t) => self.toast(&ctx, t),
-            }
-        }
-        // Updates: the badge next to Settings, the window, the status in Settings → About.
-        self.update_check.poll();
-        let skipped = self.settings.skipped_version.clone();
-        let badge = self
-            .update_check
-            .newer()
-            .filter(|r| self.update_ui.active() || skipped.as_deref() != Some(r.version.as_str()))
-            .map(|r| self.update_ui.badge(r));
-        self.library.update = badge.clone();
-        if let Some(g) = &mut self.game {
-            g.update = badge;
-        }
-        for e in self
-            .update_ui
-            .show(&ctx, self.update_check.newer(), &self.update_kind)
-        {
-            match e {
-                crate::update_ui::UpdateEvent::Restart(exe) => {
-                    self.restart_to = Some(exe);
-                    self.request_close(&ctx, CloseIntent::QuitApp);
-                }
-                crate::update_ui::UpdateEvent::CopyText(t) => {
-                    ctx.copy_text(t);
-                    self.toast(&ctx, tr("Copied"));
-                }
-                crate::update_ui::UpdateEvent::Quit => {
-                    self.request_close(&ctx, CloseIntent::QuitApp);
-                }
-                crate::update_ui::UpdateEvent::Skip(v) => {
-                    self.settings.skipped_version = Some(v);
-                    self.settings_dirty = true;
-                }
-            }
-        }
-        self.settings_ui.update_available = self.update_check.newer().map(|r| r.version.clone());
-        self.settings_ui.update_status = if self.update_check.running() {
-            Some(tr("Checking…").to_owned())
-        } else if let Some(r) = self.update_check.newer() {
-            Some(trf("Version {v} is out", &[("v", &r.version)]))
-        } else if self.update_check.release.is_some() {
-            Some(tr("This is the latest version").to_owned())
-        } else if self.update_check.error.is_some() {
-            Some(tr("Could not check for updates").to_owned())
-        } else {
-            None
-        };
+        #[cfg(not(web))]
+        self.desktop_frame(&ctx);
 
         self.settings_ui.download = self.engine_offer.stage();
         self.settings_dirty |= self.translation.poll(&ctx, &mut self.settings);
@@ -3358,15 +3438,19 @@ impl eframe::App for App {
         self.settings_dirty |= changed;
         for a in actions {
             match a {
+                #[cfg(not(web))]
                 SettingsAction::AddEngine => self.pick_engine(&ctx),
+                #[cfg(not(web))]
                 SettingsAction::CheckUpdates => {
-                    self.update_check = self.update_check.again(&ctx);
+                    self.desktop.update_check = self.desktop.update_check.again(&ctx);
                 }
+                #[cfg(not(web))]
                 SettingsAction::PickBaseFolder => {
                     let start = own_db::default_base_dir(self.settings.new_database_dir.as_deref());
                     self.pick_folder(&ctx, start);
                 }
-                SettingsAction::OpenUpdate => self.update_ui.open = true,
+                #[cfg(not(web))]
+                SettingsAction::OpenUpdate => self.desktop.update_ui.open = true,
                 SettingsAction::DownloadEngine => self.engine_offer.start(&ctx),
                 SettingsAction::CancelDownload => self.engine_offer.cancel(),
                 SettingsAction::RemoveDownloaded => {
@@ -3500,7 +3584,8 @@ impl eframe::App for App {
         }
         // Downloads of online games stop and save what they got; a new database goes on
         // the shelf with it (the next download continues it).
-        for p in self.online.stop_all() {
+        #[cfg(not(web))]
+        for p in self.desktop.online.stop_all() {
             if crate::online::State::load(&p).is_some_and(|s| s.games > 0) {
                 self.settings.touch_database(&p);
             }

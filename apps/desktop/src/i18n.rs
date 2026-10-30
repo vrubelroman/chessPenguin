@@ -61,27 +61,29 @@ impl Lang {
     pub fn from_locales<S: AsRef<str>>(locales: impl IntoIterator<Item = S>) -> Lang {
         locales
             .into_iter()
-            .find_map(|l| {
-                // "ru-RU", "ru_RU.UTF-8", "de-CH", "es-419", "fr".
-                let code = l
-                    .as_ref()
-                    .split(['-', '_', '.', '@'])
-                    .next()?
-                    .to_ascii_lowercase();
-                match code.as_str() {
-                    "en" => Some(Lang::En),
-                    "ru" => Some(Lang::Ru),
-                    "fr" => Some(Lang::Fr),
-                    "de" => Some(Lang::De),
-                    "es" => Some(Lang::Es),
-                    "it" => Some(Lang::It),
-                    "pt" => Some(Lang::Pt),
-                    "uz" => Some(Lang::Uz),
-                    "kk" => Some(Lang::Kk),
-                    _ => None,
-                }
-            })
+            .find_map(|l| Lang::from_locale(l.as_ref()))
             .unwrap_or_default()
+    }
+
+    /// The language of a locale ("ru-RU", "ru_RU.UTF-8", "de-CH", "es-419", "fr"), if
+    /// it is one of ours.
+    pub fn from_locale(locale: &str) -> Option<Lang> {
+        let code = locale
+            .split(['-', '_', '.', '@'])
+            .next()?
+            .to_ascii_lowercase();
+        match code.as_str() {
+            "en" => Some(Lang::En),
+            "ru" => Some(Lang::Ru),
+            "fr" => Some(Lang::Fr),
+            "de" => Some(Lang::De),
+            "es" => Some(Lang::Es),
+            "it" => Some(Lang::It),
+            "pt" => Some(Lang::Pt),
+            "uz" => Some(Lang::Uz),
+            "kk" => Some(Lang::Kk),
+            _ => None,
+        }
     }
 
     /// The language of this system (see [`Lang::from_locales`]).
@@ -214,6 +216,51 @@ pub fn trf(key: &'static str, args: &[(&str, &dyn Display)]) -> String {
 // [English, Русский, Français, Deutsch, Español, Italiano, Português (BR), O‘zbekcha, Қазақша]
 // Uzbek o‘ and g‘ are written with ‘ (U+2018): the interface font has no U+02BB.
 const ROWS: &[[&str; 9]] = &[
+    // --- the web version ---
+    [
+        "⇩ Download PGN",
+        "⇩ Скачать PGN",
+        "⇩ Télécharger le PGN",
+        "⇩ PGN herunterladen",
+        "⇩ Descargar PGN",
+        "⇩ Scarica PGN",
+        "⇩ Baixar PGN",
+        "⇩ PGN yuklab olish",
+        "⇩ PGN жүктеп алу",
+    ],
+    [
+        "Download the game as a PGN file: the browser puts it where it puts downloads",
+        "Скачать партию файлом PGN: браузер положит его туда же, куда все загрузки",
+        "Télécharger la partie en fichier PGN : le navigateur le met avec les autres téléchargements",
+        "Die Partie als PGN-Datei herunterladen: Der Browser legt sie zu den anderen Downloads",
+        "Descargar la partida como archivo PGN: el navegador lo guarda con las demás descargas",
+        "Scarica la partita come file PGN: il browser lo mette insieme agli altri download",
+        "Baixar a partida como arquivo PGN: o navegador o coloca junto dos outros downloads",
+        "Partiyani PGN fayl sifatida yuklab olish: brauzer uni boshqa yuklamalar qatoriga qo‘yadi",
+        "Партияны PGN файлы ретінде жүктеп алу: браузер оны басқа жүктемелермен бірге сақтайды",
+    ],
+    [
+        "The PGN could not be downloaded: {e}",
+        "Не удалось скачать PGN: {e}",
+        "Impossible de télécharger le PGN : {e}",
+        "PGN konnte nicht heruntergeladen werden: {e}",
+        "No se pudo descargar el PGN: {e}",
+        "Impossibile scaricare il PGN: {e}",
+        "Não foi possível baixar o PGN: {e}",
+        "PGN yuklab olinmadi: {e}",
+        "PGN жүктеп алынбады: {e}",
+    ],
+    [
+        "a browser cannot start it",
+        "браузер не может его запустить",
+        "un navigateur ne peut pas le lancer",
+        "ein Browser kann ihn nicht starten",
+        "un navegador no puede iniciarlo",
+        "un browser non può avviarlo",
+        "um navegador não consegue iniciá-lo",
+        "brauzer uni ishga tushira olmaydi",
+        "браузер оны іске қоса алмайды",
+    ],
     // --- engine download ---
     [
         "Stockfish installed — game analysis started",

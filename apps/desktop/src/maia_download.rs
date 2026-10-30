@@ -102,6 +102,19 @@ pub struct Download {
 }
 
 impl Download {
+    /// A browser downloads no weights into files: there is no download for it.
+    #[cfg(web)]
+    pub fn start(_ctx: &egui::Context, model: Model) -> Download {
+        Download {
+            model,
+            stage: Arc::new(Mutex::new(Stage::Failed(
+                crate::i18n::tr("not yet for this system").to_owned(),
+            ))),
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[cfg(not(web))]
     pub fn start(ctx: &egui::Context, model: Model) -> Download {
         let stage = Arc::new(Mutex::new(Stage::Downloading { done: 0 }));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -142,6 +155,7 @@ impl Drop for Download {
     }
 }
 
+#[cfg(not(web))]
 fn run(model: Model, report: &dyn Fn(Stage), cancel: &AtomicBool) -> Result<PathBuf, String> {
     let dir = dir().ok_or("no data directory")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

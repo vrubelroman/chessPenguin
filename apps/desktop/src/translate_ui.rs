@@ -368,7 +368,7 @@ impl Hub {
             }
             let ok = c.result.is_ok();
             if let Err(e) = &c.result {
-                crate::graphics::log(&format!("translation check via {}: {e}", s.service_id()));
+                crate::platform::log(&format!("translation check via {}: {e}", s.service_id()));
             }
             self.check_result = Some(c.result);
             let flow = self.resume || (self.setup_open && self.step == Step::Checking);
@@ -1640,7 +1640,7 @@ impl GameTranslation {
                     }
                 }
                 Event::Failed(f) => {
-                    crate::graphics::log(&format!("translation via {}: {f}", self.job_service));
+                    crate::platform::log(&format!("translation via {}: {f}", self.job_service));
                     match f {
                         Failure::PlanLimit => hub.chatgpt = ChatGptState::Limit,
                         Failure::SignedOut => hub.chatgpt = ChatGptState::SignedOut,

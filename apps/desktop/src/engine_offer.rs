@@ -30,6 +30,7 @@ pub enum OfferEvent {
     /// Use the Stockfish found on this computer, then run `Pending`.
     UseSystem(PathBuf, Option<Pending>),
     /// Open the file dialog to choose an engine.
+    #[cfg(not(web))]
     ChooseFile,
     Toast(String),
 }
@@ -298,6 +299,7 @@ impl EngineOffer {
                 if self.mode != Mode::Own {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         if ui.button(tr("Choose engine file…")).clicked() {
+                            #[cfg(not(web))]
                             events.push(OfferEvent::ChooseFile);
                             self.open = false;
                             self.pending = None;
@@ -368,6 +370,8 @@ impl EngineOffer {
         });
     }
 
+    // In a browser nothing is pushed: there are no engine files to choose.
+    #[cfg_attr(web, allow(clippy::ptr_arg))]
     fn failure_body(&mut self, ui: &mut Ui, f: &Failure, events: &mut Vec<OfferEvent>) {
         ui.heading(tr("⚠ Stockfish wasn't downloaded"));
         ui.add_space(6.0);
@@ -405,6 +409,7 @@ impl EngineOffer {
                 if self.mode != Mode::Own {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         if ui.button(tr("Choose engine file…")).clicked() {
+                            #[cfg(not(web))]
                             events.push(OfferEvent::ChooseFile);
                             self.open = false;
                             self.failure = None;

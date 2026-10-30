@@ -172,7 +172,8 @@ fn stamp(path: &Path) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    use web_time::Instant;
 
     fn wait(counts: &mut Counts, path: &Path, want: usize) -> bool {
         let deadline = Instant::now() + Duration::from_secs(5);

@@ -12,13 +12,12 @@ pub struct Viewed {
 
 impl Viewed {
     fn file() -> Option<PathBuf> {
-        directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
-            .map(|d| d.data_dir().join("viewed.json"))
+        crate::platform::data_dir().map(|d| d.join("viewed.json"))
     }
 
     pub fn load() -> Viewed {
         let games = Self::file()
-            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|p| crate::platform::fs::read(&p).ok())
             .and_then(|b| serde_json::from_slice::<Vec<u64>>(&b).ok())
             .unwrap_or_default();
         Viewed {
