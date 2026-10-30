@@ -21,7 +21,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::SystemTime;
 
 use chess_import::Database;
-use game_review::{JobEvent, JobFailure, JobSettings, SEARCH_NODES, SEARCH_VERSION, Target};
+use game_review::{JobEvent, SEARCH_NODES, SEARCH_VERSION, Target};
+#[cfg(not(target_family = "wasm"))]
+use game_review::{JobFailure, JobSettings};
 use serde::{Deserialize, Serialize};
 use uci::EnginePosition;
 
@@ -617,6 +619,8 @@ pub struct Progress {
     pub nps: u64,
 }
 
+// The engines run as processes, each driven from a thread: not in a browser.
+#[cfg(not(target_family = "wasm"))]
 /// Runs the engine over the positions `report` lacks (the cache
 /// is consulted first and fed as results come; `cache_dir` saves it every few
 /// hundred positions and at the end), updating the report as results come in.

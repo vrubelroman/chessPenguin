@@ -11,6 +11,9 @@ publish = false
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+
+# Requests that block a thread: not in a browser (net.rs).
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 ureq = "3.4"
 
 [dev-dependencies]
