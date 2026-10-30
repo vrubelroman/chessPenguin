@@ -60,6 +60,16 @@ impl EngineConfig {
             Some(self.path.clone())
         }
     }
+
+    /// Whether the engine can be started: ChessPenguin's Stockfish is there (in a
+    /// browser: downloaded into it), or the file of another engine.
+    pub fn present(&self) -> bool {
+        if self.builtin {
+            crate::engines::own_stockfish().is_some()
+        } else {
+            self.path.is_file()
+        }
+    }
 }
 
 /// Piece animation, with Lichess's durations.

@@ -949,6 +949,7 @@ struct ListRow {
 use crate::review::JobMsg;
 
 struct EngineJob {
+    runner: crate::review::JobRunner,
     rx: Receiver<JobMsg>,
     cancel: Arc<AtomicBool>,
     total: usize,
@@ -1977,11 +1978,15 @@ impl PrepScreen {
             tx,
             ctx.clone(),
         );
-        if let Err(e) = spawned {
-            self.error = Some(e.to_string());
-            return;
-        }
+        let runner = match spawned {
+            Ok(r) => r,
+            Err(e) => {
+                self.error = Some(e.to_string());
+                return;
+            }
+        };
         self.job = Some(EngineJob {
+            runner,
             rx,
             cancel,
             total,
@@ -2000,6 +2005,7 @@ impl PrepScreen {
         };
         let mut ended = false;
         let mut got = false;
+        job.runner.pump();
         while let Ok(msg) = job.rx.try_recv() {
             match msg {
                 JobMsg::Event(e) => {

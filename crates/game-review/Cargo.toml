@@ -15,3 +15,4 @@ uci.workspace = true
 chess-openings.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+web-time.workspace = true

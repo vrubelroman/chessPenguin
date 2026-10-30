@@ -25,6 +25,8 @@ use crate::sound::SoundPlayer;
 /// Results of work done off the UI thread (file dialogs, engine checks).
 enum Async {
     DatabasesPicked(Vec<PathBuf>),
+    /// Files not opened: too big for a browser (name, bytes).
+    TooBig(Vec<(String, u64)>),
     SavePicked(PathBuf),
     SaveCancelled,
     EngineChecked(Result<(PathBuf, String), String>),
@@ -217,6 +219,8 @@ pub struct App {
     rx: Receiver<Async>,
     /// «Paste PGN»: the clipboard being read.
     pasting: Option<crate::platform::clipboard::Reading>,
+    /// A file of the last visit being chosen again (a browser's).
+    choosing_again: Option<PathBuf>,
     confirm_close: Option<CloseIntent>,
     /// Close the game once the pending "save as" succeeds.
     close_after_save: Option<CloseIntent>,
@@ -402,6 +406,10 @@ impl App {
             let _ = settings.save();
         }
         let engines_found = crate::engines::first_run_setup(&mut settings);
+        #[cfg(web)]
+        if crate::my_games::setup(&mut settings) {
+            let _ = settings.save();
+        }
         if crate::examples::setup(&mut settings) || engines_found {
             let _ = settings.save();
         }
@@ -447,6 +455,7 @@ impl App {
             tx,
             rx,
             pasting: None,
+            choosing_again: None,
             confirm_close: None,
             close_after_save: None,
             find_after_close: None,
@@ -983,6 +992,16 @@ impl App {
         let target = self.current_target();
         let Some(g) = &self.game else { return };
         self.own.then_close = then_close;
+        // The web version keeps the user's games in «My games»: a game from anywhere
+        // else (a file, which is only read, a sample, a new one) goes there, no question.
+        #[cfg(web)]
+        if !matches!(&g.source, Some(src) if src.block.is_none()) {
+            if crate::platform::web::storage::persisted() != Some(true) {
+                crate::platform::web::storage::persist(|_| {});
+            }
+            self.add_current_to(ctx, crate::my_games::path());
+            return;
+        }
         match &g.source {
             Some(src) if src.block.is_none() => {
                 if !g.game.is_modified() {
@@ -1030,7 +1049,7 @@ impl App {
         };
         let Some(pgn) = db.as_pgn() else { return };
         let text = g.game.to_pgn();
-        match chess_core::pgn::store::replace(pgn, src.index, &text) {
+        match crate::platform::pgn_store::replace(pgn, &src.path, src.index, &text) {
             Ok(()) => {
                 let name = own_db::base_name(&src.path);
                 if let Some(g) = self.game.as_mut() {
@@ -1171,7 +1190,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::append(pgn, &text) {
+        match crate::platform::pgn_store::append(pgn, &target, &text) {
             Ok(_) => {
                 let index = pgn.len();
                 let name = own_db::base_name(&target);
@@ -1210,7 +1229,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::replace(pgn, index, &text) {
+        match crate::platform::pgn_store::replace(pgn, &target, index, &text) {
             Ok(()) => {
                 let name = own_db::base_name(&target);
                 if let Some(g) = self.game.as_mut() {
@@ -1305,7 +1324,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::append(pgn, &text) {
+        match crate::platform::pgn_store::append(pgn, &target, &text) {
             Ok(_) => {
                 let n = pgn.len();
                 let name = own_db::base_name(&target);
@@ -1351,7 +1370,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::replace(pgn, at, &text) {
+        match crate::platform::pgn_store::replace(pgn, &target, at, &text) {
             Ok(()) => {
                 let name = own_db::base_name(&target);
                 self.settings.last_target = Some(target.clone());
@@ -1506,7 +1525,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::remove(pgn, index) {
+        match crate::platform::pgn_store::remove(pgn, &path, index) {
             Ok(removed) => {
                 // Games open from this file: their records moved up by one.
                 let mut open = None;
@@ -1563,7 +1582,7 @@ impl App {
             return;
         };
         let Some(pgn) = db.as_pgn() else { return };
-        match chess_core::pgn::store::restore(pgn, &undo.removed) {
+        match crate::platform::pgn_store::restore(pgn, &undo.path, &undo.removed) {
             Ok(()) => {
                 let index = undo.removed.index;
                 for g in self.game.iter_mut().chain(self.previous_games.iter_mut()) {
@@ -2349,10 +2368,8 @@ impl App {
 
     fn pick_databases(&self, ctx: &egui::Context) {
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
-        crate::platform::files::pick_databases(move |paths| {
-            if !paths.is_empty() {
-                let _ = tx.send(Async::DatabasesPicked(paths));
-            }
+        crate::platform::files::pick_databases(move |picked| {
+            send_picked(&tx, picked);
             ctx.request_repaint();
         });
     }
@@ -2407,7 +2424,22 @@ impl App {
         self.pasted(ctx);
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
+                Async::TooBig(files) => {
+                    for (_, size) in files {
+                        let size = crate::platform::size_text(size);
+                        self.toast_for(
+                            ctx,
+                            trf("This database is too big for the web version ({size}). Open it in the desktop program — it has no such limit.", &[("size", &size)]),
+                            8.0,
+                        );
+                    }
+                }
                 Async::DatabasesPicked(paths) => {
+                    // The file chosen again takes the place of the one gone.
+                    if let Some(old) = self.choosing_again.take() {
+                        self.settings.databases.retain(|d| *d != old);
+                        self.library.forget(&old);
+                    }
                     for p in paths.iter().rev() {
                         self.settings.touch_database(p);
                     }
@@ -2734,10 +2766,8 @@ impl App {
     /// dragged over it, the window says so.
     fn dropped_files(&mut self, ctx: &egui::Context) {
         let (tx, waker) = (self.tx.clone(), ctx.clone());
-        crate::platform::files::take_dropped(ctx, move |paths| {
-            if !paths.is_empty() {
-                let _ = tx.send(Async::DatabasesPicked(paths));
-            }
+        crate::platform::files::take_dropped(ctx, move |picked| {
+            send_picked(&tx, picked);
             waker.request_repaint();
         });
         if crate::platform::files::dragging(ctx) {
@@ -2757,6 +2787,43 @@ impl App {
                 visuals.strong_text_color(),
             );
         }
+    }
+
+    /// A copy of a file of this visit kept in the browser: it takes the file's place on
+    /// the shelf. Only a browser has such files.
+    fn keep_copy(&mut self, ctx: &egui::Context, path: PathBuf) {
+        #[cfg(web)]
+        {
+            use crate::platform::files::KeepCopy;
+            use crate::platform::size_text;
+            match crate::platform::files::keep_copy(&path) {
+                Ok(copy) => {
+                    for d in self.settings.databases.iter_mut().filter(|d| **d == path) {
+                        *d = copy.clone();
+                    }
+                    self.library.forget(&path);
+                    self.library.select_db(&copy, ctx);
+                    self.settings_dirty = true;
+                    let ctx2 = ctx.clone();
+                    crate::platform::web::storage::refresh(move || ctx2.request_repaint());
+                    if crate::platform::web::storage::persisted() != Some(true) {
+                        crate::platform::web::storage::persist(|_| {});
+                    }
+                    self.toast(ctx, tr("A copy is kept in the browser"));
+                }
+                Err(KeepCopy::NoRoom { need, free }) => self.toast_for(
+                    ctx,
+                    trf(
+                        "Doesn't fit: the copy needs {need}, and the browser gives the site only {free} more. Free up space in “Browser data” or open the file from disk.",
+                        &[("need", &size_text(need)), ("free", &size_text(free))],
+                    ),
+                    8.0,
+                ),
+                Err(KeepCopy::Failed(e)) => self.toast(ctx, e),
+            }
+        }
+        #[cfg(not(web))]
+        let _ = (ctx, path);
     }
 
     /// The open game's PGN, downloaded as a file named after the game.
@@ -3134,7 +3201,14 @@ impl eframe::App for App {
         {
             self.play_new(&ctx, PlayNext::Dialog(None));
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))) && self.game.is_none() {
+        // A browser keeps Ctrl+N for its window: N in the library there (design §4).
+        let new_game_key = cfg!(web)
+            && self.game.is_none()
+            && !ctx.egui_wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::N));
+        if (new_game_key || ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))))
+            && self.game.is_none()
+        {
             self.new_game();
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::Comma))) {
@@ -3432,6 +3506,11 @@ impl eframe::App for App {
                             undo: false,
                         });
                     }
+                    LibraryAction::ChooseAgain(p) => {
+                        self.choosing_again = Some(p);
+                        self.pick_databases(&ctx);
+                    }
+                    LibraryAction::KeepCopy(p) => self.keep_copy(&ctx, p),
                     LibraryAction::OpenSettings => self.settings_ui.open = true,
                     LibraryAction::NewDatabase => {
                         self.own.then_close = None;
@@ -3485,6 +3564,20 @@ impl eframe::App for App {
                 }
                 #[cfg(not(web))]
                 SettingsAction::OpenUpdate => self.desktop.update_ui.open = true,
+                #[cfg(web)]
+                SettingsAction::DownloadMyGames => {
+                    if let Err(e) = crate::my_games::download_all() {
+                        self.toast(
+                            &ctx,
+                            trf("The PGN could not be downloaded: {e}", &[("e", &e)]),
+                        );
+                    }
+                }
+                #[cfg(web)]
+                SettingsAction::KeepData => {
+                    let ctx = ctx.clone();
+                    crate::platform::web::storage::persist(move |_| ctx.request_repaint());
+                }
                 SettingsAction::DownloadEngine => self.engine_offer.start(&ctx),
                 SettingsAction::CancelDownload => self.engine_offer.cancel(),
                 SettingsAction::RemoveDownloaded => {
@@ -3625,6 +3718,16 @@ impl eframe::App for App {
             }
         }
         let _ = self.settings.save();
+    }
+}
+
+/// What the user chose or dropped, to the screen.
+fn send_picked(tx: &Sender<Async>, picked: crate::platform::files::Picked) {
+    if !picked.paths.is_empty() {
+        let _ = tx.send(Async::DatabasesPicked(picked.paths));
+    }
+    if !picked.too_big.is_empty() {
+        let _ = tx.send(Async::TooBig(picked.too_big));
     }
 }
 

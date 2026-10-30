@@ -1711,6 +1711,7 @@ dependencies = [
  "serde_json",
  "shakmaty",
  "uci",
+ "web-time",
 ]
 
 [[package]]

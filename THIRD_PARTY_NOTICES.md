@@ -149,6 +149,23 @@ platform into the user's data directory and checks its SHA-256 (pinned in
   Open Database License (ODbL).
 - ChessPenguin runs Stockfish as a separate process over the UCI protocol.
 
+### Stockfish.js (the web version)
+
+The web version (`/app/` on the site) uses **Stockfish.js 19.0.1** by Nathan Rugg and Chess.com
+(https://github.com/nmrugg/stockfish.js), its single-threaded build `stockfish-19-single.js` +
+`stockfish-19-single.wasm`, unmodified, from the npm package `stockfish@19.0.1`
+(https://registry.npmjs.org/stockfish/-/stockfish-19.0.1.tgz, integrity
+`sha512-bTwsO4e9HAwPBKls1+szcfibmaWRNzTF20rQE/XPdB3LOSoT6XTZDr1zYwriwSRRFT5MkvqrglPmJrKEVXGnyQ==`,
+checked by `apps/web/build.sh`). It is Stockfish 19 compiled to WebAssembly with the network
+`nn-1a298aa575a0` built in. Our site serves the files beside the program (`/app/engine/`, with the
+package's `Copying.txt`); the browser downloads the `.wasm` only when the user agrees and keeps it
+in its Cache Storage; it runs in Web Workers over UCI.
+
+- License: GNU General Public License version 3 (the engine; `Copying.txt`); the JavaScript
+  wrapper as published in the package.
+- Source code: https://github.com/nmrugg/stockfish.js/tree/v19.0.1 (the build scripts and the
+  emscripten glue) and the Stockfish source above.
+
 ## Opening names (preparing against an opponent)
 
 `crates/openings/data/a.tsv` … `e.tsv` are the five files of the Lichess opening table

@@ -97,21 +97,38 @@ fn check_writable(db: &PgnDatabase) -> Result<&Path, WriteError> {
 /// before the new record stay as they were.
 pub fn append(db: &PgnDatabase, record: &str) -> Result<Appended, WriteError> {
     let path = check_writable(db)?;
-    let bytes = db.bytes();
-    let eol = line_ending(bytes);
-    let sep = separator(bytes, eol);
-    let mut data = sep.as_bytes().to_vec();
-    data.extend(record_bytes(record, eol));
+    let (data, sep) = tail_for(db.bytes(), record);
     let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
-    let offset = file.metadata()?.len() + sep.len() as u64;
+    let offset = file.metadata()?.len() + sep as u64;
     file.write_all(&data)?;
     file.sync_all()?;
     Ok(Appended { offset })
 }
 
-/// Replaces record `index` with `record`; every other byte of the file stays.
-pub fn replace(db: &PgnDatabase, index: usize, record: &str) -> Result<(), WriteError> {
-    let path = check_writable(db)?;
+/// What goes at the end of `bytes` to add `record` after a blank line, and how many of
+/// its bytes come before the record.
+fn tail_for(bytes: &[u8], record: &str) -> (Vec<u8>, usize) {
+    let eol = line_ending(bytes);
+    let sep = separator(bytes, eol);
+    let mut data = sep.as_bytes().to_vec();
+    data.extend(record_bytes(record, eol));
+    (data, sep.len())
+}
+
+/// The text of `db` with `record` added at the end, and where the record starts: the
+/// same bytes [`append`] writes, for a database kept elsewhere than in a file (the web
+/// version's games in the browser).
+pub fn appended(db: &PgnDatabase, record: &str) -> (Vec<u8>, u64) {
+    let bytes = db.bytes();
+    let (tail, sep) = tail_for(bytes, record);
+    let mut out = Vec::with_capacity(bytes.len() + tail.len());
+    out.extend_from_slice(bytes);
+    out.extend(tail);
+    (out, (bytes.len() + sep) as u64)
+}
+
+/// The text of `db` with record `index` replaced by `record` (what [`replace`] writes).
+pub fn replaced(db: &PgnDatabase, index: usize, record: &str) -> Result<Vec<u8>, WriteError> {
     let bytes = db.bytes();
     let range = db
         .entries()
@@ -124,14 +141,11 @@ pub fn replace(db: &PgnDatabase, index: usize, record: &str) -> Result<(), Write
     out.extend_from_slice(&bytes[..range.start]);
     out.extend(record_bytes(record, eol));
     out.extend_from_slice(&bytes[range.end..]);
-    write_atomic(path, &out)?;
-    Ok(())
+    Ok(out)
 }
 
-/// Removes record `index`; the bytes before and after it stay. What was removed comes
-/// back with [`restore`].
-pub fn remove(db: &PgnDatabase, index: usize) -> Result<Removed, WriteError> {
-    let path = check_writable(db)?;
+/// The text of `db` without record `index` (what [`remove`] writes) and the record.
+pub fn removed(db: &PgnDatabase, index: usize) -> Result<(Vec<u8>, Removed), WriteError> {
     let bytes = db.bytes();
     let range = db
         .entries()
@@ -142,11 +156,29 @@ pub fn remove(db: &PgnDatabase, index: usize) -> Result<Removed, WriteError> {
     let mut out = Vec::with_capacity(bytes.len());
     out.extend_from_slice(&bytes[..range.start]);
     out.extend_from_slice(&bytes[range.end..]);
+    Ok((
+        out,
+        Removed {
+            index,
+            bytes: bytes[range].to_vec(),
+        },
+    ))
+}
+
+/// Replaces record `index` with `record`; every other byte of the file stays.
+pub fn replace(db: &PgnDatabase, index: usize, record: &str) -> Result<(), WriteError> {
+    let path = check_writable(db)?;
+    write_atomic(path, &replaced(db, index, record)?)?;
+    Ok(())
+}
+
+/// Removes record `index`; the bytes before and after it stay. What was removed comes
+/// back with [`restore`].
+pub fn remove(db: &PgnDatabase, index: usize) -> Result<Removed, WriteError> {
+    let path = check_writable(db)?;
+    let (out, gone) = removed(db, index)?;
     write_atomic(path, &out)?;
-    Ok(Removed {
-        index,
-        bytes: bytes[range].to_vec(),
-    })
+    Ok(gone)
 }
 
 /// Puts a removed record back at its place: the file is byte for byte what it was
@@ -154,6 +186,12 @@ pub fn remove(db: &PgnDatabase, index: usize) -> Result<Removed, WriteError> {
 /// database as read after the removal.
 pub fn restore(db: &PgnDatabase, removed: &Removed) -> Result<(), WriteError> {
     let path = check_writable(db)?;
+    write_atomic(path, &restored(db, removed)?)?;
+    Ok(())
+}
+
+/// The text of `db` with a removed record back at its place (what [`restore`] writes).
+pub fn restored(db: &PgnDatabase, removed: &Removed) -> Result<Vec<u8>, WriteError> {
     let bytes = db.bytes();
     let at = match db.entries().get(removed.index) {
         Some(e) => e.byte_range.start,
@@ -164,8 +202,7 @@ pub fn restore(db: &PgnDatabase, removed: &Removed) -> Result<(), WriteError> {
     out.extend_from_slice(&bytes[..at]);
     out.extend_from_slice(&removed.bytes);
     out.extend_from_slice(&bytes[at..]);
-    write_atomic(path, &out)?;
-    Ok(())
+    Ok(out)
 }
 
 /// Writes every record of `db` into `dest` as UTF-8 (LF, one blank line between

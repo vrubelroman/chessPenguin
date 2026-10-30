@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
-use uci::{EngineEvent, EnginePosition, ScoreBound, SearchId, SearchLimits, Side};
+use uci::{EngineEvent, EnginePosition, ScoreBound, SearchId, SearchLimits};
 
+use super::work::{Answer, Next, Work};
 use super::{JobEvent, JobFailure, JobSettings, MAX_PROCESSES, SEARCH_HASH_MB, Target};
-use crate::{Eval, PosEval, Second, Shallow};
 
 /// A node-limited search should never take this long; stop it if it does.
 const SEARCH_GUARD: Duration = Duration::from_secs(300);
@@ -107,131 +107,31 @@ fn worker(
         let _ = handle.new_game();
         search_once(&handle, pos, SearchId(next_id), among, nodes, halted)
     };
-    while let Some(t) = targets.get(next.fetch_add(1, Ordering::Relaxed)) {
+    'targets: while let Some(t) = targets.get(next.fetch_add(1, Ordering::Relaxed)) {
         if halted() {
             break;
         }
-        let (mut eval, nps) = match &t.known {
-            Some(e) => (e.clone(), 0),
-            None => {
-                let Some((info, best)) = search(&t.pos, Vec::new(), settings.nodes)? else {
-                    continue;
-                };
-                let Some(score) = info.score else { continue };
-                let mut pv: Vec<String> = info.pv.iter().take(12).cloned().collect();
-                if let Some(b) = best
-                    && pv.first() != Some(&b)
-                {
-                    pv = vec![b];
-                }
-                let eval = PosEval {
-                    eval: Eval::from_white_eval(score.to_white(t.turn).eval),
-                    pv,
-                    depth: info.depth.unwrap_or(0),
-                    second: None,
-                    shallow: None,
-                };
-                (eval, info.nps.unwrap_or(0))
-            }
-        };
-        // The move played is the engine's best: what the best of the others gives says
-        // whether it was the only good move, or a sacrifice when nothing else won.
-        let mover = match t.turn {
-            Side::White => chess_core::shakmaty::Color::White,
-            Side::Black => chess_core::shakmaty::Color::Black,
-        };
-        let played = t.played.as_ref().filter(|p| {
-            eval.pv.first() == Some(*p)
-                && !t.others.is_empty()
-                && crate::report::worth_second(eval.eval, mover)
-        });
-        if let Some(played) = played
-            && eval.second.as_ref().map(|s| &s.without) != Some(played)
-        {
-            match search(&t.pos, t.others.clone(), settings.nodes)? {
-                // An engine that ignores `searchmoves` answers with the move played:
-                // no second move then.
-                Some((info, best))
-                    if best.as_ref() != Some(played) && info.pv.first() != Some(played) =>
-                {
-                    if let Some(score) = info.score {
-                        eval.second = Some(Second {
-                            without: played.clone(),
-                            eval: Eval::from_white_eval(score.to_white(t.turn).eval),
-                        });
+        let mut work = Work::new(t.clone(), settings.nodes);
+        loop {
+            match work.next() {
+                Next::Search { pos, among, nodes } => {
+                    let answer = search(&pos, among, nodes)?;
+                    if answer.is_none() && halted() {
+                        break 'targets;
                     }
+                    work.answer(answer);
                 }
-                None if halted() => break,
-                _ => {}
+                Next::Done(event) => {
+                    if let Some(e) = event {
+                        on_event(e);
+                    }
+                    break;
+                }
             }
         }
-        // How hard it was to find: what a shallow search makes of it.
-        if let (Some(played), Some(nodes)) = (played, t.shallow)
-            && !eval
-                .shallow
-                .as_ref()
-                .is_some_and(|s| &s.played == played && s.nodes == nodes)
-        {
-            match shallow(&mut search, t, played, nodes)? {
-                Some(s) => eval.shallow = Some(s),
-                None if halted() => break,
-                None => {}
-            }
-        }
-        on_event(JobEvent::Eval {
-            key: t.key.clone(),
-            eval,
-            nps,
-        });
     }
     handle.quit();
     Ok(())
-}
-
-/// What a search gave: its last full line and the best move, `None` when there is none
-/// (see [`search_once`]).
-type SearchResult = Result<Option<(uci::SearchInfo, Option<String>)>, JobFailure>;
-
-/// The shallow search of `played` at `t`: the best move at `nodes` and, when it is
-/// another, the move played alone. `None` when the engine gave no answer (or ignored
-/// `searchmoves`) or the job was halted.
-fn shallow(
-    search: &mut dyn FnMut(&EnginePosition, Vec<String>, u64) -> SearchResult,
-    t: &Target,
-    played: &str,
-    nodes: u64,
-) -> Result<Option<Shallow>, JobFailure> {
-    let eval_of = |info: &uci::SearchInfo| {
-        info.score
-            .map(|s| Eval::from_white_eval(s.to_white(t.turn).eval))
-    };
-    let Some((info, best)) = search(&t.pos, Vec::new(), nodes)? else {
-        return Ok(None);
-    };
-    let (Some(best), Some(best_eval)) = (best.or_else(|| info.pv.first().cloned()), eval_of(&info))
-    else {
-        return Ok(None);
-    };
-    let played_eval = if best == played {
-        best_eval
-    } else {
-        match search(&t.pos, vec![played.to_owned()], nodes)? {
-            Some((info, b)) if b.as_deref().is_none_or(|b| b == played) => {
-                let Some(e) = eval_of(&info) else {
-                    return Ok(None);
-                };
-                e
-            }
-            _ => return Ok(None),
-        }
-    };
-    Ok(Some(Shallow {
-        nodes,
-        played: played.to_owned(),
-        best,
-        best_eval,
-        played_eval,
-    }))
 }
 
 /// One node-limited search: its last full line and the best move. `None` when it gave
@@ -243,7 +143,7 @@ fn search_once(
     among: Vec<String>,
     nodes: u64,
     halted: &dyn Fn() -> bool,
-) -> SearchResult {
+) -> Result<Answer, JobFailure> {
     handle
         .search_among(pos.clone(), id, SearchLimits::Nodes(nodes), among)
         .map_err(|e| JobFailure::Engine(e.to_string()))?;

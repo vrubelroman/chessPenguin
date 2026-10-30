@@ -40,9 +40,59 @@ pub enum JobMsg {
     Failed(String),
 }
 
-/// Runs the engine job over `targets` with ChessPenguin's Stockfish at `path` on a
-/// thread named `name`: its events and its end come through `tx`, each waking `ctx`.
-/// A browser starts no engine processes: there the job cannot run (the error).
+/// An engine job under way. On a computer its thread sends everything through the
+/// channel; in a browser its engines are Web Workers driven from the frames:
+/// [`JobRunner::pump`] passes on what they gave.
+pub struct JobRunner {
+    #[cfg(web)]
+    dispatcher: game_review::Dispatcher,
+    #[cfg(web)]
+    tx: std::sync::mpsc::Sender<JobMsg>,
+    #[cfg(web)]
+    cancel: Arc<AtomicBool>,
+}
+
+impl JobRunner {
+    /// Call every frame (nothing to do on a computer).
+    pub fn pump(&mut self) {
+        #[cfg(web)]
+        {
+            if self.cancel.load(Ordering::Relaxed) {
+                self.dispatcher.cancel();
+            }
+            let (events, end) = self.dispatcher.poll();
+            for e in events {
+                let _ = self.tx.send(JobMsg::Event(e));
+            }
+            if let Some(end) = end {
+                let _ = self.tx.send(job_end(end));
+            }
+        }
+    }
+}
+
+/// The last message of a job.
+fn job_end(result: Result<(), JobFailure>) -> JobMsg {
+    match result {
+        Ok(()) => JobMsg::Done,
+        Err(JobFailure::Start(e) | JobFailure::Engine(e)) => JobMsg::Failed(e),
+        Err(JobFailure::Terminated(reason)) => {
+            JobMsg::Failed(crate::analysis::termination_message(&reason))
+        }
+    }
+}
+
+/// Engines working at once for a job: one per logical CPU, as many as fit.
+pub fn processes() -> usize {
+    #[cfg(web)]
+    return crate::platform::web::engine::workers(game_review::MAX_PROCESSES);
+    #[cfg(not(web))]
+    game_review::processes(game_review::MAX_PROCESSES)
+}
+
+/// Runs the engine job over `targets` with ChessPenguin's Stockfish at `path` (in a
+/// browser: the address of its worker) named `name`: its events and its end come
+/// through `tx`, each waking `ctx`.
 pub fn spawn_job(
     name: &str,
     path: PathBuf,
@@ -51,7 +101,7 @@ pub fn spawn_job(
     cancel: Arc<AtomicBool>,
     tx: std::sync::mpsc::Sender<JobMsg>,
     ctx: egui::Context,
-) -> std::io::Result<()> {
+) -> std::io::Result<JobRunner> {
     #[cfg(not(web))]
     {
         std::thread::Builder::new()
@@ -67,26 +117,32 @@ pub fn spawn_job(
                         ctx.request_repaint();
                     },
                 );
-                let msg = match result {
-                    Ok(()) => JobMsg::Done,
-                    Err(JobFailure::Start(e) | JobFailure::Engine(e)) => JobMsg::Failed(e),
-                    Err(JobFailure::Terminated(reason)) => {
-                        JobMsg::Failed(crate::analysis::termination_message(&reason))
-                    }
-                };
-                let _ = tx.send(msg);
+                let _ = tx.send(job_end(result));
                 ctx.request_repaint();
             })
-            .map(drop)
+            .map(|_| JobRunner {})
     }
     #[cfg(web)]
     {
-        let _ = (name, path, settings, targets, cancel, tx, ctx);
-        Err(std::io::ErrorKind::Unsupported.into())
+        let _ = name;
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || ctx.request_repaint());
+        game_review::Dispatcher::start(&path.to_string_lossy(), &settings, targets, wake)
+            .map(|dispatcher| JobRunner {
+                dispatcher,
+                tx,
+                cancel,
+            })
+            .map_err(|e| match e {
+                JobFailure::Start(e) | JobFailure::Engine(e) => std::io::Error::other(e),
+                JobFailure::Terminated(r) => {
+                    std::io::Error::other(crate::analysis::termination_message(&r))
+                }
+            })
     }
 }
 
 struct Job {
+    runner: JobRunner,
     rx: Receiver<JobMsg>,
     cancel: Arc<AtomicBool>,
     total: usize,
@@ -117,9 +173,27 @@ fn cache_dir() -> Option<PathBuf> {
     Settings::cache_dir().map(|d| d.join("analysis"))
 }
 
+/// The cached analyses in the program's files (the platform's: a folder of the disk, or
+/// the browser's storage).
+struct Cache(PathBuf);
+
+impl game_review::CacheStore for Cache {
+    fn read(&self, name: &str) -> Option<Vec<u8>> {
+        crate::platform::fs::read(&self.0.join(name)).ok()
+    }
+
+    fn write(&self, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+        crate::platform::fs::write_atomic(&self.0.join(name), bytes)
+    }
+}
+
 impl Review {
     pub fn new(game: &Game) -> Self {
-        let analysis = GameAnalysis::new(game, cache_dir().as_deref());
+        let cache = cache_dir().map(Cache);
+        let analysis = GameAnalysis::with_store(
+            game,
+            cache.as_ref().map(|c| c as &dyn game_review::CacheStore),
+        );
         Review {
             visible: analysis.has_data(),
             analysis,
@@ -175,11 +249,15 @@ impl Review {
             tx,
             ctx.clone(),
         );
-        if let Err(e) = spawned {
-            self.error = Some(e.to_string());
-            return false;
-        }
+        let runner = match spawned {
+            Ok(r) => r,
+            Err(e) => {
+                self.error = Some(e.to_string());
+                return false;
+            }
+        };
         self.job = Some(Job {
+            runner,
             rx,
             cancel,
             total,
@@ -201,6 +279,7 @@ impl Review {
             return false;
         };
         let mut ended = false;
+        job.runner.pump();
         while let Ok(msg) = job.rx.try_recv() {
             match msg {
                 JobMsg::Event(e) => {
@@ -258,7 +337,7 @@ impl Review {
 
     fn save_cache(&self) {
         if let Some(dir) = cache_dir()
-            && let Err(e) = self.analysis.save_cache(&dir)
+            && let Err(e) = self.analysis.save_to(&Cache(dir.clone()))
         {
             eprintln!("review cache: {}: {e}", dir.display());
         }
@@ -756,12 +835,6 @@ impl Drop for Review {
 
 /// Nodes per second of one engine thread assumed until an engine was measured.
 pub const DEFAULT_NPS: f64 = 700_000.0;
-
-/// Engine processes of a game analysis on this computer: one per logical CPU, at most
-/// `game_review::MAX_PROCESSES` and what the free memory holds.
-pub fn processes() -> usize {
-    game_review::processes(game_review::MAX_PROCESSES)
-}
 
 /// ChessPenguin's Stockfish at `path` for an analysis job: below the program (nice 10),
 /// so that the program stays smooth while every CPU works.

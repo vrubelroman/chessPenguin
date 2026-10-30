@@ -118,6 +118,17 @@ pub fn remove(path: &Path) -> io::Result<()> {
     })
 }
 
+/// The files right in the folder `dir`.
+pub fn list(dir: &Path) -> Vec<PathBuf> {
+    FILES.with_borrow(|files| {
+        files
+            .keys()
+            .filter(|p| p.parent() == Some(dir))
+            .cloned()
+            .collect()
+    })
+}
+
 /// A file the user gave the page (chosen or dropped): kept for the session, only read.
 /// Its path ends with its own name, in a folder of its own.
 pub fn add_opened(name: &str, bytes: Vec<u8>) -> PathBuf {

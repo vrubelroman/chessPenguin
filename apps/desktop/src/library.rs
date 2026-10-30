@@ -57,6 +57,11 @@ pub enum LibraryAction {
     #[cfg(not(web))]
     OpenUpdate,
     RemoveDatabase(PathBuf),
+    /// A file the browser held for the last visit only: choose it again, the new one
+    /// taking its place on the shelf.
+    ChooseAgain(PathBuf),
+    /// Keep a copy of a file in the browser (it opens then without choosing it).
+    KeepCopy(PathBuf),
     OpenSettings,
     /// A new, empty PGN database (own-databases.md §2).
     NewDatabase,
@@ -340,6 +345,10 @@ impl Library {
         }
         if crate::examples::is_example(path) {
             return Some(Block::Example);
+        }
+        // In a browser the user's files are only read.
+        if cfg!(web) && crate::platform::fs::meta(path).is_ok_and(|m| m.readonly) {
+            return Some(Block::ReadOnly);
         }
         if !self.files.exists(path) {
             return Some(Block::Missing);
@@ -1091,6 +1100,11 @@ impl Library {
                 });
                 trf("loading… {n}", &[("n", &p.games)])
             }
+            Some(Slot::Failed(_)) | None
+                if crate::platform::files::session_only(path) && !self.files.exists(path) =>
+            {
+                tr("↻ Choose the file again").into()
+            }
             Some(Slot::Failed(_)) => tr("error").into(),
             None if !self.files.exists(path) => tr("file not found").into(),
             // Not opened: its games once counted, nothing till then.
@@ -1261,6 +1275,25 @@ impl Library {
                 });
                 return;
             }
+            Some(Slot::Failed(_))
+                if crate::platform::files::session_only(&path) && !self.files.exists(&path) =>
+            {
+                // A browser keeps no way back to a file the user chose (Firefox, Safari).
+                ui.vertical_centered(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(tr("This browser doesn't remember files: after a reload, choose the file again or keep a copy in the browser."));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr("↻ Choose the file again")).clicked() {
+                            actions.push(LibraryAction::ChooseAgain(path.clone()));
+                        }
+                        if ui.button(tr("Remove from list")).clicked() {
+                            actions.push(LibraryAction::RemoveDatabase(path.clone()));
+                        }
+                    });
+                });
+                return;
+            }
             Some(Slot::Failed(e)) => {
                 let e = e.clone();
                 ui.vertical_centered(|ui| {
@@ -1349,6 +1382,7 @@ impl Library {
             format,
             format_hint,
             online,
+            keep_copy: crate::platform::files::session_only(path),
         }
     }
 }

@@ -981,15 +981,19 @@ impl GameView {
                 } else {
                     0.0
                 }
-                + button(ui, "⏷")
-                + button(
-                    ui,
-                    if compact {
-                        "🔍"
-                    } else {
-                        tr("🔍 Find in database")
-                    },
-                )
+                + if crate::platform::CAPS.reference {
+                    button(ui, "⏷")
+                        + button(
+                            ui,
+                            if compact {
+                                "🔍"
+                            } else {
+                                tr("🔍 Find in database")
+                            },
+                        )
+                } else {
+                    0.0
+                }
                 + notes.as_ref().map_or(0.0, |n| button(ui, n.text()))
         };
         // The result, or during a game against the computer its time control («5+3», «∞»)
@@ -1129,7 +1133,7 @@ impl GameView {
                 let why = tr("After a null move (--) this is a teaching scheme, not a position of a game: it is not searched");
                 // Not during a game against Maia: it would leave the game.
                 let playing = self.play.is_some() || self.train.is_some();
-                if !playing { ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
+                if !playing && crate::platform::CAPS.reference { ui.add_enabled_ui(searchable && !databases.is_empty(), |ui| {
                     ui.menu_button("⏷", |ui| {
                         for db in databases {
                             let name = db
@@ -1445,8 +1449,10 @@ impl GameView {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.side_tab, SideTab::Notation, tr("Notation"));
-                ui.selectable_value(&mut self.side_tab, SideTab::Reference, tr("Reference"))
-                    .on_hover_text(tr("What was played in this position in a database"));
+                if crate::platform::CAPS.reference {
+                    ui.selectable_value(&mut self.side_tab, SideTab::Reference, tr("Reference"))
+                        .on_hover_text(tr("What was played in this position in a database"));
+                }
                 if report {
                     ui.selectable_value(&mut self.side_tab, SideTab::Report, tr("Report"));
                 }
@@ -1501,7 +1507,12 @@ impl GameView {
                 }
                 return;
             }
-            match self.translation.strip(ui, settings, hub) {
+            let strip = if crate::platform::CAPS.translation {
+                self.translation.strip(ui, settings, hub)
+            } else {
+                None
+            };
+            match strip {
                 Some(crate::translate_ui::StripAction::OpenSettings) => {
                     actions.push(GameAction::OpenTranslationSettings)
                 }
@@ -2154,7 +2165,9 @@ impl GameView {
     }
 
     pub fn show_reference_tab(&mut self) {
-        self.side_tab = SideTab::Reference;
+        if crate::platform::CAPS.reference {
+            self.side_tab = SideTab::Reference;
+        }
     }
 
     pub fn search_line(&self) -> Option<(Chess, Vec<shakmaty::Move>, bool)> {
@@ -4760,6 +4773,16 @@ impl GameView {
             if i.consume_shortcut(&ctrl(Key::W)) {
                 cmds.push("back");
             }
+            // A browser keeps Ctrl+W, Ctrl+1…6 and Ctrl+Shift+C for itself
+            // (docs/design/web-version.md §4): Alt+←, plain 1…6 and Ctrl+C there.
+            if cfg!(web) {
+                if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::ALT, Key::ArrowLeft)) {
+                    cmds.push("back");
+                }
+                if i.consume_shortcut(&ctrl(Key::C)) {
+                    cmds.push("copy");
+                }
+            }
             if i.consume_shortcut(&ctrl(Key::G)) {
                 cmds.push("play_from");
             }
@@ -4783,7 +4806,9 @@ impl GameView {
                 (Key::Num5, "nag5"),
                 (Key::Num6, "nag6"),
             ] {
-                if i.consume_shortcut(&ctrl(key)) {
+                if i.consume_shortcut(&ctrl(key))
+                    || (cfg!(web) && i.consume_key(Modifiers::NONE, key))
+                {
                     cmds.push(cmd);
                 }
             }
@@ -4845,7 +4870,7 @@ impl GameView {
                 }
                 "game_data" => actions.push(GameAction::EditGameData),
                 "back" => actions.push(GameAction::BackKey),
-                "find" if self.search_line().is_some() => {
+                "find" if crate::platform::CAPS.reference && self.search_line().is_some() => {
                     actions.push(GameAction::FindPosition(None))
                 }
                 "back1" => self.step_back(),

@@ -6,8 +6,10 @@
 //! `/opened` (the files the user gave the page, only read: decisions «Веб-версия») live
 //! for the session. Background work runs on the page's thread after the frame.
 
+pub mod engine;
 pub mod idb;
 pub mod page;
+pub mod storage;
 pub mod vfs;
 
 use std::path::{Path, PathBuf};

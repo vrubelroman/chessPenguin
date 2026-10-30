@@ -31,6 +31,8 @@ mod i18n;
 mod large_db;
 mod library;
 mod maia_download;
+#[cfg(web)]
+mod my_games;
 mod notation;
 mod online;
 #[cfg(not(web))]
@@ -69,6 +71,8 @@ pub async fn start_web(
     lang: Option<String>,
 ) -> Result<(), wasm_bindgen::JsValue> {
     platform::web::vfs::load().await;
+    platform::web::engine::probe().await;
+    platform::web::storage::refresh(|| {});
     let mut settings = settings::Settings::load();
     if let Some(chosen) = lang.as_deref().and_then(i18n::Lang::from_locale)
         && chosen != settings.language

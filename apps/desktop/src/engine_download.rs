@@ -66,11 +66,14 @@ fn asset() -> Option<Asset> {
 
 /// Whether a download is offered on this platform at all.
 pub fn available() -> bool {
-    asset().is_some()
+    cfg!(web) || asset().is_some()
 }
 
 /// Size of the download in megabytes (rounded), for the offer.
 pub fn size_mb() -> u64 {
+    #[cfg(web)]
+    return crate::platform::web::engine::DOWNLOAD_MB;
+    #[cfg(not(web))]
     asset().map_or(0, |a| a.size.div_ceil(1_000_000))
 }
 
@@ -98,14 +101,25 @@ pub fn clean_leftovers() {
     }
 }
 
-/// The downloaded engine, if it is there.
+/// The downloaded engine, if it is there (in a browser: the address of its worker).
 pub fn installed() -> Option<PathBuf> {
-    let p = dir()?.join(EXE);
-    p.is_file().then_some(p)
+    #[cfg(web)]
+    return crate::platform::web::engine::worker_script().map(PathBuf::from);
+    #[cfg(not(web))]
+    {
+        let p = dir()?.join(EXE);
+        p.is_file().then_some(p)
+    }
 }
 
 /// Removes the downloaded engine (frees its space).
 pub fn remove() -> std::io::Result<()> {
+    #[cfg(web)]
+    {
+        crate::platform::web::engine::remove();
+        Ok(())
+    }
+    #[cfg(not(web))]
     match dir() {
         Some(d) if d.exists() => std::fs::remove_dir_all(d),
         _ => Ok(()),
@@ -154,14 +168,42 @@ impl Download {
         Download::spawn(ctx, total, run)
     }
 
-    /// A browser downloads no engine programs: there is no download for it, as for a
-    /// computer without a published build.
+    /// The browser's engine: Stockfish 19 in WebAssembly from our site, into the
+    /// browser's cache (`platform::web::engine`).
     #[cfg(web)]
-    pub fn start(_ctx: &egui::Context) -> Download {
-        Download::unsupported()
+    pub fn start(ctx: &egui::Context) -> Download {
+        use crate::platform::web::engine::{self, Fetch};
+        let total = engine::WASM_BYTES;
+        let stage = Arc::new(Mutex::new(Stage::Downloading { done: 0, total }));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (s, c, ctx) = (stage.clone(), cancel.clone(), ctx.clone());
+        wasm_bindgen_futures::spawn_local(async move {
+            let report = |st: Stage| {
+                if let Ok(mut g) = s.lock() {
+                    *g = st;
+                }
+                ctx.request_repaint();
+            };
+            let end =
+                match engine::download(|done, total| report(Stage::Downloading { done, total }), c)
+                    .await
+                {
+                    Ok(()) => match installed() {
+                        Some(p) => Stage::Done(p),
+                        None => Stage::Failed(Failure::Disk("not kept".into())),
+                    },
+                    Err(Fetch::Cancelled) => Stage::Cancelled,
+                    Err(Fetch::Network(e)) => Stage::Failed(Failure::Network(e)),
+                    Err(Fetch::Server(code)) => Stage::Failed(Failure::Server(code)),
+                    Err(Fetch::Checksum) => Stage::Failed(Failure::Checksum),
+                    Err(Fetch::Storage(e)) => Stage::Failed(Failure::Disk(e)),
+                };
+            report(end);
+        });
+        Download { stage, cancel }
     }
 
-    /// The download of a platform that has none.
+    /// The download of a platform that has none (Rodent and the like in a browser).
     #[cfg(web)]
     pub fn unsupported() -> Download {
         Download {

@@ -23,6 +23,7 @@ use web as imp;
 pub mod clipboard;
 pub mod files;
 pub mod fs;
+pub mod pgn_store;
 
 /// What the platform offers the interface: a feature it lacks is not shown.
 #[derive(Clone, Copy, Debug)]
@@ -46,6 +47,9 @@ pub struct Caps {
     pub training: bool,
     /// Saving a game is a download of its PGN (the browser's files are not written).
     pub download_pgn: bool,
+    /// The reference tab (what was played here in the databases) and the search of a
+    /// position in a database (not in the light web version).
+    pub reference: bool,
 }
 
 /// The features of this platform.
@@ -60,6 +64,7 @@ pub const CAPS: Caps = Caps {
     engine_programs: true,
     training: true,
     download_pgn: false,
+    reference: true,
 };
 
 /// The features of this platform: the light web version (`docs/decisions.md`, «Веб-версия»).
@@ -74,6 +79,7 @@ pub const CAPS: Caps = Caps {
     engine_programs: false,
     training: false,
     download_pgn: true,
+    reference: false,
 };
 
 /// The program's settings (`~/.config/chesspenguin`; in a browser, its storage).
@@ -103,6 +109,27 @@ pub fn examples_dir() -> Option<PathBuf> {
 /// loop that waits. The error: the job could not be started.
 pub fn spawn(name: &str, job: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
     imp::spawn(name, job)
+}
+
+/// Bytes the browser still gives the site to keep (its quota less what is used); `None`
+/// on a computer and until the browser answered.
+pub fn storage_free() -> Option<u64> {
+    #[cfg(web)]
+    return web::storage::usage().map(|(used, quota)| quota.saturating_sub(used));
+    #[cfg(not(web))]
+    None
+}
+
+/// A size for people: "340 KB", "96 MB", "9.6 GB".
+pub fn size_text(bytes: u64) -> String {
+    let b = bytes as f64;
+    if b >= 1e9 {
+        format!("{:.1} GB", b / 1e9)
+    } else if b >= 1e6 {
+        format!("{:.0} MB", b / 1e6)
+    } else {
+        format!("{:.0} KB", (b / 1e3).max(1.0))
+    }
 }
 
 /// A line for the program's log (`chesspenguin.log`; in a browser its console).

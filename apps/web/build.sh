@@ -37,6 +37,27 @@ if command -v wasm-opt >/dev/null 2>&1; then
 fi
 
 cp "$here/page/device.js" "$here/page/page.js" "$out/"
+
+# The engine: Stockfish.js 19.0.1 (npm `stockfish`, GPL-3.0), its single-threaded build,
+# checked against the registry's integrity (THIRD_PARTY_NOTICES.md). STOCKFISH_TGZ= points
+# at a copy of the package; otherwise it is downloaded once into target/web/.
+sf_url=https://registry.npmjs.org/stockfish/-/stockfish-19.0.1.tgz
+sf_sha512=bTwsO4e9HAwPBKls1+szcfibmaWRNzTF20rQE/XPdB3LOSoT6XTZDr1zYwriwSRRFT5MkvqrglPmJrKEVXGnyQ==
+tgz=${STOCKFISH_TGZ:-$root/target/web/stockfish-19.0.1.tgz}
+if [ ! -f "$tgz" ]; then
+    mkdir -p "$(dirname "$tgz")"
+    curl -fsSL --retry 3 -o "$tgz.part" "$sf_url"
+    mv "$tgz.part" "$tgz"
+fi
+have_sha=$(openssl dgst -sha512 -binary "$tgz" | base64 -w0)
+if [ "$have_sha" != "$sf_sha512" ]; then
+    echo "$tgz is not stockfish@19.0.1 (sha512 $have_sha)" >&2
+    exit 1
+fi
+mkdir -p "$out/engine"
+tar -xzf "$tgz" -C "$out/engine" --strip-components=2 \
+    package/bin/stockfish-19-single.js package/bin/stockfish-19-single.wasm
+tar -xzf "$tgz" -C "$out/engine" --strip-components=1 package/Copying.txt
 for size in 32 64 180; do
     cp "$root/website/static/img/icon-$size.png" "$out/"
 done

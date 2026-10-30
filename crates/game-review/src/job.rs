@@ -14,12 +14,19 @@ use uci::{EnginePosition, Side};
 
 use crate::PosEval;
 
+// What the job does for one target, whatever drives it.
+mod work;
 // The job in engine processes, each on a thread of its own: a computer's and a
 // phone's.
 #[cfg(not(target_family = "wasm"))]
 mod engines;
 #[cfg(not(target_family = "wasm"))]
 pub use engines::run;
+// The job in Web Workers: a browser's.
+#[cfg(target_family = "wasm")]
+mod workers;
+#[cfg(target_family = "wasm")]
+pub use workers::Dispatcher;
 
 /// Nodes of every search of a game analysis (0.85 s on one thread of an i7-13700KF,
 /// depth about 24).

@@ -22,7 +22,13 @@ pub async fn next_task() {
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
-type Picked = Box<dyn FnOnce(Vec<(String, Vec<u8>)>)>;
+type Picked = Box<dyn FnOnce(Read)>;
+
+/// Files read: their names and contents, and the ones too big to read (name, bytes).
+pub struct Read {
+    pub read: Vec<(String, Vec<u8>)>,
+    pub too_big: Vec<(String, u64)>,
+}
 
 thread_local! {
     /// What to do with the files chosen next.
@@ -70,12 +76,23 @@ fn open_input(accept: &str) -> Result<web_sys::HtmlInputElement, JsValue> {
     Ok(input)
 }
 
-/// The contents of `files`, with their names (a file that cannot be read is left out).
-pub async fn read_files(files: Vec<web_sys::File>) -> Vec<(String, Vec<u8>)> {
-    let mut out = Vec::with_capacity(files.len());
+/// The contents of `files`, with their names (a file that cannot be read is left
+/// out; one larger than [`crate::platform::files::TOO_BIG`] is not read).
+pub async fn read_files(files: Vec<web_sys::File>) -> Read {
+    let mut out = Read {
+        read: Vec::with_capacity(files.len()),
+        too_big: Vec::new(),
+    };
     for f in files {
+        let size = f.size() as u64;
+        if size > crate::platform::files::TOO_BIG {
+            out.too_big.push((f.name(), size));
+            continue;
+        }
         match wasm_bindgen_futures::JsFuture::from(f.array_buffer()).await {
-            Ok(buf) => out.push((f.name(), js_sys::Uint8Array::new(&buf).to_vec())),
+            Ok(buf) => out
+                .read
+                .push((f.name(), js_sys::Uint8Array::new(&buf).to_vec())),
             Err(e) => log::warn!("cannot read {}: {e:?}", f.name()),
         }
     }
@@ -85,7 +102,7 @@ pub async fn read_files(files: Vec<web_sys::File>) -> Vec<(String, Vec<u8>)> {
 /// Asks the user for files (the browser's dialog); `then` gets their contents once
 /// chosen. Must run soon after the user's click or key (a browser opens the dialog
 /// only then: egui handles input in the next frame, well within that time).
-pub fn pick_files(accept: &str, then: impl FnOnce(Vec<(String, Vec<u8>)>) + 'static) {
+pub fn pick_files(accept: &str, then: impl FnOnce(Read) + 'static) {
     match open_input(accept) {
         Ok(input) => {
             ON_PICKED.with_borrow_mut(|p| *p = Some(Box::new(then)));

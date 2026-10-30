@@ -73,10 +73,7 @@ impl EngineOffer {
 
     /// Whether the active engine can be started.
     pub fn engine_ready(settings: &Settings) -> bool {
-        settings
-            .active_engine()
-            .and_then(|e| e.executable())
-            .is_some_and(|p| p.is_file())
+        settings.active_engine().is_some_and(|e| e.present())
     }
 
     /// Opens the offer for an action that needs an engine.
@@ -247,6 +244,19 @@ impl EngineOffer {
                 ))
                 .weak(),
             );
+        } else if cfg!(web) {
+            // The browser's engine: from our site, into this browser (design §1.4).
+            ui.label(tr(
+                "It evaluates the position, shows the best moves and reviews the game. It is downloaded once and kept in this browser.",
+            ));
+            let free = crate::platform::storage_free().map(|f| {
+                trf(
+                    "free for the site: {free}",
+                    &[("free", &crate::platform::size_text(f))],
+                )
+            });
+            let size = trf("Size: {size}", &[("size", &format!("{size} MB"))]);
+            ui.label(RichText::new(free.map_or(size.clone(), |f| format!("{size} · {f}"))).weak());
         } else {
             ui.label(
                 RichText::new(trf(
@@ -295,11 +305,12 @@ impl EngineOffer {
                         }
                     }
                 }
-                // Another engine does not do for the game analysis.
+                // Another engine does not do for the game analysis (and a browser has
+                // no engine programs).
+                #[cfg(not(web))]
                 if self.mode != Mode::Own {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         if ui.button(tr("Choose engine file…")).clicked() {
-                            #[cfg(not(web))]
                             events.push(OfferEvent::ChooseFile);
                             self.open = false;
                             self.pending = None;
@@ -406,10 +417,10 @@ impl EngineOffer {
                     self.failure = None;
                     self.pending = None;
                 }
+                #[cfg(not(web))]
                 if self.mode != Mode::Own {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         if ui.button(tr("Choose engine file…")).clicked() {
-                            #[cfg(not(web))]
                             events.push(OfferEvent::ChooseFile);
                             self.open = false;
                             self.failure = None;
