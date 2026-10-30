@@ -35,10 +35,7 @@ try {
   // The games in one file, reviewed one by one.
   await s.run({ key: 'o', mods: ['ctrl'] }, outDir);
   await t.waitFor(`!!document.getElementById('cp-open-files')`, 5000);
-  const input = await s.ff.browser.send('script.evaluate', {
-    expression: `document.getElementById('cp-open-files')`, target: { context: t.context }, awaitPromise: false,
-  });
-  await s.ff.browser.send('input.setFiles', { context: t.context, element: { sharedId: input.result.sharedId }, files: [all] });
+  await t.setFiles('cp-open-files', [all]);
   await sleep(3000);
   await s.run({ shot: 'review-0-opened.png' }, outDir);
   for (let i = 0; i < games.length; i++) {

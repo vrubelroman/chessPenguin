@@ -52,17 +52,14 @@ try {
   await step({ shot: 's2-4-settings.png' });
   await step({ click: [1366, 77] });
   // Two files opened; one kept as a copy.
-  const a = join(s.ff.profile, 'Kept games.pgn');
-  const b = join(s.ff.profile, 'Visit games.pgn');
+  const a = join(s.b.profile, 'Kept games.pgn');
+  const b = join(s.b.profile, 'Visit games.pgn');
   copyFileSync(join(root, 'examples/alekhine.pgn'), a);
   copyFileSync(join(root, 'examples/classics.pgn'), b);
   for (const file of [b, a]) {
     await step({ key: 'o', mods: ['ctrl'] });
     await t.waitFor(`!!document.getElementById('cp-open-files')`, 5000);
-    const input = await s.ff.browser.send('script.evaluate', {
-      expression: `document.getElementById('cp-open-files')`, target: { context: t.context }, awaitPromise: false,
-    });
-    await s.ff.browser.send('input.setFiles', { context: t.context, element: { sharedId: input.result.sharedId }, files: [file] });
+    await t.setFiles('cp-open-files', [file]);
     await sleep(2500);
   }
   await step({ shot: 's2-5-opened.png' });
