@@ -1053,10 +1053,21 @@ impl PrepList {
                         .on_hover_text(tr("Double-click to open"));
                     open |= found && title.double_clicked();
                     let mut about = vec![base_name(&item.path)];
-                    if item.period != Period::All {
-                        about.push(period_label(item.period));
+                    // «за 2 года · 8 партий», «последние 100»: the number once.
+                    match item.period {
+                        Period::All => about.push(crate::i18n::games(item.games as usize)),
+                        Period::Last(n) => about.push(trf("last {n}", &[("n", &n)])),
+                        p => {
+                            let label = period_label(p);
+                            let mut chars = label.chars();
+                            let lower = chars
+                                .next()
+                                .map(|c| c.to_lowercase().chain(chars).collect())
+                                .unwrap_or_default();
+                            about.push(lower);
+                            about.push(crate::i18n::games(item.games as usize));
+                        }
                     }
-                    about.push(crate::i18n::games(item.games as usize));
                     about.push(
                         match item.color {
                             ColorChoice::White => tr("as White"),
@@ -1950,6 +1961,17 @@ impl PrepScreen {
         if !keep {
             self.select(Selection::None);
         }
+    }
+
+    /// Games of the colour(s) shown.
+    fn shown_games(&self) -> usize {
+        self.report.as_ref().map_or(0, |r| {
+            self.color
+                .colours()
+                .iter()
+                .map(|&w| r.color(w).games.len())
+                .sum()
+        })
     }
 
     /// What the report is built with.
@@ -3002,7 +3024,7 @@ impl PrepScreen {
             let more = self.names.len().saturating_sub(1);
             let mut parts = Vec::new();
             if let Some(r) = &self.report {
-                parts.push(crate::i18n::games(r.games.len()));
+                parts.push(crate::i18n::games(self.shown_games()));
                 let p = period(&r.games);
                 if !p.is_empty() {
                     parts.push(p);
@@ -3043,7 +3065,7 @@ impl PrepScreen {
                 {
                     actions.push(PrepAction::OpenSettings);
                 }
-                let games = self.report.as_ref().map_or(0, |r| r.games.len());
+                let games = self.shown_games();
                 if self.saved {
                     // A quiet mark, not a button that looks unavailable.
                     ui.label(RichText::new(save_label).color(ui.visuals().selection.bg_fill))
@@ -3163,7 +3185,9 @@ impl PrepScreen {
             .find(|l| text_width(ui, l, egui::TextStyle::Button) + pad + 20.0 + gap <= room)
             .unwrap_or_else(|| trf("{n} m.", &[("n", &moves)]));
             let mut new_plies = None;
+            let depth_w = text_width(ui, &depth_label, egui::TextStyle::Button) + 8.0;
             egui::ComboBox::from_id_salt("prep_plies")
+                .width(depth_w)
                 .selected_text(depth_label)
                 .show_ui(ui, |ui| {
                     for m in [6usize, 10, 15] {
@@ -3240,7 +3264,10 @@ impl PrepScreen {
         .find(|t| text_width(ui, t, egui::TextStyle::Button) + pad <= room)
         .unwrap_or_else(|| number(shown));
         let mut picked = None;
+        // As wide as its text: the room is the row's.
+        let width = text_width(ui, &selected, egui::TextStyle::Button) + 8.0;
         let r = egui::ComboBox::from_id_salt("prep_period")
+            .width(width)
             .selected_text(selected)
             .show_ui(ui, |ui| {
                 for p in PERIODS {
@@ -3377,7 +3404,11 @@ impl PrepScreen {
                 ui.label(RichText::new(label).weak()).on_hover_text(hint);
             }
             EngineTexts::Button { label, note } => {
-                if crate::widgets::primary(ui, &label)
+                // Nothing to search in no games.
+                let some = self.shown_games() > 0;
+                if ui
+                    .add_enabled_ui(some, |ui| crate::widgets::primary(ui, &label))
+                    .inner
                     .on_hover_text(hint)
                     .clicked()
                 {
@@ -4462,7 +4493,11 @@ impl PrepScreen {
         if report.period != Period::All && report.count(report.period, side).games == 0 {
             let all = report.count(Period::All, side).games;
             ui.add_space(12.0);
-            ui.label(tr("No games in this period"));
+            ui.label(match self.color {
+                ColorChoice::White => tr("No games as White in this period"),
+                ColorChoice::Black => tr("No games as Black in this period"),
+                ColorChoice::Both => tr("No games in this period"),
+            });
             if all > 0
                 && ui
                     .button(format!("{} · {}", period_label(Period::All), grouped(all)))
