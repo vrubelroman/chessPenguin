@@ -16045,6 +16045,17 @@ const ROWS: &[[&str; 9]] = &[
         "Baza topilmadi: faylni joyiga qaytaring yoki tayyorgarlikni o‘chiring",
         "База табылмады: файлды орнына қайтарыңыз немесе дайындықты жойыңыз",
     ],
+    [
+        "The player is not in the database: {name}",
+        "Игрока нет в базе: {name}",
+        "Le joueur n’est pas dans la base : {name}",
+        "Der Spieler ist nicht in der Datenbank: {name}",
+        "El jugador no está en la base: {name}",
+        "Il giocatore non è nel database: {name}",
+        "O jogador não está na base: {name}",
+        "O‘yinchi bazada yo‘q: {name}",
+        "Ойыншы базада жоқ: {name}",
+    ],
 ];
 
 #[cfg(test)]

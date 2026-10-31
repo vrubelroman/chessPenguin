@@ -1735,7 +1735,8 @@ impl PrepScreen {
         let mut cache = dir.as_deref().map(PositionCache::load).unwrap_or_default();
         // A saved preparation of this player: its depth and games, its report.
         let saved_dir = crate::prep_saved::dir();
-        let saved_id = crate::prep_saved::id(&start.path, &start.player);
+        let names = start.player.names(&db);
+        let saved_id = crate::prep_saved::id(&start.path, &names);
         let saved = saved_dir
             .as_deref()
             .and_then(|d| crate::prep_saved::get(d, &saved_id));
@@ -1759,7 +1760,10 @@ impl PrepScreen {
             if r.search != game_review::SEARCH_VERSION {
                 return None;
             }
-            if r.fingerprint == prep::fingerprint(&db) && r.options() == options {
+            if r.fingerprint == prep::fingerprint(&db)
+                && r.options() == options
+                && r.player == start.player
+            {
                 return Some(r);
             }
             for (k, e) in r.evals {
@@ -1767,7 +1771,6 @@ impl PrepScreen {
             }
             None
         });
-        let names = start.player.names(&db);
         let mut screen = PrepScreen {
             serial: crate::engine_offer::next_serial(),
             db_name: base_name(&start.path),
@@ -1920,6 +1923,10 @@ impl PrepScreen {
     /// The same player asked for again from the dialog: its colour and book.
     pub fn reopen(&mut self, side: ColorChoice, book: BookChoice) {
         self.shown = true;
+        // Deleted from «Preparations» while this screen was hidden: «Save» again.
+        self.saved &= crate::prep_saved::dir().is_some_and(|d| {
+            crate::prep_saved::get(&d, &crate::prep_saved::id(&self.path, &self.names)).is_some()
+        });
         self.set_color(side);
         if book != self.book {
             self.book = book;
@@ -1929,6 +1936,8 @@ impl PrepScreen {
     }
 
     fn set_color(&mut self, color: ColorChoice) {
+        // The colour a saved preparation opens with.
+        self.dirty |= self.saved && color != self.color;
         self.color = color;
         // A selection of a colour no longer shown is dropped.
         let keep = match &self.selection {
@@ -2463,7 +2472,7 @@ impl PrepScreen {
             }
             // Deleted from «Preparations» meanwhile: not written back.
             self.saved &= crate::prep_saved::dir().is_some_and(|d| {
-                crate::prep_saved::get(&d, &crate::prep_saved::id(&self.path, &self.player))
+                crate::prep_saved::get(&d, &crate::prep_saved::id(&self.path, &self.names))
                     .is_some()
             });
             if self.saved
@@ -2485,7 +2494,7 @@ impl PrepScreen {
         let Some(report) = &self.report else {
             return Ok(());
         };
-        let id = crate::prep_saved::id(&self.path, &self.player);
+        let id = crate::prep_saved::id(&self.path, &self.names);
         let title = crate::prep_saved::get(&dir, &id)
             .map(|m| m.title)
             .unwrap_or_else(|| self.names.first().cloned().unwrap_or_default());

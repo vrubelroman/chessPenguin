@@ -38,33 +38,73 @@ pub struct Chosen {
     pub undated_out: usize,
 }
 
-/// The newest date of the games (0: none dated).
-pub fn newest(pool: &[PoolGame]) -> u32 {
-    pool.iter().map(|g| g.date).max().unwrap_or(0)
+/// The latest day a PGN date can mean: «2026.??.??» → 2026.12.31, «2026.02.??» →
+/// 2026.02.31 (only compared, never shown).
+fn latest(date: u32) -> u32 {
+    match (date / 100 % 100, date % 100) {
+        (0, _) => date / 10000 * 10000 + 1231,
+        (_, 0) => date + 31,
+        _ => date,
+    }
 }
 
-/// The first date within `months` before `newest` (`yyyymmdd`).
-fn cutoff(newest: u32, months: u16) -> u32 {
-    let (y, month, d) = (newest / 10000, newest / 100 % 100, newest % 100);
-    let total = (y * 12 + month.max(1) - 1).saturating_sub(u32::from(months));
-    let (y, m) = (total / 12, total % 12 + 1);
-    // A newest date without a month: the whole year it was in.
-    let (m, d) = if month == 0 { (0, 0) } else { (m, d) };
-    y * 10000 + m * 100 + d
+/// Today as `yyyymmdd` (UTC).
+fn today() -> u32 {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() / 86_400) as i64;
+    // Days since 1970 to the civil date (H. Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y * 10000 + m * 100 + d) as u32
+}
+
+/// The date of the player's newest game as written (0: none dated). A date after
+/// `today` is a typo («2206») and does not count as the newest.
+fn newest_at(pool: &[PoolGame], today: u32) -> u32 {
+    pool.iter()
+        .filter(|g| g.date != 0 && g.date / 10000 * 10000 <= today)
+        .max_by_key(|g| (latest(g.date).min(today), g.date))
+        .map_or(0, |g| g.date)
+}
+
+/// The date of the player's newest game as written (0: none dated).
+pub fn newest(pool: &[PoolGame]) -> u32 {
+    newest_at(pool, today())
+}
+
+/// The first day within `months` before the day `end` (`yyyymmdd`).
+fn cutoff(end: u32, months: u16) -> u32 {
+    let (y, m, d) = (end / 10000, end / 100 % 100, end % 100);
+    let total = (y * 12 + m - 1).saturating_sub(u32::from(months));
+    (total / 12) * 10000 + (total % 12 + 1) * 100 + d
 }
 
 /// The games `period` takes: (record, the player had White), in record order.
 pub fn choose(pool: &[PoolGame], period: Period) -> Vec<(u32, bool)> {
+    choose_at(pool, period, today())
+}
+
+/// [`choose`] on the day `today`. A partly known date is in a period when any day it
+/// can mean is.
+fn choose_at(pool: &[PoolGame], period: Period, today: u32) -> Vec<(u32, bool)> {
     let mut out: Vec<(u32, bool)> = match period {
         Period::All => pool.iter().map(|g| (g.index, g.white)).collect(),
         Period::Months(months) => {
-            let newest = newest(pool);
+            let newest = newest_at(pool, today);
             if newest == 0 {
-                return choose(pool, Period::All);
+                return choose_at(pool, Period::All, today);
             }
-            let from = cutoff(newest, months);
+            let from = cutoff(latest(newest).min(today), months);
             pool.iter()
-                .filter(|g| g.date != 0 && g.date >= from)
+                .filter(|g| g.date != 0 && latest(g.date) >= from)
                 .map(|g| (g.index, g.white))
                 .collect()
         }
@@ -124,7 +164,31 @@ mod tests {
         ];
         assert_eq!(cutoff(20260301, 12), 20250301);
         assert_eq!(cutoff(20260115, 1), 20251215);
-        assert_eq!(cutoff(20260000, 24), 20240000);
+        // Partly known dates.
+        assert_eq!(latest(20260000), 20261231);
+        assert_eq!(latest(20260200), 20260231);
+        let today = 20261031;
+        let year_only = [
+            g(0, true, 20260000),
+            g(1, true, 20250301),
+            g(2, true, 20260700),
+        ];
+        // «2026» is up to today: three months back is 2026.07.31 — July is in.
+        assert_eq!(
+            choose_at(&year_only, Period::Months(3), today),
+            vec![(0, true), (2, true)]
+        );
+        // A typo from the future is not the newest game.
+        let typo = [
+            g(0, true, 22060101),
+            g(1, true, 20260301),
+            g(2, true, 20250101),
+        ];
+        assert_eq!(newest_at(&typo, today), 20260301);
+        assert_eq!(
+            choose_at(&typo, Period::Months(6), today),
+            vec![(0, true), (1, true)]
+        );
         assert_eq!(
             choose(&pool, Period::Months(12)),
             vec![(3, true), (5, true)]

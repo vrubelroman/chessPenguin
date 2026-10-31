@@ -289,7 +289,8 @@ pub struct App {
     /// The library's «Preparations» window, and a saved preparation waiting for its
     /// database to be read.
     prep_list: Option<crate::prep_ui::PrepList>,
-    prep_waiting: Option<crate::prep_ui::PrepStart>,
+    /// The names of its player, found again in the database once it is read.
+    prep_waiting: Option<(crate::prep_ui::PrepStart, Vec<String>)>,
     /// Quitting while the opening errors are searched: asked first; «Quit» answered.
     prep_quit_ask: bool,
     prep_quit_ok: bool,
@@ -941,9 +942,31 @@ impl App {
 
     /// «🗐 Preparations», and a saved preparation opened once its database is read.
     fn prep_list(&mut self, ctx: &egui::Context) {
-        if let Some(start) = self.prep_waiting.take() {
-            if self.library.database(&start.path).is_some() {
-                self.open_prep(ctx, start);
+        if let Some((mut start, names)) = self.prep_waiting.take() {
+            if let Some(db) = self.library.database(&start.path) {
+                // The player by his names: the database's ids of them may have changed.
+                let mut ids = Vec::new();
+                let mut missing = None;
+                for name in &names {
+                    let (found, _) = prep::candidates(&db, name, 50);
+                    match found.iter().find(|c| c.name == *name) {
+                        Some(c) => ids.push(c.id),
+                        None => missing = Some(name.clone()),
+                    }
+                }
+                match missing {
+                    Some(name) => self.toast(
+                        ctx,
+                        trf(
+                            "The player is not in the database: {name}",
+                            &[("name", &name)],
+                        ),
+                    ),
+                    None => {
+                        start.player = prep::Player::new(ids);
+                        self.open_prep(ctx, start);
+                    }
+                }
             } else if let Some(e) = self.library.failure(&start.path) {
                 let e = e.to_owned();
                 self.toast(
@@ -951,7 +974,7 @@ impl App {
                     trf("This database cannot be opened: {e}", &[("e", &e)]),
                 );
             } else {
-                self.prep_waiting = Some(start);
+                self.prep_waiting = Some((start, names));
             }
         }
         let Some(list) = self.prep_list.as_mut() else {
@@ -998,7 +1021,7 @@ impl App {
                     self.library.load(&start.path, ctx);
                     self.toast(ctx, tr("Opening the database…"));
                 }
-                self.prep_waiting = Some(start);
+                self.prep_waiting = Some((start, meta.names));
                 ctx.request_repaint();
             }
             None => {}

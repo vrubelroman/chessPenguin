@@ -40,8 +40,10 @@ pub fn dir() -> Option<PathBuf> {
     crate::platform::data_dir().map(|d| d.join("preparations"))
 }
 
-/// The id of the preparation of `player` in the database `path`.
-pub fn id(path: &Path, player: &Player) -> String {
+/// The id of the preparation of the player named `names` in the database `path`: by
+/// the names, not the database's name ids, which change when a game before his first
+/// one is deleted or the database is replaced by a new version.
+pub fn id(path: &Path, names: &[String]) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |b: u8| {
         h ^= u64::from(b);
@@ -50,8 +52,12 @@ pub fn id(path: &Path, player: &Player) -> String {
     for b in path.to_string_lossy().bytes() {
         eat(b);
     }
-    for id in &player.ids {
-        for b in id.to_le_bytes() {
+    let mut names: Vec<&String> = names.iter().collect();
+    names.sort();
+    names.dedup();
+    for n in names {
+        eat(0);
+        for b in n.bytes() {
             eat(b);
         }
     }
@@ -110,7 +116,7 @@ pub fn report(dir: &Path, id: &str) -> Option<PrepReport> {
 /// Keeps `meta` and `report` as the preparation of their player and database (the
 /// report first: a list entry never points to a missing report).
 pub fn save(dir: &Path, meta: &SavedPrep, report: &PrepReport) -> std::io::Result<()> {
-    let id = id(&meta.path, &meta.player);
+    let id = id(&meta.path, &meta.names);
     let bytes = serde_json::to_vec(report).map_err(std::io::Error::other)?;
     write_atomic(&report_path(dir, &id), &bytes)?;
     let bytes = serde_json::to_vec_pretty(meta).map_err(std::io::Error::other)?;
@@ -183,7 +189,7 @@ mod tests {
         let l = list(&dir);
         assert_eq!(l.len(), 2);
         assert_eq!(l[0].1, a2);
-        let ida = id(&a.path, &a.player);
+        let ida = id(&a.path, &a.names);
         assert!(report_path(&dir, &ida).exists());
         assert!(super::report(&dir, &ida).is_some());
         rename(&dir, &ida, "Вафин — финал").expect("rename");

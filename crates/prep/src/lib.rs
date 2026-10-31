@@ -237,18 +237,26 @@ pub fn build(
     cancel: &AtomicBool,
 ) -> Option<PrepReport> {
     let found = games_of(db, player, options.side, cancel)?;
-    let pool: Vec<PoolGame> = found
+    // Every game is read (its first plies: a moment), so that the pool and the counts of
+    // the periods are of the games a report can take: not those from a set-up position.
+    let collected = games::collect(db, &found, options.plies, progress, cancel)?;
+    let pool: Vec<PoolGame> = collected
+        .games
         .iter()
-        .map(|&(index, white)| PoolGame {
-            index,
-            white,
-            date: chess_import::pgn_catalog::date_number(&db.row(index as usize).date),
+        .map(|g| PoolGame {
+            index: g.index,
+            white: g.white,
+            date: g.date_number(),
         })
         .collect();
-    let chosen = period::choose(&pool, options.period);
-    let collected = games::collect(db, &chosen, options.plies, progress, cancel)?;
+    let chosen: std::collections::HashSet<(u32, bool)> =
+        period::choose(&pool, options.period).into_iter().collect();
     let mut openings = collected.openings;
-    let games = collected.games;
+    let games: Vec<GameInfo> = collected
+        .games
+        .into_iter()
+        .filter(|g| chosen.contains(&(g.index, g.white)))
+        .collect();
     let mut evals = HashMap::new();
     for (key, pos) in &collected.terminal {
         if let Some(eval) = game_review::terminal_eval(pos) {
@@ -888,8 +896,9 @@ mod tests {
         .expect("report");
         let dates: Vec<&str> = recent.games.iter().map(|g| g.date.as_str()).collect();
         assert_eq!(dates, ["2026.02.11", "2026.03.12", "2026.04.01"]);
-        // The pool: every game of his, a set-up one too (skipped from the report).
-        let all = report.games.len() + report.skipped as usize;
+        // The pool: the games a report can take (not the set-up one it skips).
+        let all = report.games.len();
+        assert_eq!(report.skipped, 1);
         assert_eq!(recent.pool.len(), all);
         assert_eq!(recent.count(Period::All, Side::Any).games, all);
         assert_eq!(recent.count(Period::Months(2), Side::Any).games, 3);
