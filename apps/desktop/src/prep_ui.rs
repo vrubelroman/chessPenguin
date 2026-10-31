@@ -370,11 +370,12 @@ pub struct PrepStart {
 // ----- the period ------------------------------------------------------------------
 
 /// The periods offered, in the menu's order.
-const PERIODS: [Period; 7] = [
+const PERIODS: [Period; 8] = [
     Period::All,
+    Period::Months(3),
+    Period::Months(6),
     Period::Months(12),
     Period::Months(24),
-    Period::Months(60),
     Period::Last(50),
     Period::Last(100),
     Period::Last(200),
@@ -385,7 +386,8 @@ fn period_label(p: Period) -> String {
         Period::All => tr("All games").to_owned(),
         Period::Months(12) => tr("Last year").to_owned(),
         Period::Months(24) => tr("Last 2 years").to_owned(),
-        Period::Months(60) => tr("Last 5 years").to_owned(),
+        Period::Months(3) => tr("Last 3 months").to_owned(),
+        Period::Months(6) => tr("Last 6 months").to_owned(),
         Period::Months(m) => trf("Last {n} months", &[("n", &m)]),
         Period::Last(n) => trf("Last {n} games", &[("n", &n)]),
     }
