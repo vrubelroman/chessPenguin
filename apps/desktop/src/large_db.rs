@@ -341,6 +341,8 @@ pub struct LargeView {
     /// «Prepare against…» was asked (the panel's button, a row's menu): the library
     /// takes it (docs/design/opponent-prep.md §2.1).
     pub prepare: Option<PrepEntry>,
+    /// The web page of the game whose context menu is open (its record, the link).
+    menu_link: Option<(usize, Option<crate::game_link::GameLink>)>,
 }
 
 impl LargeView {
@@ -426,6 +428,7 @@ impl LargeView {
             drawer_asked: false,
             drawer_top: 0.0,
             prepare: None,
+            menu_link: None,
         }
     }
 
@@ -2258,6 +2261,19 @@ impl LargeView {
                     resp.context_menu(|ui| {
                         if ui.button(tr("Open")).clicked() {
                             opened = Some(index);
+                            ui.close();
+                        }
+                        // The game's page, when its tags have one (read once per menu).
+                        if self.menu_link.as_ref().is_none_or(|(i, _)| *i != index) {
+                            let link = db.load_game(index).and_then(|p| {
+                                crate::game_link::of(|t| p.game.tag(t).map(str::to_owned))
+                            });
+                            self.menu_link = Some((index, link));
+                        }
+                        if let Some((_, Some(link))) = &self.menu_link
+                            && ui.button(link.label()).clicked()
+                        {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(link.at(0, false)));
                             ui.close();
                         }
                         // One item per player of the game (the same name once).

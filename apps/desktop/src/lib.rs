@@ -24,6 +24,7 @@ mod engine_offer;
 mod engines;
 mod examples;
 mod file_state;
+mod game_link;
 mod game_view;
 #[cfg(not(web))]
 mod graphics;
@@ -41,6 +42,7 @@ mod own_db;
 pub mod platform;
 mod play;
 mod player_games;
+mod prep_saved;
 mod prep_ui;
 mod reference;
 mod review;

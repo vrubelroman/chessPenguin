@@ -286,6 +286,11 @@ pub struct App {
     /// between the library and the game (opponent-prep.md §3.1).
     prep_dialog: Option<PrepDialog>,
     prep: Option<PrepScreen>,
+    /// The library's «Preparations» window, and a saved preparation waiting for its
+    /// database to be read.
+    prep_list: Option<crate::prep_ui::PrepList>,
+    /// The names of its player, found again in the database once it is read.
+    prep_waiting: Option<(crate::prep_ui::PrepStart, Vec<String>)>,
     /// Quitting while the opening errors are searched: asked first; «Quit» answered.
     prep_quit_ask: bool,
     prep_quit_ok: bool,
@@ -511,6 +516,8 @@ impl App {
             reference: Default::default(),
             prep_dialog: None,
             prep: None,
+            prep_list: None,
+            prep_waiting: None,
             prep_quit_ask: false,
             prep_quit_ok: false,
             engine_offer: crate::engine_offer::EngineOffer::new(),
@@ -758,6 +765,11 @@ impl App {
             };
             self.prep_dialog = Some(PrepDialog::new(path, entry));
         }
+        // `CP_PREP_LIST=1`: the «Preparations» window at the start (screenshots).
+        if self.prep_list.is_none() && std::env::var_os("CP_PREP_LIST").is_some() {
+            static SHOWN: std::sync::Once = std::sync::Once::new();
+            SHOWN.call_once(|| self.prep_list = Some(crate::prep_ui::PrepList::new()));
+        }
         let Some(index) = self.debug.open else { return };
         let Some(path) = self.settings.databases.first().cloned() else {
             return;
@@ -924,6 +936,96 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Some(false) => self.prep_quit_ask = false,
+            None => {}
+        }
+    }
+
+    /// «🗐 Preparations», and a saved preparation opened once its database is read.
+    fn prep_list(&mut self, ctx: &egui::Context) {
+        if let Some((mut start, names)) = self.prep_waiting.take() {
+            if let Some(db) = self.library.database(&start.path) {
+                // The player by his names: the database's ids of them may have changed.
+                let mut ids = Vec::new();
+                let mut missing = None;
+                for name in &names {
+                    // Every id of the name (a ChessBase database can have two).
+                    let (found, _) = prep::candidates(&db, name, 50);
+                    let before = ids.len();
+                    ids.extend(found.iter().filter(|c| c.name == *name).map(|c| c.id));
+                    if ids.len() == before {
+                        missing = Some(name.clone());
+                    }
+                }
+                match missing {
+                    Some(name) => self.toast(
+                        ctx,
+                        trf(
+                            "The player is not in the database: {name}",
+                            &[("name", &name)],
+                        ),
+                    ),
+                    None => {
+                        start.player = prep::Player::new(ids);
+                        self.open_prep(ctx, start);
+                    }
+                }
+            } else if let Some(e) = self.library.failure(&start.path) {
+                let e = e.to_owned();
+                self.toast(
+                    ctx,
+                    trf("This database cannot be opened: {e}", &[("e", &e)]),
+                );
+            } else {
+                self.prep_waiting = Some((start, names));
+            }
+        }
+        let Some(list) = self.prep_list.as_mut() else {
+            return;
+        };
+        let can_new = !self.settings.databases.is_empty();
+        match list.show(ctx, can_new) {
+            Some(crate::prep_ui::ListOutcome::Close) => self.prep_list = None,
+            Some(crate::prep_ui::ListOutcome::New) => {
+                self.prep_list = None;
+                let (path, entry) = match self.library.prep_entry() {
+                    Some((path, entry)) => (path, entry.unwrap_or_default()),
+                    None => match self.settings.databases.first() {
+                        Some(p) => (p.clone(), Default::default()),
+                        None => return,
+                    },
+                };
+                self.prep_dialog = Some(PrepDialog::new(path, entry));
+            }
+            Some(crate::prep_ui::ListOutcome::Open(id)) => {
+                let Some(meta) = crate::prep_saved::dir()
+                    .as_deref()
+                    .and_then(|d| crate::prep_saved::get(d, &id))
+                else {
+                    return;
+                };
+                self.prep_list = None;
+                if !self.settings.databases.contains(&meta.path) {
+                    self.settings.touch_database(&meta.path);
+                    self.settings_dirty = true;
+                }
+                let dbs = self.shelf_dbs();
+                let start = crate::prep_ui::PrepStart {
+                    book: crate::prep_ui::BookChoice::from_setting(
+                        Some(&meta.book),
+                        &meta.path,
+                        &dbs,
+                    ),
+                    path: meta.path,
+                    player: meta.player,
+                    side: meta.color,
+                };
+                if self.library.database(&start.path).is_none() {
+                    self.library.load(&start.path, ctx);
+                    self.toast(ctx, tr("Opening the database…"));
+                }
+                self.prep_waiting = Some((start, meta.names));
+                ctx.request_repaint();
+            }
             None => {}
         }
     }
@@ -3942,6 +4044,9 @@ impl eframe::App for App {
                     LibraryAction::PrepareAgainst { path, entry } => {
                         self.prep_dialog = Some(PrepDialog::new(path, entry));
                     }
+                    LibraryAction::Preparations => {
+                        self.prep_list = Some(crate::prep_ui::PrepList::new());
+                    }
                 }
             }
         }
@@ -4020,6 +4125,7 @@ impl eframe::App for App {
 
         self.confirm_dialog(&ctx);
         self.own_dialogs(&ctx);
+        self.prep_list(&ctx);
         self.prep_dialog(&ctx);
         self.prep_quit_question(&ctx);
         // Whether the database the dialog names is there, as last found.

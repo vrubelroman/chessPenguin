@@ -87,6 +87,8 @@ pub enum LibraryAction {
         path: PathBuf,
         index: usize,
     },
+    /// «🗐 Preparations»: the saved preparations against opponents.
+    Preparations,
     /// «Prepare against…» for a player of this database (opponent-prep.md §2).
     PrepareAgainst {
         path: PathBuf,
@@ -148,11 +150,24 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
         ]
     };
     let play = crate::platform::CAPS.play;
-    let groups = if play { 2.0 } else { 1.0 };
+    let prep = crate::platform::CAPS.prep;
+    let groups = 1.0 + f32::from(u8::from(play)) + f32::from(u8::from(prep));
     texts[..if play { 4 } else { 3 }]
         .iter()
         .map(|t| button_w(ui, t))
         .sum::<f32>()
+        + if prep {
+            button_w(
+                ui,
+                if icons {
+                    "🗐"
+                } else {
+                    tr("🗐 Preparations")
+                },
+            )
+        } else {
+            0.0
+        }
         + update.map_or(0.0, |v| button_w(ui, v))
         + groups * GROUP_GAP
 }
@@ -791,6 +806,25 @@ impl Library {
         if crate::platform::CAPS.play {
             ui.separator();
             self.play_button(ui, icons, actions);
+        }
+        if crate::platform::CAPS.prep {
+            ui.separator();
+            let label = if icons {
+                "🗐"
+            } else {
+                tr("🗐 Preparations")
+            };
+            if ui
+                .button(label)
+                .on_hover_text(shelf_hint(
+                    icons,
+                    tr("🗐 Preparations"),
+                    tr("Preparations against opponents: the saved ones and a new one"),
+                ))
+                .clicked()
+            {
+                actions.push(LibraryAction::Preparations);
+            }
         }
     }
 

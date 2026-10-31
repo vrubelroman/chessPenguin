@@ -17,8 +17,8 @@ use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Ui, vec2}
 use egui_extras::{Column, TableBuilder};
 use game_review::{JobEvent, JobSettings, Judgement};
 use prep::{
-    BookExit, BookOptions, Candidate, ErrorCounts, GameInfo, Options, Player, PositionCache,
-    PrepReport, Tally,
+    BookExit, BookOptions, Candidate, ErrorCounts, GameInfo, Options, Period, Player,
+    PositionCache, PrepReport, Tally,
 };
 use serde::{Deserialize, Serialize};
 use shakmaty::uci::UciMove;
@@ -208,7 +208,7 @@ fn sort_col<K: Copy + PartialEq>(
 }
 
 /// The colour switch of the report.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ColorChoice {
     White,
     Black,
@@ -216,7 +216,7 @@ pub enum ColorChoice {
 }
 
 impl ColorChoice {
-    fn side(self) -> Side {
+    pub fn side(self) -> Side {
         match self {
             ColorChoice::White => Side::White,
             ColorChoice::Black => Side::Black,
@@ -261,7 +261,7 @@ pub enum BookChoice {
 impl BookChoice {
     /// From the setting: an empty path is «none», the report's database «the same»,
     /// `None` the largest database on the shelf but the report's.
-    fn from_setting(setting: Option<&Path>, own: &Path, dbs: &[RefDb]) -> BookChoice {
+    pub fn from_setting(setting: Option<&Path>, own: &Path, dbs: &[RefDb]) -> BookChoice {
         match setting {
             Some(p) if p.as_os_str().is_empty() => BookChoice::None,
             Some(p) if p == own => BookChoice::Same,
@@ -274,7 +274,7 @@ impl BookChoice {
         }
     }
 
-    fn setting(&self, own: &Path) -> PathBuf {
+    pub fn setting(&self, own: &Path) -> PathBuf {
         match self {
             BookChoice::None => PathBuf::new(),
             BookChoice::Database(p) => p.clone(),
@@ -365,6 +365,53 @@ pub struct PrepStart {
     pub player: Player,
     pub side: ColorChoice,
     pub book: BookChoice,
+}
+
+// ----- the period ------------------------------------------------------------------
+
+/// The periods offered, in the menu's order.
+const PERIODS: [Period; 8] = [
+    Period::All,
+    Period::Months(3),
+    Period::Months(6),
+    Period::Months(12),
+    Period::Months(24),
+    Period::Last(50),
+    Period::Last(100),
+    Period::Last(200),
+];
+
+/// The period in a narrow row: «3 mo.», «Last 100».
+fn period_short(p: Period) -> String {
+    match p {
+        Period::All => tr("All").to_owned(),
+        Period::Months(12) => tr("1 yr").to_owned(),
+        Period::Months(24) => tr("2 yrs").to_owned(),
+        Period::Months(m) => trf("{n} mo.", &[("n", &m)]),
+        Period::Last(n) => trf("Last {n}", &[("n", &n)]),
+    }
+}
+
+/// `yyyymmdd` as «18.10.2026», «10.2026», «2026».
+fn shown_date(d: u32) -> String {
+    match (d / 10000, d / 100 % 100, d % 100) {
+        (0, ..) => String::new(),
+        (y, 0, _) => y.to_string(),
+        (y, m, 0) => format!("{m:02}.{y}"),
+        (y, m, day) => format!("{day:02}.{m:02}.{y}"),
+    }
+}
+
+fn period_label(p: Period) -> String {
+    match p {
+        Period::All => tr("All games").to_owned(),
+        Period::Months(12) => tr("Last year").to_owned(),
+        Period::Months(24) => tr("Last 2 years").to_owned(),
+        Period::Months(3) => tr("Last 3 months").to_owned(),
+        Period::Months(6) => tr("Last 6 months").to_owned(),
+        Period::Months(m) => trf("Last {n} months", &[("n", &m)]),
+        Period::Last(n) => trf("Last {n} games", &[("n", &n)]),
+    }
 }
 
 pub enum DialogOutcome {
@@ -875,6 +922,281 @@ fn base_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+// ----- the saved preparations -----------------------------------------------------
+
+/// What the «Preparations» window asks of the application.
+pub enum ListOutcome {
+    /// The saved preparation of this id.
+    Open(String),
+    /// «New preparation…»: the dialog for the chosen database.
+    New,
+    Close,
+}
+
+/// The library's «Preparations»: the saved ones, to open, rename or delete.
+pub struct PrepList {
+    items: Vec<(String, crate::prep_saved::SavedPrep)>,
+    /// The entry being renamed and the name typed.
+    renaming: Option<(String, String)>,
+    /// The entry asked about before deleting.
+    deleting: Option<String>,
+    error: Option<String>,
+}
+
+impl PrepList {
+    pub fn new() -> Self {
+        let mut list = PrepList {
+            items: Vec::new(),
+            renaming: None,
+            deleting: None,
+            error: None,
+        };
+        list.reload();
+        list
+    }
+
+    fn reload(&mut self) {
+        self.items = crate::prep_saved::dir()
+            .as_deref()
+            .map(crate::prep_saved::list)
+            .unwrap_or_default();
+    }
+
+    /// `can_new`: a database is chosen to prepare in.
+    pub fn show(&mut self, ctx: &egui::Context, can_new: bool) -> Option<ListOutcome> {
+        let mut out = None;
+        // Escape while renaming ends the renaming only.
+        let was_renaming = self.renaming.is_some();
+        let modal = egui::Modal::new(egui::Id::new("prep_list")).show(ctx, |ui| {
+            let screen = ctx.content_rect();
+            ui.set_width((screen.width() - 40.0).min(560.0));
+            ui.heading(tr("Preparations"));
+            ui.add_space(6.0);
+            if self.items.is_empty() {
+                ui.label(
+                    RichText::new(tr(
+                        "Nothing saved yet. Prepare against a player and press «Save» on the report.",
+                    ))
+                    .weak(),
+                );
+            }
+            egui::ScrollArea::vertical()
+                .max_height((screen.height() - 180.0).max(120.0))
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (id, item) in self.items.clone() {
+                        self.row(ui, &id, &item, &mut out);
+                        ui.separator();
+                    }
+                });
+            if let Some(e) = &self.error {
+                ui.label(RichText::new(e).color(ui.visuals().warn_fg_color));
+            }
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(tr("Close")).clicked() {
+                    out = Some(ListOutcome::Close);
+                }
+                if ui
+                    .add_enabled(can_new, egui::Button::new(tr("♟ New preparation…")))
+                    .on_disabled_hover_text(tr("Add a database to the shelf first"))
+                    .on_hover_text(tr("Choose a player in the current database"))
+                    .clicked()
+                {
+                    out = Some(ListOutcome::New);
+                }
+            });
+        });
+        if modal.should_close() && !was_renaming {
+            out = out.or(Some(ListOutcome::Close));
+        }
+        out
+    }
+
+    fn row(
+        &mut self,
+        ui: &mut Ui,
+        id: &str,
+        item: &crate::prep_saved::SavedPrep,
+        out: &mut Option<ListOutcome>,
+    ) {
+        let found = item.path.exists();
+        if self.renaming.as_ref().is_some_and(|(r, _)| r == id) {
+            self.rename_row(ui, id);
+            return;
+        }
+        let deleting = self.deleting.as_deref() == Some(id);
+        // The buttons' room first: the texts are cut to what is left.
+        let gap = ui.spacing().item_spacing.x;
+        let pad = 2.0 * ui.spacing().button_padding.x;
+        let bw = |t: &str| text_width(ui, t, egui::TextStyle::Button) + pad + gap;
+        let buttons = if deleting {
+            text_width(ui, tr("Delete?"), egui::TextStyle::Body)
+                + gap
+                + bw(tr("Delete"))
+                + bw(tr("No"))
+        } else {
+            bw(tr("Open")) + bw("✏") + bw("🗑")
+        };
+        let text_w = (ui.available_width() - buttons - 2.0 * gap).max(80.0);
+        ui.horizontal(|ui| {
+            let mut open = false;
+            ui.allocate_ui(vec2(text_w, 0.0), |ui| {
+                ui.set_max_width(text_w);
+                ui.vertical(|ui| {
+                    let title = ui
+                        .add(
+                            egui::Label::new(RichText::new(&item.title).strong())
+                                .truncate()
+                                .sense(Sense::click()),
+                        )
+                        .on_hover_text(tr("Double-click to open"));
+                    open |= found && title.double_clicked();
+                    let mut about = vec![base_name(&item.path)];
+                    // «за 2 года · 8 партий», «последние 100»: the number once.
+                    match item.period {
+                        Period::All => about.push(crate::i18n::games(item.games as usize)),
+                        Period::Last(n) => about.push(trf("last {n}", &[("n", &n)])),
+                        p => {
+                            let label = period_label(p);
+                            let mut chars = label.chars();
+                            let lower = chars
+                                .next()
+                                .map(|c| c.to_lowercase().chain(chars).collect())
+                                .unwrap_or_default();
+                            about.push(lower);
+                            about.push(crate::i18n::games(item.games as usize));
+                        }
+                    }
+                    about.push(
+                        match item.color {
+                            ColorChoice::White => tr("as White"),
+                            ColorChoice::Black => tr("as Black"),
+                            ColorChoice::Both => tr("both colours"),
+                        }
+                        .to_owned(),
+                    );
+                    ui.add(egui::Label::new(RichText::new(about.join(" · ")).weak()).truncate());
+                    let when = chrono::DateTime::<chrono::Local>::from(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(item.saved),
+                    )
+                    .format("%d.%m.%Y")
+                    .to_string();
+                    let errors = if item.evaluated {
+                        let e = &item.errors;
+                        trf(
+                            "errors: ?? {b} · ? {m} · ?! {i}",
+                            &[
+                                ("b", &e.blunders),
+                                ("m", &e.mistakes),
+                                ("i", &e.inaccuracies),
+                            ],
+                        )
+                    } else {
+                        tr("errors not searched").to_owned()
+                    };
+                    let path = item.path.display().to_string();
+                    if found {
+                        let line =
+                            format!("{errors} · {}", trf("saved {date}", &[("date", &when)]));
+                        ui.add(egui::Label::new(RichText::new(line).small().weak()).truncate());
+                    } else {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(trf(
+                                    "database not found: {path}",
+                                    &[("path", &path)],
+                                ))
+                                .small()
+                                .color(ui.visuals().warn_fg_color),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(path);
+                    }
+                });
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if deleting {
+                    if ui.button(tr("No")).clicked() {
+                        self.deleting = None;
+                    }
+                    if ui.button(tr("Delete")).clicked() {
+                        self.deleting = None;
+                        if let Some(dir) = crate::prep_saved::dir()
+                            && let Err(e) = crate::prep_saved::delete(&dir, id)
+                        {
+                            self.error = Some(e.to_string());
+                        }
+                        self.reload();
+                    }
+                    ui.label(tr("Delete?"));
+                    return;
+                }
+                if ui.button("🗑").on_hover_text(tr("Delete")).clicked() {
+                    self.deleting = Some(id.to_owned());
+                }
+                if ui.button("✏").on_hover_text(tr("Rename")).clicked() {
+                    self.renaming = Some((id.to_owned(), item.title.clone()));
+                }
+                open |= ui
+                    .add_enabled(found, egui::Button::new(tr("Open")))
+                    .on_disabled_hover_text(tr(
+                        "The database is not found: put the file back or delete the preparation",
+                    ))
+                    .clicked();
+            });
+            if open {
+                *out = Some(ListOutcome::Open(id.to_owned()));
+            }
+        });
+    }
+
+    /// The name being typed: Enter or «OK» keeps it, Escape or «Cancel» does not.
+    fn rename_row(&mut self, ui: &mut Ui, id: &str) {
+        let mut done = None;
+        ui.horizontal(|ui| {
+            let gap = ui.spacing().item_spacing.x;
+            let pad = 2.0 * ui.spacing().button_padding.x;
+            let buttons = text_width(ui, tr("OK"), egui::TextStyle::Button)
+                + text_width(ui, tr("Cancel"), egui::TextStyle::Button)
+                + 2.0 * (pad + gap);
+            if let Some((_, text)) = self.renaming.as_mut() {
+                let r = ui.add(
+                    egui::TextEdit::singleline(text)
+                        .desired_width((ui.available_width() - buttons - gap).max(80.0)),
+                );
+                r.request_focus();
+                if ui.input(|i| i.key_pressed(Key::Enter)) {
+                    done = Some(true);
+                }
+                if ui.input(|i| i.key_pressed(Key::Escape)) {
+                    done = Some(false);
+                }
+            }
+            if ui.button(tr("OK")).clicked() {
+                done = Some(true);
+            }
+            if ui.button(tr("Cancel")).clicked() {
+                done = Some(false);
+            }
+        });
+        if let Some(ok) = done {
+            let (_, text) = self.renaming.take().unwrap_or_default();
+            let text = text.trim();
+            if ok
+                && !text.is_empty()
+                && let Some(dir) = crate::prep_saved::dir()
+            {
+                if let Err(e) = crate::prep_saved::rename(&dir, id, text) {
+                    self.error = Some(e.to_string());
+                }
+                self.reload();
+            }
+        }
+    }
+}
+
 // ----- the screen ------------------------------------------------------------------
 
 /// What the screen asks of the application.
@@ -1100,7 +1422,12 @@ pub struct PrepScreen {
     pub dbs: Vec<RefDb>,
     color: ColorChoice,
     plies: usize,
+    period: Period,
     book: BookChoice,
+    /// Kept in «Preparations» (`prep_saved`): every change is written there too.
+    saved: bool,
+    /// A period asked for where the settings are not at hand (applied in `show`).
+    want_period: Option<Period>,
     report: Option<PrepReport>,
     rows: Vec<ListRow>,
     /// The games read in the background (hundreds in a moment, a Mega filter in seconds).
@@ -1416,13 +1743,45 @@ impl PrepScreen {
         ctx: &egui::Context,
     ) -> Self {
         let dir = cache_dir();
-        let cache = dir.as_deref().map(PositionCache::load).unwrap_or_default();
-        let plies = settings.prep.plies.clamp(2, 60);
+        let mut cache = dir.as_deref().map(PositionCache::load).unwrap_or_default();
+        // A saved preparation of this player: its depth and games, its report.
+        let saved_dir = crate::prep_saved::dir();
+        let names = start.player.names(&db);
+        let saved_id = crate::prep_saved::id(&start.path, &names);
+        let saved = saved_dir
+            .as_deref()
+            .and_then(|d| crate::prep_saved::get(d, &saved_id));
+        let saved_report = saved
+            .as_ref()
+            .and(saved_dir.as_deref())
+            .and_then(|d| crate::prep_saved::report(d, &saved_id));
+        let plies = saved
+            .as_ref()
+            .map_or(settings.prep.plies, |s| s.plies)
+            .clamp(2, 60);
+        let period = saved.as_ref().map_or(settings.prep.period, |s| s.period);
         let options = Options {
             plies,
             side: Side::Any,
+            period,
         };
-        let names = start.player.names(&db);
+        // The saved report as it is, when the database is the same; else its
+        // evaluations serve the report made again (new games of the database).
+        let fresh = saved_report.and_then(|r| {
+            if r.search != game_review::SEARCH_VERSION {
+                return None;
+            }
+            if r.fingerprint == prep::fingerprint(&db)
+                && r.options() == options
+                && r.player == start.player
+            {
+                return Some(r);
+            }
+            for (k, e) in r.evals {
+                cache.insert(k, e);
+            }
+            None
+        });
         let mut screen = PrepScreen {
             serial: crate::engine_offer::next_serial(),
             db_name: base_name(&start.path),
@@ -1434,7 +1793,10 @@ impl PrepScreen {
             dbs: Vec::new(),
             color: start.side,
             plies,
+            period,
             book: start.book,
+            saved: saved.is_some(),
+            want_period: None,
             report: None,
             rows: Vec::new(),
             build: None,
@@ -1481,9 +1843,10 @@ impl PrepScreen {
             games_height: None,
             auto_engine: std::env::var_os("CP_PREP_ENGINE").is_some(),
         };
-        let cached = dir
-            .as_deref()
-            .and_then(|d| PrepReport::load(d, &screen.db, &screen.player, &options));
+        let cached = fresh.or_else(|| {
+            dir.as_deref()
+                .and_then(|d| PrepReport::load(d, &screen.db, &screen.player, &options))
+        });
         match cached {
             Some(r) => screen.take_report(r),
             None => screen.rebuild(ctx),
@@ -1524,10 +1887,7 @@ impl PrepScreen {
         self.job = None;
         self.book_job = None;
         let (db, player) = (self.db.clone(), self.player.clone());
-        let options = Options {
-            plies: self.plies,
-            side: Side::Any,
-        };
+        let options = self.options();
         self.build_total = 0;
         let now = ctx.input(|i| i.time);
         self.build = Background::spawn(ctx, now, move |progress, cancel| {
@@ -1574,6 +1934,10 @@ impl PrepScreen {
     /// The same player asked for again from the dialog: its colour and book.
     pub fn reopen(&mut self, side: ColorChoice, book: BookChoice) {
         self.shown = true;
+        // Deleted from «Preparations» while this screen was hidden: «Save» again.
+        self.saved &= crate::prep_saved::dir().is_some_and(|d| {
+            crate::prep_saved::get(&d, &crate::prep_saved::id(&self.path, &self.names)).is_some()
+        });
         self.set_color(side);
         if book != self.book {
             self.book = book;
@@ -1583,6 +1947,8 @@ impl PrepScreen {
     }
 
     fn set_color(&mut self, color: ColorChoice) {
+        // The colour a saved preparation opens with.
+        self.dirty |= self.saved && color != self.color;
         self.color = color;
         // A selection of a colour no longer shown is dropped.
         let keep = match &self.selection {
@@ -1597,6 +1963,26 @@ impl PrepScreen {
         }
     }
 
+    /// Games of the colour(s) shown.
+    fn shown_games(&self) -> usize {
+        self.report.as_ref().map_or(0, |r| {
+            self.color
+                .colours()
+                .iter()
+                .map(|&w| r.color(w).games.len())
+                .sum()
+        })
+    }
+
+    /// What the report is built with.
+    fn options(&self) -> Options {
+        Options {
+            plies: self.plies,
+            side: Side::Any,
+            period: self.period,
+        }
+    }
+
     /// Another depth: the report of that depth from the cache, else built anew.
     fn set_plies(&mut self, plies: usize, settings: &mut Settings, ctx: &egui::Context) {
         if plies == self.plies {
@@ -1606,16 +1992,33 @@ impl PrepScreen {
         self.save();
         self.plies = plies;
         settings.prep.plies = plies;
+        self.load_or_build(ctx);
+    }
+
+    /// Other games of the player: the report of them from the cache, else built anew.
+    fn set_period(&mut self, period: Period, settings: &mut Settings, ctx: &egui::Context) {
+        if period == self.period {
+            return;
+        }
+        self.stop_engine(&mut Vec::new());
+        self.save();
+        self.period = period;
+        settings.prep.period = period;
+        self.load_or_build(ctx);
+    }
+
+    /// The report of the current options from the cache, else built anew.
+    fn load_or_build(&mut self, ctx: &egui::Context) {
         self.report = None;
-        let options = Options {
-            plies,
-            side: Side::Any,
-        };
+        let options = self.options();
         let cached = cache_dir()
             .as_deref()
             .and_then(|d| PrepReport::load(d, &self.db, &self.player, &options));
         match cached {
-            Some(r) => self.take_report(r),
+            Some(r) => {
+                self.take_report(r);
+                self.dirty |= self.saved;
+            }
             None => self.rebuild(ctx),
         }
     }
@@ -1801,7 +2204,11 @@ impl PrepScreen {
         {
             self.build = None;
             match r {
-                Some(report) => self.take_report(report),
+                Some(report) => {
+                    self.take_report(report);
+                    // A saved preparation follows its new games and depth.
+                    self.dirty |= self.saved;
+                }
                 None => self.error = Some(tr("The games could not be read").to_owned()),
             }
         }
@@ -2070,7 +2477,8 @@ impl PrepScreen {
         }
     }
 
-    /// Writes the report and the evaluations to the cache.
+    /// Writes the report and the evaluations to the cache, and to «Preparations» when
+    /// the preparation is kept there.
     pub fn save(&mut self) {
         let Some(dir) = cache_dir() else { return };
         if let Err(e) = self.cache.save(&dir) {
@@ -2079,9 +2487,75 @@ impl PrepScreen {
         if self.dirty
             && let Some(r) = &self.report
         {
-            match r.save(&dir) {
-                Ok(()) => self.dirty = false,
-                Err(e) => eprintln!("prep report: {}: {e}", dir.display()),
+            let mut ok = true;
+            if let Err(e) = r.save(&dir) {
+                ok = false;
+                eprintln!("prep report: {}: {e}", dir.display());
+            }
+            // Deleted from «Preparations» meanwhile: not written back.
+            self.saved &= crate::prep_saved::dir().is_some_and(|d| {
+                crate::prep_saved::get(&d, &crate::prep_saved::id(&self.path, &self.names))
+                    .is_some()
+            });
+            if self.saved
+                && let Err(e) = self.keep()
+            {
+                ok = false;
+                eprintln!("prep saved: {e}");
+            }
+            if ok {
+                self.dirty = false;
+            }
+        }
+    }
+
+    /// Writes the preparation to «Preparations» (its name in the list kept).
+    fn keep(&self) -> std::io::Result<()> {
+        let dir =
+            crate::prep_saved::dir().ok_or_else(|| std::io::Error::other("no data folder"))?;
+        let Some(report) = &self.report else {
+            return Ok(());
+        };
+        let id = crate::prep_saved::id(&self.path, &self.names);
+        let title = crate::prep_saved::get(&dir, &id)
+            .map(|m| m.title)
+            .unwrap_or_else(|| self.names.first().cloned().unwrap_or_default());
+        let mut errors = ErrorCounts::default();
+        for c in [&report.white, &report.black] {
+            errors.inaccuracies += c.counts.inaccuracies;
+            errors.mistakes += c.counts.mistakes;
+            errors.blunders += c.counts.blunders;
+        }
+        let meta = crate::prep_saved::SavedPrep {
+            title,
+            path: self.path.clone(),
+            player: self.player.clone(),
+            names: self.names.clone(),
+            plies: self.plies,
+            period: self.period,
+            color: self.color,
+            book: self.book.setting(&self.path),
+            saved: crate::prep_saved::now(),
+            games: report.games.len() as u32,
+            errors,
+            evaluated: report.evaluated(),
+        };
+        crate::prep_saved::save(&dir, &meta, report)
+    }
+
+    /// «💾 Save»: the preparation goes to «Preparations» and is kept there from now on.
+    fn save_to_list(&mut self, actions: &mut Vec<PrepAction>) {
+        self.saved = true;
+        match self.keep() {
+            Ok(()) => actions.push(PrepAction::Toast(
+                tr("Saved: the library's «Preparations» opens it").to_owned(),
+            )),
+            Err(e) => {
+                self.saved = false;
+                actions.push(PrepAction::Toast(trf(
+                    "Could not save: {e}",
+                    &[("e", &e.to_string())],
+                )));
             }
         }
     }
@@ -2505,6 +2979,10 @@ impl PrepScreen {
                 .show(ui, |ui| self.right_column(ui, settings, &mut actions));
         }
         self.engine_dialog(&ctx, settings, &mut actions);
+        if let Some(p) = self.want_period.take() {
+            self.set_period(p, settings, &ctx);
+            actions.push(PrepAction::SettingsChanged);
+        }
         if !typing && !overlay {
             self.keyboard(&ctx, settings, &mut actions);
         }
@@ -2525,7 +3003,13 @@ impl PrepScreen {
         let row = ui.available_width();
         let compact = row < 700.0;
         let left = button_w(ui, if compact { "⬅" } else { tr("⬅ Library") }) + 2.0 * gap;
-        let right = button_w(ui, if compact { "⚙" } else { tr("⚙ Settings") });
+        let save_label = match (self.saved, compact) {
+            (false, false) => tr("★ Save"),
+            (true, false) => tr("★ Saved"),
+            (_, true) => "★",
+        };
+        let right =
+            button_w(ui, if compact { "⚙" } else { tr("⚙ Settings") }) + button_w(ui, save_label);
         let title_room = (row - left - right).max(80.0);
         ui.horizontal(|ui| {
             if ui
@@ -2540,7 +3024,7 @@ impl PrepScreen {
             let more = self.names.len().saturating_sub(1);
             let mut parts = Vec::new();
             if let Some(r) = &self.report {
-                parts.push(crate::i18n::games(r.games.len()));
+                parts.push(crate::i18n::games(self.shown_games()));
                 let p = period(&r.games);
                 if !p.is_empty() {
                     parts.push(p);
@@ -2580,6 +3064,22 @@ impl PrepScreen {
                     .clicked()
                 {
                     actions.push(PrepAction::OpenSettings);
+                }
+                let games = self.shown_games();
+                if self.saved {
+                    // A quiet mark, not a button that looks unavailable.
+                    ui.label(RichText::new(save_label).color(ui.visuals().selection.bg_fill))
+                        .on_hover_text(tr(
+                            "Kept in the library's «Preparations»: changes are saved by themselves",
+                        ));
+                } else if ui
+                    .add_enabled(games > 0, egui::Button::new(save_label))
+                    .on_hover_text(tr(
+                        "Keep this preparation with the errors found: the library's «Preparations» opens it again",
+                    ))
+                    .clicked()
+                {
+                    self.save_to_list(actions);
                 }
             });
         });
@@ -2630,7 +3130,15 @@ impl PrepScreen {
             if caption_apart {
                 ui.label(tr("Book"));
             }
-            let book_w = if width < 900.0 { 150.0 } else { 240.0 };
+            let book_w = if width < 700.0 {
+                120.0
+            } else if width < 900.0 {
+                150.0
+            } else if width < 1100.0 {
+                180.0
+            } else {
+                240.0
+            };
             if let Some(b) = book_picker(
                 ui,
                 "prep_book",
@@ -2651,24 +3159,36 @@ impl PrepScreen {
                     .on_hover_text(trf("Book: could not open — {reason}", &[("reason", why)]));
             }
             ui.separator();
-            // The depth's caption by the room left: «Opening: 10 moves», «10 moves», «10 m.».
             let moves = self.plies.div_ceil(2);
             let board_w = if low {
                 text_width(ui, "♙", egui::TextStyle::Button) + pad + 2.0 * gap
             } else {
                 0.0
             };
-            let room = ui.available_width() - engine_w - board_w;
-            let depth_label = [
+            // The period's and the depth's captions by the room left, shortened in one
+            // order at every width: the depth first, then the period, then both.
+            let depths = [
                 trf("Opening: {n} moves", &[("n", &moves)]),
                 trf("{n} moves", &[("n", &moves)]),
                 trf("{n} m.", &[("n", &moves)]),
-            ]
-            .into_iter()
-            .find(|l| text_width(ui, l, egui::TextStyle::Button) + pad + 20.0 + gap <= room)
-            .unwrap_or_else(|| trf("{n} m.", &[("n", &moves)]));
+            ];
+            let periods = self.period_captions();
+            let combo = |t: &str| text_width(ui, t, egui::TextStyle::Button) + pad + 20.0 + gap;
+            let room =
+                ui.available_width() - engine_w - board_w - ui.spacing().item_spacing.x * 2.0;
+            let (p, d) = [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)]
+                .into_iter()
+                .find(|&(p, d)| combo(&periods[p]) + combo(&depths[d]) <= room)
+                .unwrap_or((2, 2));
+            let [p0, p1, p2] = periods;
+            let period_label_now = [p0, p1, p2].into_iter().nth(p).unwrap_or_default();
+            self.period_picker(ui, settings, period_label_now, actions);
+            ui.separator();
+            let depth_label = depths[d].clone();
             let mut new_plies = None;
+            let depth_w = text_width(ui, &depth_label, egui::TextStyle::Button) + 8.0;
             egui::ComboBox::from_id_salt("prep_plies")
+                .width(depth_w)
                 .selected_text(depth_label)
                 .show_ui(ui, |ui| {
                     for m in [6usize, 10, 15] {
@@ -2703,6 +3223,113 @@ impl PrepScreen {
                 self.engine_control(ui, settings, engine, width, actions);
             });
         });
+    }
+
+    /// The period shown: a period by months over games without dates takes all.
+    fn period_shown(&self) -> Period {
+        let dated = self
+            .report
+            .as_ref()
+            .is_some_and(|r| r.pool.iter().any(|g| g.date != 0));
+        match self.period {
+            Period::Months(_) if self.report.is_some() && !dated => Period::All,
+            p => p,
+        }
+    }
+
+    /// How many games `p` takes of the colour(s) shown: «80», «100 + 100».
+    fn period_number(&self, p: Period) -> String {
+        let Some(r) = &self.report else {
+            return "…".to_owned();
+        };
+        let side = self.color.side();
+        match (p, side) {
+            // The last N of each colour, not N in all.
+            (Period::Last(_), Side::Any) => format!(
+                "{} + {}",
+                grouped(r.count(p, Side::White).games),
+                grouped(r.count(p, Side::Black).games)
+            ),
+            _ => grouped(r.count(p, side).games),
+        }
+    }
+
+    /// The period's captions, longest first: «Last 2 years · 80», «2 yrs · 80», «80».
+    fn period_captions(&self) -> [String; 3] {
+        let p = self.period_shown();
+        let n = self.period_number(p);
+        [
+            format!("{} · {n}", period_label(p)),
+            format!("{} · {n}", period_short(p)),
+            n,
+        ]
+    }
+
+    /// «Last 2 years · 80 ▾»: which of the player's games, with how many each takes of
+    /// the colour(s) shown; `selected` is the caption the row has room for.
+    fn period_picker(
+        &mut self,
+        ui: &mut Ui,
+        settings: &mut Settings,
+        selected: String,
+        actions: &mut Vec<PrepAction>,
+    ) {
+        let side = self.color.side();
+        let report = self.report.as_ref();
+        let dated = report.is_some_and(|r| r.pool.iter().any(|g| g.date != 0));
+        let shown = self.period_shown();
+        let number = |p: Period| self.period_number(p);
+        let mut picked = None;
+        // As wide as its text: the room is the row's.
+        let width = text_width(ui, &selected, egui::TextStyle::Button) + 8.0;
+        let r = egui::ComboBox::from_id_salt("prep_period")
+            .width(width)
+            .selected_text(selected)
+            .show_ui(ui, |ui| {
+                for p in PERIODS {
+                    // Without dates: by number only.
+                    if matches!(p, Period::Months(_)) && !dated {
+                        continue;
+                    }
+                    let text = format!("{} · {}", period_label(p), number(p));
+                    if ui.selectable_label(shown == p, text).clicked() {
+                        picked = Some(p);
+                    }
+                }
+                let note = |ui: &mut Ui, text: String| {
+                    ui.label(RichText::new(text).weak().small());
+                };
+                if !dated {
+                    note(ui, tr("The games have no dates: by number only").to_owned());
+                } else if let Some(r) = report {
+                    let newest = prep::period_newest(&r.pool);
+                    note(
+                        ui,
+                        trf(
+                            "Counted back from his newest game — {date}",
+                            &[("date", &shown_date(newest))],
+                        ),
+                    );
+                    let out = r.count(Period::Months(12), side).undated_out;
+                    if out > 0 {
+                        note(
+                            ui,
+                            trf(
+                                "Without a date: {n} — taken only with all games",
+                                &[("n", &grouped(out))],
+                            ),
+                        );
+                    }
+                }
+            })
+            .response;
+        r.on_hover_text(tr(
+            "Which of his games: by date — counted back from his newest game; by number — the newest of each colour",
+        ));
+        if let Some(p) = picked {
+            self.set_period(p, settings, ui.ctx());
+            actions.push(PrepAction::SettingsChanged);
+        }
     }
 
     /// What the engine part of the controls says, by the room there is.
@@ -2793,7 +3420,11 @@ impl PrepScreen {
                 ui.label(RichText::new(label).weak()).on_hover_text(hint);
             }
             EngineTexts::Button { label, note } => {
-                if crate::widgets::primary(ui, &label)
+                // Nothing to search in no games.
+                let some = self.shown_games() > 0;
+                if ui
+                    .add_enabled_ui(some, |ui| crate::widgets::primary(ui, &label))
+                    .inner
                     .on_hover_text(hint)
                     .clicked()
                 {
@@ -2978,6 +3609,18 @@ impl PrepScreen {
             .iter()
             .map(|&w| report.color(w).games.len())
             .sum();
+        if let Period::Months(_) = report.period {
+            let out = report.count(report.period, self.color.side()).undated_out;
+            if out > 0 {
+                ui.label(
+                    RichText::new(trf(
+                        "Without a date, not counted: {n} (only with all games)",
+                        &[("n", &grouped(out))],
+                    ))
+                    .weak(),
+                );
+            }
+        }
         if n > 0 && n < 10 {
             ui.label(
                 RichText::new(trf(
@@ -3861,6 +4504,25 @@ impl PrepScreen {
     /// «No games as Black. As White — 138 · Show White» when the colour has none.
     fn no_games_note(&mut self, ui: &mut Ui) {
         let Some(report) = &self.report else { return };
+        // No game in the period at all: the way back to all of them.
+        let side = self.color.side();
+        if report.period != Period::All && report.count(report.period, side).games == 0 {
+            let all = report.count(Period::All, side).games;
+            ui.add_space(12.0);
+            ui.label(match self.color {
+                ColorChoice::White => tr("No games as White in this period"),
+                ColorChoice::Black => tr("No games as Black in this period"),
+                ColorChoice::Both => tr("No games in this period"),
+            });
+            if all > 0
+                && ui
+                    .button(format!("{} · {}", period_label(Period::All), grouped(all)))
+                    .clicked()
+            {
+                self.want_period = Some(Period::All);
+            }
+            return;
+        }
         let (shown, other) = match self.color {
             ColorChoice::White => (true, false),
             ColorChoice::Black => (false, true),
@@ -3886,7 +4548,11 @@ impl PrepScreen {
                     .link(trf("Show {other}", &[("other", &other_name)]))
                     .clicked()
             {
-                self.color = ColorChoice::from_side(if other { Side::White } else { Side::Black });
+                self.set_color(ColorChoice::from_side(if other {
+                    Side::White
+                } else {
+                    Side::Black
+                }));
             }
         });
     }
@@ -5450,13 +6116,13 @@ impl PrepScreen {
             self.tab = Tab::Errors;
         }
         if ctx.input_mut(|i| i.consume_shortcut(&alt(Key::Num1))) {
-            self.color = ColorChoice::White;
+            self.set_color(ColorChoice::White);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&alt(Key::Num2))) {
-            self.color = ColorChoice::Black;
+            self.set_color(ColorChoice::Black);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&alt(Key::Num3))) {
-            self.color = ColorChoice::Both;
+            self.set_color(ColorChoice::Both);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::W))) {
             actions.push(PrepAction::Back);

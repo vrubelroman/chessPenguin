@@ -4,6 +4,17 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Preparing against an opponent: choose which of his games — all, the last 3 or 6
+  months, a year or two (counted back from his newest game), or his last 50, 100 or 200
+  games of each colour; every choice shows how many games it takes. Games without a date
+  are taken only with all games, and the report says how many were left out.
+- Saved preparations: «★ Save» keeps a preparation with the errors found; «🗐
+  Preparations» in the library opens, renames and deletes them. New games of the
+  database are added when it is opened again, and the engine looks only at what is new.
+- A game downloaded from Lichess or Chess.com opens on the site: the globe after the
+  result, the ☰ menu or the game list's menu. A Lichess game opens at the move shown,
+  from the side at the bottom of the board.
+
 ## [2.1.2] — 2026-10-31
 
 - The game review runs on your own Stockfish when it is the same Stockfish 19 as

@@ -328,6 +328,17 @@ impl GameView {
         }
     }
 
+    /// The game's web page, if its tags have one.
+    fn link(&self) -> Option<crate::game_link::GameLink> {
+        crate::game_link::of(|t| self.game.tag(t).map(str::to_owned))
+    }
+
+    /// Opens the game's page at the move shown, from the side at the bottom.
+    fn open_link(&self, ctx: &egui::Context, link: &crate::game_link::GameLink) {
+        let ply = self.game.node(self.cursor).map_or(0, |n| n.ply());
+        ctx.open_url(egui::OpenUrl::new_tab(link.at(ply, self.flipped)));
+    }
+
     fn subtitle(&self) -> String {
         if let Some(t) = &self.train {
             let up_to = trf(
@@ -344,7 +355,10 @@ impl GameView {
         for t in ["Event", "Site", "Date", "ECO", "Annotator"] {
             if let Some(v) = g
                 .tag(t)
-                .filter(|v| !v.is_empty() && !v.chars().all(|c| c == '?' || c == '.'))
+                // A web address is the globe's, not text.
+                .filter(|v| {
+                    !v.is_empty() && !v.chars().all(|c| c == '?' || c == '.') && !v.contains("://")
+                })
             {
                 parts.push(v.to_string());
             }
@@ -1020,17 +1034,34 @@ impl GameView {
                 None => (None, ""),
             },
         };
-        let result_w = result.as_ref().map_or(0.0, |r| {
+        // The game's page on Lichess or Chess.com: a globe after the result.
+        let link = self.link();
+        let link_w = if link.is_some() {
             ui.painter()
                 .layout_no_wrap(
-                    format!(" {r} "),
-                    egui::FontId::proportional(15.0),
+                    "🌐".to_owned(),
+                    egui::TextStyle::Button.resolve(ui.style()),
                     Color32::WHITE,
                 )
                 .size()
                 .x
+                + 2.0 * ui.spacing().button_padding.x
                 + gap
-        });
+        } else {
+            0.0
+        };
+        let result_w = link_w
+            + result.as_ref().map_or(0.0, |r| {
+                ui.painter()
+                    .layout_no_wrap(
+                        format!(" {r} "),
+                        egui::FontId::proportional(15.0),
+                        Color32::WHITE,
+                    )
+                    .size()
+                    .x
+                    + gap
+            });
         let row = ui.available_width();
         let compact = row - left(false) - right(false) - result_w < 160.0;
         let title_room = (row - left(compact) - right(compact)).max(0.0);
@@ -1104,6 +1135,11 @@ impl GameView {
                                     .background_color(ui.visuals().widgets.inactive.weak_bg_fill),
                             )
                             .on_hover_text(result_hint);
+                        }
+                        if let Some(l) = &link
+                            && ui.button("🌐").on_hover_text(l.hint()).clicked()
+                        {
+                            self.open_link(ui.ctx(), l);
                         }
                     });
                     let sub: Vec<String> = self
@@ -1986,6 +2022,12 @@ impl GameView {
                     && ui.button(tr("Add to database… (Ctrl+Shift+S)")).clicked()
                 {
                     actions.push(GameAction::AddToDatabase);
+                    ui.close();
+                }
+                if let Some(l) = self.link()
+                    && ui.button(l.label()).clicked()
+                {
+                    self.open_link(ui.ctx(), &l);
                     ui.close();
                 }
                 ui.separator();
