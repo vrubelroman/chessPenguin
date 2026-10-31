@@ -700,3 +700,52 @@ fn an_engine_gets_the_variables_given() {
     assert!(environ.split(|&b| b == 0).any(|v| v.starts_with(b"PATH=")));
     engine.quit();
 }
+
+/// The state letter of process `pid` (`/proc/<pid>/stat`), `None` when it is gone.
+#[cfg(target_os = "linux")]
+fn proc_state(pid: u32) -> Option<char> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    stat.rsplit_once(") ")?.1.chars().next()
+}
+
+/// `kill_with_parent`: the engine dies with the thread that started it (the program
+/// quitting while a handshake hangs); without it, it lives on.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_engine_can_die_with_its_starting_thread() {
+    let start = |kill: bool| {
+        std::thread::spawn(move || {
+            let mut c = config(&[]);
+            c.kill_with_parent = kill;
+            let handle = Engine::spawn_with(c, Box::new(|| {})).expect("spawn fake engine");
+            let pid = handle.pid();
+            // Never quit: as if the program ended under it.
+            std::mem::forget(handle);
+            pid
+        })
+        .join()
+        .expect("the thread")
+    };
+    let gone = |pid: u32| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match proc_state(pid) {
+                None | Some('Z') | Some('X') => return true,
+                _ if Instant::now() > deadline => return false,
+                _ => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+    };
+    let killed = start(true);
+    assert!(gone(killed), "the engine outlived its thread");
+    let kept = start(false);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        matches!(proc_state(kept), Some('S' | 'R')),
+        "{:?}",
+        proc_state(kept)
+    );
+    unsafe {
+        libc::kill(kept as i32, libc::SIGKILL);
+    }
+}

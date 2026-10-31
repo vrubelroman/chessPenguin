@@ -283,9 +283,17 @@ impl Settings {
         self.active_engine.and_then(|i| self.engines.get(i))
     }
 
-    pub fn touch_database(&mut self, path: &Path) {
-        self.databases.retain(|p| p != path);
-        self.databases.insert(0, path.to_path_buf());
+    /// Puts the database first on the shelf; a database there already by another path
+    /// to the same file (a link) keeps its path. Returns the path on the shelf.
+    pub fn touch_database(&mut self, path: &Path) -> PathBuf {
+        let real = |p: &Path| std::fs::canonicalize(p).ok();
+        let same = |p: &PathBuf| p == path || real(p).is_some_and(|r| Some(r) == real(path));
+        let kept = match self.databases.iter().position(same) {
+            Some(i) => self.databases.remove(i),
+            None => path.to_path_buf(),
+        };
+        self.databases.insert(0, kept.clone());
+        kept
     }
 }
 
@@ -311,6 +319,31 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A database put on the shelf again by a link to its file stays itself, once.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_database_on_the_shelf_does_not_add_it_twice() {
+        let dir = std::env::temp_dir().join(format!("cp-shelf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (base, other, link) = (dir.join("a.pgn"), dir.join("b.pgn"), dir.join("link.pgn"));
+        std::fs::write(&base, "").unwrap();
+        std::fs::write(&other, "").unwrap();
+        std::os::unix::fs::symlink(&base, &link).unwrap();
+        let mut s = Settings::default();
+        s.databases.clear();
+        assert_eq!(s.touch_database(&base), base);
+        assert_eq!(s.touch_database(&other), other);
+        assert_eq!(s.touch_database(&link), base);
+        assert_eq!(s.databases, vec![base.clone(), other.clone()]);
+        // A database gone from the disk is still told by its path.
+        let gone = dir.join("gone.pgn");
+        s.touch_database(&gone);
+        assert_eq!(s.touch_database(&gone), gone);
+        assert_eq!(s.databases.len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The settings of 1.x kept the engine options of the game analysis and the
     /// quality of the preparation: they are read without them now.

@@ -38,6 +38,10 @@ pub struct EngineConfig {
     /// Variables added to the engine's environment (Rodent IV on Android finds its
     /// personalities and books by `RODENT4HOME`).
     pub env: Vec<(OsString, OsString)>,
+    /// Linux and Android: the engine is killed when the thread that started it ends
+    /// (`PR_SET_PDEATHSIG`), and so when the program ends, even in the middle of the
+    /// handshake. For engines whose starting thread lives as long as they should.
+    pub kill_with_parent: bool,
 }
 
 impl EngineConfig {
@@ -49,6 +53,7 @@ impl EngineConfig {
             timeouts: Timeouts::default(),
             nice: 0,
             env: Vec::new(),
+            kill_with_parent: false,
         }
     }
 }
@@ -307,14 +312,23 @@ fn spawn_impl(cfg: EngineConfig, waker: Waker) -> Result<EngineHandle, EngineErr
         command.current_dir(dir);
     }
     #[cfg(unix)]
-    if cfg.nice != 0 {
+    if cfg.nice != 0 || cfg.kill_with_parent {
         use std::os::unix::process::CommandExt;
-        let nice = cfg.nice;
-        // SAFETY: nice(2) is async-signal-safe and touches no memory of the parent. Its
-        // result is not checked: an engine at the app's priority still works.
+        let (nice, kill) = (cfg.nice, cfg.kill_with_parent);
+        // SAFETY: nice(2) and prctl(2) are async-signal-safe system calls and touch no
+        // memory of the parent. The results are not checked: an engine at the app's
+        // priority, or one outliving it, still works.
         unsafe {
             command.pre_exec(move || {
-                libc::nice(nice);
+                if nice != 0 {
+                    libc::nice(nice);
+                }
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if kill {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                let _ = kill;
                 Ok(())
             });
         }

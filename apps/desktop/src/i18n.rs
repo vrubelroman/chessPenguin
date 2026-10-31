@@ -15415,6 +15415,17 @@ const ROWS: &[[&str; 9]] = &[
         "Сіздің Stockfish 19 ChessPenguin жинағынан басқаша есептейді (басқа жинақ немесе желі).",
     ],
     [
+        "{engine} did not finish the check in time; it will be checked again next time.",
+        "{engine} не успел ответить на проверку — проверю снова в следующий раз.",
+        "{engine} n’a pas répondu à temps à la vérification ; il sera vérifié à nouveau la prochaine fois.",
+        "{engine} hat die Prüfung nicht rechtzeitig beantwortet; beim nächsten Mal wird erneut geprüft.",
+        "{engine} no respondió a tiempo a la comprobación; se comprobará de nuevo la próxima vez.",
+        "{engine} non ha risposto in tempo alla verifica; sarà verificato di nuovo la prossima volta.",
+        "{engine} não respondeu a tempo à verificação; será verificado de novo na próxima vez.",
+        "{engine} tekshiruvga o‘z vaqtida javob bermadi — keyingi safar yana tekshiriladi.",
+        "{engine} тексеруге уақытында жауап бермеді — келесі жолы қайта тексеріледі.",
+    ],
+    [
         "{engine} could not be started.",
         "Не удалось запустить {engine}.",
         "Impossible de lancer {engine}.",

@@ -521,13 +521,18 @@ fn instead_text(unfit: &crate::review_engine::Unfit, pending: Option<Pending>) -
         )
         .to_owned(),
         Why::NotStarted => trf("{engine} could not be started.", &[("engine", &engine)]),
+        Why::TimedOut => trf(
+            "{engine} did not finish the check in time; it will be checked again next time.",
+            &[("engine", &engine)],
+        ),
         Why::Other if unfit.from_settings => {
             trf("The settings name {engine}.", &[("engine", &engine)])
         }
         Why::Other => trf("The system has {engine}.", &[("engine", &engine)]),
     }];
+    let official = matches!(unfit.why, Why::Differs | Why::TimedOut);
     parts.push(
-        match (unfit.why == Why::Differs, errors) {
+        match (official, errors) {
             (true, false) => tr(
                 "So that the marks are the same on every computer, game analysis runs on the official build.",
             ),
@@ -544,7 +549,7 @@ fn instead_text(unfit: &crate::review_engine::Unfit, pending: Option<Pending>) -
         .to_owned(),
     );
     parts.push(
-        if unfit.why == Why::Differs {
+        if official {
             tr("Download it?")
         } else {
             tr("Download Stockfish 19?")
@@ -635,6 +640,12 @@ mod tests {
             "{t}"
         );
         assert!(t.contains("Download it?"));
+        let t = text(Why::TimedOut, true, game);
+        assert!(
+            t.starts_with("Rodent V 1.2 did not finish the check in time"),
+            "{t}"
+        );
+        assert!(t.contains("runs on the official build") && t.contains("Download it?"));
         let t = text(Why::NotStarted, true, game);
         assert!(t.starts_with("Rodent V 1.2 could not be started."), "{t}");
         assert!(!t.contains("stays for position analysis"));

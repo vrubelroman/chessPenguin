@@ -19,6 +19,9 @@ pub enum Why {
     Differs,
     /// It did not start or did not answer.
     NotStarted,
+    /// It calls itself Stockfish 19 but did not finish the check in time (a slow or
+    /// stuck machine): not remembered, checked again at the next request.
+    TimedOut,
 }
 
 /// The user's engine that does not do: its name (`id name`, else what the settings
@@ -146,10 +149,13 @@ mod native {
         pub candidates: Vec<Candidate>,
         /// By the real file.
         pub known: HashMap<PathBuf, Verdict>,
-        /// Files that did not start, until it is said (by the real file).
-        pub failed: HashSet<PathBuf>,
+        /// Files that did not start or did not finish the check, until it is said (by
+        /// the real file): why, and the name the engine gave.
+        pub failed: HashMap<PathBuf, (Why, Option<String>)>,
         pub checking: HashSet<PathBuf>,
         pub threads: Vec<JoinHandle<()>>,
+        /// How long a probe may take (shorter in the tests).
+        pub limits: ProbeLimits,
         /// Where the verdicts are kept (`None`: nowhere).
         pub file: Option<PathBuf>,
         pub loaded: bool,
@@ -281,9 +287,9 @@ mod native {
     pub(super) fn lookup_without_own(ctx: &egui::Context) -> Lookup {
         match with(decide) {
             Decision::Done(l) => l,
-            Decision::Probe(paths) => {
-                for p in paths {
-                    spawn_probe(p, ctx.clone());
+            Decision::Probe(candidates) => {
+                for c in candidates {
+                    spawn_probe(c, ctx.clone());
                 }
                 Lookup::Checking
             }
@@ -292,8 +298,9 @@ mod native {
 
     pub(super) enum Decision {
         Done(Lookup),
-        /// These real files are to be probed (and are marked as being probed).
-        Probe(Vec<PathBuf>),
+        /// These candidates are to be probed (their real files are marked as being
+        /// probed).
+        Probe(Vec<Candidate>),
     }
 
     /// What the verdicts say of the candidates; files without one are to be probed.
@@ -313,8 +320,8 @@ mod native {
             };
             if s.checking.contains(&c.real) {
                 checking = true;
-            } else if s.failed.contains(&c.real) {
-                unfit.get_or_insert_with(|| said(None, Why::NotStarted));
+            } else if let Some((why, name)) = s.failed.get(&c.real) {
+                unfit.get_or_insert_with(|| said(name.as_ref(), *why));
             } else {
                 match fresh(s, &c.real) {
                     Some(v) if v.same => {
@@ -329,12 +336,12 @@ mod native {
                         };
                         unfit.get_or_insert_with(|| said(v.name.as_ref(), why));
                     }
-                    None => to_probe.push(c.real.clone()),
+                    None => to_probe.push(c.clone()),
                 }
             }
         }
         if !to_probe.is_empty() {
-            s.checking.extend(to_probe.iter().cloned());
+            s.checking.extend(to_probe.iter().map(|c| c.real.clone()));
             return Decision::Probe(to_probe);
         }
         if checking {
@@ -344,8 +351,13 @@ mod native {
         Decision::Done(unfit.map_or(Lookup::None, Lookup::Unfit))
     }
 
-    /// Probes the real file on a thread of its own and keeps the verdict.
-    fn spawn_probe(real: PathBuf, ctx: egui::Context) {
+    /// Probes the engine on a thread of its own, started by the path it is known by
+    /// (a snap or a wrapper looks at the name it is started by), and keeps the verdict
+    /// for its real file. The engine dies with that thread (the program quitting in
+    /// the middle of a handshake leaves no process behind).
+    fn spawn_probe(c: Candidate, ctx: egui::Context) {
+        let real = c.real.clone();
+        let limits = with(|s| s.limits);
         let spawned = std::thread::Builder::new()
             .name("review-engine-probe".into())
             .spawn({
@@ -354,11 +366,11 @@ mod native {
                     let stamp = stamp(&real);
                     let config = uci::EngineConfig {
                         nice: 10,
-                        ..uci::EngineConfig::new(&real)
+                        kill_with_parent: true,
+                        ..uci::EngineConfig::new(&c.path)
                     };
                     let quitting = || QUITTING.load(Ordering::Relaxed);
-                    let probe =
-                        game_review::probe::probe(config, ProbeLimits::default(), &quitting);
+                    let probe = game_review::probe::probe(config, limits, &quitting);
                     if !quitting() {
                         record(&real, stamp, probe);
                         ctx.request_repaint();
@@ -389,6 +401,10 @@ mod native {
                 return;
             };
             match probe {
+                // Not remembered: tried again at the next request.
+                Ok(p) if p.timed_out => {
+                    s.failed.insert(real.to_path_buf(), (Why::TimedOut, p.name));
+                }
                 Ok(p) => {
                     s.known.insert(
                         real.to_path_buf(),
@@ -401,9 +417,8 @@ mod native {
                     );
                     save(s);
                 }
-                // Not remembered: tried again at the next request.
                 Err(_) => {
-                    s.failed.insert(real.to_path_buf());
+                    s.failed.insert(real.to_path_buf(), (Why::NotStarted, None));
                 }
             }
         });
@@ -424,13 +439,23 @@ mod native {
         false
     }
 
+    /// How long the program waits for the probes when it quits.
+    const QUIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
     pub(super) fn shutdown() {
         QUITTING.store(true, Ordering::Relaxed);
         let threads = with(|s| std::mem::take(&mut s.threads));
-        // Each gives up within a tenth of a second, and its engine quits or is killed
-        // within the `uci` crate's stop and quit timeouts.
+        // A probe in a search gives up within a tenth of a second and quits its engine;
+        // one in a hung handshake is not waited for: its engine dies with its thread
+        // when the program ends (`kill_with_parent`).
+        let deadline = std::time::Instant::now() + QUIT_WAIT;
         for t in threads {
-            let _ = t.join();
+            while !t.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            if t.is_finished() {
+                let _ = t.join();
+            }
         }
     }
 
@@ -440,6 +465,10 @@ mod native {
         *s = State {
             candidates,
             loaded: true,
+            limits: ProbeLimits {
+                search: std::time::Duration::from_millis(300),
+                total: std::time::Duration::from_secs(2),
+            },
             ..State::default()
         };
     }
@@ -551,6 +580,44 @@ mod tests {
         assert_eq!(settle(&ctx), unfit("Broken one", true, Why::NotStarted));
         assert_eq!(lookup_without_own(&ctx), Lookup::Checking);
         assert_eq!(settle(&ctx), unfit("Broken one", true, Why::NotStarted));
+
+        // A «Stockfish 19» that does not finish in time: said once, not remembered.
+        let slow = dir.join("sf-slow");
+        let script = format!(
+            "#!/bin/sh\nexec '{}' --name 'Stockfish 19' --ignore-nodes\n",
+            fake().display()
+        );
+        std::fs::write(&slow, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&slow, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        reset(vec![settings(&slow, "Slow")]);
+        assert_eq!(settle(&ctx), unfit("Stockfish 19", true, Why::TimedOut));
+        assert_eq!(lookup_without_own(&ctx), Lookup::Checking);
+        assert_eq!(settle(&ctx), unfit("Stockfish 19", true, Why::TimedOut));
+
+        // Started by the name it is known by (a wrapper looking at its name), the
+        // verdict kept for the real file.
+        #[cfg(unix)]
+        {
+            let picky = dir.join("picky");
+            let script = format!(
+                "#!/bin/sh\n[ \"$(basename \"$0\")\" = sf-launch ] || exit 3\nexec '{}'\n",
+                same.display()
+            );
+            std::fs::write(&picky, script).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&picky, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let launch = dir.join("sf-launch");
+            std::os::unix::fs::symlink(&picky, &launch).unwrap();
+            reset(vec![settings(&launch, "Launcher")]);
+            assert_eq!(
+                settle(&ctx),
+                Lookup::Ready(EngineLocation::Program(launch.clone()))
+            );
+        }
 
         // The reference answers: taken, even after another engine in the list.
         reset(vec![settings(&differs, "A"), settings(&same, "B")]);

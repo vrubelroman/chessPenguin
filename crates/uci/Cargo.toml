@@ -17,7 +17,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Worker", "MessageEvent", "ErrorEvent"] }
 
 [target.'cfg(unix)'.dependencies]
-# nice(2) for EngineConfig::nice (std has no way to lower a child's priority).
+# nice(2) for EngineConfig::nice, prctl(2) for kill_with_parent (std has neither).
 libc = "0.2"
 
 # Test helper: deterministic fake UCI engine used by tests/ via CARGO_BIN_EXE_fake_uci.

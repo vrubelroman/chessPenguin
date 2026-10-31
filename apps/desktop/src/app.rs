@@ -2513,11 +2513,14 @@ impl App {
                 }
                 Async::DatabasesDropped(paths) => {
                     // As «Add database»; the game on the screen stays, so it is told.
+                    // The first one ends up first on the shelf (as the shelf has it: a
+                    // link to a database there is that database).
+                    let mut first = None;
                     for p in paths.iter().rev() {
-                        self.settings.touch_database(p);
+                        first = Some(self.settings.touch_database(p));
                     }
-                    if let Some(first) = paths.first() {
-                        self.library.select_db(first, ctx);
+                    if let Some(first) = first {
+                        self.library.select_db(&first, ctx);
                     }
                     self.settings_dirty = true;
                     if self.game.is_some() {
@@ -2542,11 +2545,14 @@ impl App {
                         self.library.forget(&old);
                         crate::platform::files::forget(&old);
                     }
+                    // The first one ends up first on the shelf (as the shelf has it: a
+                    // link to a database there is that database).
+                    let mut first = None;
                     for p in paths.iter().rev() {
-                        self.settings.touch_database(p);
+                        first = Some(self.settings.touch_database(p));
                     }
-                    if let Some(first) = paths.first() {
-                        self.library.select_db(first, ctx);
+                    if let Some(first) = first {
+                        self.library.select_db(&first, ctx);
                     }
                     self.settings_dirty = true;
                 }
@@ -2831,12 +2837,7 @@ impl App {
     /// is offered for download, saying why the user's engine does not do.
     fn need_review_engine(&mut self, ctx: &egui::Context, pending: crate::engine_offer::Pending) {
         crate::review_engine::set_candidates(&self.settings);
-        if self.review_wait.is_empty() {
-            self.toast(
-                ctx,
-                tr("Checking whether your engine can run the analysis…"),
-            );
-        }
+        let waited = !self.review_wait.is_empty();
         // One wait per kind: the newer request of a kind takes its place, the other
         // kind keeps its own.
         let same_kind = |p: &crate::engine_offer::Pending| {
@@ -2844,13 +2845,21 @@ impl App {
         };
         self.review_wait.retain(|p| !same_kind(p));
         self.review_wait.push(pending);
-        self.poll_review_wait(ctx);
+        // Said only when an engine is really being checked (not when the answer is
+        // known already: then it starts, or the offer says why not).
+        if self.poll_review_wait(ctx) && !waited {
+            self.toast(
+                ctx,
+                tr("Checking whether your engine can run the analysis…"),
+            );
+        }
     }
 
     /// The actions waiting for an engine of the user's to be probed: dropped when their
     /// game or preparation is no longer there; when the probe is done, started, or the
     /// download of ours is offered for the latest of them.
-    fn poll_review_wait(&mut self, ctx: &egui::Context) {
+    /// Returns whether they still wait.
+    fn poll_review_wait(&mut self, ctx: &egui::Context) -> bool {
         use crate::review_engine::Lookup;
         let (game, prep) = (
             self.game.as_ref().map(|g| g.serial),
@@ -2858,10 +2867,10 @@ impl App {
         );
         self.review_wait.retain(|p| still_waiting(p, game, prep));
         if self.review_wait.is_empty() {
-            return;
+            return false;
         }
         match crate::review_engine::lookup(ctx) {
-            Lookup::Checking => {}
+            Lookup::Checking => return true,
             Lookup::Ready(_) => {
                 for p in std::mem::take(&mut self.review_wait) {
                     self.run_engine_pending(ctx, Some(p));
@@ -2880,6 +2889,7 @@ impl App {
                 }
             }
         }
+        false
     }
 
     /// Runs what the user was doing when an engine had to be found first: on the game
@@ -3547,7 +3557,7 @@ impl eframe::App for App {
             }
         }
         if !self.review_wait.is_empty() {
-            self.poll_review_wait(&ctx);
+            let _ = self.poll_review_wait(&ctx);
         }
         self.offer_events(&ctx);
         self.page_frame(&ctx);
