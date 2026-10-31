@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.1.3] — 2026-10-31
+
 - Preparing against an opponent: choose which of his games — all, the last 3 or 6
   months, a year or two (counted back from his newest game), or his last 50, 100 or 200
   games of each colour; every choice shows how many games it takes. Games without a date
