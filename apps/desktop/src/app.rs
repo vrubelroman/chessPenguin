@@ -948,10 +948,12 @@ impl App {
                 let mut ids = Vec::new();
                 let mut missing = None;
                 for name in &names {
+                    // Every id of the name (a ChessBase database can have two).
                     let (found, _) = prep::candidates(&db, name, 50);
-                    match found.iter().find(|c| c.name == *name) {
-                        Some(c) => ids.push(c.id),
-                        None => missing = Some(name.clone()),
+                    let before = ids.len();
+                    ids.extend(found.iter().filter(|c| c.name == *name).map(|c| c.id));
+                    if ids.len() == before {
+                        missing = Some(name.clone());
                     }
                 }
                 match missing {

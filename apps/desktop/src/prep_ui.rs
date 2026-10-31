@@ -4497,7 +4497,11 @@ impl PrepScreen {
                     .link(trf("Show {other}", &[("other", &other_name)]))
                     .clicked()
             {
-                self.color = ColorChoice::from_side(if other { Side::White } else { Side::Black });
+                self.set_color(ColorChoice::from_side(if other {
+                    Side::White
+                } else {
+                    Side::Black
+                }));
             }
         });
     }
@@ -6061,13 +6065,13 @@ impl PrepScreen {
             self.tab = Tab::Errors;
         }
         if ctx.input_mut(|i| i.consume_shortcut(&alt(Key::Num1))) {
-            self.color = ColorChoice::White;
+            self.set_color(ColorChoice::White);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&alt(Key::Num2))) {
-            self.color = ColorChoice::Black;
+            self.set_color(ColorChoice::Black);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&alt(Key::Num3))) {
-            self.color = ColorChoice::Both;
+            self.set_color(ColorChoice::Both);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::W))) {
             actions.push(PrepAction::Back);

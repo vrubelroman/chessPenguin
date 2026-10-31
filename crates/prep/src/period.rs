@@ -66,13 +66,17 @@ fn today() -> u32 {
     (y * 10000 + m * 100 + d) as u32
 }
 
-/// The date of the player's newest game as written (0: none dated). A date after
-/// `today` is a typo («2206») and does not count as the newest.
+/// The date as the choice sees it: one after `today` is a typo («2206») and counts as
+/// no date.
+fn known(date: u32, today: u32) -> u32 {
+    if date > today { 0 } else { date }
+}
+
+/// The date of the player's newest game as written (0: none dated): by its earliest
+/// day, so that one game of «2026.??.??» does not move the period past the exactly
+/// dated ones.
 fn newest_at(pool: &[PoolGame], today: u32) -> u32 {
-    pool.iter()
-        .filter(|g| g.date != 0 && g.date / 10000 * 10000 <= today)
-        .max_by_key(|g| (latest(g.date).min(today), g.date))
-        .map_or(0, |g| g.date)
+    pool.iter().map(|g| known(g.date, today)).max().unwrap_or(0)
 }
 
 /// The date of the player's newest game as written (0: none dated).
@@ -104,7 +108,7 @@ fn choose_at(pool: &[PoolGame], period: Period, today: u32) -> Vec<(u32, bool)> 
             }
             let from = cutoff(latest(newest).min(today), months);
             pool.iter()
-                .filter(|g| g.date != 0 && latest(g.date) >= from)
+                .filter(|g| known(g.date, today) != 0 && latest(g.date) >= from)
                 .map(|g| (g.index, g.white))
                 .collect()
         }
@@ -113,7 +117,11 @@ fn choose_at(pool: &[PoolGame], period: Period, today: u32) -> Vec<(u32, bool)> 
             for white in [true, false] {
                 let mut games: Vec<&PoolGame> = pool.iter().filter(|g| g.white == white).collect();
                 // Newest first; the undated (0) last, later records counted newer.
-                games.sort_by(|a, b| b.date.cmp(&a.date).then(b.index.cmp(&a.index)));
+                games.sort_by(|a, b| {
+                    known(b.date, today)
+                        .cmp(&known(a.date, today))
+                        .then(b.index.cmp(&a.index))
+                });
                 out.extend(games.iter().take(n as usize).map(|g| (g.index, g.white)));
             }
             out
@@ -173,7 +181,8 @@ mod tests {
             g(1, true, 20250301),
             g(2, true, 20260700),
         ];
-        // «2026» is up to today: three months back is 2026.07.31 — July is in.
+        // From «2026.07.??», the newest: its last day 2026.07.31, three months back
+        // 2026.04.31; «2026» may be any day of the year, so it is in.
         assert_eq!(
             choose_at(&year_only, Period::Months(3), today),
             vec![(0, true), (2, true)]
@@ -185,10 +194,16 @@ mod tests {
             g(2, true, 20250101),
         ];
         assert_eq!(newest_at(&typo, today), 20260301);
-        assert_eq!(
-            choose_at(&typo, Period::Months(6), today),
-            vec![(0, true), (1, true)]
-        );
+        assert_eq!(choose_at(&typo, Period::Months(6), today), vec![(1, true)]);
+        assert_eq!(choose_at(&typo, Period::Last(1), today), vec![(1, true)]);
+        // One game of «2026» does not push out the exactly dated newest ones.
+        let mixed = [
+            g(0, true, 20260510),
+            g(1, true, 20260000),
+            g(2, true, 20260301),
+        ];
+        assert_eq!(newest_at(&mixed, today), 20260510);
+        assert_eq!(choose_at(&mixed, Period::Months(3), today).len(), 3);
         assert_eq!(
             choose(&pool, Period::Months(12)),
             vec![(3, true), (5, true)]
