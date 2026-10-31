@@ -2260,6 +2260,17 @@ impl LargeView {
                             opened = Some(index);
                             ui.close();
                         }
+                        // A game downloaded from Lichess or Chess.com: its page.
+                        let online = r.site.to_ascii_lowercase().contains("lichess.org")
+                            || r.site.trim().eq_ignore_ascii_case("chess.com");
+                        if online && ui.button(tr("🌐 Open in the browser")).clicked() {
+                            if let Some(link) = db.load_game(index).and_then(|p| {
+                                crate::game_link::of(|t| p.game.tag(t).map(str::to_owned))
+                            }) {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(link.at(0, false)));
+                            }
+                            ui.close();
+                        }
                         // One item per player of the game (the same name once).
                         let mut players: Vec<&str> = vec![r.white.as_str(), r.black.as_str()];
                         players.dedup();
