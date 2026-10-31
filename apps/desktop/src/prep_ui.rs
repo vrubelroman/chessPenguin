@@ -1087,6 +1087,8 @@ fn cache_dir() -> Option<PathBuf> {
 }
 
 pub struct PrepScreen {
+    /// This screen's own number (`engine_offer::next_serial`).
+    pub serial: u64,
     pub path: PathBuf,
     db: Arc<Database>,
     db_name: String,
@@ -1422,6 +1424,7 @@ impl PrepScreen {
         };
         let names = start.player.names(&db);
         let mut screen = PrepScreen {
+            serial: crate::engine_offer::next_serial(),
             db_name: base_name(&start.path),
             path: start.path,
             db,

@@ -11,7 +11,7 @@
 //! set: its own check of the universal build (`scripts/check_universal.sh` of the
 //! release) requires the same `bench` node count from every per-CPU build.
 
-use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
 
 use uci::{EnginePosition, Score};
 
@@ -55,8 +55,11 @@ pub const REFERENCE: [(&str, Score, u64); 3] = [
 pub struct Probe {
     /// The engine's name (`id name`).
     pub name: Option<String>,
-    /// The answers, one per position of [`PROBE_POSITIONS`] (fewer when one gave none).
+    /// The answers, one per position of [`PROBE_POSITIONS`] (fewer when one gave none,
+    /// took too long, or the engine is not called Stockfish 19: then none is searched).
     pub answers: Vec<ProbeAnswer>,
+    /// A search took longer than allowed (an engine that ignores `go nodes`).
+    pub timed_out: bool,
 }
 
 impl Probe {
@@ -74,23 +77,75 @@ impl Probe {
     }
 }
 
-/// Runs the probe searches in a process of the engine. Takes about a second (the
-/// engine's start included); the engine is quit at the end.
-pub fn probe(config: uci::EngineConfig) -> Result<Probe, JobFailure> {
+/// How long the probe may take: a search (Stockfish needs about 0.1 s) and all of it.
+#[derive(Clone, Copy, Debug)]
+pub struct ProbeLimits {
+    pub search: Duration,
+    pub total: Duration,
+}
+
+impl Default for ProbeLimits {
+    fn default() -> Self {
+        ProbeLimits {
+            search: Duration::from_secs(10),
+            total: Duration::from_secs(30),
+        }
+    }
+}
+
+/// What [`REFERENCE`] is a reference of — the positions, the nodes, the hash, the
+/// answers — as a short text kept with the verdicts: a verdict of another probe is
+/// not trusted. (FNV-1a of their text: the same in every build.)
+pub fn reference_key() -> String {
+    let text = format!("{PROBE_POSITIONS:?}|{PROBE_NODES}|{SEARCH_HASH_MB}|{REFERENCE:?}");
+    let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+/// Runs the probe in a process of the engine; `halted` gives it up (the program
+/// quits). An engine not called Stockfish 19 is not searched at all. The engine is
+/// quit at the end (killed if it does not go).
+pub fn probe(
+    config: uci::EngineConfig,
+    limits: ProbeLimits,
+    halted: &dyn Fn() -> bool,
+) -> Result<Probe, JobFailure> {
+    let started = Instant::now();
     let handle = uci::Engine::spawn_with(config, Box::new(|| {}))
         .map_err(|e| JobFailure::Start(e.to_string()))?;
-    let name = handle.info().name.clone();
+    let mut probe = Probe {
+        name: handle.info().name.clone(),
+        answers: Vec::new(),
+        timed_out: false,
+    };
+    if probe.name.as_deref() != Some(STOCKFISH_19) {
+        handle.quit();
+        return Ok(probe);
+    }
     let _ = handle.set_threads(1);
     let _ = handle.set_hash_mb(SEARCH_HASH_MB);
     let _ = handle.set_multipv(1);
-    let never = AtomicBool::new(false);
-    let halted = || never.load(std::sync::atomic::Ordering::Relaxed);
-    let mut answers = Vec::new();
+    let over = || halted() || started.elapsed() > limits.total;
     for (i, fen) in PROBE_POSITIONS.iter().enumerate() {
         let _ = handle.new_game();
         let pos = EnginePosition::fen(*fen, Vec::<String>::new());
         let id = uci::SearchId(i as u64 + 1);
-        let answer = search_once(&handle, &pos, id, Vec::new(), PROBE_NODES, &halted)?;
+        let search_started = Instant::now();
+        let answer = search_once(
+            &handle,
+            &pos,
+            id,
+            Vec::new(),
+            PROBE_NODES,
+            limits.search,
+            &over,
+        )?;
+        if search_started.elapsed() > limits.search || started.elapsed() > limits.total {
+            probe.timed_out = true;
+            break;
+        }
         let Some((info, best)) = answer else { break };
         let (Some(best), Some(score), Some(nodes)) = (
             best.or_else(|| info.pv.first().cloned()),
@@ -99,19 +154,23 @@ pub fn probe(config: uci::EngineConfig) -> Result<Probe, JobFailure> {
         ) else {
             break;
         };
-        answers.push(ProbeAnswer {
+        probe.answers.push(ProbeAnswer {
             best,
             score: score.score,
             nodes,
         });
     }
     handle.quit();
-    Ok(Probe { name, answers })
+    Ok(probe)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run(config: uci::EngineConfig) -> Result<Probe, JobFailure> {
+        probe(config, ProbeLimits::default(), &|| false)
+    }
 
     fn fake() -> &'static str {
         let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/fake_uci");
@@ -143,7 +202,7 @@ mod tests {
 
     #[test]
     fn the_reference_answers_pass() {
-        let p = probe(engine(STOCKFISH_19, &REFERENCE)).expect("the probe runs");
+        let p = run(engine(STOCKFISH_19, &REFERENCE)).expect("the probe runs");
         assert_eq!(p.name.as_deref(), Some(STOCKFISH_19));
         assert_eq!(p.answers.len(), 3);
         assert!(p.same(), "{p:?}");
@@ -154,24 +213,24 @@ mod tests {
         // Another network or version: one score differs.
         let mut other = REFERENCE;
         other[1].1 = Score::Cp(-117);
-        let p = probe(engine(STOCKFISH_19, &other)).expect("the probe runs");
+        let p = run(engine(STOCKFISH_19, &other)).expect("the probe runs");
         assert!(!p.same());
         // The nodes differ (another search), the move and score the same.
         let mut other = REFERENCE;
         other[2].2 += 1;
-        assert!(!probe(engine(STOCKFISH_19, &other)).unwrap().same());
+        assert!(!run(engine(STOCKFISH_19, &other)).unwrap().same());
         // Another best move.
         let mut other = REFERENCE;
         other[0].0 = "g8f6";
-        assert!(!probe(engine(STOCKFISH_19, &other)).unwrap().same());
+        assert!(!run(engine(STOCKFISH_19, &other)).unwrap().same());
         // The same answers under another name.
-        let p = probe(engine("Stockfish 18", &REFERENCE)).unwrap();
+        let p = run(engine("Stockfish 18", &REFERENCE)).unwrap();
         assert_eq!(p.name.as_deref(), Some("Stockfish 18"));
         assert!(!p.same());
         // An engine that answers nothing of the kind (the fake's own lines).
         let mut plain = uci::EngineConfig::new(fake());
         plain.args = vec!["--name".into(), STOCKFISH_19.into()];
-        assert!(!probe(plain).unwrap().same());
+        assert!(!run(plain).unwrap().same());
     }
 
     /// A real Stockfish 19 gives [`REFERENCE`] (run when the reference is taken again
@@ -181,15 +240,72 @@ mod tests {
     #[ignore = "needs a Stockfish 19 in CP_PROBE_ENGINE"]
     fn a_real_stockfish_19_gives_the_reference() {
         let path = std::env::var("CP_PROBE_ENGINE").expect("CP_PROBE_ENGINE");
-        let p = probe(uci::EngineConfig::new(path)).expect("the probe runs");
+        let p = run(uci::EngineConfig::new(path)).expect("the probe runs");
         println!("{p:?}");
         assert!(p.same(), "{p:?}");
+    }
+
+    /// An engine not called Stockfish 19 is not searched (Rodent searches on past
+    /// `go nodes`): its name is the verdict, at once.
+    #[test]
+    fn another_engine_is_not_searched() {
+        let mut config = uci::EngineConfig::new(fake());
+        config.args = vec![
+            "--name".into(),
+            "Rodent V 1.2".into(),
+            "--ignore-nodes".into(),
+        ];
+        let started = Instant::now();
+        let p = run(config).expect("the probe runs");
+        assert_eq!(p.name.as_deref(), Some("Rodent V 1.2"));
+        assert!(p.answers.is_empty() && !p.timed_out && !p.same());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// A «Stockfish 19» that ignores `go nodes`: stopped by the guard, not the same.
+    #[test]
+    fn an_endless_search_is_cut_short() {
+        let mut config = uci::EngineConfig::new(fake());
+        config.args = vec![
+            "--name".into(),
+            STOCKFISH_19.into(),
+            "--ignore-nodes".into(),
+        ];
+        let limits = ProbeLimits {
+            search: Duration::from_millis(300),
+            total: Duration::from_secs(2),
+        };
+        let started = Instant::now();
+        let p = probe(config, limits, &|| false).expect("the probe runs");
+        assert!(p.timed_out && !p.same(), "{p:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        // Halted from outside (the program quits): at once.
+        let mut config = uci::EngineConfig::new(fake());
+        config.args = vec![
+            "--name".into(),
+            STOCKFISH_19.into(),
+            "--ignore-nodes".into(),
+        ];
+        let started = Instant::now();
+        let p = probe(config, ProbeLimits::default(), &|| true).expect("the probe runs");
+        assert!(!p.same());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn the_reference_key_is_stable() {
+        assert_eq!(reference_key(), reference_key());
+        assert_eq!(reference_key().len(), 16);
     }
 
     #[test]
     fn an_engine_that_does_not_start_fails() {
         assert!(matches!(
-            probe(uci::EngineConfig::new("/nonexistent/engine")),
+            run(uci::EngineConfig::new("/nonexistent/engine")),
             Err(JobFailure::Start(_))
         ));
     }

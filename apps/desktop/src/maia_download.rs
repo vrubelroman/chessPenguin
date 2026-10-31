@@ -60,7 +60,7 @@ impl Published for Model {
 }
 
 /// `<local data dir>/maia/<file>`.
-fn dir() -> Option<PathBuf> {
+pub fn dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("io.github", "vrubelroman", "ChessPenguin")
         .map(|d| d.data_local_dir().join("maia"))
 }

@@ -18,9 +18,23 @@ pub const DOWNLOAD_INDICATOR: &str = "download_indicator";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pending {
     LiveAnalysis,
-    GameAnalysis,
-    /// The opponent preparation's search for opening errors.
-    OpeningErrors,
+    /// The analysis of the game on the screen whose `serial` is `game` (no other game's);
+    /// `full`: anew, over evaluations read from the PGN.
+    GameAnalysis {
+        game: u64,
+        full: bool,
+    },
+    /// The search for opening errors of the preparation whose `serial` is `prep`.
+    OpeningErrors {
+        prep: u64,
+    },
+}
+
+/// A number of its own for a screen an action waits on (a game, a preparation), so
+/// that an engine arriving later starts it there and nowhere else.
+pub fn next_serial() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What the owner should do.
@@ -45,9 +59,8 @@ enum Mode {
     /// The game analysis or the opening errors, which need ChessPenguin's Stockfish 19
     /// itself (their search is the same on every computer): only its download helps.
     Own,
-    /// The same, when the user's engine (its name here) is another one: another
-    /// version, network or build of Stockfish, or another engine (`review_engine`).
-    OwnInstead(String),
+    /// The same, when the user's engine does not do (`review_engine`): it is named.
+    OwnInstead(crate::review_engine::Unfit),
 }
 
 pub struct EngineOffer {
@@ -98,11 +111,11 @@ impl EngineOffer {
     }
 
     /// Opens the offer of ChessPenguin's Stockfish 19 for the game analysis or the
-    /// opening errors, saying that the user's engine `name` is not it.
-    pub fn ask_instead_of(&mut self, pending: Pending, name: String) {
+    /// opening errors, saying why the user's engine does not do.
+    pub fn ask_instead_of(&mut self, pending: Pending, unfit: crate::review_engine::Unfit) {
         self.pending = Some(pending);
         self.failure = None;
-        self.mode = Mode::OwnInstead(name);
+        self.mode = Mode::OwnInstead(unfit);
         self.open = true;
     }
 
@@ -140,13 +153,13 @@ impl EngineOffer {
                     events.push(OfferEvent::Installed(pending));
                     events.push(OfferEvent::Toast(
                         match pending {
-                            Some(Pending::GameAnalysis) => {
+                            Some(Pending::GameAnalysis { .. }) => {
                                 tr("Stockfish installed — game analysis started")
                             }
                             Some(Pending::LiveAnalysis) => {
                                 tr("Stockfish installed — analysis is on")
                             }
-                            Some(Pending::OpeningErrors) => {
+                            Some(Pending::OpeningErrors { .. }) => {
                                 tr("Stockfish installed — the search for opening errors started")
                             }
                             None => tr("Stockfish installed"),
@@ -245,19 +258,9 @@ impl EngineOffer {
                 )
                 .into(),
             ),
-            Mode::OwnInstead(name) => (
+            Mode::OwnInstead(unfit) => (
                 tr("Analysis needs Stockfish 19"),
-                if self.pending == Some(Pending::OpeningErrors) {
-                    trf(
-                        "The settings name {engine}. The search for opening errors needs Stockfish 19 itself, so that the marks are the same on every computer. Download Stockfish 19 ({mb} MB)?",
-                        &[("engine", name), ("mb", &size)],
-                    )
-                } else {
-                    trf(
-                        "The settings name {engine}. Game analysis needs Stockfish 19 itself, so that the marks are the same on every computer. Download Stockfish 19 ({mb} MB)?",
-                        &[("engine", name), ("mb", &size)],
-                    )
-                },
+                instead_text(unfit, self.pending),
             ),
         };
         ui.heading(title);
@@ -285,12 +288,6 @@ impl EngineOffer {
             });
             let size = trf("Size: {size}", &[("size", &format!("{size} MB"))]);
             ui.label(RichText::new(free.map_or(size.clone(), |f| format!("{size} · {f}"))).weak());
-        } else if matches!(self.mode, Mode::OwnInstead(_)) {
-            // The size is in the question already.
-            ui.label(RichText::new(tr("Installed for your account only")).weak())
-                .on_hover_text(
-                    "https://github.com/official-stockfish/Stockfish/releases/tag/sf_19",
-                );
         } else {
             ui.label(
                 RichText::new(trf(
@@ -391,10 +388,10 @@ impl EngineOffer {
         }
         ui.add_space(4.0);
         let after = match self.pending {
-            Some(Pending::GameAnalysis) => {
+            Some(Pending::GameAnalysis { .. }) => {
                 tr("Game analysis will start by itself when the download finishes.")
             }
-            Some(Pending::OpeningErrors) => {
+            Some(Pending::OpeningErrors { .. }) => {
                 tr("The search for opening errors will start by itself when the download finishes.")
             }
             _ => tr("Analysis will start by itself when the download finishes."),
@@ -512,6 +509,62 @@ impl EngineOffer {
     }
 }
 
+/// Why the user's engine does not do for the game analysis (or the opening errors),
+/// what is offered instead, and that the analysis follows the download by itself.
+fn instead_text(unfit: &crate::review_engine::Unfit, pending: Option<Pending>) -> String {
+    use crate::review_engine::Why;
+    let errors = matches!(pending, Some(Pending::OpeningErrors { .. }));
+    let engine = crate::widgets::shorten(&unfit.name, 48);
+    let mut parts = vec![match unfit.why {
+        Why::Differs => tr(
+            "Your Stockfish 19 calculates differently from ChessPenguin's build (another build or network).",
+        )
+        .to_owned(),
+        Why::NotStarted => trf("{engine} could not be started.", &[("engine", &engine)]),
+        Why::Other if unfit.from_settings => {
+            trf("The settings name {engine}.", &[("engine", &engine)])
+        }
+        Why::Other => trf("The system has {engine}.", &[("engine", &engine)]),
+    }];
+    parts.push(
+        match (unfit.why == Why::Differs, errors) {
+            (true, false) => tr(
+                "So that the marks are the same on every computer, game analysis runs on the official build.",
+            ),
+            (true, true) => tr(
+                "So that the marks are the same on every computer, the search for opening errors runs on the official build.",
+            ),
+            (false, false) => tr(
+                "Game analysis needs Stockfish 19 itself, so that the marks are the same on every computer.",
+            ),
+            (false, true) => tr(
+                "The search for opening errors needs Stockfish 19 itself, so that the marks are the same on every computer.",
+            ),
+        }
+        .to_owned(),
+    );
+    parts.push(
+        if unfit.why == Why::Differs {
+            tr("Download it?")
+        } else {
+            tr("Download Stockfish 19?")
+        }
+        .to_owned(),
+    );
+    if unfit.why != Why::NotStarted {
+        parts.push(tr("Your engine stays for position analysis.").to_owned());
+    }
+    parts.push(
+        if errors {
+            tr("The search for opening errors will start by itself when the download finishes.")
+        } else {
+            tr("Game analysis will start by itself when the download finishes.")
+        }
+        .to_owned(),
+    );
+    parts.join(" ")
+}
+
 /// What to tell the user about a failure, and the technical details (collapsed).
 fn failure_text(f: &Failure) -> (String, Option<String>) {
     match f {
@@ -543,5 +596,47 @@ fn failure_text(f: &Failure) -> (String, Option<String>) {
                 .into(),
             None,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Pending, instead_text};
+    use crate::review_engine::{Unfit, Why};
+
+    fn text(why: Why, from_settings: bool, pending: Pending) -> String {
+        let unfit = Unfit {
+            name: "Rodent V 1.2".into(),
+            from_settings,
+            why,
+        };
+        instead_text(&unfit, Some(pending))
+    }
+
+    /// The offer says why the user's engine does not do and where it is from; the
+    /// user's engine stays for the live analysis, the analysis follows the download.
+    #[test]
+    fn the_offer_says_why_the_users_engine_does_not_do() {
+        let game = Pending::GameAnalysis {
+            game: 1,
+            full: false,
+        };
+        let errors = Pending::OpeningErrors { prep: 1 };
+        let t = text(Why::Other, true, game);
+        assert!(t.starts_with("The settings name Rodent V 1.2."), "{t}");
+        assert!(t.contains("Your engine stays for position analysis."));
+        assert!(t.ends_with("Game analysis will start by itself when the download finishes."));
+        let t = text(Why::Other, false, errors);
+        assert!(t.starts_with("The system has Rodent V 1.2."), "{t}");
+        assert!(t.contains("The search for opening errors needs Stockfish 19 itself"));
+        let t = text(Why::Differs, true, game);
+        assert!(
+            t.starts_with("Your Stockfish 19 calculates differently"),
+            "{t}"
+        );
+        assert!(t.contains("Download it?"));
+        let t = text(Why::NotStarted, true, game);
+        assert!(t.starts_with("Rodent V 1.2 could not be started."), "{t}");
+        assert!(!t.contains("stays for position analysis"));
     }
 }

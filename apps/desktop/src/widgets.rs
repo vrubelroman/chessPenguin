@@ -138,3 +138,28 @@ pub fn icon_button(ui: &mut Ui, check: bool, primary: bool) -> egui::Response {
     }
     resp
 }
+
+/// `text` cut to `max` characters, with «…» in the middle when longer (a file's or an
+/// engine's name keeps its start and its end, where versions and extensions are).
+pub fn shorten(text: &str, max: usize) -> String {
+    let n = text.chars().count();
+    if n <= max || max < 3 {
+        return text.to_owned();
+    }
+    let head = (max - 1) / 2;
+    let tail = max - 1 - head;
+    let start: String = text.chars().take(head).collect();
+    let end: String = text.chars().skip(n - tail).collect();
+    format!("{start}…{end}")
+}
+
+#[cfg(test)]
+mod shorten_tests {
+    #[test]
+    fn long_names_are_cut_in_the_middle() {
+        assert_eq!(super::shorten("Stockfish 19", 48), "Stockfish 19");
+        assert_eq!(super::shorten("abcdefghij", 5), "ab…ij");
+        assert_eq!(super::shorten("абвгдежзик", 7), "абв…зик");
+        assert_eq!(super::shorten("abcdefghij", 7).chars().count(), 7);
+    }
+}

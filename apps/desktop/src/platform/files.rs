@@ -28,6 +28,8 @@ pub struct Picked {
     pub incomplete: Vec<String>,
     pub empty_folder: bool,
     pub unsupported: Vec<String>,
+    /// Files dropped on a computer's window that are no longer there (their names).
+    pub missing: Vec<String>,
 }
 
 /// The files the user gave the page, made databases: the ChessBase ones of their
@@ -293,34 +295,77 @@ pub fn dragging(ctx: &egui::Context) -> bool {
     ctx.input(|i| !i.raw.hovered_files.is_empty())
 }
 
+/// The extensions of the other files of a ChessBase database (beside its `.cbh`).
+#[cfg(not(web))]
+const CHESSBASE_PARTS: [&str; 14] = [
+    "cbg", "cba", "cbp", "cbt", "cbc", "cbs", "cbj", "cbe", "cbm", "cbb", "cbgi", "cbtt", "cbpi",
+    "cbl",
+];
+
 /// The databases of the files and folders dropped on a computer's window: a file of
-/// [`chess_import::EXTENSIONS`] is one; any other file of a ChessBase database (its
-/// `.cbg`, `.cba`, …: a `.cbh` of the same name beside it) stands for that database;
-/// a folder gives the databases in it. Each database once, in the order dropped.
+/// [`chess_import::EXTENSIONS`] is one; another file of a ChessBase database (its
+/// `.cbg`, `.cba`, …: [`CHESSBASE_PARTS`]) stands for the `.cbh` of the same name
+/// beside it; a folder gives the databases in it. Each database once (its real file),
+/// in the order dropped; a file no longer there and a file of no database are named.
 #[cfg(not(web))]
 fn sort_dropped(paths: &[PathBuf]) -> Picked {
+    use std::collections::{HashMap, HashSet};
     let mut picked = Picked::default();
-    let add = |p: PathBuf, picked: &mut Picked| {
-        if !picked.paths.contains(&p) {
-            picked.paths.push(p);
-        }
+    let mut seen = HashSet::new();
+    // Each folder is listed once, however many of its files were dropped.
+    let mut listed: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+    let mut list = |dir: &std::path::Path| -> Vec<PathBuf> {
+        listed
+            .entry(dir.to_path_buf())
+            .or_insert_with(|| {
+                let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+                    .map(|entries| {
+                        entries
+                            .flatten()
+                            .map(|e| e.path())
+                            .filter(|f| f.is_file())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                files.sort();
+                files
+            })
+            .clone()
+    };
+    let name = |p: &std::path::Path| {
+        p.file_name()
+            .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into())
     };
     for p in paths {
-        if p.is_dir() {
-            let found = databases_in(p);
+        let found = if p.is_dir() {
+            let found: Vec<PathBuf> = list(p)
+                .into_iter()
+                .filter(|f| chess_import::EXTENSIONS.contains(&extension(f).as_str()))
+                .collect();
             if found.is_empty() {
                 picked.empty_folder = true;
             }
-            for f in found {
-                add(f, &mut picked);
-            }
-        } else if let Some(db) = database_of(p) {
-            add(db, &mut picked);
+            found
+        } else if !p.is_file() {
+            picked.missing.push(name(p));
+            continue;
         } else {
-            let name = p
-                .file_name()
-                .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into());
-            picked.unsupported.push(name);
+            let ext = extension(p);
+            if chess_import::EXTENSIONS.contains(&ext.as_str()) {
+                vec![p.clone()]
+            } else if CHESSBASE_PARTS.contains(&ext.as_str())
+                && let Some(cbh) = p.parent().and_then(|dir| cbh_beside(p, &list(dir)))
+            {
+                vec![cbh]
+            } else {
+                picked.unsupported.push(name(p));
+                continue;
+            }
+        };
+        for f in found {
+            if seen.insert(f.canonicalize().unwrap_or_else(|_| f.clone())) {
+                picked.paths.push(f);
+            }
         }
     }
     picked
@@ -334,39 +379,19 @@ fn extension(p: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-/// The database the file `p` is, or is a part of.
+/// The `.cbh` of the ChessBase database the file `part` belongs to, among the files
+/// of its folder (names differ in case in sets copied from Windows).
 #[cfg(not(web))]
-fn database_of(p: &std::path::Path) -> Option<PathBuf> {
-    if chess_import::EXTENSIONS.contains(&extension(p).as_str()) {
-        return Some(p.to_path_buf());
-    }
-    // A part of a ChessBase database: its `.cbh` beside it (in any case of letters).
-    let stem = p.file_stem()?.to_string_lossy().to_lowercase();
+fn cbh_beside(part: &std::path::Path, folder: &[PathBuf]) -> Option<PathBuf> {
+    let stem = part.file_stem()?.to_string_lossy().to_lowercase();
     let want = format!("{stem}.cbh");
-    std::fs::read_dir(p.parent()?)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
+    folder
+        .iter()
         .find(|f| {
-            f.is_file()
-                && f.file_name()
-                    .is_some_and(|n| n.to_string_lossy().to_lowercase() == want)
+            f.file_name()
+                .is_some_and(|n| n.to_string_lossy().to_lowercase() == want)
         })
-}
-
-/// The databases in the folder `dir` (not in folders inside it), by name.
-#[cfg(not(web))]
-fn databases_in(dir: &std::path::Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|f| f.is_file() && chess_import::EXTENSIONS.contains(&extension(f).as_str()))
-        .collect();
-    found.sort();
-    found
+        .cloned()
 }
 
 /// Gives `pgn` to the user as the file `name` (a download, where the browser puts
@@ -392,9 +417,10 @@ mod tests {
         let archive = dir.join("set.7z");
         let notes = dir.join("notes.txt");
         let cbh = base.join("Mega.CBH");
-        let parts = ["Mega.cbg", "Mega.cba", "Mega.cbj", "Mega.ini"].map(|n| base.join(n));
+        let parts = ["Mega.cbg", "Mega.cba", "Mega.cbj", "Mega.CBTT"].map(|n| base.join(n));
+        let ini = base.join("Mega.ini");
         let lonely = dir.join("lost.cbg");
-        for p in [&games, &archive, &notes, &cbh, &lonely] {
+        for p in [&games, &archive, &notes, &cbh, &lonely, &ini] {
             touch(p);
         }
         for p in &parts {
@@ -415,21 +441,34 @@ mod tests {
             picked.paths,
             vec![games.clone(), archive.clone(), cbh.clone()]
         );
-        assert!(picked.unsupported.is_empty());
+        assert!(picked.unsupported.is_empty() && picked.missing.is_empty());
         assert!(!picked.empty_folder);
 
-        // What is no database is named; a ChessBase part without its .cbh is none.
-        let picked = sort_dropped(&[notes.clone(), lonely.clone(), games.clone()]);
+        // What is no database is named: another file, a ChessBase part without its
+        // .cbh, a file of an unknown kind beside a .cbh.
+        let picked = sort_dropped(&[notes.clone(), lonely.clone(), ini.clone(), games.clone()]);
         assert_eq!(picked.paths, vec![games.clone()]);
-        assert_eq!(
-            picked.unsupported,
-            vec!["notes.txt".to_string(), "lost.cbg".into()]
-        );
+        assert_eq!(picked.unsupported, ["notes.txt", "lost.cbg", "Mega.ini"]);
+
+        // A file no longer there: named, not taken.
+        let picked = sort_dropped(&[dir.join("gone.pgn"), games.clone()]);
+        assert_eq!(picked.paths, vec![games.clone()]);
+        assert_eq!(picked.missing, ["gone.pgn"]);
+        assert!(picked.unsupported.is_empty());
 
         // A folder: its databases (by name); one without any is told.
         let picked = sort_dropped(&[base.clone(), empty.clone()]);
         assert_eq!(picked.paths, vec![cbh.clone(), cbv.clone()]);
         assert!(picked.empty_folder);
+
+        // The same file by a link and by its own path: once.
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.pgn");
+            std::os::unix::fs::symlink(&games, &link).unwrap();
+            let picked = sort_dropped(&[link.clone(), games.clone()]);
+            assert_eq!(picked.paths, vec![link]);
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

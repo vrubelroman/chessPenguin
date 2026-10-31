@@ -30,6 +30,7 @@
 //!                          best move, scored 30 cp lower (a worse move)
 //!   --shallow N MOVE       `go nodes n` with n < N (no `searchmoves`): MOVE is the
 //!                          best move (a shallow search choosing another move)
+//!   --ignore-nodes         `go nodes N` searches until `stop` (as Rodent does)
 //!   --answer MARKER TAIL   `go` in the position of MARKER answers at once with
 //!                          `info depth 10 multipv 1 score TAIL` and the bestmove of
 //!                          the first move after `pv` in TAIL (repeatable)
@@ -64,6 +65,7 @@ struct Cfg {
     searchmoves: bool,
     shallow: Option<(u64, String)>,
     answers: Vec<(String, String)>,
+    ignore_nodes: bool,
 }
 
 fn parse_args() -> Cfg {
@@ -98,6 +100,7 @@ fn parse_args() -> Cfg {
                 let n = num(args.next());
                 c.shallow = args.next().map(|m| (n, m));
             }
+            "--ignore-nodes" => c.ignore_nodes = true,
             "--answer" => {
                 if let (Some(m), Some(t)) = (args.next(), args.next()) {
                     c.answers.push((m, t));
@@ -309,7 +312,7 @@ fn main() {
                     .and_then(|p| toks.get(p + 1))
                     .and_then(|v| v.parse().ok())
                     // `go nodes N`: a short search that ends by itself, like a real one.
-                    .or_else(|| toks.contains(&"nodes").then_some(3));
+                    .or_else(|| (toks.contains(&"nodes") && !cfg.ignore_nodes).then_some(3));
                 since_new_game += 1;
                 let mut bias = if cfg.hash_memory {
                     let of_position = marker.bytes().map(i32::from).sum::<i32>() % 97;

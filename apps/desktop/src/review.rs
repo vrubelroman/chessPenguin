@@ -3,8 +3,9 @@
 //! evaluations, judgements, cache and the job itself are the `game-review` crate's,
 //! shared with the Android app.
 //!
-//! The job uses engine processes of its own — ChessPenguin's Stockfish 19 with the fixed
-//! search of `game_review::run`, the same on every computer, not the user's engine — and
+//! The job uses engine processes of its own — Stockfish 19 (ChessPenguin's, or the user's
+//! that searches the same, `review_engine`) with the fixed search of `game_review::run`,
+//! the same on every computer — and
 //! never touches the game; writing the results into the game is a separate, undoable
 //! action ([`Review::write_to_game`]).
 
@@ -108,17 +109,39 @@ pub fn spawn_job(
         std::thread::Builder::new()
             .name(name.to_owned())
             .spawn(move || {
+                // A user's engine must still be the Stockfish 19 probed (a wrapper may
+                // start another program now): else the job stops at once, before any
+                // evaluation is taken, and the engine is probed again next time.
+                let mut changed = false;
                 let result = game_review::run(
                     engine_config(&path),
                     &settings,
                     targets,
                     &cancel,
                     &mut |e| {
+                        if changed {
+                            return;
+                        }
+                        if let JobEvent::Engine(name) = &e
+                            && !crate::review_engine::name_fits(&path, name)
+                        {
+                            changed = true;
+                            cancel.store(true, Ordering::Relaxed);
+                            return;
+                        }
                         let _ = tx.send(JobMsg::Event(e));
                         ctx.request_repaint();
                     },
                 );
-                let _ = tx.send(job_end(result));
+                let end = if changed {
+                    JobMsg::Failed(
+                        tr("The engine is no longer the Stockfish 19 that was checked. Start the analysis again.")
+                            .into(),
+                    )
+                } else {
+                    job_end(result)
+                };
+                let _ = tx.send(end);
                 ctx.request_repaint();
             })
             .map(|_| JobRunner {})

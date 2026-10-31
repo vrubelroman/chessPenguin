@@ -49,6 +49,8 @@ impl Preview {
 }
 
 pub struct GameView {
+    /// This view's own number (`engine_offer::next_serial`).
+    pub serial: u64,
     pub game: Game,
     pub source: Option<GameSource>,
     /// A new game meant for this database (the table's «+ Game»): Ctrl+S adds it there.
@@ -163,8 +165,11 @@ pub enum GameAction {
     ResumeLive,
     /// Find the current position in a database (`None`: the last chosen one).
     FindPosition(Option<std::path::PathBuf>),
-    /// Game analysis needs an engine that is not there yet (offer to download one).
-    NeedEngine,
+    /// Game analysis (`full`: anew) needs an engine that is not there yet (offer to
+    /// download one).
+    NeedEngine {
+        full: bool,
+    },
     /// The reference tab: use / load a database, open one of its games.
     ReferenceChoose(std::path::PathBuf),
     ReferenceLoad(std::path::PathBuf),
@@ -186,6 +191,7 @@ impl GameView {
         let flipped = false;
         let review = Review::new(&game);
         Self {
+            serial: crate::engine_offer::next_serial(),
             game,
             source,
             diagnostics,
@@ -859,7 +865,7 @@ impl GameView {
     /// download ours.
     fn start_review(&mut self, full: bool, ctx: &egui::Context, actions: &mut Vec<GameAction>) {
         let Some(path) = crate::review_engine::engine() else {
-            actions.push(GameAction::NeedEngine);
+            actions.push(GameAction::NeedEngine { full });
             return;
         };
         if self.review.start(&self.game, &path, full, ctx) {
@@ -2129,10 +2135,11 @@ impl GameView {
         }
     }
 
-    /// Starts the game analysis right away (after an engine was installed for it).
-    pub fn start_review_now(&mut self, ctx: &egui::Context) -> Vec<GameAction> {
+    /// Starts the game analysis right away (after an engine was found or installed for
+    /// it); `full` as it was asked.
+    pub fn start_review_now(&mut self, ctx: &egui::Context, full: bool) -> Vec<GameAction> {
         let mut actions = Vec::new();
-        self.start_review(false, ctx, &mut actions);
+        self.start_review(full, ctx, &mut actions);
         actions
     }
 

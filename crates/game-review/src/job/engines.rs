@@ -105,7 +105,15 @@ fn worker(
     let mut search = |pos: &EnginePosition, among: Vec<String>, nodes: u64| {
         next_id += 1;
         let _ = handle.new_game();
-        search_once(&handle, pos, SearchId(next_id), among, nodes, halted)
+        search_once(
+            &handle,
+            pos,
+            SearchId(next_id),
+            among,
+            nodes,
+            SEARCH_GUARD,
+            halted,
+        )
     };
     'targets: while let Some(t) = targets.get(next.fetch_add(1, Ordering::Relaxed)) {
         if halted() {
@@ -135,13 +143,15 @@ fn worker(
 }
 
 /// One node-limited search: its last full line and the best move. `None` when it gave
-/// no line or the job was halted.
+/// no line or the job was halted. After `guard` the search is stopped (an engine that
+/// ignores `stop` is killed by the `uci` crate's stop timeout: `Terminated`).
 pub(super) fn search_once(
     handle: &uci::EngineHandle,
     pos: &EnginePosition,
     id: SearchId,
     among: Vec<String>,
     nodes: u64,
+    guard: Duration,
     halted: &dyn Fn() -> bool,
 ) -> Result<Answer, JobFailure> {
     handle
@@ -154,7 +164,7 @@ pub(super) fn search_once(
         if halted() {
             return Ok(None);
         }
-        if !stopping && started.elapsed() > SEARCH_GUARD {
+        if !stopping && started.elapsed() > guard {
             let _ = handle.stop();
             stopping = true;
         }

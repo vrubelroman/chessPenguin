@@ -24,7 +24,12 @@ use crate::sound::SoundPlayer;
 
 /// Results of work done off the UI thread (file dialogs, engine checks).
 enum Async {
+    /// Databases chosen in a dialog (none: it was cancelled).
     DatabasesPicked(Vec<PathBuf>),
+    /// Databases dropped on the window.
+    DatabasesDropped(Vec<PathBuf>),
+    /// Files dropped on the window that are no longer there (their names).
+    Missing(Vec<String>),
     /// Files not opened: too big for a browser (name, bytes).
     #[cfg(web)]
     TooBig(Vec<(String, u64)>),
@@ -257,8 +262,9 @@ pub struct App {
     close_after_save: Option<CloseIntent>,
     /// The offer to download Stockfish when an action needs an engine.
     engine_offer: crate::engine_offer::EngineOffer,
-    /// What waits for an engine of the user's to be probed (`review_engine`).
-    review_wait: Option<crate::engine_offer::Pending>,
+    /// What waits for an engine of the user's to be probed (`review_engine`): at most
+    /// one game analysis and one search for opening errors.
+    review_wait: Vec<crate::engine_offer::Pending>,
     offer_hook_done: bool,
     /// What only the desktop program has: online games, updates.
     #[cfg(not(web))]
@@ -508,7 +514,7 @@ impl App {
             prep_quit_ask: false,
             prep_quit_ok: false,
             engine_offer: crate::engine_offer::EngineOffer::new(),
-            review_wait: None,
+            review_wait: Vec::new(),
             offer_hook_done: false,
             #[cfg(not(web))]
             desktop,
@@ -981,7 +987,10 @@ impl App {
                 }
                 PrepAction::EngineEnded => {}
                 PrepAction::NeedEngine => {
-                    self.need_review_engine(ctx, crate::engine_offer::Pending::OpeningErrors)
+                    if let Some(prep) = self.prep.as_ref().map(|p| p.serial) {
+                        let pending = crate::engine_offer::Pending::OpeningErrors { prep };
+                        self.need_review_engine(ctx, pending);
+                    }
                 }
                 PrepAction::SettingsChanged => self.settings_dirty = true,
                 PrepAction::Toast(m) => self.toast(ctx, m),
@@ -2417,7 +2426,7 @@ impl App {
     fn pick_databases(&self, ctx: &egui::Context) {
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         crate::platform::files::pick_databases(move |picked| {
-            send_picked(&tx, picked);
+            send_picked(&tx, picked, false);
             ctx.request_repaint();
         });
     }
@@ -2487,10 +2496,7 @@ impl App {
                     );
                 }
                 Async::NotDatabases(names) => {
-                    let mut files = names.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
-                    if names.len() > 3 {
-                        files.push_str(", …");
-                    }
+                    let files = names_text(&names);
                     self.toast(
                         ctx,
                         trf(
@@ -2501,9 +2507,37 @@ impl App {
                 }
                 #[cfg(web)]
                 Async::CopyKept(path, kept) => self.copy_kept(ctx, path, kept),
+                Async::Missing(names) => {
+                    let files = names_text(&names);
+                    self.toast(ctx, trf("Not found: {files}", &[("files", &files)]));
+                }
+                Async::DatabasesDropped(paths) => {
+                    // As «Add database»; the game on the screen stays, so it is told.
+                    for p in paths.iter().rev() {
+                        self.settings.touch_database(p);
+                    }
+                    if let Some(first) = paths.first() {
+                        self.library.select_db(first, ctx);
+                    }
+                    self.settings_dirty = true;
+                    if self.game.is_some() {
+                        let names: Vec<String> =
+                            paths.iter().map(|p| own_db::base_name(p)).collect();
+                        let files = names_text(&names);
+                        self.toast(
+                            ctx,
+                            trf("Added to the shelf: {files}", &[("files", &files)]),
+                        );
+                    }
+                }
                 Async::DatabasesPicked(paths) => {
-                    // The file chosen again takes the place of the one gone.
-                    if let Some(old) = self.choosing_again.take() {
+                    // The file chosen again takes the place of the one gone (a cancelled
+                    // dialog ends «Choose again» too).
+                    let old = self.choosing_again.take();
+                    if paths.is_empty() {
+                        continue;
+                    }
+                    if let Some(old) = old {
                         self.settings.databases.retain(|d| *d != old);
                         self.library.forget(&old);
                         crate::platform::files::forget(&old);
@@ -2780,8 +2814,8 @@ impl App {
         let own_search = matches!(
             pending,
             Some(
-                crate::engine_offer::Pending::GameAnalysis
-                    | crate::engine_offer::Pending::OpeningErrors
+                crate::engine_offer::Pending::GameAnalysis { .. }
+                    | crate::engine_offer::Pending::OpeningErrors { .. }
             )
         );
         if !own_search || self.settings.active_engine().is_none() {
@@ -2793,34 +2827,63 @@ impl App {
 
     /// The game analysis or the opening errors found no engine to search with: a
     /// Stockfish 19 of the user's that searches as ours is taken (probed first, in the
-    /// background: the action waits for it), else ours is offered for download, saying
-    /// what the user's engine is.
+    /// background: the action waits for it, on its own game or preparation), else ours
+    /// is offered for download, saying why the user's engine does not do.
     fn need_review_engine(&mut self, ctx: &egui::Context, pending: crate::engine_offer::Pending) {
-        use crate::review_engine::Lookup;
         crate::review_engine::set_candidates(&self.settings);
+        if self.review_wait.is_empty() {
+            self.toast(
+                ctx,
+                tr("Checking whether your engine can run the analysis…"),
+            );
+        }
+        // One wait per kind: the newer request of a kind takes its place, the other
+        // kind keeps its own.
+        let same_kind = |p: &crate::engine_offer::Pending| {
+            std::mem::discriminant(p) == std::mem::discriminant(&pending)
+        };
+        self.review_wait.retain(|p| !same_kind(p));
+        self.review_wait.push(pending);
+        self.poll_review_wait(ctx);
+    }
+
+    /// The actions waiting for an engine of the user's to be probed: dropped when their
+    /// game or preparation is no longer there; when the probe is done, started, or the
+    /// download of ours is offered for the latest of them.
+    fn poll_review_wait(&mut self, ctx: &egui::Context) {
+        use crate::review_engine::Lookup;
+        let (game, prep) = (
+            self.game.as_ref().map(|g| g.serial),
+            self.prep.as_ref().map(|p| p.serial),
+        );
+        self.review_wait.retain(|p| still_waiting(p, game, prep));
+        if self.review_wait.is_empty() {
+            return;
+        }
         match crate::review_engine::lookup(ctx) {
+            Lookup::Checking => {}
             Lookup::Ready(_) => {
-                self.review_wait = None;
-                self.run_engine_pending(ctx, Some(pending));
-            }
-            Lookup::Checking => {
-                if self.review_wait.is_none() {
-                    self.toast(ctx, tr("Checking the Stockfish of the settings…"));
+                for p in std::mem::take(&mut self.review_wait) {
+                    self.run_engine_pending(ctx, Some(p));
                 }
-                self.review_wait = Some(pending);
             }
-            Lookup::Other(name) => {
-                self.review_wait = None;
-                self.engine_offer.ask_instead_of(pending, name);
+            Lookup::Unfit(unfit) => {
+                let waiting = std::mem::take(&mut self.review_wait);
+                if let Some(p) = waiting.last() {
+                    self.engine_offer.ask_instead_of(*p, unfit);
+                }
             }
             Lookup::None => {
-                self.review_wait = None;
-                self.engine_offer.ask(pending, &self.settings);
+                let waiting = std::mem::take(&mut self.review_wait);
+                if let Some(p) = waiting.last() {
+                    self.engine_offer.ask(*p, &self.settings);
+                }
             }
         }
     }
 
-    /// Runs what the user was doing when an engine had to be found first.
+    /// Runs what the user was doing when an engine had to be found first: on the game
+    /// or the preparation it was asked on, if it is still there.
     fn run_engine_pending(
         &mut self,
         ctx: &egui::Context,
@@ -2832,9 +2895,9 @@ impl App {
                     self.toggle_engine(ctx);
                 }
             }
-            Some(crate::engine_offer::Pending::GameAnalysis) => {
-                let actions = match self.game.as_mut() {
-                    Some(g) => g.start_review_now(ctx),
+            Some(crate::engine_offer::Pending::GameAnalysis { game, full }) => {
+                let actions = match self.game.as_mut().filter(|g| g.serial == game) {
+                    Some(g) => g.start_review_now(ctx, full),
                     None => Vec::new(),
                 };
                 for a in actions {
@@ -2848,8 +2911,8 @@ impl App {
                     }
                 }
             }
-            Some(crate::engine_offer::Pending::OpeningErrors) => {
-                let actions = match self.prep.as_mut() {
+            Some(crate::engine_offer::Pending::OpeningErrors { prep }) => {
+                let actions = match self.prep.as_mut().filter(|p| p.serial == prep) {
                     Some(p) => p.start_after_engine(ctx),
                     None => Vec::new(),
                 };
@@ -2946,7 +3009,7 @@ impl App {
     fn dropped_files(&mut self, ctx: &egui::Context) {
         let (tx, waker) = (self.tx.clone(), ctx.clone());
         crate::platform::files::take_dropped(ctx, move |picked| {
-            send_picked(&tx, picked);
+            send_picked(&tx, picked, true);
             waker.request_repaint();
         });
         if crate::platform::files::dragging(ctx) {
@@ -2955,14 +3018,34 @@ impl App {
                 egui::Order::Foreground,
                 egui::Id::new("dropping files"),
             ));
+            // The window tinted and framed in the accent colour; the words on a card of
+            // the window's own background, readable in both themes.
             let visuals = ctx.global_style().visuals.clone();
             let accent = visuals.selection.bg_fill;
-            painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.12));
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                tr("Release to open"),
+            painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.28));
+            painter.rect_stroke(
+                rect.shrink(2.0),
+                6.0,
+                egui::Stroke::new(4.0, accent),
+                egui::StrokeKind::Inside,
+            );
+            let galley = painter.layout_no_wrap(
+                tr("Release to open").to_owned(),
                 egui::FontId::proportional(22.0),
+                visuals.strong_text_color(),
+            );
+            let card =
+                egui::Rect::from_center_size(rect.center(), galley.size() + egui::vec2(48.0, 32.0));
+            painter.rect(
+                card,
+                10.0,
+                visuals.window_fill,
+                egui::Stroke::new(2.0, accent),
+                egui::StrokeKind::Inside,
+            );
+            painter.galley(
+                card.center() - galley.size() / 2.0,
+                galley,
                 visuals.strong_text_color(),
             );
         }
@@ -3108,7 +3191,7 @@ impl App {
     fn pick_database_folder(&self, ctx: &egui::Context) {
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         crate::platform::files::pick_database_folder(move |picked| {
-            send_picked(&tx, picked);
+            send_picked(&tx, picked, false);
             ctx.request_repaint();
         });
     }
@@ -3463,8 +3546,8 @@ impl eframe::App for App {
                 self.engine_offer.start(&ctx);
             }
         }
-        if let Some(p) = self.review_wait {
-            self.need_review_engine(&ctx, p);
+        if !self.review_wait.is_empty() {
+            self.poll_review_wait(&ctx);
         }
         self.offer_events(&ctx);
         self.page_frame(&ctx);
@@ -3594,8 +3677,11 @@ impl eframe::App for App {
                             self.request_close(&ctx, CloseIntent::ReturnToPrevious);
                         }
                     }
-                    GameAction::NeedEngine => {
-                        self.need_review_engine(&ctx, crate::engine_offer::Pending::GameAnalysis)
+                    GameAction::NeedEngine { full } => {
+                        if let Some(game) = self.game.as_ref().map(|g| g.serial) {
+                            let pending = crate::engine_offer::Pending::GameAnalysis { game, full };
+                            self.need_review_engine(&ctx, pending);
+                        }
                     }
                     GameAction::Sound(s) => self.play(s),
                     GameAction::CopyText(text, msg) => {
@@ -4022,6 +4108,7 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         self.analysis.stop();
+        crate::review_engine::shutdown();
         if let Some(p) = self.prep.as_mut() {
             p.save();
         }
@@ -4038,9 +4125,18 @@ impl eframe::App for App {
 }
 
 /// What the user chose or dropped, to the screen.
-fn send_picked(tx: &Sender<Async>, picked: crate::platform::files::Picked) {
-    if !picked.paths.is_empty() {
+/// Sends what was chosen in a dialog (`dropped`: dropped on the window) to the screen.
+/// A dialog's choice is sent even when empty (cancelled): «Choose again» ends with it.
+fn send_picked(tx: &Sender<Async>, picked: crate::platform::files::Picked, dropped: bool) {
+    if dropped {
+        if !picked.paths.is_empty() {
+            let _ = tx.send(Async::DatabasesDropped(picked.paths));
+        }
+    } else {
         let _ = tx.send(Async::DatabasesPicked(picked.paths));
+    }
+    if !picked.missing.is_empty() {
+        let _ = tx.send(Async::Missing(picked.missing));
     }
     if picked.empty_folder {
         let _ = tx.send(Async::EmptyFolder);
@@ -4059,6 +4155,35 @@ fn send_picked(tx: &Sender<Async>, picked: crate::platform::files::Picked) {
     }
 }
 
+/// Whether an action waiting for an engine still has its screen: the game (by its
+/// serial) or the preparation on which it was asked.
+fn still_waiting(
+    pending: &crate::engine_offer::Pending,
+    game: Option<u64>,
+    prep: Option<u64>,
+) -> bool {
+    use crate::engine_offer::Pending;
+    match pending {
+        Pending::GameAnalysis { game: g, .. } => Some(*g) == game,
+        Pending::OpeningErrors { prep: p } => Some(*p) == prep,
+        Pending::LiveAnalysis => false,
+    }
+}
+
+/// Files' names for a message: at most three, each at most 40 characters.
+fn names_text(names: &[String]) -> String {
+    let mut text = names
+        .iter()
+        .take(3)
+        .map(|n| crate::widgets::shorten(n, 40))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if names.len() > 3 {
+        text.push_str(", …");
+    }
+    text
+}
+
 fn sanitize(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -4067,4 +4192,37 @@ fn sanitize(s: &str) -> String {
             _ => '_',
         })
         .collect::<String>()
+}
+
+#[cfg(test)]
+mod waiting_tests {
+    use super::{names_text, still_waiting};
+    use crate::engine_offer::Pending;
+
+    /// An analysis waiting for an engine starts on its own game only: another game on
+    /// the screen, or none, drops it; the two kinds wait apart.
+    #[test]
+    fn a_waiting_analysis_belongs_to_its_game() {
+        let review = Pending::GameAnalysis {
+            game: 7,
+            full: true,
+        };
+        let errors = Pending::OpeningErrors { prep: 3 };
+        assert!(still_waiting(&review, Some(7), None));
+        assert!(!still_waiting(&review, Some(8), Some(3)));
+        assert!(!still_waiting(&review, None, Some(3)));
+        assert!(still_waiting(&errors, Some(8), Some(3)));
+        assert!(!still_waiting(&errors, Some(7), Some(4)));
+        assert!(!still_waiting(&Pending::LiveAnalysis, Some(7), Some(3)));
+    }
+
+    #[test]
+    fn names_in_messages_are_short() {
+        let names: Vec<String> = ["a.pgn", "b.pgn", "c.pgn", "d.pgn"]
+            .map(String::from)
+            .into();
+        assert_eq!(names_text(&names), "a.pgn, b.pgn, c.pgn, …");
+        let long = vec!["x".repeat(100) + ".pgn"];
+        assert_eq!(names_text(&long).chars().count(), 40);
+    }
 }
