@@ -764,6 +764,11 @@ impl App {
             };
             self.prep_dialog = Some(PrepDialog::new(path, entry));
         }
+        // `CP_PREP_LIST=1`: the «Preparations» window at the start (screenshots).
+        if self.prep_list.is_none() && std::env::var_os("CP_PREP_LIST").is_some() {
+            static SHOWN: std::sync::Once = std::sync::Once::new();
+            SHOWN.call_once(|| self.prep_list = Some(crate::prep_ui::PrepList::new()));
+        }
         let Some(index) = self.debug.open else { return };
         let Some(path) = self.settings.databases.first().cloned() else {
             return;
@@ -934,7 +939,7 @@ impl App {
         }
     }
 
-    /// «📑 Preparations», and a saved preparation opened once its database is read.
+    /// «🗐 Preparations», and a saved preparation opened once its database is read.
     fn prep_list(&mut self, ctx: &egui::Context) {
         if let Some(start) = self.prep_waiting.take() {
             if self.library.database(&start.path).is_some() {
@@ -991,6 +996,7 @@ impl App {
                 };
                 if self.library.database(&start.path).is_none() {
                     self.library.load(&start.path, ctx);
+                    self.toast(ctx, tr("Opening the database…"));
                 }
                 self.prep_waiting = Some(start);
                 ctx.request_repaint();

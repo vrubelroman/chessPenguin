@@ -87,7 +87,7 @@ pub enum LibraryAction {
         path: PathBuf,
         index: usize,
     },
-    /// «📑 Preparations»: the saved preparations against opponents.
+    /// «🗐 Preparations»: the saved preparations against opponents.
     Preparations,
     /// «Prepare against…» for a player of this database (opponent-prep.md §2).
     PrepareAgainst {
@@ -160,9 +160,9 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
             button_w(
                 ui,
                 if icons {
-                    "📑"
+                    "🗐"
                 } else {
-                    tr("📑 Preparations")
+                    tr("🗐 Preparations")
                 },
             )
         } else {
@@ -810,15 +810,15 @@ impl Library {
         if crate::platform::CAPS.prep {
             ui.separator();
             let label = if icons {
-                "📑"
+                "🗐"
             } else {
-                tr("📑 Preparations")
+                tr("🗐 Preparations")
             };
             if ui
                 .button(label)
                 .on_hover_text(shelf_hint(
                     icons,
-                    tr("📑 Preparations"),
+                    tr("🗐 Preparations"),
                     tr("Preparations against opponents: the saved ones and a new one"),
                 ))
                 .clicked()

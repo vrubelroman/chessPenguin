@@ -2,7 +2,8 @@
 //! back from his newest game, so an old database is not left empty), or his last games
 //! of each colour. Games without a date are taken by «all» only; by number they count
 //! as the oldest, in the order of the database (so a database without dates gives its
-//! last records).
+//! last records). When no game has a date, a period by months takes them all: it
+//! cannot choose, and an empty report would explain nothing.
 
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +60,7 @@ pub fn choose(pool: &[PoolGame], period: Period) -> Vec<(u32, bool)> {
         Period::Months(months) => {
             let newest = newest(pool);
             if newest == 0 {
-                return Vec::new();
+                return choose(pool, Period::All);
             }
             let from = cutoff(newest, months);
             pool.iter()
@@ -94,7 +95,7 @@ pub fn count(pool: &[PoolGame], period: Period, side: Side) -> Chosen {
         .filter(|(_, w)| of_side(*w))
         .count();
     let undated_out = match period {
-        Period::Months(_) => pool
+        Period::Months(_) if newest(pool) != 0 => pool
             .iter()
             .filter(|g| g.date == 0 && of_side(g.white))
             .count(),
@@ -136,8 +137,13 @@ mod tests {
         let c = count(&pool, Period::Months(24), Side::Black);
         assert_eq!((c.games, c.undated_out), (1, 1));
         assert_eq!(count(&pool, Period::All, Side::Any).undated_out, 0);
-        // Nothing dated: a period takes nothing.
-        assert!(choose(&[g(0, true, 0)], Period::Months(12)).is_empty());
+        // Nothing dated: a period by months takes all.
+        let undated = [g(0, true, 0), g(1, false, 0)];
+        assert_eq!(choose(&undated, Period::Months(12)).len(), 2);
+        assert_eq!(
+            count(&undated, Period::Months(12), Side::Any).undated_out,
+            0
+        );
     }
 
     #[test]

@@ -41,7 +41,7 @@ pub use errors::{EXACT, ErrorCounts, OpeningError, PositionCache, PositionEval, 
 pub use game_review::{Eval, Judgement};
 pub use games::{BookExit, GameInfo, Outcome, Tally, move_label};
 pub use openings::Opening;
-pub use period::{Chosen, Period, PoolGame};
+pub use period::{Chosen, Period, PoolGame, newest as period_newest};
 pub use players::{Candidate, Player, candidates, games_of};
 pub use tree::{Node, Tree};
 
