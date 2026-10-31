@@ -45,6 +45,9 @@ enum Mode {
     /// The game analysis or the opening errors, which need ChessPenguin's Stockfish 19
     /// itself (their search is the same on every computer): only its download helps.
     Own,
+    /// The same, when the user's engine (its name here) is another one: another
+    /// version, network or build of Stockfish, or another engine (`review_engine`).
+    OwnInstead(String),
 }
 
 pub struct EngineOffer {
@@ -91,6 +94,15 @@ impl EngineOffer {
         } else {
             Mode::Offer
         };
+        self.open = true;
+    }
+
+    /// Opens the offer of ChessPenguin's Stockfish 19 for the game analysis or the
+    /// opening errors, saying that the user's engine `name` is not it.
+    pub fn ask_instead_of(&mut self, pending: Pending, name: String) {
+        self.pending = Some(pending);
+        self.failure = None;
+        self.mode = Mode::OwnInstead(name);
         self.open = true;
     }
 
@@ -210,26 +222,42 @@ impl EngineOffer {
 
     fn offer_body(&mut self, ui: &mut Ui, events: &mut Vec<OfferEvent>) {
         let size = engine_download::size_mb();
-        let (title, text) = match &self.mode {
+        let (title, text): (&str, String) = match &self.mode {
             Mode::Offer => (
                 tr("Analysis needs a chess engine"),
                 tr(
                     "Download Stockfish, the strongest free chess engine? Analysis will start as soon as the download finishes.",
-                ),
+                )
+                .into(),
             ),
             Mode::System(_) => (
                 tr("Analysis needs a chess engine"),
-                tr("Stockfish is already installed on this computer."),
+                tr("Stockfish is already installed on this computer.").into(),
             ),
             Mode::Missing => (
                 tr("Stockfish not found"),
-                tr("The Stockfish file is missing from the disk. Download it again?"),
+                tr("The Stockfish file is missing from the disk. Download it again?").into(),
             ),
             Mode::Own => (
                 tr("Analysis needs Stockfish 19"),
                 tr(
                     "Game analysis and the search for opening errors always use ChessPenguin's Stockfish 19, so that their marks are the same on every computer. Download it? The analysis will start as soon as the download finishes.",
-                ),
+                )
+                .into(),
+            ),
+            Mode::OwnInstead(name) => (
+                tr("Analysis needs Stockfish 19"),
+                if self.pending == Some(Pending::OpeningErrors) {
+                    trf(
+                        "The settings name {engine}. The search for opening errors needs Stockfish 19 itself, so that the marks are the same on every computer. Download Stockfish 19 ({mb} MB)?",
+                        &[("engine", name), ("mb", &size)],
+                    )
+                } else {
+                    trf(
+                        "The settings name {engine}. Game analysis needs Stockfish 19 itself, so that the marks are the same on every computer. Download Stockfish 19 ({mb} MB)?",
+                        &[("engine", name), ("mb", &size)],
+                    )
+                },
             ),
         };
         ui.heading(title);
@@ -257,6 +285,12 @@ impl EngineOffer {
             });
             let size = trf("Size: {size}", &[("size", &format!("{size} MB"))]);
             ui.label(RichText::new(free.map_or(size.clone(), |f| format!("{size} · {f}"))).weak());
+        } else if matches!(self.mode, Mode::OwnInstead(_)) {
+            // The size is in the question already.
+            ui.label(RichText::new(tr("Installed for your account only")).weak())
+                .on_hover_text(
+                    "https://github.com/official-stockfish/Stockfish/releases/tag/sf_19",
+                );
         } else {
             ui.label(
                 RichText::new(trf(
@@ -308,7 +342,7 @@ impl EngineOffer {
                 // Another engine does not do for the game analysis (and a browser has
                 // no engine programs).
                 #[cfg(not(web))]
-                if self.mode != Mode::Own {
+                if !matches!(self.mode, Mode::Own | Mode::OwnInstead(_)) {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         if ui.button(tr("Choose engine file…")).clicked() {
                             events.push(OfferEvent::ChooseFile);
@@ -395,7 +429,10 @@ impl EngineOffer {
                     ui.label(RichText::new(d).small().weak());
                 });
         }
-        if matches!(f, Failure::Network(_)) && cfg!(target_os = "linux") && self.mode != Mode::Own {
+        if matches!(f, Failure::Network(_))
+            && cfg!(target_os = "linux")
+            && !matches!(self.mode, Mode::Own | Mode::OwnInstead(_))
+        {
             ui.label(
                 RichText::new(tr(
                     "A stockfish package of your distribution is found by ChessPenguin too.",
@@ -418,7 +455,7 @@ impl EngineOffer {
                     self.pending = None;
                 }
                 #[cfg(not(web))]
-                if self.mode != Mode::Own {
+                if !matches!(self.mode, Mode::Own | Mode::OwnInstead(_)) {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         if ui.button(tr("Choose engine file…")).clicked() {
                             events.push(OfferEvent::ChooseFile);

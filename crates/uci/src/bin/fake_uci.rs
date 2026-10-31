@@ -30,6 +30,9 @@
 //!                          best move, scored 30 cp lower (a worse move)
 //!   --shallow N MOVE       `go nodes n` with n < N (no `searchmoves`): MOVE is the
 //!                          best move (a shallow search choosing another move)
+//!   --answer MARKER TAIL   `go` in the position of MARKER answers at once with
+//!                          `info depth 10 multipv 1 score TAIL` and the bestmove of
+//!                          the first move after `pv` in TAIL (repeatable)
 //!
 //! Protocol violations by the GUI (`position`/`go`/`setoption`/`ucinewgame`
 //! during a search) are reported as `info string ERROR ...`.
@@ -60,6 +63,7 @@ struct Cfg {
     hash_memory: bool,
     searchmoves: bool,
     shallow: Option<(u64, String)>,
+    answers: Vec<(String, String)>,
 }
 
 fn parse_args() -> Cfg {
@@ -93,6 +97,11 @@ fn parse_args() -> Cfg {
             "--shallow" => {
                 let n = num(args.next());
                 c.shallow = args.next().map(|m| (n, m));
+            }
+            "--answer" => {
+                if let (Some(m), Some(t)) = (args.next(), args.next()) {
+                    c.answers.push((m, t));
+                }
             }
             other => {
                 eprintln!("fake_uci: unknown flag {other}");
@@ -280,6 +289,16 @@ fn main() {
                     out("info string ERROR go during search");
                 }
                 gos += 1;
+                if let Some((_, tail)) = cfg.answers.iter().find(|(m, _)| *m == marker) {
+                    out(&format!("info depth 10 multipv 1 score {tail}"));
+                    let best = tail
+                        .split_whitespace()
+                        .skip_while(|&t| t != "pv")
+                        .nth(1)
+                        .unwrap_or("0000");
+                    out(&format!("bestmove {best}"));
+                    continue;
+                }
                 if cfg.exit_after_go == Some(gos) {
                     info_lines(&cfg, &marker, 1, multipv, 0);
                     std::process::exit(1);

@@ -18,14 +18,16 @@ pub const TOO_BIG: u64 = 2_000_000_000;
 
 /// What the user chose or dropped: the databases to open, the ones left out because
 /// they are too big for a browser (name, bytes of their files), the ChessBase
-/// databases not all files of which were given (the name of their `.cbh`), and
-/// whether a chosen folder held no database.
-#[derive(Default)]
+/// databases not all files of which were given (the name of their `.cbh`), whether a
+/// chosen (or, on a computer, dropped) folder held no database, and the files dropped
+/// on a computer's window that are no databases (their names).
+#[derive(Debug, Default, PartialEq)]
 pub struct Picked {
     pub paths: Vec<PathBuf>,
     pub too_big: Vec<(String, u64)>,
     pub incomplete: Vec<String>,
     pub empty_folder: bool,
+    pub unsupported: Vec<String>,
 }
 
 /// The files the user gave the page, made databases: the ChessBase ones of their
@@ -250,11 +252,25 @@ pub fn forget(path: &std::path::Path) {
 
 /// The files dropped on the window in this frame, as databases to open: `then` gets
 /// their paths once read (in a browser they are kept for the session like chosen
-/// ones). The desktop program does not take dropped files: nothing comes there.
+/// ones; on a computer they are opened where they are, as «Add database» does).
 pub fn take_dropped(ctx: &egui::Context, then: impl FnOnce(Picked) + Send + 'static) {
     #[cfg(not(web))]
     {
-        let _ = (ctx, then);
+        let paths: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .filter(|p| p.is_absolute())
+                .collect()
+        });
+        if paths.is_empty() {
+            return;
+        }
+        // Folders are listed and files' neighbours looked at: off the screen's thread.
+        let _ = std::thread::Builder::new()
+            .name("dropped".into())
+            .spawn(move || then(sort_dropped(&paths)));
     }
     #[cfg(web)]
     {
@@ -274,7 +290,83 @@ pub fn take_dropped(ctx: &egui::Context, then: impl FnOnce(Picked) + Send + 'sta
 
 /// Files are dragged over the window now (the page shows where they go).
 pub fn dragging(ctx: &egui::Context) -> bool {
-    cfg!(web) && ctx.input(|i| !i.raw.hovered_files.is_empty())
+    ctx.input(|i| !i.raw.hovered_files.is_empty())
+}
+
+/// The databases of the files and folders dropped on a computer's window: a file of
+/// [`chess_import::EXTENSIONS`] is one; any other file of a ChessBase database (its
+/// `.cbg`, `.cba`, …: a `.cbh` of the same name beside it) stands for that database;
+/// a folder gives the databases in it. Each database once, in the order dropped.
+#[cfg(not(web))]
+fn sort_dropped(paths: &[PathBuf]) -> Picked {
+    let mut picked = Picked::default();
+    let add = |p: PathBuf, picked: &mut Picked| {
+        if !picked.paths.contains(&p) {
+            picked.paths.push(p);
+        }
+    };
+    for p in paths {
+        if p.is_dir() {
+            let found = databases_in(p);
+            if found.is_empty() {
+                picked.empty_folder = true;
+            }
+            for f in found {
+                add(f, &mut picked);
+            }
+        } else if let Some(db) = database_of(p) {
+            add(db, &mut picked);
+        } else {
+            let name = p
+                .file_name()
+                .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into());
+            picked.unsupported.push(name);
+        }
+    }
+    picked
+}
+
+/// The extension of `p`, in lower case.
+#[cfg(not(web))]
+fn extension(p: &std::path::Path) -> String {
+    p.extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+}
+
+/// The database the file `p` is, or is a part of.
+#[cfg(not(web))]
+fn database_of(p: &std::path::Path) -> Option<PathBuf> {
+    if chess_import::EXTENSIONS.contains(&extension(p).as_str()) {
+        return Some(p.to_path_buf());
+    }
+    // A part of a ChessBase database: its `.cbh` beside it (in any case of letters).
+    let stem = p.file_stem()?.to_string_lossy().to_lowercase();
+    let want = format!("{stem}.cbh");
+    std::fs::read_dir(p.parent()?)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|f| {
+            f.is_file()
+                && f.file_name()
+                    .is_some_and(|n| n.to_string_lossy().to_lowercase() == want)
+        })
+}
+
+/// The databases in the folder `dir` (not in folders inside it), by name.
+#[cfg(not(web))]
+fn databases_in(dir: &std::path::Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|f| f.is_file() && chess_import::EXTENSIONS.contains(&extension(f).as_str()))
+        .collect();
+    found.sort();
+    found
 }
 
 /// Gives `pgn` to the user as the file `name` (a download, where the browser puts
@@ -283,4 +375,62 @@ pub fn dragging(ctx: &egui::Context) -> bool {
 pub fn download_pgn(name: &str, pgn: &str) -> Result<(), String> {
     super::web::page::download(name, "application/x-chess-pgn", pgn.as_bytes())
         .map_err(|e| format!("{e:?}"))
+}
+
+#[cfg(all(test, not(web)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropped_files_are_sorted_into_databases() {
+        let dir = std::env::temp_dir().join(format!("cp-dropped-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let base = dir.join("Mega");
+        std::fs::create_dir_all(&base).unwrap();
+        let touch = |p: &std::path::Path| std::fs::write(p, b"x").unwrap();
+        let games = dir.join("games.PGN");
+        let archive = dir.join("set.7z");
+        let notes = dir.join("notes.txt");
+        let cbh = base.join("Mega.CBH");
+        let parts = ["Mega.cbg", "Mega.cba", "Mega.cbj", "Mega.ini"].map(|n| base.join(n));
+        let lonely = dir.join("lost.cbg");
+        for p in [&games, &archive, &notes, &cbh, &lonely] {
+            touch(p);
+        }
+        for p in &parts {
+            touch(p);
+        }
+        let cbv = base.join("Other.cbv");
+        touch(&cbv);
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        touch(&empty.join("readme.md"));
+
+        // Files of each kind; all the files of a ChessBase database give it once.
+        let mut dropped = vec![games.clone(), archive.clone()];
+        dropped.extend(parts.iter().cloned());
+        dropped.push(cbh.clone());
+        let picked = sort_dropped(&dropped);
+        assert_eq!(
+            picked.paths,
+            vec![games.clone(), archive.clone(), cbh.clone()]
+        );
+        assert!(picked.unsupported.is_empty());
+        assert!(!picked.empty_folder);
+
+        // What is no database is named; a ChessBase part without its .cbh is none.
+        let picked = sort_dropped(&[notes.clone(), lonely.clone(), games.clone()]);
+        assert_eq!(picked.paths, vec![games.clone()]);
+        assert_eq!(
+            picked.unsupported,
+            vec!["notes.txt".to_string(), "lost.cbg".into()]
+        );
+
+        // A folder: its databases (by name); one without any is told.
+        let picked = sort_dropped(&[base.clone(), empty.clone()]);
+        assert_eq!(picked.paths, vec![cbh.clone(), cbv.clone()]);
+        assert!(picked.empty_folder);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

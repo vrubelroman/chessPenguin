@@ -44,6 +44,7 @@ mod player_games;
 mod prep_ui;
 mod reference;
 mod review;
+mod review_engine;
 mod rodent4_download;
 mod rodent_download;
 mod san;

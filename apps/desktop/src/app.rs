@@ -39,9 +39,10 @@ enum Async {
     /// ChessBase databases not all files of which were chosen (their `.cbh` names).
     #[cfg(web)]
     Incomplete(Vec<String>),
-    /// A folder was chosen with no database in it.
-    #[cfg(web)]
+    /// A folder was chosen (or dropped) with no database in it.
     EmptyFolder,
+    /// Files dropped on the window that are no databases (their names).
+    NotDatabases(Vec<String>),
     /// A copy of the visit's database `.0` kept in the browser, or why not.
     #[cfg(web)]
     CopyKept(PathBuf, Result<PathBuf, crate::platform::files::KeepCopy>),
@@ -256,6 +257,8 @@ pub struct App {
     close_after_save: Option<CloseIntent>,
     /// The offer to download Stockfish when an action needs an engine.
     engine_offer: crate::engine_offer::EngineOffer,
+    /// What waits for an engine of the user's to be probed (`review_engine`).
+    review_wait: Option<crate::engine_offer::Pending>,
     offer_hook_done: bool,
     /// What only the desktop program has: online games, updates.
     #[cfg(not(web))]
@@ -505,6 +508,7 @@ impl App {
             prep_quit_ask: false,
             prep_quit_ok: false,
             engine_offer: crate::engine_offer::EngineOffer::new(),
+            review_wait: None,
             offer_hook_done: false,
             #[cfg(not(web))]
             desktop,
@@ -514,6 +518,7 @@ impl App {
             debug: DebugStartup::from_env(),
         }
         .with_debug_settings();
+        crate::review_engine::set_candidates(&app.settings);
         #[cfg(not(web))]
         if let Some(from) = updated_from {
             let msg = trf(
@@ -975,9 +980,9 @@ impl App {
                     self.live_paused = false;
                 }
                 PrepAction::EngineEnded => {}
-                PrepAction::NeedEngine => self
-                    .engine_offer
-                    .ask(crate::engine_offer::Pending::OpeningErrors, &self.settings),
+                PrepAction::NeedEngine => {
+                    self.need_review_engine(ctx, crate::engine_offer::Pending::OpeningErrors)
+                }
                 PrepAction::SettingsChanged => self.settings_dirty = true,
                 PrepAction::Toast(m) => self.toast(ctx, m),
                 PrepAction::CopyText(text, msg) => {
@@ -2475,11 +2480,23 @@ impl App {
                         self.web_notice = Some(WebNotice::Incomplete(name));
                     }
                 }
-                #[cfg(web)]
                 Async::EmptyFolder => {
                     self.toast(
                         ctx,
                         tr("There is no database in this folder (.pgn, .cbh, .cbv, .zip, .7z)."),
+                    );
+                }
+                Async::NotDatabases(names) => {
+                    let mut files = names.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+                    if names.len() > 3 {
+                        files.push_str(", …");
+                    }
+                    self.toast(
+                        ctx,
+                        trf(
+                            "Not a database: {files}. ChessPenguin opens .pgn, .cbh, .cbv, .zip and .7z files.",
+                            &[("files", &files)],
+                        ),
                     );
                 }
                 #[cfg(web)]
@@ -2771,6 +2788,44 @@ impl App {
             self.settings.active_engine = Some(index);
         }
         self.settings_dirty = true;
+        self.run_engine_pending(ctx, pending);
+    }
+
+    /// The game analysis or the opening errors found no engine to search with: a
+    /// Stockfish 19 of the user's that searches as ours is taken (probed first, in the
+    /// background: the action waits for it), else ours is offered for download, saying
+    /// what the user's engine is.
+    fn need_review_engine(&mut self, ctx: &egui::Context, pending: crate::engine_offer::Pending) {
+        use crate::review_engine::Lookup;
+        crate::review_engine::set_candidates(&self.settings);
+        match crate::review_engine::lookup(ctx) {
+            Lookup::Ready(_) => {
+                self.review_wait = None;
+                self.run_engine_pending(ctx, Some(pending));
+            }
+            Lookup::Checking => {
+                if self.review_wait.is_none() {
+                    self.toast(ctx, tr("Checking the Stockfish of the settings…"));
+                }
+                self.review_wait = Some(pending);
+            }
+            Lookup::Other(name) => {
+                self.review_wait = None;
+                self.engine_offer.ask_instead_of(pending, name);
+            }
+            Lookup::None => {
+                self.review_wait = None;
+                self.engine_offer.ask(pending, &self.settings);
+            }
+        }
+    }
+
+    /// Runs what the user was doing when an engine had to be found first.
+    fn run_engine_pending(
+        &mut self,
+        ctx: &egui::Context,
+        pending: Option<crate::engine_offer::Pending>,
+    ) {
         match pending {
             Some(crate::engine_offer::Pending::LiveAnalysis) => {
                 if !self.analysis.is_on() {
@@ -3408,6 +3463,9 @@ impl eframe::App for App {
                 self.engine_offer.start(&ctx);
             }
         }
+        if let Some(p) = self.review_wait {
+            self.need_review_engine(&ctx, p);
+        }
         self.offer_events(&ctx);
         self.page_frame(&ctx);
         #[cfg(web)]
@@ -3536,9 +3594,9 @@ impl eframe::App for App {
                             self.request_close(&ctx, CloseIntent::ReturnToPrevious);
                         }
                     }
-                    GameAction::NeedEngine => self
-                        .engine_offer
-                        .ask(crate::engine_offer::Pending::GameAnalysis, &self.settings),
+                    GameAction::NeedEngine => {
+                        self.need_review_engine(&ctx, crate::engine_offer::Pending::GameAnalysis)
+                    }
                     GameAction::Sound(s) => self.play(s),
                     GameAction::CopyText(text, msg) => {
                         ctx.copy_text(text);
@@ -3958,6 +4016,7 @@ impl eframe::App for App {
             if let Err(e) = self.settings.save() {
                 eprintln!("settings: save failed: {e}");
             }
+            crate::review_engine::set_candidates(&self.settings);
         }
     }
 
@@ -3983,6 +4042,12 @@ fn send_picked(tx: &Sender<Async>, picked: crate::platform::files::Picked) {
     if !picked.paths.is_empty() {
         let _ = tx.send(Async::DatabasesPicked(picked.paths));
     }
+    if picked.empty_folder {
+        let _ = tx.send(Async::EmptyFolder);
+    }
+    if !picked.unsupported.is_empty() {
+        let _ = tx.send(Async::NotDatabases(picked.unsupported));
+    }
     #[cfg(web)]
     {
         if !picked.too_big.is_empty() {
@@ -3990,9 +4055,6 @@ fn send_picked(tx: &Sender<Async>, picked: crate::platform::files::Picked) {
         }
         if !picked.incomplete.is_empty() {
             let _ = tx.send(Async::Incomplete(picked.incomplete));
-        }
-        if picked.empty_folder {
-            let _ = tx.send(Async::EmptyFolder);
         }
     }
 }

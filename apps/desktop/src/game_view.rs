@@ -854,10 +854,11 @@ impl GameView {
         actions
     }
 
-    /// Starts the game analysis with ChessPenguin's Stockfish; without it, the offer to
-    /// download it comes first.
+    /// Starts the game analysis with Stockfish 19 (ChessPenguin's, or the user's that
+    /// searches the same, `review_engine`); without it, the app finds one or offers to
+    /// download ours.
     fn start_review(&mut self, full: bool, ctx: &egui::Context, actions: &mut Vec<GameAction>) {
-        let Some(path) = crate::engines::own_stockfish() else {
+        let Some(path) = crate::review_engine::engine() else {
             actions.push(GameAction::NeedEngine);
             return;
         };

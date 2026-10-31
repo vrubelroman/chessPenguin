@@ -22,6 +22,9 @@ mod work;
 mod engines;
 #[cfg(not(target_family = "wasm"))]
 pub use engines::run;
+// Whether an engine is the Stockfish 19 of the analysis (a user's own one).
+#[cfg(not(target_family = "wasm"))]
+pub mod probe;
 // The job in Web Workers: a browser's.
 #[cfg(target_family = "wasm")]
 mod workers;

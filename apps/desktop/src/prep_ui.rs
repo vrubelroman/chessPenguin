@@ -1929,7 +1929,7 @@ impl PrepScreen {
         ctx: &egui::Context,
         actions: &mut Vec<PrepAction>,
     ) {
-        if crate::engines::own_stockfish().is_none() {
+        if crate::review_engine::engine().is_none() {
             actions.push(PrepAction::NeedEngine);
             return;
         }
@@ -1940,11 +1940,11 @@ impl PrepScreen {
         }
     }
 
-    /// Starts the search for opening errors: ChessPenguin's Stockfish with the fixed
+    /// Starts the search for opening errors: Stockfish 19 (`review_engine`) with the fixed
     /// search of the game analysis (`game_review::run`), the same on every computer.
     fn start_engine(&mut self, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
         self.error = None;
-        let Some(path) = crate::engines::own_stockfish() else {
+        let Some(path) = crate::review_engine::engine() else {
             actions.push(PrepAction::NeedEngine);
             return;
         };

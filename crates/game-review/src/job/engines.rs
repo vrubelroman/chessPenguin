@@ -136,7 +136,7 @@ fn worker(
 
 /// One node-limited search: its last full line and the best move. `None` when it gave
 /// no line or the job was halted.
-fn search_once(
+pub(super) fn search_once(
     handle: &uci::EngineHandle,
     pos: &EnginePosition,
     id: SearchId,
