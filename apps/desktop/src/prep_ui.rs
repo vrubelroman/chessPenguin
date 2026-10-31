@@ -3134,6 +3134,8 @@ impl PrepScreen {
                 120.0
             } else if width < 900.0 {
                 150.0
+            } else if width < 1100.0 {
+                180.0
             } else {
                 240.0
             };
@@ -3171,7 +3173,7 @@ impl PrepScreen {
             ) + pad
                 + 20.0
                 + 2.0 * gap;
-            let period_room = ui.available_width() - engine_w - board_w - depth_least - 2.0 * gap;
+            let period_room = ui.available_width() - engine_w - board_w - depth_least;
             self.period_picker(ui, settings, period_room, actions);
             ui.separator();
             // The depth's caption by the room left: «Opening: 10 moves», «10 moves», «10 m.».
