@@ -4,6 +4,19 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.1.2] — 2026-10-31
+
+- The game review runs on your own Stockfish when it is the same Stockfish 19 as
+  ChessPenguin's: checked once per engine file with three test searches against our
+  reference (move, score and node count), so the marks stay the same everywhere. Another
+  engine is told by name and why Stockfish 19 is needed; your engine stays for the
+  position analysis. Engines for playing (Rodent, Maia) are never used for the review.
+- Desktop: files dropped on the window open as databases (PGN, ChessBase, archives,
+  several at once or a folder) — on Windows, macOS and X11; a Wayland session does not
+  take dropped files.
+- Sizes are written in the interface's language («2,2 ГБ»).
+- Less memory to check the encoding of a large PGN file.
+
 ## [2.1.1] — 2026-10-29
 
 - Brilliant moves (!!) also for the only good move that a shallow search misses, sacrifice

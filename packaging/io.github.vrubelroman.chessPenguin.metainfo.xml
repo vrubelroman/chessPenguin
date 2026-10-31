@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.1.2" date="2026-10-31">
+      <description>
+        <p>The game review can run on your own Stockfish 19 when it is the same build; files dropped on the window open as databases; sizes in the interface's language.</p>
+      </description>
+    </release>
     <release version="2.1.1" date="2026-10-29">
       <description>
         <p>Brilliant moves also for a hard only move that a shallow search misses; great moves are surer, with no mark for a piece simply stepping away or the king stepping out of check.</p>
