@@ -3165,27 +3165,26 @@ impl PrepScreen {
             } else {
                 0.0
             };
-            // The period takes what the depth leaves at its shortest.
-            let depth_least = text_width(
-                ui,
-                &trf("{n} m.", &[("n", &moves)]),
-                egui::TextStyle::Button,
-            ) + pad
-                + 20.0
-                + 2.0 * gap;
-            let period_room = ui.available_width() - engine_w - board_w - depth_least;
-            self.period_picker(ui, settings, period_room, actions);
-            ui.separator();
-            // The depth's caption by the room left: «Opening: 10 moves», «10 moves», «10 m.».
-            let room = ui.available_width() - engine_w - board_w;
-            let depth_label = [
+            // The period's and the depth's captions by the room left, shortened in one
+            // order at every width: the depth first, then the period, then both.
+            let depths = [
                 trf("Opening: {n} moves", &[("n", &moves)]),
                 trf("{n} moves", &[("n", &moves)]),
                 trf("{n} m.", &[("n", &moves)]),
-            ]
-            .into_iter()
-            .find(|l| text_width(ui, l, egui::TextStyle::Button) + pad + 20.0 + gap <= room)
-            .unwrap_or_else(|| trf("{n} m.", &[("n", &moves)]));
+            ];
+            let periods = self.period_captions();
+            let combo = |t: &str| text_width(ui, t, egui::TextStyle::Button) + pad + 20.0 + gap;
+            let room =
+                ui.available_width() - engine_w - board_w - ui.spacing().item_spacing.x * 2.0;
+            let (p, d) = [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)]
+                .into_iter()
+                .find(|&(p, d)| combo(&periods[p]) + combo(&depths[d]) <= room)
+                .unwrap_or((2, 2));
+            let [p0, p1, p2] = periods;
+            let period_label_now = [p0, p1, p2].into_iter().nth(p).unwrap_or_default();
+            self.period_picker(ui, settings, period_label_now, actions);
+            ui.separator();
+            let depth_label = depths[d].clone();
             let mut new_plies = None;
             let depth_w = text_width(ui, &depth_label, egui::TextStyle::Button) + 8.0;
             egui::ComboBox::from_id_salt("prep_plies")
@@ -3226,45 +3225,60 @@ impl PrepScreen {
         });
     }
 
+    /// The period shown: a period by months over games without dates takes all.
+    fn period_shown(&self) -> Period {
+        let dated = self
+            .report
+            .as_ref()
+            .is_some_and(|r| r.pool.iter().any(|g| g.date != 0));
+        match self.period {
+            Period::Months(_) if self.report.is_some() && !dated => Period::All,
+            p => p,
+        }
+    }
+
+    /// How many games `p` takes of the colour(s) shown: «80», «100 + 100».
+    fn period_number(&self, p: Period) -> String {
+        let Some(r) = &self.report else {
+            return "…".to_owned();
+        };
+        let side = self.color.side();
+        match (p, side) {
+            // The last N of each colour, not N in all.
+            (Period::Last(_), Side::Any) => format!(
+                "{} + {}",
+                grouped(r.count(p, Side::White).games),
+                grouped(r.count(p, Side::Black).games)
+            ),
+            _ => grouped(r.count(p, side).games),
+        }
+    }
+
+    /// The period's captions, longest first: «Last 2 years · 80», «2 yrs · 80», «80».
+    fn period_captions(&self) -> [String; 3] {
+        let p = self.period_shown();
+        let n = self.period_number(p);
+        [
+            format!("{} · {n}", period_label(p)),
+            format!("{} · {n}", period_short(p)),
+            n,
+        ]
+    }
+
     /// «Last 2 years · 80 ▾»: which of the player's games, with how many each takes of
-    /// the colour(s) shown; shorter («2 yrs · 80», «80») when `room` is short.
+    /// the colour(s) shown; `selected` is the caption the row has room for.
     fn period_picker(
         &mut self,
         ui: &mut Ui,
         settings: &mut Settings,
-        room: f32,
+        selected: String,
         actions: &mut Vec<PrepAction>,
     ) {
         let side = self.color.side();
         let report = self.report.as_ref();
         let dated = report.is_some_and(|r| r.pool.iter().any(|g| g.date != 0));
-        // Without dates a period by months takes all the games: it is shown as all.
-        let shown = match self.period {
-            Period::Months(_) if report.is_some() && !dated => Period::All,
-            p => p,
-        };
-        let number = |p: Period| -> String {
-            let Some(r) = report else {
-                return "…".to_owned();
-            };
-            match (p, side) {
-                // «100 + 100»: the last N of each colour, not N in all.
-                (Period::Last(_), Side::Any) => format!(
-                    "{} + {}",
-                    grouped(r.count(p, Side::White).games),
-                    grouped(r.count(p, Side::Black).games)
-                ),
-                _ => grouped(r.count(p, side).games),
-            }
-        };
-        let pad = 2.0 * ui.spacing().button_padding.x + 20.0;
-        let selected = [
-            format!("{} · {}", period_label(shown), number(shown)),
-            format!("{} · {}", period_short(shown), number(shown)),
-        ]
-        .into_iter()
-        .find(|t| text_width(ui, t, egui::TextStyle::Button) + pad <= room)
-        .unwrap_or_else(|| number(shown));
+        let shown = self.period_shown();
+        let number = |p: Period| self.period_number(p);
         let mut picked = None;
         // As wide as its text: the room is the row's.
         let width = text_width(ui, &selected, egui::TextStyle::Button) + 8.0;

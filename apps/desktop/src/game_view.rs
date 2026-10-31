@@ -355,7 +355,10 @@ impl GameView {
         for t in ["Event", "Site", "Date", "ECO", "Annotator"] {
             if let Some(v) = g
                 .tag(t)
-                .filter(|v| !v.is_empty() && !v.chars().all(|c| c == '?' || c == '.'))
+                // A web address is the globe's, not text.
+                .filter(|v| {
+                    !v.is_empty() && !v.chars().all(|c| c == '?' || c == '.') && !v.contains("://")
+                })
             {
                 parts.push(v.to_string());
             }
@@ -1134,10 +1137,7 @@ impl GameView {
                             .on_hover_text(result_hint);
                         }
                         if let Some(l) = &link
-                            && ui
-                                .small_button("🌐")
-                                .on_hover_text(format!("{} — {}", l.label(), tr("in the browser")))
-                                .clicked()
+                            && ui.button("🌐").on_hover_text(l.hint()).clicked()
                         {
                             self.open_link(ui.ctx(), l);
                         }

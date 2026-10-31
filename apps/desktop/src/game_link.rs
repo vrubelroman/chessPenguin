@@ -69,6 +69,16 @@ impl GameLink {
         }
     }
 
+    /// The globe's tooltip: «Open on Lichess (in the browser, at this move)».
+    pub fn hint(&self) -> &'static str {
+        match (self.site, self.lichess_id.is_some()) {
+            (Site::Lichess, true) => tr("Open on Lichess (in the browser, at this move)"),
+            (Site::Lichess, false) => tr("Open on Lichess (in the browser)"),
+            (Site::ChessCom, _) => tr("Open on Chess.com (in the browser)"),
+            (Site::Other, _) => tr("Open the game's link (in the browser)"),
+        }
+    }
+
     /// «🌐 Open on Lichess».
     pub fn label(&self) -> &'static str {
         match self.site {
