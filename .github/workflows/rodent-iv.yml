@@ -30,7 +30,7 @@ jobs:
             name: rodent-iv-linux-x86_64
           - os: windows-latest
             name: rodent-iv-windows-x86_64.exe
-          - os: macos-14
+          - os: macos-15
             name: rodent-iv-macos-arm64
     runs-on: ${{ matrix.os }}
     steps:

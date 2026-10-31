@@ -114,7 +114,7 @@ jobs:
     needs: version
     # Apple Silicon (arm64). Not signed by Apple yet: the first start goes through
     # "Open" in the context menu (decision 15).
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
