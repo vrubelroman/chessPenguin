@@ -274,6 +274,7 @@ fn main() {
     let options = Options {
         plies: a.plies,
         side: Side::Any,
+        period: prep::Period::All,
     };
     let t = Instant::now();
     let cached = cache_dir

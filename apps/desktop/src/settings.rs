@@ -169,6 +169,8 @@ pub struct PrepSettings {
     pub book: Option<PathBuf>,
     /// Plies of the opening the report looks at.
     pub plies: usize,
+    /// Which of the player's games.
+    pub period: prep::Period,
     /// Moves with fewer games fold into «other moves».
     pub branches_from: u32,
     /// The colour was chosen in the dialog once: the button starts the engine at once.
@@ -184,6 +186,7 @@ impl Default for PrepSettings {
         Self {
             book: None,
             plies: 20,
+            period: prep::Period::All,
             branches_from: 3,
             chosen: false,
             inaccuracies: true,

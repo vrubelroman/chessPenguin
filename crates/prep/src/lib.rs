@@ -31,6 +31,7 @@ mod book;
 mod errors;
 mod games;
 pub mod openings;
+mod period;
 mod players;
 mod tree;
 
@@ -40,6 +41,7 @@ pub use errors::{EXACT, ErrorCounts, OpeningError, PositionCache, PositionEval, 
 pub use game_review::{Eval, Judgement};
 pub use games::{BookExit, GameInfo, Outcome, Tally, move_label};
 pub use openings::Opening;
+pub use period::{Chosen, Period, PoolGame};
 pub use players::{Candidate, Player, candidates, games_of};
 pub use tree::{Node, Tree};
 
@@ -55,6 +57,8 @@ pub struct Options {
     pub plies: usize,
     /// The player's colour(s).
     pub side: Side,
+    /// Which of his games.
+    pub period: Period,
 }
 
 impl Default for Options {
@@ -62,6 +66,7 @@ impl Default for Options {
         Options {
             plies: DEFAULT_PLIES,
             side: Side::Any,
+            period: Period::All,
         }
     }
 }
@@ -138,7 +143,8 @@ pub struct BookInfo {
     pub left: u32,
 }
 
-const REPORT_VERSION: u32 = 3;
+// 4: the period and the pool of the player's games.
+const REPORT_VERSION: u32 = 4;
 
 /// Everything the preparation knows about the player.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -152,6 +158,13 @@ pub struct PrepReport {
     pub plies: usize,
     pub side_white: bool,
     pub side_black: bool,
+    /// Which of the player's games the report took.
+    #[serde(default)]
+    pub period: Period,
+    /// All the player's games of the side(s), before the period's choice (for the
+    /// counts of the other periods).
+    #[serde(default)]
+    pub pool: Vec<PoolGame>,
     pub games: Vec<GameInfo>,
     /// Games left out: from a set-up position, or unreadable.
     pub skipped: u32,
@@ -224,7 +237,16 @@ pub fn build(
     cancel: &AtomicBool,
 ) -> Option<PrepReport> {
     let found = games_of(db, player, options.side, cancel)?;
-    let collected = games::collect(db, &found, options.plies, progress, cancel)?;
+    let pool: Vec<PoolGame> = found
+        .iter()
+        .map(|&(index, white)| PoolGame {
+            index,
+            white,
+            date: chess_import::pgn_catalog::date_number(&db.row(index as usize).date),
+        })
+        .collect();
+    let chosen = period::choose(&pool, options.period);
+    let collected = games::collect(db, &chosen, options.plies, progress, cancel)?;
     let mut openings = collected.openings;
     let games = collected.games;
     let mut evals = HashMap::new();
@@ -270,6 +292,8 @@ pub fn build(
         plies: options.plies,
         side_white: options.side != Side::Black,
         side_black: options.side != Side::White,
+        period: options.period,
+        pool,
         games,
         skipped: collected.skipped,
         openings: openings.list,
@@ -352,6 +376,20 @@ impl PrepReport {
             (false, true) => Side::Black,
             _ => Side::Any,
         }
+    }
+
+    /// The options the report was built with.
+    pub fn options(&self) -> Options {
+        Options {
+            plies: self.plies,
+            side: self.side(),
+            period: self.period,
+        }
+    }
+
+    /// How many games `period` would take of the colour(s) `side`.
+    pub fn count(&self, period: Period, side: Side) -> Chosen {
+        period::count(&self.pool, period, side)
     }
 
     pub fn color(&self, white: bool) -> &ColorReport {
@@ -564,6 +602,18 @@ impl PrepReport {
             Side::White => 1,
             Side::Black => 2,
         });
+        // All the games: as before periods were chosen (the reports cached then).
+        match options.period {
+            Period::All => {}
+            Period::Months(m) => {
+                bytes.push(1);
+                bytes.extend(u32::from(m).to_le_bytes());
+            }
+            Period::Last(n) => {
+                bytes.push(2);
+                bytes.extend(n.to_le_bytes());
+            }
+        }
         dir.join(format!("{:016x}.json", fnv(bytes.iter())))
     }
 
@@ -581,7 +631,8 @@ impl PrepReport {
             && report.fingerprint == fp
             && report.player == *player
             && report.plies == options.plies
-            && report.side() == options.side;
+            && report.side() == options.side
+            && report.period == options.period;
         if !same {
             return None;
         }
@@ -598,10 +649,7 @@ impl PrepReport {
 
     /// Keeps the report in `dir` (atomically).
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
-        let options = Options {
-            plies: self.plies,
-            side: self.side(),
-        };
+        let options = self.options();
         let path = Self::cache_path(dir, self.fingerprint, &self.player, &options);
         let bytes = serde_json::to_vec(self).map_err(std::io::Error::other)?;
         errors::write_atomic(&path, &bytes)
@@ -816,6 +864,7 @@ mod tests {
             &Options {
                 plies: 4,
                 side: Side::White,
+                period: Period::All,
             },
             &AtomicUsize::new(0),
             &never,
@@ -825,6 +874,26 @@ mod tests {
         assert!(white_only.black.games.is_empty());
         assert!(white_only.games.iter().all(|g| g.ucis.len() <= 4));
         assert_eq!(white_only.side(), Side::White);
+        // The last two months before his newest game (2026.04.01): from 2026.02.01.
+        let recent = build(
+            &db,
+            &player,
+            &Options {
+                period: Period::Months(2),
+                ..Options::default()
+            },
+            &AtomicUsize::new(0),
+            &never,
+        )
+        .expect("report");
+        let dates: Vec<&str> = recent.games.iter().map(|g| g.date.as_str()).collect();
+        assert_eq!(dates, ["2026.02.11", "2026.03.12", "2026.04.01"]);
+        // The pool: every game of his, a set-up one too (skipped from the report).
+        let all = report.games.len() + report.skipped as usize;
+        assert_eq!(recent.pool.len(), all);
+        assert_eq!(recent.count(Period::All, Side::Any).games, all);
+        assert_eq!(recent.count(Period::Months(2), Side::Any).games, 3);
+        assert_eq!(recent.count(Period::Last(1), Side::White).games, 1);
         // Cancelled.
         let cancelled = AtomicBool::new(true);
         assert!(
@@ -1037,7 +1106,8 @@ mod tests {
                 &player,
                 &Options {
                     plies: 10,
-                    side: Side::Any
+                    side: Side::Any,
+                    period: Period::All,
                 }
             )
             .is_none()
