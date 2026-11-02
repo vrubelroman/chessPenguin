@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.1.5" date="2026-11-02">
+      <description>
+        <p>Opponent preparations save automatically, the engine starts searching for opening mistakes by itself, and the preparation layout is clearer. The book comparison has been removed.</p>
+      </description>
+    </release>
     <release version="2.1.4" date="2026-10-31">
       <description>
         <p>Preparing against an opponent: choose his games by period or number, and save preparations with the errors found; downloaded games open on Lichess or Chess.com.</p>

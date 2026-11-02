@@ -62,15 +62,11 @@ impl Tally {
     }
 }
 
-/// Where a game left the book (see [`crate::PrepReport::find_book_exits`]).
+/// Legacy book data kept so old reports still round-trip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BookExit {
-    /// Moves played when the line reached its first position the book rarely has:
-    /// move `ply - 1` (0-based, [`GameInfo::ucis`]) led out of the book.
     pub ply: u32,
-    /// That move was the player's.
     pub by_player: bool,
-    /// Games of the book with the position (below the threshold).
     pub count: u32,
 }
 
@@ -96,8 +92,8 @@ pub struct GameInfo {
     pub opening: Option<usize>,
     /// Plies of the line up to the named position (`keys[named]` is it).
     pub named: Option<u32>,
-    /// Filled in by [`crate::PrepReport::find_book_exits`]; `None` while the line
-    /// is within the book, or before the book was looked at.
+    /// Unused legacy book data, preserved when old reports are saved again.
+    #[serde(default)]
     pub book: Option<BookExit>,
 }
 

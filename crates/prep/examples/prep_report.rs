@@ -1,12 +1,10 @@
 //! A check of the `prep` crate on a real database, printed as text: the candidates
-//! for a name, the repertoire tree of each colour, the opening table, where the games
-//! left the book (the database itself, or another one), and, with an engine, the
-//! opening errors by opening and the repeated ones.
+//! for a name, the repertoire tree of each colour, the opening table, and, with an
+//! engine, the opening errors by opening and the repeated ones.
 //!
 //! ```text
 //! cargo run --release -p prep --example prep_report -- <database> "<player>" \
-//!     [--engine <path>] [--book <path>] [--plies 20] [--processes N] \
-//!     [--min-games 3] [--no-cache]
+//!     [--engine <path>] [--plies 20] [--processes N] [--min-games 3] [--no-cache]
 //! ```
 //!
 //! The report and the evaluations are cached under `~/.cache/chesspenguin/prep/`
@@ -16,13 +14,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::time::Instant;
 
-use prep::{BookOptions, ColorReport, Options, Player, PositionCache, PrepReport, Side, Tree};
+use prep::{ColorReport, Options, Player, PositionCache, PrepReport, Side, Tree};
 
 struct Args {
     db: PathBuf,
     player: String,
     engine: Option<PathBuf>,
-    book: Option<PathBuf>,
     plies: usize,
     processes: usize,
     min_games: u32,
@@ -35,7 +32,6 @@ fn args() -> Args {
         db: PathBuf::new(),
         player: String::new(),
         engine: None,
-        book: None,
         plies: prep::DEFAULT_PLIES,
         processes: game_review::processes(game_review::MAX_PROCESSES),
         min_games: 3,
@@ -45,7 +41,6 @@ fn args() -> Args {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--engine" => a.engine = it.next().map(PathBuf::from),
-            "--book" => a.book = it.next().map(PathBuf::from),
             "--plies" => a.plies = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.plies),
             "--processes" => {
                 a.processes = it
@@ -64,7 +59,7 @@ fn args() -> Args {
         }
     }
     if positional.len() < 2 {
-        eprintln!("usage: prep_report <database> <player> [--engine path] [--book path] …");
+        eprintln!("usage: prep_report <database> <player> [--engine path] …");
         std::process::exit(2);
     }
     a.db = PathBuf::from(&positional[0]);
@@ -162,35 +157,6 @@ fn print_color(report: &PrepReport, cr: &ColorReport, min_games: u32) {
                 games.join(" ")
             );
         }
-    }
-    if report.book.is_some() {
-        let (own, other) = cr.book_exits(&report.games);
-        let total = cr.games.len() as u32;
-        println!(
-            "-- book: left by his own move in {own} games, by the opponent's in {other}, \
-             within the book for the whole line in {}",
-            total - own - other
-        );
-        let mut by_ply: Vec<(u32, bool, u32)> = cr
-            .games
-            .iter()
-            .filter_map(|&g| report.games[g as usize].book)
-            .map(|b| (b.ply, b.by_player, 1))
-            .collect();
-        by_ply.sort_unstable();
-        by_ply.dedup_by(|a, b| {
-            if a.0 == b.0 && a.1 == b.1 {
-                b.2 += a.2;
-                true
-            } else {
-                false
-            }
-        });
-        let text: Vec<String> = by_ply
-            .iter()
-            .map(|(ply, own, n)| format!("ply {ply}{}: {n}", if *own { " (his)" } else { "" }))
-            .collect();
-        println!("   {}", text.join(", "));
     }
     if !cr.errors.is_empty() || report.engine.is_some() {
         println!(
@@ -302,34 +268,6 @@ fn main() {
             r
         }
     };
-
-    // The book: another database, or this one without the player's own games.
-    let t = Instant::now();
-    let book_options = BookOptions {
-        threshold: prep::DEFAULT_BOOK_THRESHOLD,
-        same_database: a.book.is_none(),
-    };
-    let book = a.book.as_deref().map(open);
-    let book_db = book.as_ref().unwrap_or(&db);
-    if report
-        .book
-        .as_ref()
-        .is_some_and(|b| b.fingerprint == prep::fingerprint(book_db))
-    {
-        println!("[book] from the cached report");
-    } else {
-        let progress = AtomicUsize::new(0);
-        match report.find_book_exits(book_db, &book_options, &progress, &never) {
-            Some(()) => println!(
-                "[book] threshold {}: {} of {} games left the book, {:.2} s",
-                book_options.threshold,
-                report.book.as_ref().map_or(0, |b| b.left),
-                report.games.len(),
-                t.elapsed().as_secs_f64()
-            ),
-            None => println!("[book] not searchable (no memory for the position table?)"),
-        }
-    }
 
     for cr in [&report.white, &report.black] {
         print_color(&report, cr, a.min_games);

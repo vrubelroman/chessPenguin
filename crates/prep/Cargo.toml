@@ -1,6 +1,6 @@
 [package]
 name = "prep"
-description = "Preparing against an opponent: a player's opening repertoire in a database, the names of the openings, where the games leave the book, and the opening errors the engine finds (the desktop and Android apps share it)"
+description = "Preparing against an opponent: a player's opening repertoire in a database, the names of the openings, and the opening errors the engine finds (the desktop and Android apps share it)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

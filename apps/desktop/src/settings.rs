@@ -165,7 +165,7 @@ pub struct Settings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PrepSettings {
-    /// The book (`None`: the largest database on the shelf; `Some("")`: no book).
+    /// Unused legacy book choice, preserved when old settings are saved again.
     pub book: Option<PathBuf>,
     /// Plies of the opening the report looks at.
     pub plies: usize,
@@ -173,8 +173,6 @@ pub struct PrepSettings {
     pub period: prep::Period,
     /// Moves with fewer games fold into «other moves».
     pub branches_from: u32,
-    /// The colour was chosen in the dialog once: the button starts the engine at once.
-    pub chosen: bool,
     /// Inaccuracies (?!) are shown with the mistakes and blunders.
     pub inaccuracies: bool,
     /// The order of each table of the screen.
@@ -188,7 +186,6 @@ impl Default for PrepSettings {
             plies: 20,
             period: prep::Period::All,
             branches_from: 3,
-            chosen: false,
             inaccuracies: true,
             sorts: Default::default(),
         }
@@ -355,13 +352,15 @@ mod tests {
         let old = r#"{
             "language": "Ru",
             "review": {"quality": 2, "threads": 12, "hash_mb": 1024, "chosen": true},
-            "prep": {"quality": 1, "plies": 16, "chosen": true}
+            "prep": {"quality": 1, "plies": 16, "chosen": true, "book": "/db/book.pgn"}
         }"#;
         let s: Settings = serde_json::from_str(old).expect("read");
         assert_eq!(s.language, Lang::Ru);
         assert_eq!(s.prep.plies, 16);
-        assert!(s.prep.chosen);
+        assert_eq!(s.prep.book, Some(PathBuf::from("/db/book.pgn")));
         let json = serde_json::to_string(&s).expect("written");
         assert!(!json.contains("\"review\"") && !json.contains("quality"));
+        assert!(!json.contains("\"chosen\""));
+        assert!(json.contains("\"book\":\"/db/book.pgn\""));
     }
 }

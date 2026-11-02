@@ -1,11 +1,11 @@
-//! Preparing against an opponent, shared by the desktop and the Android app: what a
-//! player of a database plays in the opening and where in the opening he goes wrong.
+//! Preparing against an opponent on the desktop: what a player of a database plays
+//! in the opening and where in the opening he goes wrong.
 //!
 //! The [`PrepReport`] is built in a moment from the player's games ([`build`]): his
 //! main lines up to a number of plies, the repertoire tree of each colour with
-//! transpositions marked, the openings named from the Lichess `chess-openings` table
-//! (family → variation → games), and, with a second database as the book, where each
-//! game left it. The engine step is apart and optional: every distinct position of
+//! transpositions marked, and the openings named from the Lichess `chess-openings`
+//! table (family → variation → games). The engine step is apart and optional: every
+//! distinct position of
 //! the lines is evaluated once ([`PrepReport::targets`], run by
 //! [`game_review::run`], results taken in by [`PrepReport::apply`]), the player's
 //! moves are judged with the rules of the game analysis, and the errors are listed by
@@ -27,7 +27,6 @@ use game_review::{JobFailure, JobSettings};
 use serde::{Deserialize, Serialize};
 use uci::EnginePosition;
 
-mod book;
 mod errors;
 mod games;
 pub mod openings;
@@ -35,7 +34,6 @@ mod period;
 mod players;
 mod tree;
 
-pub use book::BookOptions;
 pub use chess_import::chessbase::base::Side;
 pub use errors::{EXACT, ErrorCounts, OpeningError, PositionCache, PositionEval, RepeatedError};
 pub use game_review::{Eval, Judgement};
@@ -47,8 +45,6 @@ pub use tree::{Node, Tree};
 
 /// Plies of the opening a report looks at unless told otherwise.
 pub const DEFAULT_PLIES: usize = 20;
-/// A position with fewer games than this in the book is out of it.
-pub const DEFAULT_BOOK_THRESHOLD: u32 = 5;
 
 /// What a report covers.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -110,22 +106,6 @@ pub struct ColorReport {
     pub counts: ErrorCounts,
 }
 
-impl ColorReport {
-    /// Games that left the book, by whose move: (the player's, the opponent's);
-    /// the rest stayed in the book for the whole line (or no book was looked at).
-    pub fn book_exits(&self, games: &[GameInfo]) -> (u32, u32) {
-        let mut out = (0, 0);
-        for &g in &self.games {
-            match games[g as usize].book {
-                Some(b) if b.by_player => out.0 += 1,
-                Some(_) => out.1 += 1,
-                None => {}
-            }
-        }
-        out
-    }
-}
-
 /// The engine the evaluations came from.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EngineInfo {
@@ -134,12 +114,11 @@ pub struct EngineInfo {
     pub nodes: u64,
 }
 
-/// The book the exits were found against.
+/// Legacy book data kept so old reports still round-trip.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BookInfo {
     pub fingerprint: u64,
     pub threshold: u32,
-    /// Games that left the book within their line.
     pub left: u32,
 }
 
@@ -172,9 +151,9 @@ pub struct PrepReport {
     pub openings: Vec<Opening>,
     pub white: ColorReport,
     pub black: ColorReport,
+    /// Unused legacy book data, preserved when old reports are saved again.
+    #[serde(default)]
     pub book: Option<BookInfo>,
-    /// The book's number of games in every position the book step looked at (by
-    /// key): the first plies of every line, then the positions around each exit.
     #[serde(default)]
     pub book_counts: HashMap<u64, u32>,
     pub engine: Option<EngineInfo>,
@@ -184,6 +163,9 @@ pub struct PrepReport {
     /// ([`SEARCH_VERSION`]; 0: from before it, made with the user's engine settings).
     #[serde(default)]
     pub search: u32,
+    /// A manual Stop forbids another automatic run of this report.
+    #[serde(default)]
+    pub engine_stopped: bool,
 }
 
 /// Identity of a database for the report cache: the content of a PGN file, the
@@ -312,6 +294,7 @@ pub fn build(
         engine: None,
         evals,
         search: SEARCH_VERSION,
+        engine_stopped: false,
     };
     report.refresh();
     Some(report)
@@ -402,30 +385,6 @@ impl PrepReport {
 
     pub fn color(&self, white: bool) -> &ColorReport {
         if white { &self.white } else { &self.black }
-    }
-
-    // ----- the book -------------------------------------------------------------
-
-    /// Finds where each game left `book` (see [`book`]); `progress` counts the games
-    /// done. `None` when cancelled or the book cannot be searched; the report is
-    /// then left as it was.
-    pub fn find_book_exits(
-        &mut self,
-        book: &Database,
-        options: &BookOptions,
-        progress: &AtomicUsize,
-        cancel: &AtomicBool,
-    ) -> Option<()> {
-        let mut games = self.games.clone();
-        let (left, counts) = book::find_exits(&mut games, book, options, progress, cancel)?;
-        self.games = games;
-        self.book = Some(BookInfo {
-            fingerprint: fingerprint(book),
-            threshold: options.threshold,
-            left,
-        });
-        self.book_counts = counts;
-        Some(())
     }
 
     // ----- the engine -----------------------------------------------------------
@@ -946,70 +905,36 @@ mod tests {
     }
 
     #[test]
-    fn the_book_says_where_a_game_left_it() {
+    fn legacy_book_fields_survive_report_serde() {
         let db = database(PGN);
         let (list, _) = candidates(&db, "Вафин Р.", 2);
         let player = Player::new([list[0].id, list[1].id]);
-        let never = AtomicBool::new(false);
         let mut report = build(
             &db,
             &player,
             &Options::default(),
             &AtomicUsize::new(0),
-            &never,
+            &AtomicBool::new(false),
         )
         .expect("report");
-        // The database itself as the book, threshold 2: 1.e4 c5 2.Nf3 is in three
-        // games; game 0 (3...g6) and game 2 (3...e6) part after 3.Bb5, which is in
-        // both. `ply` counts the moves to the first rare position.
-        let options = BookOptions {
-            threshold: 2,
-            same_database: false,
+        assert!(report.book.is_none() && report.book_counts.is_empty());
+        let exit = BookExit {
+            ply: 6,
+            by_player: false,
+            count: 1,
         };
-        report
-            .find_book_exits(&db, &options, &AtomicUsize::new(0), &never)
-            .expect("book");
-        let exits: Vec<Option<BookExit>> = report.games.iter().map(|g| g.book).collect();
-        assert_eq!(
-            exits[0],
-            Some(BookExit {
-                ply: 6,
-                by_player: false,
-                count: 1
-            })
-        );
-        assert_eq!(
-            exits[1].map(|b| (b.ply, b.by_player)),
-            Some((4, true)),
-            "2...d6 is his"
-        );
-        assert_eq!(exits[2].map(|b| (b.ply, b.by_player)), Some((6, false)));
-        assert_eq!(
-            exits[3].map(|b| (b.ply, b.by_player)),
-            Some((1, true)),
-            "1.d4 is his own"
-        );
-        assert_eq!(
-            report.book.as_ref().map(|b| (b.threshold, b.left)),
-            Some((2, 4))
-        );
-        assert_eq!(report.white.book_exits(&report.games), (1, 2));
-        // The counts of the positions looked at: the start (4 games), 1.e4 c5 2.Nf3
-        // (3), the rare 3...g6 (1).
-        let g = &report.games[0];
-        assert_eq!(report.book_counts.get(&g.keys[0]), Some(&4));
-        assert_eq!(report.book_counts.get(&g.keys[3]), Some(&3));
-        assert_eq!(report.book_counts.get(&g.keys[6]), Some(&1));
-        // The player's own games excluded: everything is out of the book at once.
-        let own = BookOptions {
-            threshold: 1,
-            same_database: true,
-        };
-        report
-            .find_book_exits(&db, &own, &AtomicUsize::new(0), &never)
-            .expect("book");
-        assert_eq!(report.games[0].book.map(|b| b.ply), Some(0));
-        assert_eq!(report.book.as_ref().map(|b| b.left), Some(4));
+        report.games[0].book = Some(exit);
+        report.book = Some(BookInfo {
+            fingerprint: 17,
+            threshold: 5,
+            left: 1,
+        });
+        report.book_counts.insert(report.games[0].keys[0], 4);
+        let json = serde_json::to_string(&report).expect("serialize");
+        let restored: PrepReport = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.games[0].book, Some(exit));
+        assert_eq!(restored.book, report.book);
+        assert_eq!(restored.book_counts, report.book_counts);
     }
 
     #[test]

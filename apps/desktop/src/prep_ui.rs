@@ -1,5 +1,5 @@
 //! Preparing against an opponent on the desktop (docs/design/opponent-prep.md): the
-//! dialog that picks the database, the player's spellings, the colour and the book;
+//! dialog that picks the database, the player's spellings and the colour;
 //! the report screen — the repertoire tree, the openings, the errors, the board of the
 //! chosen position and the games through it — and the engine run over the opening
 //! positions. The data are the `prep` crate's; the engine job is the same as the game
@@ -17,8 +17,7 @@ use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Sense, Ui, vec2}
 use egui_extras::{Column, TableBuilder};
 use game_review::{JobEvent, JobSettings, Judgement};
 use prep::{
-    BookExit, BookOptions, Candidate, ErrorCounts, GameInfo, Options, Period, Player,
-    PositionCache, PrepReport, Tally,
+    Candidate, ErrorCounts, GameInfo, Options, Period, Player, PositionCache, PrepReport, Tally,
 };
 use serde::{Deserialize, Serialize};
 use shakmaty::uci::UciMove;
@@ -250,111 +249,12 @@ impl ColorChoice {
     }
 }
 
-/// The book: a database of the shelf, none, or the report's own database.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BookChoice {
-    None,
-    Database(PathBuf),
-    Same,
-}
-
-impl BookChoice {
-    /// From the setting: an empty path is «none», the report's database «the same»,
-    /// `None` the largest database on the shelf but the report's.
-    pub fn from_setting(setting: Option<&Path>, own: &Path, dbs: &[RefDb]) -> BookChoice {
-        match setting {
-            Some(p) if p.as_os_str().is_empty() => BookChoice::None,
-            Some(p) if p == own => BookChoice::Same,
-            Some(p) if dbs.iter().any(|d| d.path == p) => BookChoice::Database(p.to_owned()),
-            _ => dbs
-                .iter()
-                .filter(|d| d.path != own)
-                .max_by_key(|d| d.bytes)
-                .map_or(BookChoice::None, |d| BookChoice::Database(d.path.clone())),
-        }
-    }
-
-    pub fn setting(&self, own: &Path) -> PathBuf {
-        match self {
-            BookChoice::None => PathBuf::new(),
-            BookChoice::Database(p) => p.clone(),
-            BookChoice::Same => own.to_owned(),
-        }
-    }
-
-    fn label(&self, own_name: &str, dbs: &[RefDb]) -> String {
-        match self {
-            BookChoice::None => tr("None").to_owned(),
-            BookChoice::Same => trf("This database ({name})", &[("name", &own_name)]),
-            BookChoice::Database(p) => dbs
-                .iter()
-                .find(|d| d.path == *p)
-                .map_or_else(|| p.display().to_string(), db_label),
-        }
-    }
-}
-
 /// "Mega Database 2026 · 11.7M games" for the pickers.
 fn db_label(d: &RefDb) -> String {
     match &d.db {
         Some(db) => format!("{} · {}", d.name, crate::i18n::games_short(db.len())),
         None => format!("{} · {}", d.name, tr("not open")),
     }
-}
-
-/// The book picker: «None», the databases of the shelf but the report's own, «This
-/// database». Returns the new choice.
-fn book_picker(
-    ui: &mut Ui,
-    id: &str,
-    current: &BookChoice,
-    own: &Path,
-    dbs: &[RefDb],
-    width: f32,
-    with_caption: bool,
-) -> Option<BookChoice> {
-    let mut picked = None;
-    let own_name = base_name(own);
-    let own_name = own_name.as_str();
-    let label = current.label(own_name, dbs);
-    // Without its caption beside it, «None» alone would say nothing.
-    let shown = if with_caption {
-        trf("Book: {name}", &[("name", &label)])
-    } else {
-        label
-    };
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(shown)
-        .width(width)
-        .truncate()
-        .show_ui(ui, |ui| {
-            if ui
-                .selectable_label(*current == BookChoice::None, tr("None"))
-                .clicked()
-            {
-                picked = Some(BookChoice::None);
-            }
-            for d in dbs.iter().filter(|d| d.path != own) {
-                let choice = BookChoice::Database(d.path.clone());
-                if ui.selectable_label(*current == choice, db_label(d)).clicked() {
-                    picked = Some(choice);
-                }
-            }
-            if ui
-                .selectable_label(
-                    *current == BookChoice::Same,
-                    trf("This database ({name})", &[("name", &own_name)]),
-                )
-                .clicked()
-            {
-                picked = Some(BookChoice::Same);
-            }
-        })
-        .response
-        .on_hover_text(tr(
-            "A book is a large database that shows up to which move his line is common and where he plays a rare move. A rare move is not a mistake.",
-        ));
-    picked.filter(|p| p != current)
 }
 
 // ----- the dialog ------------------------------------------------------------------
@@ -364,7 +264,6 @@ pub struct PrepStart {
     pub path: PathBuf,
     pub player: Player,
     pub side: ColorChoice,
-    pub book: BookChoice,
 }
 
 // ----- the period ------------------------------------------------------------------
@@ -465,8 +364,6 @@ const CANDIDATES: usize = 40;
 type SearchJob = Background<(Vec<Candidate>, usize)>;
 /// The count of the ticked names' games by colour (White, Black).
 type CountJob = Background<(u32, u32)>;
-/// The book step: every game's exit, how many left the book, the counts by position.
-type BookJob = Background<(Vec<Option<BookExit>>, u32, HashMap<u64, u32>)>;
 
 pub struct PrepDialog {
     pub path: PathBuf,
@@ -483,8 +380,6 @@ pub struct PrepDialog {
     /// The name the dialog was opened with (ticked by itself when found).
     wanted: Option<u32>,
     side: ColorChoice,
-    /// The book; `None` until the shelf is known (the setting names a database of it).
-    book: Option<BookChoice>,
     /// Games of the ticked names by colour, and the job counting them.
     counts: Option<(Vec<u32>, (u32, u32))>,
     count_job: Option<(Vec<u32>, CountJob)>,
@@ -497,7 +392,6 @@ pub struct PrepDialog {
 impl PrepDialog {
     pub fn new(path: PathBuf, entry: PrepEntry) -> Self {
         PrepDialog {
-            book: None,
             path,
             dbs: Vec::new(),
             query: entry.query,
@@ -605,23 +499,13 @@ impl PrepDialog {
     }
 
     /// Draws the dialog; what was chosen, if anything.
-    pub fn show(&mut self, ctx: &egui::Context, settings: &mut Settings) -> Option<DialogOutcome> {
+    pub fn show(&mut self, ctx: &egui::Context, _settings: &mut Settings) -> Option<DialogOutcome> {
         let db = self.db();
         if let Some(db) = &db {
             self.search(ctx, db);
             self.poll(ctx, db);
         }
         let own_name = base_name(&self.path);
-        if self.book.is_none() && !self.dbs.is_empty() {
-            // The book chosen last time, else the largest database on the shelf: once
-            // the shelf is known.
-            self.book = Some(BookChoice::from_setting(
-                settings.prep.book.as_deref(),
-                &self.path,
-                &self.dbs,
-            ));
-        }
-        let book = self.book.clone().unwrap_or(BookChoice::None);
         let mut outcome = None;
         let ready = db.is_some() && !self.ticked.is_empty();
         let ticked_names: Vec<String> = self
@@ -674,7 +558,10 @@ impl PrepDialog {
                             .truncate()
                             .show_ui(ui, |ui| {
                                 for d in &self.dbs {
-                                    if ui.selectable_label(d.path == self.path, db_label(d)).clicked() {
+                                    if ui
+                                        .selectable_label(d.path == self.path, db_label(d))
+                                        .clicked()
+                                    {
                                         pick = Some(d.path.clone());
                                     }
                                 }
@@ -686,11 +573,6 @@ impl PrepDialog {
                             self.ticked.clear();
                             self.counts = None;
                             self.count_job = None;
-                            self.book = Some(BookChoice::from_setting(
-                                settings.prep.book.as_deref(),
-                                &self.path,
-                                &self.dbs,
-                            ));
                         }
                     });
                     ui.horizontal(|ui| {
@@ -719,7 +601,11 @@ impl PrepDialog {
                     });
                     ui.add_space(2.0);
                     match &db {
-                        None if self.dbs.iter().any(|d| d.path == self.path && d.failed.is_some()) => {
+                        None if self
+                            .dbs
+                            .iter()
+                            .any(|d| d.path == self.path && d.failed.is_some()) =>
+                        {
                             let why = self
                                 .dbs
                                 .iter()
@@ -727,8 +613,11 @@ impl PrepDialog {
                                 .and_then(|d| d.failed.clone())
                                 .unwrap_or_default();
                             ui.label(
-                                RichText::new(trf("This database cannot be opened: {e}", &[("e", &why)]))
-                                    .color(ui.visuals().warn_fg_color),
+                                RichText::new(trf(
+                                    "This database cannot be opened: {e}",
+                                    &[("e", &why)],
+                                ))
+                                .color(ui.visuals().warn_fg_color),
                             );
                         }
                         None => {
@@ -773,26 +662,15 @@ impl PrepDialog {
                         );
                         ui.radio_value(&mut self.side, ColorChoice::Both, tr("Both"));
                     });
-                    ui.horizontal(|ui| {
-                        ui.add_sized([label_w, 20.0], egui::Label::new(tr("Book")));
-                        let width = ui.available_width() - 8.0;
-                        if let Some(b) = book_picker(ui, "prep_dialog_book", &book, &self.path, &self.dbs, width, false) {
-                            settings.prep.book = Some(b.setting(&self.path));
-                            self.book = Some(b);
-                        }
-                    });
-                    ui.label(
-                        RichText::new(tr(
-                            "The book shows where he leaves the theory. «None» — without that column.",
-                        ))
-                        .weak()
-                        .small(),
-                    );
                 });
             ui.add_space(10.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let open = ui
-                    .add_enabled(ready, egui::Button::new(RichText::new(tr("Open report")).strong()).min_size(vec2(0.0, 30.0)))
+                    .add_enabled(
+                        ready,
+                        egui::Button::new(RichText::new(tr("Open report")).strong())
+                            .min_size(vec2(0.0, 30.0)),
+                    )
                     .on_disabled_hover_text(tr("Tick a player"));
                 if open.clicked() {
                     outcome = Some(DialogOutcome::Open(self.start()));
@@ -826,7 +704,6 @@ impl PrepDialog {
             path: self.path.clone(),
             player: Player::new(self.ticked.iter().copied()),
             side: self.side,
-            book: self.book.clone().unwrap_or(BookChoice::None),
         }
     }
 
@@ -941,6 +818,9 @@ pub struct PrepList {
     /// The entry asked about before deleting.
     deleting: Option<String>,
     error: Option<String>,
+    /// When the entries were last read (a report being built in the background
+    /// changes them on disk while this window is open).
+    last_reload: f64,
 }
 
 impl PrepList {
@@ -950,6 +830,7 @@ impl PrepList {
             renaming: None,
             deleting: None,
             error: None,
+            last_reload: 0.0,
         };
         list.reload();
         list
@@ -965,6 +846,11 @@ impl PrepList {
     /// `can_new`: a database is chosen to prepare in.
     pub fn show(&mut self, ctx: &egui::Context, can_new: bool) -> Option<ListOutcome> {
         let mut out = None;
+        let now = ctx.input(|i| i.time);
+        if now - self.last_reload > 2.0 {
+            self.reload();
+            self.last_reload = now;
+        }
         // Escape while renaming ends the renaming only.
         let was_renaming = self.renaming.is_some();
         let modal = egui::Modal::new(egui::Id::new("prep_list")).show(ctx, |ui| {
@@ -975,7 +861,7 @@ impl PrepList {
             if self.items.is_empty() {
                 ui.label(
                     RichText::new(tr(
-                        "Nothing saved yet. Prepare against a player and press «Save» on the report.",
+                        "Nothing yet. A preparation is saved by itself as soon as you start it: prepare against a player.",
                     ))
                     .weak(),
                 );
@@ -1210,8 +1096,6 @@ pub enum PrepAction {
         index: usize,
         ply: usize,
     },
-    /// A database of the shelf is needed (the book) but not read yet.
-    LoadDb(PathBuf),
     /// The engine run started (the live engine pauses) / ended.
     EngineStarted,
     EngineEnded,
@@ -1418,13 +1302,12 @@ pub struct PrepScreen {
     pub names: Vec<String>,
     /// On the screen (else kept in the stack under the library).
     pub shown: bool,
-    /// The shelf (set by the application every frame; the book comes from it).
-    pub dbs: Vec<RefDb>,
     color: ColorChoice,
     plies: usize,
     period: Period,
-    book: BookChoice,
     /// Kept in «Preparations» (`prep_saved`): every change is written there too.
+    /// Every started preparation is kept from the start; the flag goes off only if it
+    /// was deleted from «Preparations» while this screen lives (not written back then).
     saved: bool,
     /// A period asked for where the settings are not at hand (applied in `show`).
     want_period: Option<Period>,
@@ -1433,10 +1316,6 @@ pub struct PrepScreen {
     /// The games read in the background (hundreds in a moment, a Mega filter in seconds).
     build: Option<Background<PrepReport>>,
     build_total: usize,
-    book_job: Option<(u64, BookJob)>,
-    /// The book that could not be searched (its fingerprint, why).
-    book_failed: Option<(u64, String)>,
-    book_asked: Option<PathBuf>,
     job: Option<EngineJob>,
     cache: PositionCache,
     nps_per_thread: Option<f64>,
@@ -1457,10 +1336,6 @@ pub struct PrepScreen {
     open_variations: HashSet<(bool, usize, usize)>,
     /// The row of the errors tab the keyboard is on.
     err_cursor: Option<ErrRow>,
-    /// The fingerprint of the chosen book, once it is open (`None`: no book), and the
-    /// book and its database it was taken from.
-    book_fp: Option<u64>,
-    book_fp_of: Option<(BookChoice, usize)>,
     /// Inaccuracies shown (`settings.prep.inaccuracies`, read every frame).
     show_inaccuracies: bool,
     /// The board stands over the lists (a narrow or low window); the window is low.
@@ -1482,8 +1357,8 @@ pub struct PrepScreen {
     scroll_to_selected: bool,
     /// The games list's height, once the user dragged the border (else 35 %).
     games_height: Option<f32>,
-    /// `CP_PREP_ENGINE`: the engine run started by itself once the report is built.
-    auto_engine: bool,
+    /// The one automatic engine start of this report was considered.
+    auto_done: bool,
 }
 
 /// Plays `ucis` from the start; stops at a move that cannot be read.
@@ -1698,41 +1573,51 @@ fn pill(ui: &mut Ui, j: Judgement) -> egui::Response {
     resp
 }
 
-/// The width of [`counts_text`].
-fn errors_text_width(ui: &Ui, c: &ErrorCounts) -> f32 {
-    let parts: Vec<String> = [
+const COUNTS_GAP: f32 = 4.0;
+
+fn count_parts(c: &ErrorCounts) -> Vec<(u32, Judgement)> {
+    [
         (c.inaccuracies, Judgement::Inaccuracy),
         (c.mistakes, Judgement::Mistake),
         (c.blunders, Judgement::Blunder),
     ]
-    .iter()
+    .into_iter()
     .filter(|(n, _)| *n > 0)
-    .map(|(n, j)| format!("{n} {}", review::judgement_symbol(*j)))
-    .collect();
-    text_width(ui, &parts.join(" · "), egui::TextStyle::Body) + 8.0 * parts.len() as f32
+    .collect()
+}
+
+/// The width of [`counts_text`], including its separator Labels and gaps.
+fn errors_text_width(ui: &Ui, c: &ErrorCounts) -> f32 {
+    let parts = count_parts(c);
+    let counts = parts
+        .iter()
+        .map(|(n, j)| {
+            text_width(
+                ui,
+                &format!("{n} {}", review::judgement_symbol(*j)),
+                egui::TextStyle::Body,
+            )
+        })
+        .sum::<f32>();
+    let separators = parts.len().saturating_sub(1) as f32;
+    counts + separators * text_width(ui, "·", egui::TextStyle::Body) + 2.0 * separators * COUNTS_GAP
 }
 
 /// "3 ? · 1 ??" in the colours of the signs (nothing when there are none).
 fn counts_text(ui: &mut Ui, c: &ErrorCounts) {
     let dark = ui.visuals().dark_mode;
-    let mut first = true;
-    for (n, j) in [
-        (c.inaccuracies, Judgement::Inaccuracy),
-        (c.mistakes, Judgement::Mistake),
-        (c.blunders, Judgement::Blunder),
-    ] {
-        if n == 0 {
-            continue;
-        }
-        if !first {
+    let old_gap = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = COUNTS_GAP;
+    for (i, (n, j)) in count_parts(c).into_iter().enumerate() {
+        if i > 0 {
             ui.label(RichText::new("·").weak());
         }
-        first = false;
         ui.label(
             RichText::new(format!("{n} {}", review::judgement_symbol(j)))
                 .color(review::judgement_text_color(j, dark)),
         );
     }
+    ui.spacing_mut().item_spacing.x = old_gap;
 }
 
 impl PrepScreen {
@@ -1755,6 +1640,7 @@ impl PrepScreen {
             .as_ref()
             .and(saved_dir.as_deref())
             .and_then(|d| crate::prep_saved::report(d, &saved_id));
+        let had_saved_report = saved_report.is_some();
         let plies = saved
             .as_ref()
             .map_or(settings.prep.plies, |s| s.plies)
@@ -1790,20 +1676,15 @@ impl PrepScreen {
             player: start.player,
             names,
             shown: true,
-            dbs: Vec::new(),
             color: start.side,
             plies,
             period,
-            book: start.book,
-            saved: saved.is_some(),
+            saved: crate::prep_saved::dir().is_some(),
             want_period: None,
             report: None,
             rows: Vec::new(),
             build: None,
             build_total: 0,
-            book_job: None,
-            book_failed: None,
-            book_asked: None,
             job: None,
             cache,
             nps_per_thread: None,
@@ -1825,8 +1706,6 @@ impl PrepScreen {
             open_repeated: HashSet::new(),
             open_variations: HashSet::new(),
             err_cursor: None,
-            book_fp: None,
-            book_fp_of: None,
             show_inaccuracies: settings.prep.inaccuracies,
             stacked: false,
             low_window: false,
@@ -1841,7 +1720,7 @@ impl PrepScreen {
             hover_arrow: None,
             scroll_to_selected: false,
             games_height: None,
-            auto_engine: std::env::var_os("CP_PREP_ENGINE").is_some(),
+            auto_done: false,
         };
         let cached = fresh.or_else(|| {
             dir.as_deref()
@@ -1850,6 +1729,24 @@ impl PrepScreen {
         match cached {
             Some(r) => screen.take_report(r),
             None => screen.rebuild(ctx),
+        }
+        // A preparation is kept from the moment it is started: the list entry at
+        // once, the report as soon as it is built (then `save` writes both).
+        // A saved report missing on disk (a crash between the writes) is restored
+        // from the cache the same way.
+        let restore = saved.is_some() && !had_saved_report && screen.report.is_some();
+        if screen.saved && (saved.is_none() || restore) {
+            let result = if screen.report.is_some() {
+                screen.keep()
+            } else {
+                screen.keep_meta()
+            };
+            if let Err(e) = result {
+                eprintln!("prep saved: {e}");
+                // Not silently unsaved: told on the screen, tried again by `save`.
+                screen.dirty = true;
+                screen.error = Some(trf("Could not save: {e}", &[("e", &e.to_string())]));
+            }
         }
         screen
     }
@@ -1885,7 +1782,6 @@ impl PrepScreen {
     /// Reads the games anew (a new depth; the database read again).
     fn rebuild(&mut self, ctx: &egui::Context) {
         self.job = None;
-        self.book_job = None;
         let (db, player) = (self.db.clone(), self.player.clone());
         let options = self.options();
         self.build_total = 0;
@@ -1898,6 +1794,7 @@ impl PrepScreen {
     /// A report arrived (built or from the cache): the rows of the games list, the
     /// cached evaluations, the default expansion.
     fn take_report(&mut self, mut report: PrepReport) {
+        self.auto_done = false;
         let taken = report.take_cached(&self.cache);
         self.dirty |= taken > 0;
         self.rows = report
@@ -1921,8 +1818,6 @@ impl PrepScreen {
         self.open_families.clear();
         self.open_variations.clear();
         self.open_repeated.clear();
-        // A book step of the report this one replaces is not this report's.
-        self.book_job = None;
         self.report = Some(report);
         self.rebuild_marks();
         self.selection = Selection::None;
@@ -1931,19 +1826,14 @@ impl PrepScreen {
         self.err_cursor = None;
     }
 
-    /// The same player asked for again from the dialog: its colour and book.
-    pub fn reopen(&mut self, side: ColorChoice, book: BookChoice) {
+    /// The same player asked for again from the dialog: its colour.
+    pub fn reopen(&mut self, side: ColorChoice) {
         self.shown = true;
-        // Deleted from «Preparations» while this screen was hidden: «Save» again.
+        // Deleted from «Preparations» while this screen was hidden: not written back.
         self.saved &= crate::prep_saved::dir().is_some_and(|d| {
             crate::prep_saved::get(&d, &crate::prep_saved::id(&self.path, &self.names)).is_some()
         });
         self.set_color(side);
-        if book != self.book {
-            self.book = book;
-            self.book_failed = None;
-            self.book_asked = None;
-        }
     }
 
     fn set_color(&mut self, color: ColorChoice) {
@@ -2017,18 +1907,17 @@ impl PrepScreen {
         match cached {
             Some(r) => {
                 self.take_report(r);
+                if let Some(report) = self.report.as_mut()
+                    && report.engine_stopped
+                {
+                    report.engine_stopped = false;
+                    self.dirty = true;
+                }
                 self.dirty |= self.saved;
+                self.save();
             }
             None => self.rebuild(ctx),
         }
-    }
-
-    /// The report's book is the one chosen (else its column and line are not shown).
-    fn book_ok(&self) -> bool {
-        let Some(report) = &self.report else {
-            return false;
-        };
-        self.book_fp.is_some() && report.book.as_ref().map(|b| b.fingerprint) == self.book_fp
     }
 
     /// The judgement is shown (inaccuracies can be hidden).
@@ -2053,10 +1942,16 @@ impl PrepScreen {
         let Some(report) = &self.report else {
             return EngineState::NotRun;
         };
+        let side = self.color.side();
         if !report.evaluated() {
+            // Stopped before the first evaluation: not «never run», but 0 of N with
+            // «Continue».
+            if report.engine_stopped {
+                let total = report.distinct_positions_for(side);
+                return EngineState::Partial { done: 0, total };
+            }
             return EngineState::NotRun;
         }
-        let side = self.color.side();
         let total = report.distinct_positions_for(side);
         let missing = report.missing_for(side);
         if missing == 0 {
@@ -2206,113 +2101,36 @@ impl PrepScreen {
             match r {
                 Some(report) => {
                     self.take_report(report);
-                    // A saved preparation follows its new games and depth.
+                    // A saved preparation follows its new games and depth; the first
+                    // report of a just started one is written at once, not on quitting.
                     self.dirty |= self.saved;
+                    self.save();
                 }
                 None => self.error = Some(tr("The games could not be read").to_owned()),
             }
         }
         self.show_inaccuracies = settings.prep.inaccuracies;
-        if let Some((fp, job)) = &self.book_job
-            && let Some(r) = job.poll()
-        {
-            let fp = *fp;
-            self.book_job = None;
-            match r {
-                Some((exits, left, counts)) => {
-                    if let Some(report) = self.report.as_mut() {
-                        for (g, b) in report.games.iter_mut().zip(exits) {
-                            g.book = b;
-                        }
-                        report.book = Some(prep::BookInfo {
-                            fingerprint: fp,
-                            threshold: prep::DEFAULT_BOOK_THRESHOLD,
-                            left,
-                        });
-                        report.book_counts = counts;
-                        self.dirty = true;
-                    }
-                }
-                None => {
-                    self.book_failed = Some((
-                        fp,
-                        tr("the position search failed (not enough memory?)").to_owned(),
-                    ))
+        self.poll_engine(ctx, actions);
+        // The one automatic engine run of this report, once it is built; a manual
+        // Stop forbids it. Without an engine there is no offer by itself: the Errors
+        // tab says so and offers the download.
+        if !self.auto_done && self.build.is_none() {
+            self.auto_done = true;
+            let start = self
+                .report
+                .as_ref()
+                .is_some_and(|r| !r.engine_stopped && !r.targets_for(self.color.side()).is_empty());
+            if start {
+                if crate::review_engine::engine().is_some() {
+                    self.start_engine(ctx, actions);
+                } else {
+                    self.tab = Tab::Errors;
                 }
             }
         }
-        self.poll_engine(ctx, actions);
-        self.start_book(ctx, actions);
-        if self.auto_engine && self.report.is_some() && self.build.is_none() {
-            self.auto_engine = false;
-            self.start_engine(ctx, actions);
-        }
-        if self.build.is_some() || self.book_job.is_some() || self.job.is_some() {
+        if self.build.is_some() || self.job.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
-    }
-
-    /// The book step for the chosen book, once the report and the book are there.
-    fn start_book(&mut self, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
-        let Some(report) = &self.report else { return };
-        if self.book_job.is_some() || self.build.is_some() {
-            return;
-        }
-        let book = match &self.book {
-            BookChoice::None => None,
-            BookChoice::Same => Some((self.db.clone(), true)),
-            BookChoice::Database(p) => match self.dbs.iter().find(|d| d.path == *p) {
-                Some(d) => match &d.db {
-                    Some(db) => Some((db.clone(), false)),
-                    None => {
-                        if d.failed.is_none() && self.book_asked.as_ref() != Some(p) {
-                            self.book_asked = Some(p.clone());
-                            actions.push(PrepAction::LoadDb(p.clone()));
-                        }
-                        None
-                    }
-                },
-                None => None,
-            },
-        };
-        let Some((book_db, same)) = book else {
-            self.book_fp = None;
-            self.book_fp_of = None;
-            return;
-        };
-        // The fingerprint reads the file's data: once per book and database read.
-        let of = (self.book.clone(), Arc::as_ptr(&book_db) as usize);
-        if self.book_fp_of.as_ref() != Some(&of) {
-            self.book_fp = Some(prep::fingerprint(&book_db));
-            self.book_fp_of = Some(of);
-        }
-        let Some(fp) = self.book_fp else { return };
-        if report.book.as_ref().is_some_and(|b| b.fingerprint == fp)
-            || self.book_failed.as_ref().is_some_and(|(f, _)| *f == fp)
-        {
-            return;
-        }
-        let mut clone = report.clone();
-        let options = BookOptions {
-            threshold: prep::DEFAULT_BOOK_THRESHOLD,
-            same_database: same,
-        };
-        let now = ctx.input(|i| i.time);
-        self.book_job = Background::spawn(ctx, now, move |progress, cancel| {
-            clone.find_book_exits(&book_db, &options, progress, cancel)?;
-            let exits = clone.games.iter().map(|g| g.book).collect();
-            let left = clone.book.as_ref().map_or(0, |b| b.left);
-            Some((exits, left, std::mem::take(&mut clone.book_counts)))
-        })
-        .map(|j| (fp, j));
-    }
-
-    /// The book's count in a position, when the book step looked at it.
-    fn book_count(&self, key: u64) -> Option<u32> {
-        if !self.book_ok() {
-            return None;
-        }
-        self.report.as_ref()?.book_counts.get(&key).copied()
     }
 
     // ----- the engine ----------------------------------------------------------------
@@ -2332,28 +2150,42 @@ impl PrepScreen {
         game_review::estimate_secs(positions, nps, processes)
     }
 
-    /// The button: the dialog the first time, at once with the colour chosen before.
-    fn engine_asked(
-        &mut self,
-        settings: &Settings,
-        ctx: &egui::Context,
-        actions: &mut Vec<PrepAction>,
-    ) {
+    /// The button: the search at once, no dialog; the options are only the «▾» dialog.
+    fn engine_asked(&mut self, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
+        // Nothing to evaluate: no engine offer, just the state (an empty report too).
+        if self
+            .report
+            .as_ref()
+            .is_some_and(|r| r.targets_for(self.color.side()).is_empty())
+        {
+            self.tab = Tab::Errors;
+            actions.push(PrepAction::Toast(
+                tr("Every position is already evaluated").to_owned(),
+            ));
+            return;
+        }
         if crate::review_engine::engine().is_none() {
             actions.push(PrepAction::NeedEngine);
             return;
         }
-        if settings.prep.chosen {
-            self.start_engine(ctx, actions);
-        } else {
-            self.dialog_open = true;
-        }
+        self.start_engine(ctx, actions);
     }
 
     /// Starts the search for opening errors: Stockfish 19 (`review_engine`) with the fixed
     /// search of the game analysis (`game_review::run`), the same on every computer.
     fn start_engine(&mut self, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
+        // A running search is not restarted (e.g. «Find errors» in the options dialog).
+        if self.job.is_some() {
+            return;
+        }
         self.error = None;
+        // A start by hand (or by the new report) clears the manual Stop of this one.
+        if let Some(report) = self.report.as_mut()
+            && report.engine_stopped
+        {
+            report.engine_stopped = false;
+            self.dirty = true;
+        }
         let Some(path) = crate::review_engine::engine() else {
             actions.push(PrepAction::NeedEngine);
             return;
@@ -2467,14 +2299,39 @@ impl PrepScreen {
         self.stop_engine(&mut Vec::new());
     }
 
-    /// «Stop»: what was evaluated stays.
+    /// «Stop»: what was evaluated stays, including what is already in the channel.
     fn stop_engine(&mut self, actions: &mut Vec<PrepAction>) {
-        if self.job.take().is_some() {
+        if let Some(mut job) = self.job.take() {
+            if let Some(report) = self.report.as_mut() {
+                job.runner.pump();
+                while let Ok(msg) = job.rx.try_recv() {
+                    if let JobMsg::Event(e) = msg
+                        && let Some((k, eval)) = report.apply(&e)
+                    {
+                        self.cache.insert(k, eval);
+                        // The drained evaluations belong in the saved report too.
+                        self.dirty = true;
+                    }
+                }
+            }
             self.rejudge(PrepReport::refresh);
             self.pending_refresh = false;
             self.save();
             actions.push(PrepAction::EngineEnded);
         }
+    }
+
+    /// «Stop» pressed by the user: the evaluations stay, and this report is not run
+    /// automatically again (a new depth/period or «Continue» clears that).
+    fn stop_engine_by_user(&mut self, actions: &mut Vec<PrepAction>) {
+        if self.job.is_some()
+            && let Some(report) = self.report.as_mut()
+        {
+            report.engine_stopped = true;
+            // Even before the first evaluation the stop is written, not lost on exit.
+            self.dirty = true;
+        }
+        self.stop_engine(actions);
     }
 
     /// Writes the report and the evaluations to the cache, and to «Preparations» when
@@ -2516,17 +2373,38 @@ impl PrepScreen {
         let Some(report) = &self.report else {
             return Ok(());
         };
+        crate::prep_saved::save(&dir, &self.saved_meta(), report)
+    }
+
+    /// Writes only the list entry: a preparation just started, its report not built yet.
+    fn keep_meta(&self) -> std::io::Result<()> {
+        let dir =
+            crate::prep_saved::dir().ok_or_else(|| std::io::Error::other("no data folder"))?;
+        crate::prep_saved::save_meta(&dir, &self.saved_meta())
+    }
+
+    /// The list entry as it is now; the counts of the report, when there is one.
+    fn saved_meta(&self) -> crate::prep_saved::SavedPrep {
         let id = crate::prep_saved::id(&self.path, &self.names);
-        let title = crate::prep_saved::get(&dir, &id)
-            .map(|m| m.title)
+        let previous = crate::prep_saved::dir().and_then(|d| crate::prep_saved::get(&d, &id));
+        let title = previous
+            .as_ref()
+            .map(|m| m.title.clone())
             .unwrap_or_else(|| self.names.first().cloned().unwrap_or_default());
+        let book = previous.map_or_else(PathBuf::new, |m| m.book);
         let mut errors = ErrorCounts::default();
-        for c in [&report.white, &report.black] {
-            errors.inaccuracies += c.counts.inaccuracies;
-            errors.mistakes += c.counts.mistakes;
-            errors.blunders += c.counts.blunders;
+        let mut games = 0;
+        let mut evaluated = false;
+        if let Some(report) = &self.report {
+            for c in [&report.white, &report.black] {
+                errors.inaccuracies += c.counts.inaccuracies;
+                errors.mistakes += c.counts.mistakes;
+                errors.blunders += c.counts.blunders;
+            }
+            games = report.games.len() as u32;
+            evaluated = report.evaluated();
         }
-        let meta = crate::prep_saved::SavedPrep {
+        crate::prep_saved::SavedPrep {
             title,
             path: self.path.clone(),
             player: self.player.clone(),
@@ -2534,37 +2412,19 @@ impl PrepScreen {
             plies: self.plies,
             period: self.period,
             color: self.color,
-            book: self.book.setting(&self.path),
+            book,
             saved: crate::prep_saved::now(),
-            games: report.games.len() as u32,
+            games,
             errors,
-            evaluated: report.evaluated(),
-        };
-        crate::prep_saved::save(&dir, &meta, report)
-    }
-
-    /// «💾 Save»: the preparation goes to «Preparations» and is kept there from now on.
-    fn save_to_list(&mut self, actions: &mut Vec<PrepAction>) {
-        self.saved = true;
-        match self.keep() {
-            Ok(()) => actions.push(PrepAction::Toast(
-                tr("Saved: the library's «Preparations» opens it").to_owned(),
-            )),
-            Err(e) => {
-                self.saved = false;
-                actions.push(PrepAction::Toast(trf(
-                    "Could not save: {e}",
-                    &[("e", &e.to_string())],
-                )));
-            }
+            evaluated,
         }
     }
 
-    /// The launch dialog (§4.2).
+    /// The options dialog (§4.2), only by the explicit «▾».
     fn engine_dialog(
         &mut self,
         ctx: &egui::Context,
-        settings: &mut Settings,
+        _settings: &mut Settings,
         actions: &mut Vec<PrepAction>,
     ) {
         if !self.dialog_open {
@@ -2645,9 +2505,7 @@ impl PrepScreen {
         }
         if start {
             self.dialog_open = false;
-            settings.prep.chosen = true;
-            actions.push(PrepAction::SettingsChanged);
-            self.engine_asked(settings, ctx, actions);
+            self.engine_asked(ctx, actions);
         }
     }
 
@@ -3003,13 +2861,7 @@ impl PrepScreen {
         let row = ui.available_width();
         let compact = row < 700.0;
         let left = button_w(ui, if compact { "⬅" } else { tr("⬅ Library") }) + 2.0 * gap;
-        let save_label = match (self.saved, compact) {
-            (false, false) => tr("★ Save"),
-            (true, false) => tr("★ Saved"),
-            (_, true) => "★",
-        };
-        let right =
-            button_w(ui, if compact { "⚙" } else { tr("⚙ Settings") }) + button_w(ui, save_label);
+        let right = button_w(ui, if compact { "⚙" } else { tr("⚙ Settings") });
         let title_room = (row - left - right).max(80.0);
         ui.horizontal(|ui| {
             if ui
@@ -3065,27 +2917,11 @@ impl PrepScreen {
                 {
                     actions.push(PrepAction::OpenSettings);
                 }
-                let games = self.shown_games();
-                if self.saved {
-                    // A quiet mark, not a button that looks unavailable.
-                    ui.label(RichText::new(save_label).color(ui.visuals().selection.bg_fill))
-                        .on_hover_text(tr(
-                            "Kept in the library's «Preparations»: changes are saved by themselves",
-                        ));
-                } else if ui
-                    .add_enabled(games > 0, egui::Button::new(save_label))
-                    .on_hover_text(tr(
-                        "Keep this preparation with the errors found: the library's «Preparations» opens it again",
-                    ))
-                    .clicked()
-                {
-                    self.save_to_list(actions);
-                }
             });
         });
     }
 
-    /// The colour switch, the book, the depth and the engine button or its progress.
+    /// The colour switch, the depth and the engine button or its progress.
     fn controls(
         &mut self,
         ui: &mut Ui,
@@ -3124,39 +2960,6 @@ impl PrepScreen {
                 {
                     self.set_color(choice);
                 }
-            }
-            ui.separator();
-            let caption_apart = width >= 640.0;
-            if caption_apart {
-                ui.label(tr("Book"));
-            }
-            let book_w = if width < 700.0 {
-                120.0
-            } else if width < 900.0 {
-                150.0
-            } else if width < 1100.0 {
-                180.0
-            } else {
-                240.0
-            };
-            if let Some(b) = book_picker(
-                ui,
-                "prep_book",
-                &self.book,
-                &self.path,
-                &self.dbs,
-                book_w,
-                !caption_apart,
-            ) {
-                self.book = b;
-                self.book_failed = None;
-                self.book_asked = None;
-                settings.prep.book = Some(self.book.setting(&self.path));
-                actions.push(PrepAction::SettingsChanged);
-            }
-            if let Some((_, why)) = &self.book_failed {
-                ui.label(RichText::new("⚠").color(ui.visuals().warn_fg_color))
-                    .on_hover_text(trf("Book: could not open — {reason}", &[("reason", why)]));
             }
             ui.separator();
             let moves = self.plies.div_ceil(2);
@@ -3376,7 +3179,7 @@ impl PrepScreen {
     fn engine_control(
         &mut self,
         ui: &mut Ui,
-        settings: &Settings,
+        _settings: &Settings,
         texts: EngineTexts,
         width: f32,
         actions: &mut Vec<PrepAction>,
@@ -3387,7 +3190,7 @@ impl PrepScreen {
         if let Some(job) = &self.job {
             let (done, total) = (job.done, job.total);
             if ui.button(tr("Stop")).on_hover_text("Shift+A").clicked() {
-                self.stop_engine(actions);
+                self.stop_engine_by_user(actions);
                 return;
             }
             let secs = self.secs_for(total.saturating_sub(done), job.processes);
@@ -3428,7 +3231,7 @@ impl PrepScreen {
                     .on_hover_text(hint)
                     .clicked()
                 {
-                    self.engine_asked(settings, ui.ctx(), actions);
+                    self.engine_asked(ui.ctx(), actions);
                 }
                 if let Some(n) = note {
                     ui.label(RichText::new(n).weak());
@@ -3461,8 +3264,8 @@ impl PrepScreen {
     }
 
     /// The summary: a row per colour in columns — colour, games, score, opponents,
-    /// the last game, the book, the errors; the columns give way from the right (the
-    /// last game, the book, the opponents) instead of wrapping.
+    /// the last game, then separate error counts and percentages. Secondary columns
+    /// give way from the right (the last game, then the opponents) instead of wrapping.
     fn summary(&self, ui: &mut Ui, stacked: bool) {
         let Some(report) = &self.report else { return };
         let colours = if stacked {
@@ -3471,9 +3274,8 @@ impl PrepScreen {
             vec![true, false]
         };
         let evaluated = report.evaluated() && !stacked;
-        let book = self.book_ok();
-        // Texts per colour: [games, score, opponents, last, book].
-        let mut rows: Vec<(bool, [String; 5], ErrorCounts, usize)> = Vec::new();
+        // Texts per colour: [colour, games, score, opponents, last].
+        let mut rows: Vec<(bool, [String; 5], String, ErrorCounts, usize)> = Vec::new();
         for &white in &colours {
             let cr = report.color(white);
             let root = &cr.tree.nodes[0];
@@ -3482,10 +3284,15 @@ impl PrepScreen {
                 tr("As White")
             } else {
                 tr("As Black")
-            };
-            let games = format!("{title}  {}", tally.games);
+            }
+            .to_owned();
             let score = if tally.games > 0 {
                 format!("{} ({})", score_text(tally), tally_hint(tally))
+            } else {
+                String::new()
+            };
+            let compact_score = if tally.games > 0 {
+                score_text(tally)
             } else {
                 String::new()
             };
@@ -3499,29 +3306,6 @@ impl PrepScreen {
             } else {
                 trf("last {date}", &[("date", &last)])
             };
-            let book_text = if book {
-                let mut plies: Vec<u32> = cr
-                    .games
-                    .iter()
-                    .filter_map(|&g| report.games[g as usize].book.map(|b| b.ply))
-                    .collect();
-                plies.sort_unstable();
-                match plies.get(plies.len() / 2) {
-                    Some(median) => {
-                        let (own, other) = cr.book_exits(&report.games);
-                        let p = 100 * own / (own + other).max(1);
-                        trf(
-                            "leaves the book at move {n}, first in {p} % of games",
-                            &[("n", &median.div_ceil(2).max(1)), ("p", &p)],
-                        )
-                    }
-                    None => String::new(),
-                }
-            } else if self.book_job.is_some() {
-                tr("book…").to_owned()
-            } else {
-                String::new()
-            };
             let with_errors: HashSet<u32> = cr
                 .errors
                 .iter()
@@ -3531,74 +3315,123 @@ impl PrepScreen {
             let p = 100 * with_errors.len() / cr.games.len().max(1);
             rows.push((
                 white,
-                [games, score, opponents, last, book_text],
+                [title, tally.games.to_string(), score, opponents, last],
+                compact_score,
                 self.shown_counts(&cr.counts),
                 p,
             ));
         }
-        // Which columns fit: the errors stay; last, book, opponents give way in turn.
+        // The colour, games and score percentage stay; secondary columns give way.
         let gap = 14.0;
-        let col_w = |k: usize| -> f32 {
+        let col_w = |k: usize, compact_score: bool| -> f32 {
             rows.iter()
-                .map(|r| text_width(ui, &r.1[k], egui::TextStyle::Body))
+                .map(|r| {
+                    let text = if k == 2 && compact_score {
+                        &r.2
+                    } else {
+                        &r.1[k]
+                    };
+                    text_width(ui, text, egui::TextStyle::Body)
+                })
                 .fold(0.0, f32::max)
         };
-        let errors_w = if evaluated {
+        let no_errors_w = text_width(ui, tr("no errors"), egui::TextStyle::Body);
+        let counts_w = if evaluated {
             rows.iter()
-                .map(|(_, _, c, p)| {
-                    errors_text_width(ui, c)
-                        + text_width(
-                            ui,
-                            &trf("in {p} % of games", &[("p", p)]),
-                            egui::TextStyle::Body,
-                        )
-                        + 12.0
+                .map(|(_, _, _, counts, _)| {
+                    if counts.total() > 0 {
+                        errors_text_width(ui, counts)
+                    } else {
+                        no_errors_w
+                    }
                 })
                 .fold(0.0, f32::max)
         } else {
             0.0
         };
+        let percent_w = if evaluated {
+            rows.iter()
+                .filter(|(_, _, _, counts, _)| counts.total() > 0)
+                .map(|(_, _, _, _, p)| {
+                    text_width(
+                        ui,
+                        &trf("in {p} % of games", &[("p", p)]),
+                        egui::TextStyle::Body,
+                    )
+                })
+                .fold(0.0, f32::max)
+        } else {
+            0.0
+        };
+        let has_percent = percent_w > 0.0;
         let width = ui.available_width();
         let mut shown = [true; 5];
-        let used = |shown: &[bool; 5]| -> f32 {
-            (0..5)
+        if stacked {
+            shown[3] = false;
+            shown[4] = false;
+        }
+        let used = |shown: &[bool; 5], compact_score: bool| -> f32 {
+            let base_cells = shown.iter().filter(|&&show| show).count();
+            let cells = base_cells + usize::from(evaluated) + usize::from(has_percent);
+            let base_w = (0..5)
                 .filter(|&k| shown[k])
-                .map(|k| col_w(k) + gap)
-                .sum::<f32>()
-                + errors_w
+                .map(|k| col_w(k, compact_score))
+                .sum::<f32>();
+            base_w + counts_w + percent_w + cells.saturating_sub(1) as f32 * gap
         };
-        for k in [3, 4, 2, 1] {
-            if used(&shown) <= width {
+        for k in [4, 3] {
+            if used(&shown, stacked) <= width {
                 break;
             }
             shown[k] = false;
         }
+        let compact_score = stacked || used(&shown, false) > width;
+        let grid_columns = shown.iter().filter(|&&show| show).count()
+            + usize::from(evaluated)
+            + usize::from(has_percent);
         egui::Grid::new("prep_summary")
-            .num_columns(6)
+            .num_columns(grid_columns)
             .spacing(vec2(gap, 2.0))
             .show(ui, |ui| {
-                for (white, texts, counts, p) in &rows {
+                for (white, texts, short_score, counts, p) in &rows {
                     let weak = !self.color.colours().contains(white);
                     for k in 0..5 {
                         if !shown[k] {
                             continue;
                         }
-                        let rt = RichText::new(&texts[k]);
-                        let rt = if k == 0 { rt.strong() } else { rt };
-                        ui.label(if weak { rt.weak() } else { rt });
+                        let text = if k == 2 && compact_score {
+                            short_score
+                        } else {
+                            &texts[k]
+                        };
+                        let rt = RichText::new(text);
+                        let rt = if k <= 1 { rt.strong() } else { rt };
+                        if k == 1 {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(if weak { rt.weak() } else { rt });
+                                },
+                            );
+                        } else {
+                            ui.label(if weak { rt.weak() } else { rt });
+                        }
                     }
                     if evaluated {
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
                             if counts.total() > 0 {
                                 counts_text(ui, counts);
-                                ui.label(
-                                    RichText::new(trf("in {p} % of games", &[("p", p)])).weak(),
-                                );
                             } else {
                                 ui.label(RichText::new(tr("no errors")).weak());
                             }
                         });
+                    }
+                    if has_percent {
+                        if counts.total() > 0 {
+                            ui.label(RichText::new(trf("in {p} % of games", &[("p", p)])).weak());
+                        } else {
+                            ui.label("");
+                        }
                     }
                     ui.end_row();
                 }
@@ -4194,7 +4027,6 @@ impl PrepScreen {
         };
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
-        let has_book = self.book_ok() || (self.book_job.is_some() && self.book != BookChoice::None);
         let mut used = 180.0 + 76.0 + 48.0 + 50.0 + 4.0 * gap;
         let mut fits = |w: f32, wanted: bool| {
             let ok = wanted && used + w + gap <= width;
@@ -4206,12 +4038,6 @@ impl PrepScreen {
         let show_opening = fits(160.0, true);
         let show_bar = fits(64.0, true);
         let show_last = fits(84.0, true);
-        let show_book = fits(80.0, has_book);
-        let book_title = if self.book == BookChoice::Same {
-            tr("In database")
-        } else {
-            tr("Book")
-        };
         ui.style_mut().interaction.selectable_labels = false;
         let mut table = TableBuilder::new(ui)
             .id_salt("prep_tree")
@@ -4229,9 +4055,6 @@ impl PrepScreen {
         table = table.column(Column::exact(if show_bar { 110.0 } else { 50.0 }));
         if show_last {
             table = table.column(Column::exact(84.0));
-        }
-        if show_book {
-            table = table.column(Column::exact(80.0));
         }
         let selected_row = rows.iter().position(|r| match (r, &self.selection) {
             (
@@ -4252,10 +4075,6 @@ impl PrepScreen {
         let mut clicked: Option<TreeRow> = None;
         let mut toggled: Option<TreeRow> = None;
         let mut hovered: Option<(bool, u32)> = None;
-        let threshold = report
-            .book
-            .as_ref()
-            .map_or(prep::DEFAULT_BOOK_THRESHOLD, |b| b.threshold);
         let mut tree_click = None;
         table
             .header(ROW_H, |mut h| {
@@ -4269,9 +4088,6 @@ impl PrepScreen {
                 sort_col(&mut h, tr("Score"), tr("The opponent's points in these games"), TreeSort::Score, sort, &mut tree_click);
                 if show_last {
                     sort_col(&mut h, tr("Last"), "", TreeSort::Last, sort, &mut tree_click);
-                }
-                if show_book {
-                    head_col(&mut h, book_title, tr("Games of the book in this position; the first number under the threshold is where he leaves the book"));
                 }
             })
             .body(|body| {
@@ -4296,7 +4112,7 @@ impl PrepScreen {
                                 };
                                 ui.label(RichText::new(text).weak());
                             });
-                            let rest = 2 + usize::from(show_opening) + 1 + usize::from(show_last) + usize::from(show_book);
+                            let rest = 2 + usize::from(show_opening) + 1 + usize::from(show_last);
                             for _ in 0..rest {
                                 row.col(|_| {});
                             }
@@ -4408,34 +4224,6 @@ impl PrepScreen {
                                 row.col(|ui| {
                                     let d = crate::library::display_date(cr.tree.position_last_date(n.key));
                                     ui.label(RichText::new(if d.is_empty() { "—".to_owned() } else { d }).weak());
-                                });
-                            }
-                            if show_book {
-                                row.col(|ui| {
-                                    match self.book_count(n.key) {
-                                        Some(c) if c < threshold => {
-                                            let parent_in = parent.and_then(|p| self.book_count(p.key)).is_none_or(|pc| pc >= threshold);
-                                            let t = RichText::new(crate::large_db::grouped(c as usize));
-                                            let l = ui.label(if parent_in { t.color(ui.visuals().warn_fg_color) } else { t.weak() });
-                                            if parent_in {
-                                                let book = match &self.book {
-                                                    BookChoice::Database(p) => base_name(p),
-                                                    _ => self.db_name.clone(),
-                                                };
-                                                l.on_hover_text(trf(
-                                                    "Here he leaves the book: in “{book}” this position occurs {n} times",
-                                                    &[("book", &book), ("n", &c)],
-                                                ));
-                                            }
-                                        }
-                                        Some(c) => {
-                                            ui.label(RichText::new(crate::large_db::grouped(c as usize)).weak());
-                                        }
-                                        None if self.book_job.is_some() => {
-                                            ui.label(RichText::new("…").weak());
-                                        }
-                                        None => {}
-                                    }
                                 });
                             }
                             let resp = row.response();
@@ -4948,6 +4736,24 @@ impl PrepScreen {
         let moves = self.plies.div_ceil(2);
         let state = self.engine_state();
         if state == EngineState::NotRun {
+            // The download is offered only when there is something to evaluate.
+            if crate::review_engine::engine().is_none()
+                && !report.targets_for(self.color.side()).is_empty()
+            {
+                // No offer by itself on the automatic run: told here, downloaded by hand.
+                ui.add_space(40.0);
+                ui.vertical_centered(|ui| {
+                    ui.set_max_width(520.0);
+                    ui.label(tr(
+                        "No engine yet. Stockfish finds the opening errors in his games; add it to start the search.",
+                    ));
+                    ui.add_space(12.0);
+                    if crate::widgets::primary(ui, tr("Download Stockfish")).clicked() {
+                        actions.push(PrepAction::NeedEngine);
+                    }
+                });
+                return;
+            }
             // The invitation (§5).
             let (positions, secs) = self.estimate();
             let games: usize = self
@@ -4976,7 +4782,7 @@ impl PrepScreen {
                 ));
                 ui.add_space(12.0);
                 if crate::widgets::primary(ui, tr("▶ Find opening errors")).clicked() {
-                    self.engine_asked(settings, ui.ctx(), actions);
+                    self.engine_asked(ui.ctx(), actions);
                 }
             });
             return;
@@ -4987,6 +4793,7 @@ impl PrepScreen {
         ui.horizontal_wrapped(|ui| {
             match state {
                 EngineState::Running => {
+                    let mut stop = false;
                     if let Some(job) = &self.job {
                         let secs = self.secs_for(job.total.saturating_sub(job.done), job.processes);
                         ui.label(
@@ -4999,6 +4806,12 @@ impl PrepScreen {
                         ui.label(
                             RichText::new(format!("· ≈ {}", review::format_duration(secs))).weak(),
                         );
+                        if ui.button(tr("Stop")).clicked() {
+                            stop = true;
+                        }
+                    }
+                    if stop {
+                        self.stop_engine_by_user(actions);
                     }
                 }
                 EngineState::Partial { done, total } => {
@@ -5043,7 +4856,7 @@ impl PrepScreen {
             actions.push(PrepAction::SettingsChanged);
         }
         if ask_engine {
-            self.engine_asked(settings, ui.ctx(), actions);
+            self.engine_asked(ui.ctx(), actions);
             return;
         }
         let Some(report) = self.report.as_ref() else {
@@ -6101,7 +5914,7 @@ impl PrepScreen {
     fn keyboard(
         &mut self,
         ctx: &egui::Context,
-        settings: &Settings,
+        _settings: &Settings,
         actions: &mut Vec<PrepAction>,
     ) {
         let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
@@ -6136,9 +5949,9 @@ impl PrepScreen {
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::A)) {
             if self.job.is_some() {
-                self.stop_engine(actions);
+                self.stop_engine_by_user(actions);
             } else if self.report.is_some() {
-                self.engine_asked(settings, ctx, actions);
+                self.engine_asked(ctx, actions);
             }
         }
         if ctx.input_mut(|i| {
@@ -6623,53 +6436,16 @@ mod tests {
     }
 
     #[test]
-    fn book_choice_from_the_setting() {
-        let own = Path::new("/a/own.pgn");
-        let dbs = vec![
-            RefDb {
-                path: PathBuf::from("/a/own.pgn"),
-                name: "own".into(),
-                db: None,
-                failed: None,
-                bytes: 500,
-            },
-            RefDb {
-                path: PathBuf::from("/a/mega.cbh"),
-                name: "mega".into(),
-                db: None,
-                failed: None,
-                bytes: 5000,
-            },
-            RefDb {
-                path: PathBuf::from("/a/small.pgn"),
-                name: "small".into(),
-                db: None,
-                failed: None,
-                bytes: 10,
-            },
-        ];
+    fn error_count_parts_skip_zeroes_and_keep_the_order() {
+        let counts = ErrorCounts {
+            inaccuracies: 30,
+            mistakes: 0,
+            blunders: 13,
+        };
         assert_eq!(
-            BookChoice::from_setting(None, own, &dbs),
-            BookChoice::Database(PathBuf::from("/a/mega.cbh"))
+            count_parts(&counts),
+            vec![(30, Judgement::Inaccuracy), (13, Judgement::Blunder)]
         );
-        assert_eq!(
-            BookChoice::from_setting(Some(Path::new("")), own, &dbs),
-            BookChoice::None
-        );
-        assert_eq!(
-            BookChoice::from_setting(Some(own), own, &dbs),
-            BookChoice::Same
-        );
-        assert_eq!(
-            BookChoice::from_setting(Some(Path::new("/a/small.pgn")), own, &dbs),
-            BookChoice::Database(PathBuf::from("/a/small.pgn"))
-        );
-        // A database no longer on the shelf: the default again.
-        assert_eq!(
-            BookChoice::from_setting(Some(Path::new("/gone.pgn")), own, &dbs),
-            BookChoice::Database(PathBuf::from("/a/mega.cbh"))
-        );
-        assert_eq!(BookChoice::Same.setting(own), own);
-        assert_eq!(BookChoice::None.setting(own), PathBuf::new());
+        assert!(count_parts(&ErrorCounts::default()).is_empty());
     }
 }

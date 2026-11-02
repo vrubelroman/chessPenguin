@@ -4,6 +4,21 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.1.5] — 2026-11-02
+
+- Preparing against an opponent is saved by itself: a preparation appears in the
+  library's «Preparations» as soon as it is started, and its report and the errors
+  found are written there as they come. The «★ Save» button is gone.
+- Preparing against an opponent: the engine starts looking for the opening errors
+  by itself once the report is built — progress on the Errors tab, «Stop» keeps the
+  evaluations and the search does not restart by itself after it; changing the depth
+  or the period starts it again.
+- The book comparison has been removed from opponent preparation: its controls,
+  background work and book-exit statistics are gone. Old saved data remains readable.
+- Preparing against an opponent: the game counts for White and Black line up, the
+  score percentage stays visible in the compact summary, and the error counts and
+  their game percentages have separate aligned columns.
+
 ## [2.1.4] — 2026-10-31
 
 (2.1.3 was not published: its macOS build was cancelled by GitHub retiring the macOS 14

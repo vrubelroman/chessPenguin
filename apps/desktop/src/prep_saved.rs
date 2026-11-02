@@ -24,7 +24,8 @@ pub struct SavedPrep {
     pub plies: usize,
     pub period: Period,
     pub color: ColorChoice,
-    /// The book as the setting keeps it (`BookChoice::setting`).
+    /// Unused legacy book choice, preserved when old preparations are saved again.
+    #[serde(default)]
     pub book: PathBuf,
     /// Seconds since 1970, of the last save.
     pub saved: u64,
@@ -119,8 +120,14 @@ pub fn save(dir: &Path, meta: &SavedPrep, report: &PrepReport) -> std::io::Resul
     let id = id(&meta.path, &meta.names);
     let bytes = serde_json::to_vec(report).map_err(std::io::Error::other)?;
     write_atomic(&report_path(dir, &id), &bytes)?;
+    save_meta(dir, meta)
+}
+
+/// Writes only the list entry: a preparation is kept from the moment it is started,
+/// before its report is built.
+pub fn save_meta(dir: &Path, meta: &SavedPrep) -> std::io::Result<()> {
     let bytes = serde_json::to_vec_pretty(meta).map_err(std::io::Error::other)?;
-    write_atomic(&meta_path(dir, &id), &bytes)
+    write_atomic(&meta_path(dir, &id(&meta.path, &meta.names)), &bytes)
 }
 
 /// A new name in the list.
@@ -197,6 +204,41 @@ mod tests {
         delete(&dir, &ida).expect("delete");
         assert_eq!(list(&dir).len(), 1);
         assert!(!report_path(&dir, &ida).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_book_choice_is_preserved() {
+        let dir = std::env::temp_dir().join(format!("cp-prep-legacy-book-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut a = meta("/db/a.pgn", [7], "Вафин", 10);
+        a.book = PathBuf::from("/db/book.pgn");
+        save_meta(&dir, &a).expect("save_meta");
+        let ida = id(&a.path, &a.names);
+        let path = meta_path(&dir, &ida);
+        let json = std::fs::read_to_string(&path).expect("metadata");
+        let without_book = json.replace(&format!("\"book\": \"{}\",", a.book.display()), "");
+        std::fs::write(&path, without_book).expect("legacy metadata");
+        let mut loaded = get(&dir, &ida).expect("defaulted legacy book");
+        assert_eq!(loaded.book, PathBuf::new());
+        loaded.book = a.book.clone();
+        save_meta(&dir, &loaded).expect("save legacy book");
+        assert_eq!(get(&dir, &ida).expect("metadata").book, a.book);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn started_preparation_is_listed_before_its_report_exists() {
+        let dir = std::env::temp_dir().join(format!("cp-prep-meta-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = meta("/db/a.pgn", [7], "Вафин", 10);
+        save_meta(&dir, &a).expect("save_meta");
+        assert_eq!(list(&dir).len(), 1, "in the list from the start");
+        let ida = id(&a.path, &a.names);
+        assert!(super::report(&dir, &ida).is_none(), "no report yet");
+        let report: PrepReport = serde_json::from_str(REPORT).expect("report");
+        save(&dir, &a, &report).expect("save");
+        assert!(super::report(&dir, &ida).is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

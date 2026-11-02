@@ -376,7 +376,7 @@ struct DebugStartup {
     /// `CP_TYPE=<text>`: typed into the field that has the keyboard, 2.5 s after start.
     typed: Option<String>,
     /// `CP_PREP=<name>`: «Prepare against…» for this name in the first database
-    /// (`CP_PREP_OPEN=1` presses «Open report», `CP_PREP_TAB`, `CP_PREP_ENGINE=1`).
+    /// (`CP_PREP_OPEN=1` presses «Open report», `CP_PREP_TAB`).
     prep: Option<String>,
 }
 
@@ -892,8 +892,8 @@ impl App {
         if let Some(p) = self.prep.as_mut()
             && p.matches(&start.path, &start.player)
         {
-            // The report as it was, with the colour and the book of the dialog.
-            p.reopen(start.side, start.book);
+            // The report as it was, with the colour of the dialog.
+            p.reopen(start.side);
             return;
         }
         if let Some(mut old) = self.prep.take() {
@@ -1008,13 +1008,7 @@ impl App {
                     self.settings.touch_database(&meta.path);
                     self.settings_dirty = true;
                 }
-                let dbs = self.shelf_dbs();
                 let start = crate::prep_ui::PrepStart {
-                    book: crate::prep_ui::BookChoice::from_setting(
-                        Some(&meta.book),
-                        &meta.path,
-                        &dbs,
-                    ),
                     path: meta.path,
                     player: meta.player,
                     side: meta.color,
@@ -1074,11 +1068,6 @@ impl App {
                         g.previous = title;
                         g.previous_prep = true;
                         g.goto_ply(ply);
-                    }
-                }
-                PrepAction::LoadDb(p) => {
-                    if !self.library.loading(&p) && self.library.database(&p).is_none() {
-                        self.library.load(&p, ctx);
                     }
                 }
                 // One engine job for the whole program: the live engine is off while
@@ -3918,13 +3907,9 @@ impl eframe::App for App {
                 }
             }
         } else if self.prep.as_ref().is_some_and(|p| p.shown) {
-            // A database opened for the book arrives here (the library is not drawn).
             self.library.poll();
             let actions = match self.prep.as_mut() {
-                Some(p) => {
-                    p.dbs = shelf;
-                    p.show(ui, &mut self.settings)
-                }
+                Some(p) => p.show(ui, &mut self.settings),
                 None => Vec::new(),
             };
             self.prep_actions(&ctx, actions);
