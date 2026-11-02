@@ -89,6 +89,8 @@ pub enum LibraryAction {
     },
     /// «🗐 Preparations»: the saved preparations against opponents.
     Preparations,
+    #[cfg(not(web))]
+    OpeningTraining,
     /// «Prepare against…» for a player of this database (opponent-prep.md §2).
     PrepareAgainst {
         path: PathBuf,
@@ -151,7 +153,8 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
     };
     let play = crate::platform::CAPS.play;
     let prep = crate::platform::CAPS.prep;
-    let groups = 1.0 + f32::from(u8::from(play)) + f32::from(u8::from(prep));
+    let training = crate::platform::CAPS.training;
+    let groups = 1.0 + f32::from(u8::from(play)) + f32::from(u8::from(prep || training));
     texts[..if play { 4 } else { 3 }]
         .iter()
         .map(|t| button_w(ui, t))
@@ -165,6 +168,11 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
                     tr("🗐 Preparations")
                 },
             )
+        } else {
+            0.0
+        }
+        + if training {
+            button_w(ui, tr("Opening training"))
         } else {
             0.0
         }
@@ -824,6 +832,15 @@ impl Library {
                 .clicked()
             {
                 actions.push(LibraryAction::Preparations);
+            }
+        }
+        #[cfg(not(web))]
+        if crate::platform::CAPS.training {
+            if !crate::platform::CAPS.prep {
+                ui.separator();
+            }
+            if ui.button(tr("Opening training")).clicked() {
+                actions.push(LibraryAction::OpeningTraining);
             }
         }
     }

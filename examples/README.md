@@ -13,3 +13,8 @@ the program, see `apps/desktop/src/examples.rs`).
   disk when the program is updated.
 - `alekhine.pgn` — 267 games of Alexander Alekhine: game records only (tags and main-line
   moves). The commentary of the source collection was removed and is not distributed.
+
+The opening-training files `najdorf.pgn` and `spanish.pgn` contain three short, legal
+standalone studies each (English Attack/Classical/Scheveningen and Berlin/Morphy/Open).
+Add them explicitly in **Opening training → Add PGN…**. They are not auto-installed or
+updated by the program, so lines added by the user are never overwritten by a sample update.

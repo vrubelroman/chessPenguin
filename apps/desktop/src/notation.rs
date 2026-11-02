@@ -58,7 +58,7 @@ pub enum NotationCommand {
     Paste,
     /// A game against Maia from this position (docs/design/play-from-position.md).
     PlayFrom,
-    /// Learn the opening up to this move (docs/design/opening-trainer.md).
+    /// Add the exact path through this move to an opening repertoire.
     Train,
 }
 
@@ -445,60 +445,57 @@ fn handle_move_response(
             out.context = Some((id, NotationCommand::Delete));
             ui.close();
         }
-        // Games against the computer and the trainer: not in every version.
-        if !crate::platform::CAPS.play {
+        if !crate::platform::CAPS.play && !crate::platform::CAPS.training {
             return;
         }
         ui.separator();
-        // A finished position has nothing to play.
-        let over = n.game.position(id).and_then(|p| {
-            if p.is_checkmate() {
-                Some(tr("checkmate"))
-            } else if p.is_stalemate() {
-                Some(tr("stalemate"))
-            } else if p.is_insufficient_material() {
-                Some(tr("neither side can checkmate"))
-            } else {
-                None
+        if crate::platform::CAPS.play {
+            let over = n.game.position(id).and_then(|p| {
+                if p.is_checkmate() {
+                    Some(tr("checkmate"))
+                } else if p.is_stalemate() {
+                    Some(tr("stalemate"))
+                } else if p.is_insufficient_material() {
+                    Some(tr("neither side can checkmate"))
+                } else {
+                    None
+                }
+            });
+            let play = ui
+                .add_enabled(
+                    over.is_none(),
+                    egui::Button::new(tr("Play on from here…")).shortcut_text("Ctrl+G"),
+                )
+                .on_hover_text(tr("A game against the computer from this position"));
+            let play = match over {
+                Some(why) => play.on_disabled_hover_text(crate::i18n::trf(
+                    "The game is over here: {why}",
+                    &[("why", &why)],
+                )),
+                None => play,
+            };
+            if play.clicked() {
+                out.context = Some((id, NotationCommand::PlayFrom));
+                ui.close();
             }
-        });
-        let play = ui
-            .add_enabled(
-                over.is_none(),
-                egui::Button::new(tr("Play on from here…")).shortcut_text("Ctrl+G"),
-            )
-            .on_hover_text(tr("A game against the computer from this position"));
-        let play = match over {
-            Some(why) => play.on_disabled_hover_text(crate::i18n::trf(
-                "The game is over here: {why}",
-                &[("why", &why)],
-            )),
-            None => play,
-        };
-        if play.clicked() {
-            out.context = Some((id, NotationCommand::PlayFrom));
-            ui.close();
         }
-        // Learning the opening: the runs of this line so far on the right.
-        let runs = crate::train::runs_to(n.game, id);
-        let label = runs
-            .filter(|&r| r > 0)
-            .map(|r| crate::i18n::trf("runs: {n}", &[("n", &r)]))
-            .unwrap_or_default();
-        let learn = ui
-            .add_enabled(
-                runs.is_some(),
-                egui::Button::new(tr("Learn the opening up to this move")).shortcut_text(label),
-            )
-            .on_hover_text(tr(
-                "Replay from memory the moves of both sides from the start of the game up to this move",
-            ))
-            .on_disabled_hover_text(tr(
-                "The line has a null move (--): it cannot be played on the board",
-            ));
-        if learn.clicked() {
-            out.context = Some((id, NotationCommand::Train));
-            ui.close();
+        if crate::platform::CAPS.training {
+            let line = crate::train::TrainStart::from_game(n.game, id);
+            let add = ui
+                .add_enabled(
+                    line.is_some(),
+                    egui::Button::new(tr("Add to repertoire…")),
+                )
+                .on_hover_text(tr("Add only the path from the start through this move, with its comments and NAGs"))
+                .on_disabled_hover_text(if id == NodeId::ROOT {
+                    tr("Select the move up to which to add")
+                } else {
+                    tr("The line has a null move (--): it cannot be played on the board")
+                });
+            if add.clicked() {
+                out.context = Some((id, NotationCommand::Train));
+                ui.close();
+            }
         }
     });
     let _ = ui;

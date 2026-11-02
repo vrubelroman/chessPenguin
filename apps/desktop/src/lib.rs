@@ -45,6 +45,10 @@ mod player_games;
 mod prep_saved;
 mod prep_ui;
 mod reference;
+#[cfg(not(web))]
+mod repertoire_training;
+#[cfg(not(web))]
+mod repertoire_ui;
 mod review;
 mod review_engine;
 mod rodent4_download;
@@ -147,17 +151,30 @@ pub fn run_native() -> eframe::Result {
     graphics::install_panic_hook();
     graphics::init_library_log();
     let mode = graphics::choose();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_app_id("io.github.vrubelroman.chessPenguin")
+        .with_title("ChessPenguin")
+        .with_inner_size([1400.0, 900.0])
+        .with_min_inner_size([640.0, 480.0])
+        // X11 uses this; on Wayland the icon comes from the .desktop entry matching the app id.
+        .with_icon(
+            eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))
+                .unwrap_or_default(),
+        );
+    if let Some((width, height)) = std::env::var("CP_SCREENSHOT_SIZE").ok().and_then(|size| {
+        let (width, height) = size.split_once('x')?;
+        Some((width.parse::<f32>().ok()?, height.parse::<f32>().ok()?))
+    }) {
+        viewport = viewport
+            .with_inner_size([width, height])
+            .with_min_inner_size([width, height])
+            .with_max_inner_size([width, height])
+            .with_resizable(false)
+            .with_fullscreen(false)
+            .with_maximized(false);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_app_id("io.github.vrubelroman.chessPenguin")
-            .with_title("ChessPenguin")
-            .with_inner_size([1400.0, 900.0])
-            .with_min_inner_size([640.0, 480.0])
-            // X11 uses this; on Wayland the icon comes from the .desktop entry matching the app id.
-            .with_icon(
-                eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))
-                    .unwrap_or_default(),
-            ),
+        viewport,
         wgpu_options: graphics::options(mode),
         ..Default::default()
     };

@@ -159,6 +159,15 @@ pub struct Settings {
     pub players: Vec<crate::player_games::Player>,
     /// Preparing against an opponent (docs/design/opponent-prep.md).
     pub prep: PrepSettings,
+    pub repertoire_flow_version: u8,
+    /// Last training mode and queue of each opening repertoire.
+    pub repertoire_modes: std::collections::HashMap<
+        String,
+        (
+            trainer::repertoire::TrainingMode,
+            trainer::repertoire::QueueMode,
+        ),
+    >,
 }
 
 /// Options of the opponent preparation; its engine search is the game analysis's.
@@ -226,11 +235,23 @@ impl Default for Settings {
             rating: None,
             play: Default::default(),
             prep: PrepSettings::default(),
+            repertoire_modes: Default::default(),
+            repertoire_flow_version: 0,
         }
     }
 }
 
 impl Settings {
+    pub fn migrate_repertoire_flow(&mut self) -> bool {
+        if self.repertoire_flow_version >= 1 {
+            return false;
+        }
+        for (_, queue) in self.repertoire_modes.values_mut() {
+            *queue = trainer::repertoire::QueueMode::Practice;
+        }
+        self.repertoire_flow_version = 1;
+        true
+    }
     pub fn config_dir() -> Option<PathBuf> {
         crate::platform::config_dir()
     }
@@ -362,5 +383,30 @@ mod tests {
         assert!(!json.contains("\"review\"") && !json.contains("quality"));
         assert!(!json.contains("\"chosen\""));
         assert!(json.contains("\"book\":\"/db/book.pgn\""));
+    }
+}
+
+#[cfg(test)]
+mod repertoire_flow_tests {
+    use super::*;
+    use trainer::repertoire::{QueueMode, TrainingMode};
+    #[test]
+    fn old_training_preferences_migrate_once_without_resetting_color_or_custom_settings() {
+        let mut settings = Settings::default();
+        settings.repertoire_modes.insert(
+            "old".into(),
+            (TrainingMode::Black, QueueMode::SpacedRepetition),
+        );
+        assert!(settings.migrate_repertoire_flow());
+        assert_eq!(
+            settings.repertoire_modes["old"],
+            (TrainingMode::Black, QueueMode::Practice)
+        );
+        settings.repertoire_modes.get_mut("old").unwrap().1 = QueueMode::SpacedRepetition;
+        assert!(!settings.migrate_repertoire_flow());
+        assert_eq!(
+            settings.repertoire_modes["old"].1,
+            QueueMode::SpacedRepetition
+        );
     }
 }

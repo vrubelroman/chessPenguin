@@ -130,8 +130,8 @@ pub enum GameAction {
     OpenDatabase(PathBuf),
     /// «Play on from here»: the play dialog for this position.
     PlayFrom(Box<crate::play::StartFrom>),
-    /// «Learn the opening up to this move»: the training over this game.
-    Train(Box<crate::train::TrainStart>),
+    #[cfg(not(web))]
+    AddToRepertoire(Box<Game>, NodeId),
     Sound(Sound),
     CopyText(String, &'static str),
     /// Ctrl+S: into the game's own database, else "Add to database…".
@@ -1635,7 +1635,10 @@ impl GameView {
                     } else if let Some((id, NotationCommand::PlayFrom)) = resp.context {
                         self.play_from(id, actions);
                     } else if let Some((id, NotationCommand::Train)) = resp.context {
-                        self.train_from(id, actions);
+                        #[cfg(not(web))]
+                        self.add_repertoire_from(id, actions);
+                        #[cfg(web)]
+                        let _ = id;
                     } else if let Some((id, cmd)) = resp.context {
                         let result = match cmd {
                             NotationCommand::Paste
@@ -2061,21 +2064,24 @@ impl GameView {
                         self.play_from(at, actions);
                         ui.close();
                     }
+                }
+                #[cfg(not(web))]
+                if self.play.is_none() && crate::platform::CAPS.training {
+                    if !crate::platform::CAPS.play {
+                        ui.separator();
+                    }
                     let line = crate::train::TrainStart::from_game(&self.game, self.cursor);
                     if ui
-                        .add_enabled(
-                            line.is_some(),
-                            egui::Button::new(tr("Learn the opening up to this move")),
-                        )
+                        .add_enabled(line.is_some(), egui::Button::new(tr("Add to repertoire…")))
                         .on_disabled_hover_text(if self.cursor == NodeId::ROOT {
-                            tr("Select the move to learn up to")
+                            tr("Select the move up to which to add")
                         } else {
                             tr("The line has a null move (--): it cannot be played on the board")
                         })
                         .clicked()
                     {
                         let at = self.cursor;
-                        self.train_from(at, actions);
+                        self.add_repertoire_from(at, actions);
                         ui.close();
                     }
                 }
@@ -3905,16 +3911,10 @@ impl GameView {
 
     // ----- learning an opening (docs/design/opening-trainer.md) ----------------------
 
-    /// «Learn the opening up to this move»: the training opens over this game.
-    fn train_from(&mut self, at: NodeId, actions: &mut Vec<GameAction>) {
-        if self.play.is_some() {
-            return;
-        }
-        self.commit_editor();
-        self.preview = None;
-        if let Some(mut t) = crate::train::TrainStart::from_game(&self.game, at) {
-            t.flipped = self.flipped;
-            actions.push(GameAction::Train(Box::new(t)));
+    #[cfg(not(web))]
+    fn add_repertoire_from(&self, at: NodeId, actions: &mut Vec<GameAction>) {
+        if self.play.is_none() && crate::train::TrainStart::from_game(&self.game, at).is_some() {
+            actions.push(GameAction::AddToRepertoire(Box::new(self.game.clone()), at));
         }
     }
 
@@ -4468,6 +4468,12 @@ impl GameView {
         let mut t = crate::train::TrainStart::from_game(&self.game, self.cursor)?;
         t.flipped = self.flipped;
         Some(t)
+    }
+
+    #[cfg(not(web))]
+    pub fn debug_repertoire_source(&self) -> Option<(Game, NodeId)> {
+        crate::train::TrainStart::from_game(&self.game, self.cursor)
+            .map(|_| (self.game.clone(), self.cursor))
     }
 
     /// Dev hook (`CP_TRAIN_MOVES`): moves of the training made as on the board (UCI;

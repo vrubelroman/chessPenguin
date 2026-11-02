@@ -9,6 +9,8 @@
 //! position and moves), so they survive edits of the game and are shared between games
 //! with the same line, in the file the app names ([`set_file`]).
 
+pub mod repertoire;
+
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;

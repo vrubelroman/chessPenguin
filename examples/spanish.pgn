@@ -1,0 +1,29 @@
+[Event "Spanish: Berlin Defence"]
+[Site "ChessPenguin opening training"]
+[Date "2026.11.02"]
+[Round "1"]
+[White "Ruy Lopez"]
+[Black "3...Nf6"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O Nxe4 *
+
+[Event "Spanish: Morphy Defence"]
+[Site "ChessPenguin opening training"]
+[Date "2026.11.02"]
+[Round "2"]
+[White "Ruy Lopez"]
+[Black "3...a6"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 *
+
+[Event "Spanish: Open Variation"]
+[Site "ChessPenguin opening training"]
+[Date "2026.11.02"]
+[Round "3"]
+[White "Ruy Lopez"]
+[Black "3...a6 4.Ba4 Nf6 5.O-O Nxe4"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Nxe4 6. d4 b5 *
