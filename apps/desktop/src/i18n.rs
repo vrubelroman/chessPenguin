@@ -16861,17 +16861,6 @@ const ROWS: &[[&str; 9]] = &[
         "PGN оқылуда · жазбалар: {n}",
     ],
     [
-        "Previous lines · {n}",
-        "Прежние линии · {n}",
-        "Lignes précédentes · {n}",
-        "Frühere Linien · {n}",
-        "Líneas anteriores · {n}",
-        "Linee precedenti · {n}",
-        "Linhas anteriores · {n}",
-        "Oldingi chiziqlar · {n}",
-        "Алдыңғы жолдар · {n}",
-    ],
-    [
         "Import: {path}",
         "Импорт: {path}",
         "Import : {path}",

@@ -109,7 +109,7 @@ fn clicking_a_row_selects_it_without_leaving_the_workspace() {
         (f.ui.selected.clone(), f.ui.training_visible)
     };
     let click = || {
-        let position = egui::pos2(200.0, 80.0);
+        let position = egui::pos2(200.0, 120.0);
         vec![
             egui::Event::PointerMoved(position),
             egui::Event::PointerButton {
@@ -168,7 +168,7 @@ fn rows_have_one_height_and_show_at_most_five_opening_names() {
             .collect(),
     };
 
-    assert_eq!(LibraryRow::height(), 28.0 + 22.0 * OPENING_LINES as f32);
+    assert_eq!(LibraryRow::height(), 160.0);
     assert_eq!(row(0).visible_openings().len(), 0);
     assert_eq!(row(3).visible_openings().len(), 3);
     assert_eq!(row(8).visible_openings().len(), OPENING_LINES);

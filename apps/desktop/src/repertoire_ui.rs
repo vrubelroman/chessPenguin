@@ -46,10 +46,19 @@ struct LibraryRow {
 
 const OPENING_LINES: usize = 5;
 const ACTION_BUTTON_WIDTH: f32 = 120.0;
+const ROW_VERTICAL_PADDING: f32 = 8.0;
+const TITLE_HEIGHT: f32 = 24.0;
+const TITLE_GAP: f32 = 12.0;
+const OPENING_HEIGHT: f32 = 20.0;
+const OPENING_GAP: f32 = 2.0;
 
 impl LibraryRow {
     fn height() -> f32 {
-        28.0 + 22.0 * OPENING_LINES as f32
+        2.0 * ROW_VERTICAL_PADDING
+            + TITLE_HEIGHT
+            + TITLE_GAP
+            + OPENING_HEIGHT * OPENING_LINES as f32
+            + OPENING_GAP * (OPENING_LINES - 1) as f32
     }
 
     fn visible_openings(&self) -> &[OpeningLabel] {
@@ -131,7 +140,6 @@ pub struct RepertoireUi {
     delete: Option<RepertoireId>,
     reset_stats: Option<RepertoireId>,
     search: String,
-    legacy: bool,
     import: Option<ImportPreview>,
     cancel: Option<Arc<AtomicBool>>,
     tx: Sender<Event>,
@@ -185,7 +193,6 @@ impl RepertoireUi {
             delete: None,
             reset_stats: None,
             search: String::new(),
-            legacy: false,
             import: None,
             cancel: None,
             tx,
@@ -611,17 +618,28 @@ impl RepertoireUi {
         }
     }
     fn errors(&mut self, ui: &mut Ui) {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
+        let mut status = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let ui = &mut status;
         if self.indexing {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(tr("Indexing variations and ECO names…"));
-            });
-        }
-        if self.preparing {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(tr("Preparing the training session…"));
-            });
+            ui.add(egui::Spinner::new().size(16.0));
+            ui.add(egui::Label::new(tr("Indexing variations and ECO names…")).truncate())
+                .on_hover_text(tr("Indexing variations and ECO names…"));
+        } else if self.preparing {
+            ui.add(egui::Spinner::new().size(16.0));
+            ui.add(egui::Label::new(tr("Preparing the training session…")).truncate())
+                .on_hover_text(tr("Preparing the training session…"));
+        } else if let Some(cancel) = &self.cancel {
+            ui.add(egui::Spinner::new().size(16.0));
+            ui.add(egui::Label::new(tr("Importing PGN…")).truncate());
+            if ui.button(tr("Cancel")).clicked() {
+                cancel.store(true, Ordering::Relaxed);
+            }
         }
         if self.indexing || self.preparing || self.cancel.is_some() {
             ui.ctx()
@@ -662,15 +680,6 @@ impl RepertoireUi {
                 }
             });
         }
-        if let Some(cancel) = &self.cancel {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(tr("Importing PGN…"));
-                if ui.button(tr("Cancel")).clicked() {
-                    cancel.store(true, Ordering::Relaxed);
-                }
-            });
-        }
     }
     fn show_library(&mut self, ui: &mut Ui, settings: &Settings) {
         self.errors(ui);
@@ -687,46 +696,10 @@ impl RepertoireUi {
             {
                 self.pick_import(None, ui.ctx());
             }
-            if !self.stats.legacy_lines.is_empty() {
-                let previous = crate::i18n::trf(
-                    "Previous lines · {n}",
-                    &[("n", &self.stats.legacy_lines.len())],
-                );
-                if ui.selectable_label(self.legacy, previous).clicked() {
-                    self.legacy = !self.legacy;
-                }
-            }
         });
         self.name_editor(ui, settings);
         if self.import.is_some() {
             self.import_preview(ui, settings);
-        }
-        if self.legacy {
-            egui::ScrollArea::both().show(ui, |ui| {
-                egui::Grid::new("legacy_training")
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for key in ["Line", "Runs", "Last mistakes", "Clean streak", "Recent"] {
-                            ui.strong(tr(key));
-                        }
-                        ui.end_row();
-                        for (key, value) in &self.stats.legacy_lines {
-                            if let Ok(stats) =
-                                serde_json::from_value::<trainer::LineStats>(value.clone())
-                            {
-                                ui.add(egui::Label::new(key).truncate()).on_hover_text(key);
-                                ui.label(stats.runs.to_string());
-                                ui.label(
-                                    stats.last.map_or_else(|| "—".to_owned(), |v| v.to_string()),
-                                );
-                                ui.label(stats.clean_streak.to_string());
-                                ui.label(&stats.last_date);
-                                ui.end_row();
-                            }
-                        }
-                    });
-            });
-            return;
         }
         if self.library.repertoires.is_empty() {
             ui.heading(tr("No repertoires yet"));
@@ -829,13 +802,16 @@ impl RepertoireUi {
                     let r = &rows[row.index()];
                     row.set_selected(self.selected.as_ref() == Some(&r.id));
                     row.col(|ui| {
-                        ui.vertical(|ui| {
-                            ui.add(
-                                egui::Label::new(RichText::new(&r.name).strong())
-                                    .selectable(false)
-                                    .truncate(),
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing.y = OPENING_GAP;
+                            ui.add_space(ROW_VERTICAL_PADDING);
+                            table_text_line(
+                                ui,
+                                RichText::new(&r.name).strong().size(16.0),
+                                TITLE_HEIGHT,
                             )
                             .on_hover_text(&r.name);
+                            ui.add_space(TITLE_GAP - OPENING_GAP);
                             for (index, opening) in r.visible_openings().iter().enumerate() {
                                 let more =
                                     index + 1 == OPENING_LINES && r.openings.len() > OPENING_LINES;
@@ -844,10 +820,10 @@ impl RepertoireUi {
                                 } else {
                                     opening.name.clone()
                                 };
-                                let response = ui.add(
-                                    egui::Label::new(RichText::new(text).small())
-                                        .selectable(false)
-                                        .truncate(),
+                                let response = table_text_line(
+                                    ui,
+                                    RichText::new(text).size(14.0),
+                                    OPENING_HEIGHT,
                                 );
                                 if more {
                                     response.on_hover_text(
@@ -866,13 +842,22 @@ impl RepertoireUi {
                         });
                     });
                     row.col(|ui| {
-                        ui.vertical(|ui| {
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing.y = OPENING_GAP;
+                            ui.add_space(ROW_VERTICAL_PADDING);
+                            table_text_line(
+                                ui,
+                                RichText::new(" ").strong().size(16.0),
+                                TITLE_HEIGHT,
+                            );
+                            ui.add_space(TITLE_GAP - OPENING_GAP);
                             if r.openings.is_empty() {
-                                ui.label(RichText::new("—").weak());
-                            } else {
-                                ui.add(
-                                    egui::Label::new(RichText::new(" ").strong()).selectable(false),
+                                table_text_line(
+                                    ui,
+                                    RichText::new("—").size(14.0).weak(),
+                                    OPENING_HEIGHT,
                                 );
+                            } else {
                                 for (index, opening) in r.visible_openings().iter().enumerate() {
                                     let more = index + 1 == OPENING_LINES
                                         && r.openings.len() > OPENING_LINES;
@@ -881,10 +866,10 @@ impl RepertoireUi {
                                     } else {
                                         opening.eco.clone()
                                     };
-                                    ui.add(
-                                        egui::Label::new(RichText::new(text).small())
-                                            .selectable(false)
-                                            .truncate(),
+                                    table_text_line(
+                                        ui,
+                                        RichText::new(text).size(14.0),
+                                        OPENING_HEIGHT,
                                     );
                                 }
                             }
@@ -1092,7 +1077,7 @@ impl RepertoireUi {
                                     if let Some(count) = available {
                                         ui.label(count.to_string());
                                     } else {
-                                        ui.spinner();
+                                        ui.add(egui::Spinner::new().size(16.0));
                                         ui.ctx().request_repaint_after(
                                             std::time::Duration::from_millis(100),
                                         );
@@ -1585,6 +1570,22 @@ fn opening_labels(tree: &RepertoireTree) -> Vec<OpeningLabel> {
         std::ops::ControlFlow::Continue(())
     });
     labels.into_iter().collect()
+}
+
+fn table_text_line(ui: &mut Ui, text: RichText, height: f32) -> egui::Response {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), height),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add(
+                egui::Label::new(text)
+                    .selectable(false)
+                    .truncate()
+                    .halign(egui::Align::Min),
+            )
+        },
+    )
+    .inner
 }
 
 fn count_cell(ui: &mut Ui, count: Option<usize>) {
