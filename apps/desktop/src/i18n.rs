@@ -16267,6 +16267,17 @@ const ROWS: &[[&str; 9]] = &[
         "Екі тарап",
     ],
     [
+        "Variants",
+        "Варианты",
+        "Variantes",
+        "Varianten",
+        "Variantes",
+        "Varianti",
+        "Variantes",
+        "Variantlar",
+        "Варианттар",
+    ],
+    [
         "No targets in this mode",
         "В этом режиме нет целей",
         "Aucune cible dans ce mode",

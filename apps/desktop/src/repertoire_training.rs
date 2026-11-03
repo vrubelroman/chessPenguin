@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::mpsc, time::Duration};
 
 use chess_core::shakmaty::{Chess, Color, Move, Position, Square, uci::UciMove};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Ui, vec2};
@@ -28,10 +28,17 @@ struct Flash {
     wrong: bool,
 }
 
+struct NextPathJob {
+    generation: u64,
+    rx: mpsc::Receiver<(u64, Result<TrainingSession, String>)>,
+}
+
 pub struct TrainingUi {
     repertoire: Repertoire,
     saved_stats: StatsData,
     discard_requested: bool,
+    next_job: Option<NextPathJob>,
+    next_generation: u64,
     mode: TrainingMode,
     queue_mode: QueueMode,
     policy: SrsPolicy,
@@ -71,7 +78,55 @@ impl TrainingUi {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    pub fn new_random(
+        repertoire: &Repertoire,
+        mode: TrainingMode,
+        stats: StatsData,
+        store: StatsStore,
+        flipped: bool,
+    ) -> Result<Self, SessionError> {
+        let session = TrainingSession::new_random(repertoire, mode, stats, now())?;
+        let task_origin = if session.scope().include_context {
+            repertoire.game().start().position().clone()
+        } else {
+            session.scope_start_position().clone()
+        };
+        let mut training = Self {
+            repertoire: repertoire.clone(),
+            saved_stats: session.stats().clone(),
+            discard_requested: false,
+            next_job: None,
+            next_generation: 0,
+            mode,
+            queue_mode: QueueMode::Practice,
+            policy: SrsPolicy::Due,
+            session,
+            store,
+            board: BoardState::default(),
+            flipped: match mode {
+                TrainingMode::White => false,
+                TrainingMode::Black => true,
+                TrainingMode::Both => flipped,
+            },
+            positions: Vec::new(),
+            position_path_len: usize::MAX,
+            position_task_start: usize::MAX,
+            task_start: 0,
+            task_origin,
+            view_ply: 0,
+            flash: None,
+            hint: None,
+            message: None,
+            save_error: None,
+            confirm_discard: false,
+            completed_targets: 0,
+            target_limit: usize::MAX,
+        };
+        training.save();
+        Ok(training)
+    }
+
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub fn new_with_policy(
         repertoire: &Repertoire,
         scope: TrainingScope,
@@ -98,6 +153,8 @@ impl TrainingUi {
             repertoire: repertoire.clone(),
             saved_stats,
             discard_requested: false,
+            next_job: None,
+            next_generation: 0,
             mode,
             queue_mode,
             policy,
@@ -200,7 +257,11 @@ impl TrainingUi {
     }
 
     fn play(&mut self, mv: Move) {
-        if self.is_finished() || self.flash.is_some() || self.save_error.is_some() {
+        if self.is_finished()
+            || self.flash.is_some()
+            || self.save_error.is_some()
+            || self.next_job.is_some()
+        {
             return;
         }
         let mut after = self.session.position().clone();
@@ -247,7 +308,7 @@ impl TrainingUi {
     }
 
     fn restart(&mut self) {
-        if self.save_error.is_some() {
+        if self.save_error.is_some() || self.next_job.is_some() {
             return;
         }
         match self.session.restart(now()) {
@@ -257,13 +318,79 @@ impl TrainingUi {
     }
 
     fn next_path(&mut self) {
-        if self.save_error.is_some() || !self.is_path_practice() {
+        if self.save_error.is_some() || self.next_job.is_some() || !self.is_path_practice() {
             return;
         }
-        match self.session.next_path(now()) {
-            Ok(()) => self.after_run_reset(),
+        let prepared = match self.session.prepare_next_path() {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.message = Some(error.to_string());
+                return;
+            }
+        };
+        let repertoire = self.repertoire.clone();
+        let (tx, rx) = mpsc::channel();
+        self.next_generation = self.next_generation.wrapping_add(1);
+        let generation = self.next_generation;
+        self.next_job = Some(NextPathJob { generation, rx });
+        if let Err(error) = crate::platform::spawn("repertoire-training-next", move || {
+            let result = prepared
+                .run(&repertoire, now())
+                .map_err(|error| error.to_string());
+            let _ = tx.send((generation, result));
+        }) {
+            self.next_job = None;
+            self.message = Some(error.to_string());
+        }
+    }
+
+    fn poll_next(&mut self) {
+        let (generation, result) = {
+            let Some(job) = &self.next_job else {
+                return;
+            };
+            match job.rx.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => (
+                    job.generation,
+                    Err("next-path worker stopped without a result".to_owned()),
+                ),
+            }
+        };
+        self.apply_next(generation, result);
+    }
+
+    fn apply_next(&mut self, generation: u64, result: Result<TrainingSession, String>) {
+        if generation != self.next_generation
+            || self
+                .next_job
+                .as_ref()
+                .is_none_or(|job| job.generation != generation)
+        {
+            return;
+        }
+        self.next_job = None;
+        match result {
+            Ok(session) => {
+                self.session = session;
+                self.after_run_reset();
+                self.save();
+            }
             Err(error) => self.message = Some(error.to_string()),
         }
+    }
+
+    #[cfg(test)]
+    fn deliver_next(&mut self) {
+        let (generation, result) = self
+            .next_job
+            .as_ref()
+            .expect("a pending next-path job")
+            .rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("next-path worker result");
+        self.apply_next(generation, result);
     }
 
     fn after_run_reset(&mut self) {
@@ -314,7 +441,7 @@ impl TrainingUi {
     }
 
     fn keyboard(&mut self, ui: &Ui, actions: &mut Vec<TrainingAction>) {
-        if ui.ctx().egui_wants_keyboard_input() {
+        if ui.ctx().egui_wants_keyboard_input() || self.next_job.is_some() {
             return;
         }
         let mut command = None;
@@ -423,6 +550,7 @@ impl TrainingUi {
                 interactive: !self.is_finished()
                     && self.flash.is_none()
                     && self.save_error.is_none()
+                    && self.next_job.is_none()
                     && self.view_ply + 1 == self.positions.len(),
                 show_coords: settings.show_coords,
                 theme: settings.board_theme.theme(),
@@ -523,6 +651,15 @@ impl TrainingUi {
         });
     }
 
+    fn preparing(&self, ui: &mut Ui) {
+        card(ui, false).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(tr("Preparing the tree…"));
+            });
+        });
+    }
+
     fn result(&mut self, ui: &mut Ui, actions: &mut Vec<TrainingAction>) {
         card(ui, false).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -535,6 +672,9 @@ impl TrainingUi {
                 .strong()
                 .size(17.0),
             );
+            if let Some(message) = &self.message {
+                ui.label(message);
+            }
             if self.is_path_practice() {
                 let played = self
                     .session
@@ -591,94 +731,6 @@ impl TrainingUi {
         });
     }
 
-    fn notation(&mut self, ui: &mut Ui) {
-        let mut clicked = None;
-        let mut marks: std::collections::HashMap<(String, String), (u32, bool)> =
-            std::collections::HashMap::new();
-        for attempt in self.session.attempts() {
-            let mark = marks
-                .entry((
-                    attempt.position_fen4.clone(),
-                    if self.mode == TrainingMode::Both {
-                        String::new()
-                    } else {
-                        attempt.expected_uci.clone()
-                    },
-                ))
-                .or_default();
-            mark.0 += u32::from(!attempt.correct);
-            mark.1 |= attempt.hinted;
-        }
-        egui::ScrollArea::vertical()
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                let path = &self.session.path()[self.task_start..];
-                let mut index = 0;
-                while index < path.len() {
-                    let white = self
-                        .positions
-                        .get(index)
-                        .is_some_and(|p| p.turn() == Color::White);
-                    let number = self.positions.get(index).map_or(1, |p| p.fullmoves().get());
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_sized(
-                            [36.0, 24.0],
-                            egui::Label::new(
-                                RichText::new(if white {
-                                    format!("{number}.")
-                                } else {
-                                    format!("{number}…")
-                                })
-                                .weak(),
-                            ),
-                        );
-                        for color in [Color::White, Color::Black] {
-                            if index >= path.len() {
-                                break;
-                            }
-                            let is_white = self
-                                .positions
-                                .get(index)
-                                .is_some_and(|p| p.turn() == Color::White);
-                            if is_white != (color == Color::White) {
-                                continue;
-                            }
-                            let played = &path[index];
-                            let global = self.task_start + index;
-                            let mut text = played.san.clone();
-                            if let Some((mistakes, hinted)) = marks.get(&(
-                                played.position_before.clone(),
-                                if self.mode == TrainingMode::Both {
-                                    String::new()
-                                } else {
-                                    played.uci.clone()
-                                },
-                            )) {
-                                if *mistakes > 0 {
-                                    text.push_str(&format!(" ×{mistakes}"));
-                                }
-                                if *hinted {
-                                    text.push_str(" *");
-                                }
-                            }
-                            let response = ui.selectable_label(self.view_ply == global + 1, text);
-                            let was_clicked = response.clicked();
-                            if played.automatic {
-                                response.on_hover_text(tr("Automatic move/context"));
-                            }
-                            if was_clicked {
-                                clicked = Some(global + 1 - self.task_start);
-                            }
-                            index += 1;
-                        }
-                    });
-                }
-            });
-        if let Some(ply) = clicked {
-            self.view_ply = ply;
-        }
-    }
-
     fn save_strip(&mut self, ui: &mut Ui) {
         let Some(error) = self.save_error.clone() else {
             return;
@@ -716,7 +768,11 @@ impl TrainingUi {
     }
 
     pub fn show(&mut self, ui: &mut Ui, settings: &Settings, name: &str) -> Vec<TrainingAction> {
+        self.poll_next();
         let mut actions = Vec::new();
+        if self.next_job.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
+        }
         if let Some(flash) = &self.flash {
             let left = flash
                 .until
@@ -731,7 +787,10 @@ impl TrainingUi {
         egui::Panel::top("repertoire_training_header").show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .button(format!("← {}", tr("Back to repertoire")))
+                    .add_enabled(
+                        self.next_job.is_none(),
+                        egui::Button::new(format!("← {}", tr("Back to repertoire"))),
+                    )
                     .clicked()
                 {
                     if self.save_error.is_some() {
@@ -765,6 +824,10 @@ impl TrainingUi {
         };
         crate::widgets::check_panel("repertoire_training_side", &side.response);
         egui::CentralPanel::default().show(ui, |ui| self.board(ui, settings, &mut actions));
+        if self.next_job.is_some() {
+            self.discard_requested = false;
+            actions.retain(|action| !matches!(action, TrainingAction::Back));
+        }
         if self.save_error.is_some() && !self.discard_requested {
             if actions
                 .iter()
@@ -781,63 +844,66 @@ impl TrainingUi {
     }
 
     fn side(&mut self, ui: &mut Ui, actions: &mut Vec<TrainingAction>) {
-        let notation_height = (ui.available_height() - 230.0).max(120.0);
         egui::ScrollArea::vertical()
             .id_salt("repertoire_training_controls")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
                 self.save_strip(ui);
-                if self.is_finished() {
+                if self.next_job.is_some() {
+                    self.preparing(ui);
+                } else if self.is_finished() {
                     self.result(ui, actions);
                 } else {
                     self.task_card(ui);
                     self.user_card(ui);
                 }
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    for (label, ply) in [
-                        ("⏮", 0),
-                        ("◀", self.view_ply.saturating_sub(1)),
-                        (
-                            "▶",
-                            (self.view_ply + 1).min(self.positions.len().saturating_sub(1)),
-                        ),
-                        ("⏭", self.positions.len().saturating_sub(1)),
-                    ] {
+                if self.next_job.is_none() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for (label, ply) in [
+                            ("⏮", 0),
+                            ("◀", self.view_ply.saturating_sub(1)),
+                            (
+                                "▶",
+                                (self.view_ply + 1).min(self.positions.len().saturating_sub(1)),
+                            ),
+                            ("⏭", self.positions.len().saturating_sub(1)),
+                        ] {
+                            if ui
+                                .add_sized([30.0, 26.0], egui::Button::new(label))
+                                .clicked()
+                            {
+                                self.view_ply = ply;
+                            }
+                        }
                         if ui
-                            .add_sized([30.0, 26.0], egui::Button::new(label))
+                            .add_sized([30.0, 26.0], egui::Button::new("🔃"))
+                            .on_hover_text(tr("Flip board (F)"))
                             .clicked()
                         {
-                            self.view_ply = ply;
+                            self.flipped = !self.flipped;
                         }
-                    }
-                    if ui
-                        .add_sized([30.0, 26.0], egui::Button::new("🔃"))
-                        .on_hover_text(tr("Flip board (F)"))
-                        .clicked()
-                    {
-                        self.flipped = !self.flipped;
-                    }
-                    if !self.is_finished() && ui.button(tr("↻ Restart")).clicked() {
-                        self.restart();
-                    }
-                });
-                if self.view_ply + 1 < self.positions.len()
+                        if !self.is_finished() && ui.button(tr("↻ Restart")).clicked() {
+                            self.restart();
+                        }
+                    });
+                }
+                if self.next_job.is_none()
+                    && self.view_ply + 1 < self.positions.len()
                     && ui
                         .link(tr("Viewing an earlier position · back to training — End"))
                         .clicked()
                 {
                     self.go_end();
                 }
-                ui.separator();
-                ui.allocate_ui(vec2(ui.available_width(), notation_height), |ui| {
-                    self.notation(ui);
-                });
             });
     }
 
     pub fn debug_hint(&mut self) {
+        if self.next_job.is_some() {
+            return;
+        }
         if let Some(candidate) = self.session.hint(now()) {
             self.hint = move_squares(&candidate);
             self.save();
@@ -848,7 +914,13 @@ impl TrainingUi {
         for text in moves.split_whitespace() {
             match text {
                 "hint" => self.debug_hint(),
-                "next" => self.next_path(),
+                "next" => {
+                    self.next_path();
+                    #[cfg(test)]
+                    if self.next_job.is_some() {
+                        self.deliver_next();
+                    }
+                }
                 "repeat" => self.restart(),
                 _ => {}
             }
@@ -1174,6 +1246,164 @@ mod tests {
         assert!(training.is_finished());
         assert_eq!(training.session.path().last().unwrap().uci, "c2c4");
         assert_board_matches_session(&training);
+    }
+
+    #[test]
+    fn random_next_saves_its_cursor_without_a_move_and_repeat_does_not_advance_it() {
+        let fixture = training(
+            "1. e4 e5 (1... c5) 2. Nf3 (2. c4) *",
+            TrainingMode::Both,
+            "random-cursor-save",
+        );
+        let mut random = TrainingUi::new_random(
+            &fixture.repertoire,
+            TrainingMode::Both,
+            StatsData::default(),
+            fixture.store.clone(),
+            false,
+        )
+        .unwrap();
+        assert!(random.save_error.is_none());
+        assert_eq!(random.session.queue_mode(), QueueMode::Practice);
+        let initial = serde_json::to_value(random.session.stats()).unwrap();
+        assert_eq!(initial["random_practice_cursors"][0]["position"], 1);
+        assert_eq!(
+            serde_json::to_value(random.store.load().unwrap()).unwrap(),
+            initial
+        );
+
+        random.debug_moves("next");
+        assert!(random.save_error.is_none());
+        assert!(random.session.attempts().is_empty());
+        assert_board_matches_session(&random);
+        let next = serde_json::to_value(random.session.stats()).unwrap();
+        assert_eq!(next["random_practice_cursors"][0]["position"], 2);
+        assert_eq!(
+            serde_json::to_value(random.store.load().unwrap()).unwrap(),
+            next
+        );
+
+        random.debug_moves("repeat");
+        assert_eq!(serde_json::to_value(random.session.stats()).unwrap(), next);
+        assert_board_matches_session(&random);
+    }
+
+    #[test]
+    fn async_next_blocks_duplicate_work_and_applies_delivery_exactly_once() {
+        let fixture = training(
+            "1. e4 e5 (1... c5) 2. Nf3 (2. c4) *",
+            TrainingMode::Both,
+            "async-next-delivery",
+        );
+        let mut random = TrainingUi::new_random(
+            &fixture.repertoire,
+            TrainingMode::Both,
+            StatsData::default(),
+            fixture.store.clone(),
+            false,
+        )
+        .unwrap();
+        random.debug_moves("");
+        let old_path = random.session.path().to_vec();
+        let old_scope = random.session.scope().clone();
+        let old_positions = random.positions.clone();
+        let old_stats = serde_json::to_vec(random.session.stats()).unwrap();
+        let generation = random.next_generation;
+
+        random.next_path();
+        assert!(random.next_job.is_some());
+        assert_eq!(random.next_generation, generation.wrapping_add(1));
+        assert_eq!(random.session.path(), old_path);
+        assert_eq!(random.positions, old_positions);
+        assert_eq!(
+            serde_json::to_vec(random.session.stats()).unwrap(),
+            old_stats
+        );
+        random.next_path();
+        assert_eq!(random.next_generation, generation.wrapping_add(1));
+        random.restart();
+        assert_eq!(random.session.scope(), &old_scope);
+        assert_eq!(random.session.path(), old_path);
+
+        random.deliver_next();
+        assert!(random.next_job.is_none());
+        assert!(random.session.attempts().is_empty());
+        assert_board_matches_session(&random);
+        let delivered_stats = serde_json::to_value(random.session.stats()).unwrap();
+        assert_eq!(delivered_stats["random_practice_cursors"][0]["position"], 2);
+        assert_eq!(
+            serde_json::to_value(random.store.load().unwrap()).unwrap(),
+            delivered_stats
+        );
+        let delivered_path = random.session.path().to_vec();
+        random.poll_next();
+        assert_eq!(random.session.path(), delivered_path);
+        assert_eq!(
+            serde_json::to_value(random.session.stats()).unwrap(),
+            delivered_stats
+        );
+    }
+
+    #[test]
+    fn async_next_computation_error_preserves_the_current_session() {
+        let mut training = training_queue(
+            "1. e4 e5 *",
+            TrainingMode::Both,
+            "async-next-error",
+            QueueMode::Practice,
+            TrainingScope::from_prefix(vec!["e2e4".into()]),
+        );
+        training.debug_moves("");
+        let old_path = training.session.path().to_vec();
+        let old_scope = training.session.scope().clone();
+        let old_positions = training.positions.clone();
+        let old_stats = serde_json::to_vec(training.session.stats()).unwrap();
+        training.repertoire.pgn = parse_str("1. d4 d5 *").game.to_pgn();
+
+        training.next_path();
+        training.deliver_next();
+        assert!(training.next_job.is_none());
+        assert!(
+            training
+                .message
+                .as_ref()
+                .is_some_and(|message| message.contains("invalid training scope"))
+        );
+        assert_eq!(training.session.path(), old_path);
+        assert_eq!(training.session.scope(), &old_scope);
+        assert_eq!(training.positions, old_positions);
+        assert_eq!(
+            serde_json::to_vec(training.session.stats()).unwrap(),
+            old_stats
+        );
+        assert_board_matches_session(&training);
+    }
+
+    #[test]
+    fn async_next_save_error_remains_visible_after_successful_computation() {
+        let fixture = training(
+            "1. e4 e5 (1... c5) 2. Nf3 *",
+            TrainingMode::Both,
+            "async-next-save-error",
+        );
+        let mut random = TrainingUi::new_random(
+            &fixture.repertoire,
+            TrainingMode::Both,
+            StatsData::default(),
+            fixture.store.clone(),
+            false,
+        )
+        .unwrap();
+        let mut external = random.store.load().unwrap();
+        random.store.save(&mut external).unwrap();
+
+        random.next_path();
+        random.deliver_next();
+        assert!(random.next_job.is_none());
+        assert!(random.save_error.is_some());
+        assert!(random.has_unsaved());
+        assert_eq!(random.session.stats().revision, 1);
+        assert_board_matches_session(&random);
     }
 
     #[test]

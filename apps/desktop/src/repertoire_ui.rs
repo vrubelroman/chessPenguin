@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -10,8 +10,8 @@ use chess_core::shakmaty::Color;
 use chess_core::{Game, NodeId, PgnDatabase, Severity};
 use egui::{Key, Modifiers, RichText, Ui};
 use trainer::repertoire::{
-    Library, LibraryStore, MergeReport, MoveKey, QueueMode, Repertoire, RepertoireId,
-    RepertoireTree, SrsPolicy, StatsData, StatsStore, TrainingMode, TrainingScope, fen4,
+    Library, LibraryStore, MergeReport, QueueMode, Repertoire, RepertoireId, RepertoireTree,
+    SrsPolicy, StatsData, StatsStore, TrainingMode, TrainingScope, fen4,
 };
 
 use crate::board::{BoardState, BoardView};
@@ -44,6 +44,11 @@ struct ImportPreview {
     report: MergeReport,
     name: String,
     target: Option<RepertoireId>,
+}
+
+struct LibraryLoadError {
+    library: Option<Library>,
+    message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -83,8 +88,6 @@ pub struct RepertoireUi {
     error: Option<String>,
     selected: Option<RepertoireId>,
     detail: bool,
-    active: NodeId,
-    scope: TrainingScope,
     tree: Option<Arc<RepertoireTree>>,
     trees: HashMap<RepertoireId, Arc<RepertoireTree>>,
     counts: HashMap<CountKey, Option<usize>>,
@@ -92,13 +95,9 @@ pub struct RepertoireUi {
     indexing: bool,
     preparing: bool,
     training_generation: u64,
-    rows: Vec<(NodeId, usize)>,
-    expanded: HashSet<NodeId>,
     cleanup: Option<RepertoireId>,
     board: BoardState,
     mode: TrainingMode,
-    queue: QueueMode,
-    policy: SrsPolicy,
     training: Option<TrainingUi>,
     training_visible: bool,
     return_to_game: Option<String>,
@@ -121,9 +120,9 @@ impl RepertoireUi {
         Self::with_stores(library_store, stats_store)
     }
     fn with_stores(library_store: LibraryStore, stats_store: StatsStore) -> Self {
-        let (library, library_error) = match library_store.load() {
+        let (library, library_error) = match load_library(&library_store) {
             Ok(data) => (data, None),
-            Err(e) => (Library::default(), Some(e.to_string())),
+            Err(e) => (e.library.unwrap_or_default(), Some(e.message)),
         };
         let (stats, stats_error) = match stats_store.load() {
             Ok(data) => (data, None),
@@ -141,8 +140,6 @@ impl RepertoireUi {
             error: None,
             selected,
             detail: false,
-            active: NodeId::ROOT,
-            scope: TrainingScope::whole(),
             tree: None,
             trees: HashMap::new(),
             counts: HashMap::new(),
@@ -150,13 +147,9 @@ impl RepertoireUi {
             indexing: false,
             preparing: false,
             training_generation: 0,
-            rows: Vec::new(),
-            expanded: HashSet::new(),
             cleanup: None,
             board: BoardState::default(),
             mode: TrainingMode::White,
-            queue: QueueMode::Practice,
-            policy: SrsPolicy::Due,
             training: None,
             training_visible: false,
             return_to_game: None,
@@ -217,16 +210,11 @@ impl RepertoireUi {
         self.preparing = false;
         self.selected = Some(id.clone());
         self.detail = true;
-        self.active = NodeId::ROOT;
-        self.expanded.clear();
-        self.scope = TrainingScope::whole();
-        let (mode, queue) = settings
+        self.mode = settings
             .repertoire_modes
             .get(id.as_str())
-            .copied()
-            .unwrap_or((TrainingMode::White, QueueMode::Practice));
-        self.mode = mode;
-        self.queue = queue;
+            .map(|(mode, _)| *mode)
+            .unwrap_or(TrainingMode::White);
         self.update_selected_tree();
     }
     fn update_selected_tree(&mut self) {
@@ -235,13 +223,9 @@ impl RepertoireUi {
             .as_ref()
             .and_then(|id| self.trees.get(id))
             .cloned();
-        self.rows = self
-            .tree
-            .as_ref()
-            .map(|tree| tree_rows(tree.game(), &self.expanded))
-            .unwrap_or_default();
     }
     fn rebuild_tree(&mut self) {
+        normalize_library(&mut self.library);
         self.counts.clear();
         self.index_generation += 1;
         self.indexing = true;
@@ -266,6 +250,7 @@ impl RepertoireUi {
         if self.library_error.is_some() {
             return false;
         }
+        normalize_library(&mut library);
         match self.library_store.save(&mut library) {
             Ok(()) => {
                 self.library = library;
@@ -312,19 +297,11 @@ impl RepertoireUi {
         else {
             return;
         };
-        let queue = if self.mode == TrainingMode::Both && self.queue == QueueMode::SpacedRepetition
-        {
-            QueueMode::LeastRecent
-        } else {
-            self.queue
-        };
         if self.preparing {
             return;
         }
         let repertoire = r.clone();
-        let scope = self.scope.clone();
         let mode = self.mode;
-        let policy = self.policy;
         let stats = self.stats.clone();
         let store = self.stats_store.clone();
         let tx = self.tx.clone();
@@ -332,21 +309,12 @@ impl RepertoireUi {
         let generation = self.training_generation;
         settings
             .repertoire_modes
-            .insert(r.id.to_string(), (mode, queue));
+            .insert(r.id.to_string(), (mode, QueueMode::Practice));
         self.preparing = true;
         if let Err(error) = crate::platform::spawn("repertoire-training-start", move || {
-            let result = TrainingUi::new_with_policy(
-                &repertoire,
-                scope,
-                mode,
-                queue,
-                stats,
-                store,
-                false,
-                policy,
-            )
-            .map(Box::new)
-            .map_err(|e| e.to_string());
+            let result = TrainingUi::new_random(&repertoire, mode, stats, store, false)
+                .map(Box::new)
+                .map_err(|e| e.to_string());
             let _ = tx.send(Event::TrainingReady(generation, result));
         }) {
             self.preparing = false;
@@ -490,10 +458,7 @@ impl RepertoireUi {
                                 self.debug_moves(&moves);
                             }
                         }
-                        Ok(_) => {
-                            self.error =
-                                Some(tr("No enabled moves for this mode and depth").to_owned())
-                        }
+                        Ok(_) => self.error = Some(tr("No targets in this mode").to_owned()),
                         Err(error) => self.error = Some(error),
                     }
                 }
@@ -637,13 +602,19 @@ impl RepertoireUi {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
                 if ui.button(tr("Retry")).clicked() {
-                    match self.library_store.load() {
+                    match load_library(&self.library_store) {
                         Ok(data) => {
                             self.library = data;
                             self.library_error = None;
                             self.rebuild_tree();
                         }
-                        Err(e) => self.library_error = Some(e.to_string()),
+                        Err(e) => {
+                            if let Some(library) = e.library {
+                                self.library = library;
+                                self.rebuild_tree();
+                            }
+                            self.library_error = Some(e.message);
+                        }
                     }
                     match self.stats_store.load() {
                         Ok(data) => {
@@ -778,21 +749,23 @@ impl RepertoireUi {
             } else {
                 110.0
             }))
-            .column(egui_extras::Column::exact(if compact {
-                82.0
-            } else {
-                110.0
-            }))
-            .column(egui_extras::Column::exact(if compact {
-                82.0
-            } else {
-                130.0
-            }))
             .column(egui_extras::Column::exact(28.0))
             .header(30.0, |mut header| {
-                for key in ["Name", "White: due", "Black: due", "Both sides", ""] {
+                for (column, key) in ["Name", "Variants", ""].into_iter().enumerate() {
                     header.col(|ui| {
-                        ui.add(egui::Label::new(RichText::new(tr(key)).strong()).truncate());
+                        if column == 1 {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(tr(key)).strong())
+                                            .truncate(),
+                                    );
+                                },
+                            );
+                        } else {
+                            ui.add(egui::Label::new(RichText::new(tr(key)).strong()).truncate());
+                        }
                     });
                 }
             })
@@ -814,33 +787,15 @@ impl RepertoireUi {
                             open = Some(r.id.clone());
                         }
                     });
-                    for mode in [TrainingMode::White, TrainingMode::Black] {
-                        row.col(|ui| {
-                            match self.task_count(
-                                &r.id,
-                                mode,
-                                QueueMode::SpacedRepetition,
-                                SrsPolicy::Due,
-                                &TrainingScope::whole(),
-                            ) {
-                                Some(n) => {
-                                    ui.label(n.to_string());
-                                }
-                                None => {
-                                    ui.spinner();
-                                    ui.ctx().request_repaint_after(
-                                        std::time::Duration::from_millis(100),
-                                    );
-                                }
-                            }
-                        });
-                    }
                     row.col(|ui| {
-                        ui.label(
-                            self.stats
-                                .runs(&r.id, TrainingMode::Both)
-                                .map_or_else(|| "—".to_owned(), |s| s.completions.to_string()),
+                        let count = self.task_count(
+                            &r.id,
+                            TrainingMode::Both,
+                            QueueMode::Practice,
+                            SrsPolicy::Due,
+                            &TrainingScope::whole(),
                         );
+                        count_cell(ui, count);
                     });
                     row.col(|ui| {
                         ui.menu_button("⋯", |ui| {
@@ -991,7 +946,7 @@ impl RepertoireUi {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.add_enabled_ui(!self.preparing, |ui| {
-                    let previous = (self.mode, self.queue);
+                    let previous_mode = self.mode;
                     ui.add(egui::Label::new(RichText::new(&r.name).heading()).truncate())
                         .on_hover_text(&r.name);
                     ui.add_space(6.0);
@@ -1004,101 +959,13 @@ impl RepertoireUi {
                         }
                     });
                     ui.separator();
-                    egui::Grid::new("repertoire_options")
-                        .num_columns(2)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.label(tr("Depth"));
-                            ui.horizontal_wrapped(|ui| {
-                                let mut depth = r.max_plies;
-                                let mut unlimited = depth == u32::MAX;
-                                let mut changed =
-                                    ui.checkbox(&mut unlimited, tr("No limit")).changed();
-                                if !unlimited {
-                                    if depth == u32::MAX {
-                                        depth = 20;
-                                    }
-                                    changed |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut depth)
-                                                .range(1..=10000)
-                                                .suffix(format!(" {}", tr("half-moves"))),
-                                        )
-                                        .changed();
-                                }
-                                if changed {
-                                    let mut library = self.library.clone();
-                                    if let Some(r) = library.repertoire_mut(id) {
-                                        r.max_plies = if unlimited { u32::MAX } else { depth };
-                                    }
-                                    self.persist(library);
-                                }
-                            });
-                            ui.end_row();
-                            ui.label(tr("Color"));
-                            ui.horizontal_wrapped(|ui| {
-                                for mode in
-                                    [TrainingMode::White, TrainingMode::Black, TrainingMode::Both]
-                                {
-                                    ui.selectable_value(&mut self.mode, mode, mode_label(mode));
-                                }
-                            });
-                            ui.end_row();
-                            ui.label(tr("Mode"));
-                            egui::ComboBox::from_id_salt("repertoire_queue")
-                                .width(180.0)
-                                .wrap_mode(egui::TextWrapMode::Truncate)
-                                .selected_text(queue_label(self.queue))
-                                .show_ui(ui, |ui| {
-                                    for queue in [
-                                        QueueMode::Practice,
-                                        QueueMode::SpacedRepetition,
-                                    ] {
-                                        if self.mode != TrainingMode::Both
-                                            || queue != QueueMode::SpacedRepetition
-                                        {
-                                            ui.selectable_value(
-                                                &mut self.queue,
-                                                queue,
-                                                queue_label(queue),
-                                            );
-                                        }
-                                    }
-                                });
-                            if self.mode == TrainingMode::Both
-                                && self.queue != QueueMode::Practice
-                            {
-                                self.queue = QueueMode::Practice;
-                            }
-                            ui.end_row();
-                            if self.mode != TrainingMode::Both
-                                && self.queue == QueueMode::SpacedRepetition
-                            {
-                                ui.label(tr("Spaced schedule"));
-                                egui::ComboBox::from_id_salt("srs_policy")
-                                    .selected_text(policy_label(self.policy))
-                                    .show_ui(ui, |ui| {
-                                        for policy in [
-                                            SrsPolicy::Due,
-                                            SrsPolicy::Introduce,
-                                            SrsPolicy::EarlyReview,
-                                        ] {
-                                            ui.selectable_value(
-                                                &mut self.policy,
-                                                policy,
-                                                policy_label(policy),
-                                            );
-                                        }
-                                    });
-                            }
-                            ui.end_row();
-                        });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(tr("Color"));
+                        for mode in [TrainingMode::White, TrainingMode::Black, TrainingMode::Both] {
+                            ui.selectable_value(&mut self.mode, mode, mode_label(mode));
+                        }
+                    });
                     ui.add_space(6.0);
-                    ui.label(tr(if self.queue == QueueMode::Practice {
-                        "Play a variation from start to finish. Any enabled move is accepted; the program plays the other side."
-                    } else {
-                        "Move review presents individual positions. Any repertoire move is accepted; only the move you play is recorded."
-                    }));
                     ui.horizontal_wrapped(|ui| {
                         let available = self.available_tasks();
                         if available.is_none() {
@@ -1108,17 +975,9 @@ impl RepertoireUi {
                         }
                         let count_label =
                             available.map_or_else(|| "…".to_owned(), |n| n.to_string());
-                        ui.label(format!(
-                            "{}: {count_label}",
-                            if self.mode == TrainingMode::Both || self.queue == QueueMode::Practice {
-                                tr("Paths")
-                            } else {
-                                tr("Moves")
-                            }
-                        ));
+                        ui.label(format!("{}: {count_label}", tr("Paths")));
                         let ready = !self.preparing
-                            && (available.is_some_and(|n| n > 0)
-                                || ((self.mode == TrainingMode::Both || self.queue == QueueMode::Practice) && self.tree.is_some()))
+                            && available.is_some_and(|n| n > 0)
                             && self.stats_error.is_none()
                             && self.library_error.is_none();
                         if ui
@@ -1128,56 +987,30 @@ impl RepertoireUi {
                             self.start(settings);
                             actions.push(RepertoireAction::SettingsChanged);
                         }
-                        if self.mode != TrainingMode::Both
-                            && self.queue == QueueMode::SpacedRepetition
-                            && self.policy == SrsPolicy::Due
-                            && available == Some(0)
-                            && ui.button(tr("Introduce new moves")).clicked()
-                        {
-                            self.policy = SrsPolicy::Introduce;
-                        }
                     });
-                    if matches!(self.queue, QueueMode::ReviewInOrder | QueueMode::LeastRecent) {
-                        ui.label(tr("Early review · schedule unchanged"));
-                    }
-                    if previous != (self.mode, self.queue) {
+                    if previous_mode != self.mode {
                         settings
                             .repertoire_modes
-                            .insert(id.to_string(), (self.mode, self.queue));
+                            .insert(id.to_string(), (self.mode, QueueMode::Practice));
                         actions.push(RepertoireAction::SettingsChanged);
                     }
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(if self.scope.prefix.is_empty() {
-                            tr("Whole repertoire").to_owned()
-                        } else {
-                            format!("{}: {}", tr("Scope"), self.scope.prefix.join(" "))
-                        });
-                        if ui.button(tr("Reset scope")).clicked() {
-                            self.scope = TrainingScope::whole();
-                        }
-                        if self.active != NodeId::ROOT
-                            && ui.button(tr("Use selected as scope")).clicked()
-                            && let Some(path) = self.tree.as_ref().and_then(|t| t.path(self.active))
-                        {
-                            self.scope = TrainingScope::from_prefix(path.to_vec());
-                        }
-                        if ui.button(tr("End scope here")).clicked()
-                            && let Some(path) = self.tree.as_ref().and_then(|t| t.path(self.active))
-                        {
-                            self.scope.end_prefix = Some(path.to_vec());
-                        }
-                    });
                     if self.import.is_some() {
                         self.import_preview(ui, settings);
                     }
                     ui.separator();
-                    self.tree_panel(ui, r);
+                    self.statistics_panel(ui, r);
                 });
             });
     }
     fn available_tasks(&mut self) -> Option<usize> {
         let id = self.selected.clone()?;
-        self.task_count(&id, self.mode, self.queue, self.policy, &self.scope.clone())
+        self.task_count(
+            &id,
+            self.mode,
+            QueueMode::Practice,
+            SrsPolicy::Due,
+            &TrainingScope::whole(),
+        )
     }
     fn task_count(
         &mut self,
@@ -1223,7 +1056,19 @@ impl RepertoireUi {
         });
         self.counts.insert(key.clone(), None);
         if let Err(error) = crate::platform::spawn("repertoire-count", move || {
-            let count = if mode == TrainingMode::Both || queue == QueueMode::Practice {
+            let count = if queue == QueueMode::Practice {
+                use chess_core::shakmaty::Position;
+                let start_turn = tree.position(tree.root()).map(|position| position.turn());
+                let mut count = 0usize;
+                tree.visit_training_paths(&job_key.scope, |moves| {
+                    if start_turn.is_some_and(|turn| path_has_mode_move(mode, turn, moves.len())) {
+                        count = count.saturating_add(1);
+                    }
+                    std::ops::ControlFlow::Continue(())
+                })
+                .map(|()| count)
+                .unwrap_or(0)
+            } else if mode == TrainingMode::Both {
                 tree.training_path_count(&job_key.scope).unwrap_or(0)
             } else if queue == QueueMode::SpacedRepetition {
                 stats
@@ -1245,7 +1090,7 @@ impl RepertoireUi {
         let Some(tree) = &self.tree else {
             return;
         };
-        let Some(pos) = tree.game().position(self.active) else {
+        let Some(pos) = tree.game().position(NodeId::ROOT) else {
             return;
         };
         let side = ui.available_width().min(ui.available_height()).max(80.0);
@@ -1279,103 +1124,10 @@ impl RepertoireUi {
             .show(ui, &mut self.board);
         });
     }
-    fn tree_panel(&mut self, ui: &mut Ui, r: &Repertoire) {
-        let Some(tree) = &self.tree else {
+    fn statistics_panel(&mut self, ui: &mut Ui, r: &Repertoire) {
+        if self.tree.is_none() {
             return;
-        };
-        let game = tree.game();
-        let mut select = None;
-        let mut toggle = None;
-        let mut expand = None;
-        ui.horizontal_wrapped(|ui| {
-            ui.strong(tr("Tree"));
-            if ui
-                .selectable_label(self.active == NodeId::ROOT, tr("Start position"))
-                .clicked()
-            {
-                select = Some(NodeId::ROOT);
-            }
-        });
-        let rows = &self.rows;
-        egui::ScrollArea::vertical()
-            .id_salt("repertoire_moves")
-            .max_height(260.0)
-            .show_rows(ui, 24.0, rows.len(), |ui, range| {
-                for index in range {
-                    let (node, depth) = rows[index];
-                    let path = tree.path(node).unwrap_or(&[]);
-                    let disabled = r.is_prefix_disabled(path);
-                    ui.horizontal(|ui| {
-                        ui.add_space((depth.min(10) as f32) * 12.0);
-                        let mut enabled = !disabled;
-                        if ui
-                            .checkbox(&mut enabled, "")
-                            .on_hover_text(tr("Enable for training"))
-                            .changed()
-                        {
-                            toggle = Some((path.to_vec(), !enabled));
-                        }
-                        if game.children(node).len() > 1 {
-                            let is_open = self.expanded.contains(&node);
-                            if ui
-                                .add_sized(
-                                    [18.0, 20.0],
-                                    egui::Button::new(if is_open { "▾" } else { "▸" }).frame(false),
-                                )
-                                .clicked()
-                            {
-                                expand = Some(node);
-                            }
-                        } else {
-                            ui.add_space(18.0);
-                        }
-                        let label = game.move_label(node).unwrap_or_default();
-                        let text = if disabled {
-                            RichText::new(crate::san::show(&label)).weak()
-                        } else {
-                            RichText::new(crate::san::show(&label))
-                        };
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(100.0, 22.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                if ui.selectable_label(self.active == node, text).clicked() {
-                                    select = Some(node);
-                                }
-                            },
-                        );
-                        if disabled {
-                            ui.label(RichText::new(tr(" ∅ not trained")).weak());
-                        }
-                        if path.len() > r.max_plies as usize {
-                            ui.label(RichText::new(format!(">{}", r.max_plies)).weak());
-                        }
-                        if !self.scope.prefix.is_empty() && path == self.scope.prefix {
-                            ui.label("▶");
-                        }
-                        let transpositions = tree.transpositions(node);
-                        if transpositions.len() > 1 {
-                            ui.menu_button(format!("⇄ {}", transpositions.len()), |ui| {
-                                for alternate in transpositions {
-                                    if ui.button(prefix_label(game, *alternate)).clicked() {
-                                        select = Some(*alternate);
-                                        ui.close();
-                                    }
-                                }
-                            });
-                        }
-                        if let Some(n) = game.node(node) {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(n.comments_after().join(" ")).weak(),
-                                )
-                                .truncate(),
-                            );
-                        }
-                    });
-                }
-            });
-        ui.separator();
+        }
         egui::ScrollArea::vertical()
             .id_salt("repertoire_statistics")
             .show(ui, |ui| {
@@ -1401,110 +1153,7 @@ impl RepertoireUi {
                         format_time(run.last)
                     ));
                 }
-                if let Some(n) = game.node(self.active) {
-                    ui.label(
-                        n.comments_before()
-                            .iter()
-                            .chain(n.comments_after())
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    );
-                    ui.label(
-                        n.nags()
-                            .iter()
-                            .map(|n| format!("${}", n.0))
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    );
-                }
-                if self.active != NodeId::ROOT
-                    && let Some(before) = game.position_before(self.active)
-                {
-                    let uci = tree
-                        .path(self.active)
-                        .and_then(|p| p.last())
-                        .cloned()
-                        .unwrap_or_default();
-                    let key = MoveKey {
-                        repertoire_id: r.id.clone(),
-                        mode: self.mode,
-                        position_fen4: fen4(before),
-                        expected_uci: if self.mode == TrainingMode::Both {
-                            String::new()
-                        } else {
-                            uci
-                        },
-                    };
-                    ui.strong(tr("Move statistics"));
-                    if let Some(stats) = self.stats.get(&key) {
-                        ui.label(format!(
-                            "{}: {} · {}: {} · {}: {}",
-                            tr("Correct"),
-                            stats.correct,
-                            tr("Wrong"),
-                            stats.wrong,
-                            tr("Hints"),
-                            stats.hints
-                        ));
-                        ui.label(format!(
-                            "{}: {}",
-                            tr("Last attempt"),
-                            format_time(stats.last_attempt)
-                        ));
-                        if self.mode != TrainingMode::Both {
-                            ui.label(format!("{}: {}", tr("Next review"), format_time(stats.due)));
-                        }
-                    } else {
-                        ui.label(tr("No attempts in the selected mode"));
-                    }
-                }
-                if self.mode == TrainingMode::Both {
-                    let prefix = tree.path(self.active).unwrap_or(&[]);
-                    ui.strong(tr("Branch statistics"));
-                    for path in
-                        self.stats.path_stats.iter().filter(|p| {
-                            p.key.repertoire_id == r.id && p.key.path.starts_with(prefix)
-                        })
-                    {
-                        ui.label(format!(
-                            "{} · {}: {} · {}",
-                            path.key.path.join(" "),
-                            tr("Completions"),
-                            path.completions,
-                            format_time(path.last_completion)
-                        ));
-                    }
-                }
             });
-        if let Some(node) = select {
-            self.active = node;
-            for parent in game.path(node) {
-                self.expanded.insert(parent);
-            }
-        }
-        if let Some(node) = expand
-            && !self.expanded.remove(&node)
-        {
-            self.expanded.insert(node);
-        }
-        if select.is_some() || expand.is_some() {
-            self.rows = tree_rows(game, &self.expanded);
-        }
-        if let Some((path, disabled)) = toggle {
-            let mut library = self.library.clone();
-            if let Some(rep) = library.repertoire_mut(&r.id) {
-                if !disabled && !rep.disabled_prefixes.contains(&path) {
-                    self.error = Some(tr("Enable the parent branch first").to_owned());
-                    return;
-                }
-                if let Err(e) = rep.set_prefix_disabled(&path, disabled) {
-                    self.error = Some(e.to_string());
-                    return;
-                }
-            }
-            self.persist(library);
-        }
     }
     fn show_add(&mut self, ui: &mut Ui, actions: &mut Vec<RepertoireAction>) {
         let Some(mut add) = self.add.take() else {
@@ -1634,7 +1283,6 @@ impl RepertoireUi {
                     "black" => TrainingMode::Black,
                     _ => TrainingMode::Both,
                 };
-                self.queue = QueueMode::Practice;
                 self.start(settings);
             }
             _ => {}
@@ -1731,43 +1379,56 @@ fn read_import(
         target,
     })
 }
-fn tree_rows(game: &Game, expanded: &HashSet<NodeId>) -> Vec<(NodeId, usize)> {
-    let mut rows = Vec::new();
-    let mut stack: Vec<_> = game
-        .children(NodeId::ROOT)
-        .iter()
-        .rev()
-        .map(|id| (*id, 0))
-        .collect();
-    while let Some((id, depth)) = stack.pop() {
-        rows.push((id, depth));
-        for (index, child) in game.children(id).iter().enumerate().rev() {
-            if index == 0 || expanded.contains(&id) {
-                stack.push((*child, depth + usize::from(index != 0)));
-            }
-        }
+fn path_has_mode_move(mode: TrainingMode, start_turn: Color, plies: usize) -> bool {
+    match mode.user_color() {
+        Some(color) => plies > usize::from(start_turn != color),
+        None => plies > 0,
     }
-    rows
+}
+fn count_cell(ui: &mut Ui, count: Option<usize>) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if let Some(count) = count {
+            ui.label(count.to_string());
+        } else {
+            ui.spinner();
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    });
 }
 fn now() -> i64 {
     web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
 }
-fn queue_label(q: QueueMode) -> &'static str {
-    tr(match q {
-        QueueMode::Practice => "Play through variations",
-        QueueMode::SpacedRepetition => "Review individual moves",
-        QueueMode::ReviewInOrder => "Review in order",
-        QueueMode::LeastRecent => "Least recent and unseen first",
-    })
+fn load_library(store: &LibraryStore) -> Result<Library, LibraryLoadError> {
+    let mut library = store.load().map_err(|error| LibraryLoadError {
+        library: None,
+        message: error.to_string(),
+    })?;
+    if normalize_library(&mut library)
+        && let Err(error) = store.save(&mut library)
+    {
+        return Err(LibraryLoadError {
+            library: Some(library),
+            message: error.to_string(),
+        });
+    }
+    Ok(library)
 }
-fn policy_label(p: SrsPolicy) -> &'static str {
-    tr(match p {
-        SrsPolicy::Due => "Review due moves",
-        SrsPolicy::Introduce => "Introduce new moves",
-        SrsPolicy::EarlyReview => "Review future moves early",
-    })
+fn normalize_library(library: &mut Library) -> bool {
+    let mut changed = false;
+    for repertoire in &mut library.repertoires {
+        if repertoire.max_plies != u32::MAX {
+            repertoire.max_plies = u32::MAX;
+            changed = true;
+        }
+        if !repertoire.disabled_prefixes.is_empty() {
+            repertoire.disabled_prefixes.clear();
+            changed = true;
+        }
+    }
+    changed
 }
 fn prefix_label(game: &Game, at: NodeId) -> String {
     game.path(at)

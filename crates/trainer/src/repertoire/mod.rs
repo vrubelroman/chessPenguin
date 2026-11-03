@@ -15,8 +15,8 @@ pub use model::{
 };
 pub use scope::{TrainingScope, TrainingScopeKey};
 pub use session::{
-    FirstMoveChooser, MoveChooser, PlayedMove, SessionAttempt, SessionError, TrainingSession,
-    TrainingVerdict,
+    FirstMoveChooser, MoveChooser, PlayedMove, PreparedNextPath, SessionAttempt, SessionError,
+    TrainingSession, TrainingVerdict,
 };
 pub use stats::{
     AttemptRecord, INITIAL_INTERVAL_SECONDS, INTRODUCTION_BATCH_SIZE, MAX_INTERVAL_SECONDS,

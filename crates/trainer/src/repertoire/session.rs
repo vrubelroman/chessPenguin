@@ -86,6 +86,9 @@ pub struct TrainingSession {
     mode: TrainingMode,
     queue_mode: QueueMode,
     scope: TrainingScope,
+    base_scope: TrainingScope,
+    random_practice_seed: Option<u64>,
+    repertoire_fingerprint: u64,
     srs_policy: SrsPolicy,
     tree: RepertoireTree,
     stats: StatsData,
@@ -110,6 +113,39 @@ pub struct TrainingSession {
     deferred_targets: BTreeSet<MoveKey>,
 }
 
+pub struct PreparedNextPath {
+    scope: TrainingScope,
+    mode: TrainingMode,
+    queue_mode: QueueMode,
+    stats: StatsData,
+    random_practice_seed: Option<u64>,
+}
+
+impl PreparedNextPath {
+    pub fn run(self, repertoire: &Repertoire, now: i64) -> Result<TrainingSession, SessionError> {
+        let Self {
+            scope,
+            mode,
+            queue_mode,
+            stats,
+            random_practice_seed,
+        } = self;
+        if let Some(seed) = random_practice_seed {
+            TrainingSession::scoped_random_seeded(repertoire, scope, mode, stats, now, seed)
+        } else {
+            TrainingSession::scoped_with_chooser(
+                repertoire,
+                scope,
+                mode,
+                queue_mode,
+                stats,
+                now,
+                Box::<FirstMoveChooser>::default(),
+            )
+        }
+    }
+}
+
 impl TrainingSession {
     pub fn new(
         repertoire: &Repertoire,
@@ -125,6 +161,56 @@ impl TrainingSession {
             stats,
             now,
             Box::<FirstMoveChooser>::default(),
+        )
+    }
+
+    pub fn new_random(
+        repertoire: &Repertoire,
+        mode: TrainingMode,
+        stats: StatsData,
+        now: i64,
+    ) -> Result<Self, SessionError> {
+        Self::scoped_random(repertoire, TrainingScope::whole(), mode, stats, now)
+    }
+
+    pub fn scoped_random(
+        repertoire: &Repertoire,
+        scope: TrainingScope,
+        mode: TrainingMode,
+        stats: StatsData,
+        now: i64,
+    ) -> Result<Self, SessionError> {
+        Self::scoped_random_seeded(repertoire, scope, mode, stats, now, random_seed())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scoped_random_with_seed(
+        repertoire: &Repertoire,
+        scope: TrainingScope,
+        mode: TrainingMode,
+        stats: StatsData,
+        now: i64,
+        seed: u64,
+    ) -> Result<Self, SessionError> {
+        Self::scoped_random_seeded(repertoire, scope, mode, stats, now, seed)
+    }
+
+    fn scoped_random_seeded(
+        repertoire: &Repertoire,
+        scope: TrainingScope,
+        mode: TrainingMode,
+        stats: StatsData,
+        now: i64,
+        seed: u64,
+    ) -> Result<Self, SessionError> {
+        Self::build(
+            repertoire,
+            scope,
+            mode,
+            QueueMode::Practice,
+            stats,
+            now,
+            (None, Box::<FirstMoveChooser>::default(), Some(seed)),
         )
     }
 
@@ -211,7 +297,7 @@ impl TrainingSession {
             queue_mode,
             stats,
             now,
-            (None, chooser),
+            (None, chooser, None),
         )
     }
 
@@ -231,7 +317,7 @@ impl TrainingSession {
             QueueMode::SpacedRepetition,
             stats,
             now,
-            (Some(policy), chooser),
+            (Some(policy), chooser, None),
         )
     }
 
@@ -242,15 +328,21 @@ impl TrainingSession {
         queue_mode: QueueMode,
         stats: StatsData,
         now: i64,
-        options: (Option<SrsPolicy>, Box<dyn MoveChooser>),
+        options: (Option<SrsPolicy>, Box<dyn MoveChooser>, Option<u64>),
     ) -> Result<Self, SessionError> {
-        let (policy, chooser) = options;
+        let (policy, chooser, random_practice_seed) = options;
         if policy.is_some()
             && (mode == TrainingMode::Both || queue_mode != QueueMode::SpacedRepetition)
         {
             return Err(SessionError::InvalidSrsPolicy);
         }
-        let tree = RepertoireTree::new(repertoire);
+        let tree = if random_practice_seed.is_some() {
+            let mut full = repertoire.clone();
+            full.max_plies = u32::MAX;
+            RepertoireTree::new(&full)
+        } else {
+            RepertoireTree::new(repertoire)
+        };
         let current = tree
             .scope_anchor(&scope)
             .map_err(SessionError::InvalidScope)?;
@@ -259,7 +351,10 @@ impl TrainingSession {
             repertoire_id: repertoire.id.clone(),
             mode,
             queue_mode,
+            base_scope: scope.clone(),
             scope,
+            random_practice_seed,
+            repertoire_fingerprint: super::model::stable_hash(repertoire.pgn.as_bytes()),
             srs_policy,
             stats,
             chooser,
@@ -510,7 +605,7 @@ impl TrainingSession {
     }
 
     /// Repeats the same proposed path (or restarts the current one-side queue). It does
-    /// not advance the Both path cursor and never counts an unfinished run as complete.
+    /// not advance a path cursor and never counts an unfinished run as complete.
     pub fn restart(&mut self, now: i64) -> Result<(), SessionError> {
         if self.queue_mode == QueueMode::Practice && !self.actual_path.is_empty() {
             self.suggested_path = Some(TrainingPath {
@@ -521,6 +616,28 @@ impl TrainingSession {
         self.initialize(now, false)
     }
 
+    /// Captures the inputs for a next-path run without changing this session. The
+    /// expensive tree traversal happens only when `PreparedNextPath::run` is called.
+    pub fn prepare_next_path(&self) -> Result<PreparedNextPath, SessionError> {
+        if self.mode != TrainingMode::Both && self.queue_mode != QueueMode::Practice {
+            return Err(SessionError::InvalidQueueMode(
+                "next_path is available in branch practice or Both mode",
+            ));
+        }
+        let scope = if self.random_practice_seed.is_some() {
+            &self.base_scope
+        } else {
+            &self.scope
+        };
+        Ok(PreparedNextPath {
+            scope: scope.clone(),
+            mode: self.mode,
+            queue_mode: self.queue_mode,
+            stats: self.stats.clone(),
+            random_practice_seed: self.random_practice_seed,
+        })
+    }
+
     /// Selects the next proposed root/scope-to-boundary path. Enabled deviations remain
     /// free; the actual path, rather than this proposal, receives completion statistics.
     pub fn next_path(&mut self, now: i64) -> Result<(), SessionError> {
@@ -528,6 +645,9 @@ impl TrainingSession {
             return Err(SessionError::InvalidQueueMode(
                 "next_path is available in branch practice or Both mode",
             ));
+        }
+        if self.random_practice_seed.is_some() {
+            self.scope = self.base_scope.clone();
         }
         self.reset_run()?;
         self.suggested_path = None;
@@ -570,10 +690,14 @@ impl TrainingSession {
     fn initialize(&mut self, now: i64, select_path: bool) -> Result<(), SessionError> {
         if self.queue_mode == QueueMode::Practice {
             if select_path {
-                self.suggested_path = self
-                    .stats
-                    .next_practice_path(&self.tree, &self.repertoire_id, self.mode, &self.scope)
-                    .map_err(SessionError::InvalidScope)?;
+                if self.random_practice_seed.is_some() {
+                    self.select_random_path()?;
+                } else {
+                    self.suggested_path = self
+                        .stats
+                        .next_practice_path(&self.tree, &self.repertoire_id, self.mode, &self.scope)
+                        .map_err(SessionError::InvalidScope)?;
+                }
             }
             self.prepare_scope_start()?;
             if self.suggested_path.is_none() {
@@ -612,6 +736,55 @@ impl TrainingSession {
         } else {
             self.prepare_next_target(now).map(|_| ())
         }
+    }
+
+    fn select_random_path(&mut self) -> Result<(), SessionError> {
+        let seed = self
+            .random_practice_seed
+            .ok_or(SessionError::InvalidQueueMode(
+                "random practice seed is missing",
+            ))?;
+        let selected = self
+            .stats
+            .next_random_practice_path(
+                &self.tree,
+                &self.repertoire_id,
+                self.mode,
+                &self.base_scope,
+                self.repertoire_fingerprint,
+                seed,
+            )
+            .map_err(SessionError::InvalidScope)?;
+        let Some(selected) = selected else {
+            self.scope = self.base_scope.clone();
+            self.suggested_path = None;
+            return Ok(());
+        };
+        let prefix_moves = selected
+            .path
+            .moves
+            .get(..=selected.start)
+            .ok_or(SessionError::MissingTargetPath)?;
+        let suggested = selected
+            .path
+            .moves
+            .get(selected.start..)
+            .ok_or(SessionError::MissingTargetPath)?
+            .to_vec();
+        let mut prefix = self.base_scope.parent_prefix().to_vec();
+        prefix.extend(prefix_moves.iter().cloned());
+        let end_prefix = self.base_scope.end_prefix.as_ref().map(|_| {
+            let mut end = self.base_scope.parent_prefix().to_vec();
+            end.extend(selected.path.moves.iter().cloned());
+            end
+        });
+        self.scope = TrainingScope {
+            prefix,
+            end_prefix,
+            include_context: true,
+        };
+        self.suggested_path = Some(TrainingPath { moves: suggested });
+        Ok(())
     }
 
     fn prepare_scope_start(&mut self) -> Result<(), SessionError> {
@@ -980,4 +1153,10 @@ impl TrainingSession {
             );
         }
     }
+}
+
+fn random_seed() -> u64 {
+    use std::hash::BuildHasher;
+
+    std::collections::hash_map::RandomState::new().hash_one(0u8)
 }

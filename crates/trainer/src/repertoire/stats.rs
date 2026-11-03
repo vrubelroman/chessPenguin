@@ -1,4 +1,4 @@
-use chess_core::shakmaty::Color;
+use chess_core::shakmaty::{Color, Position};
 use serde::{Deserialize, Serialize};
 
 use super::model::RepertoireId;
@@ -263,6 +263,23 @@ struct PathReviewCursor {
     next: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct RandomPracticeCursor {
+    repertoire_id: RepertoireId,
+    mode: TrainingMode,
+    scope: TrainingScopeKey,
+    seed: u64,
+    position: usize,
+    count: usize,
+    #[serde(default)]
+    fingerprint: Option<u64>,
+}
+
+pub(crate) struct RandomPracticePath {
+    pub path: TrainingPath,
+    pub start: usize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StatsData {
@@ -276,6 +293,7 @@ pub struct StatsData {
     review_cursors: Vec<ReviewCursor>,
     path_review_cursors: Vec<PathReviewCursor>,
     practice_path_cursors: Vec<ReviewCursor>,
+    random_practice_cursors: Vec<RandomPracticeCursor>,
 }
 
 impl Default for StatsData {
@@ -290,6 +308,7 @@ impl Default for StatsData {
             review_cursors: Vec::new(),
             path_review_cursors: Vec::new(),
             practice_path_cursors: Vec::new(),
+            random_practice_cursors: Vec::new(),
         }
     }
 }
@@ -309,6 +328,8 @@ impl StatsData {
         self.path_review_cursors
             .retain(|entry| &entry.repertoire_id != repertoire_id);
         self.practice_path_cursors
+            .retain(|entry| &entry.repertoire_id != repertoire_id);
+        self.random_practice_cursors
             .retain(|entry| &entry.repertoire_id != repertoire_id);
     }
 
@@ -560,6 +581,111 @@ impl StatsData {
                 self.practice_path_cursors[index].next.saturating_add(1);
         }
         Ok(chosen)
+    }
+
+    pub(crate) fn next_random_practice_path(
+        &mut self,
+        tree: &RepertoireTree,
+        repertoire_id: &RepertoireId,
+        mode: TrainingMode,
+        scope: &TrainingScope,
+        repertoire_fingerprint: u64,
+        initial_seed: u64,
+    ) -> Result<Option<RandomPracticePath>, String> {
+        use std::ops::ControlFlow;
+
+        let anchor = tree.scope_anchor(scope)?;
+        let start_turn = tree
+            .position(anchor)
+            .map(|position| position.turn())
+            .ok_or_else(|| "scope start position is missing".to_owned())?;
+        let mut count = Some(0usize);
+        tree.visit_training_paths(scope, |moves| {
+            if eligible_target_count(mode, start_turn, moves.len()) == 0 {
+                return ControlFlow::Continue(());
+            }
+            count = count.and_then(|count| count.checked_add(1));
+            if count.is_none() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })?;
+        let count =
+            count.ok_or_else(|| "training path count exceeds the platform limit".to_owned())?;
+        let scope_key = scope.key();
+        let existing = self.random_practice_cursors.iter().position(|cursor| {
+            &cursor.repertoire_id == repertoire_id
+                && cursor.mode == mode
+                && cursor.scope == scope_key
+        });
+        let is_new = existing.is_none();
+        let index = existing.unwrap_or_else(|| {
+            self.random_practice_cursors.push(RandomPracticeCursor {
+                repertoire_id: repertoire_id.clone(),
+                mode,
+                scope: scope_key,
+                seed: initial_seed,
+                position: 0,
+                count: 0,
+                fingerprint: Some(repertoire_fingerprint),
+            });
+            self.random_practice_cursors.len() - 1
+        });
+        let cursor = &mut self.random_practice_cursors[index];
+        if !is_new
+            && (cursor.fingerprint != Some(repertoire_fingerprint)
+                || cursor.count != count
+                || cursor.position >= count)
+        {
+            cursor.seed = next_cycle_seed(cursor.seed);
+            cursor.position = 0;
+        }
+        cursor.fingerprint = Some(repertoire_fingerprint);
+        cursor.count = count;
+        if count == 0 {
+            cursor.position = 0;
+            return Ok(None);
+        }
+        if cursor.position >= count {
+            cursor.position = 0;
+        }
+
+        let position = cursor.position;
+        let seed = cursor.seed;
+        let step = coprime_step(seed ^ 0xa076_1d64_78bd_642f, count);
+        let offset = (mix64(seed ^ 0xe703_7ed1_a0b4_28db) as u128 % count as u128) as usize;
+        let selected_index =
+            ((step as u128 * position as u128 + offset as u128) % count as u128) as usize;
+        let start_seed = mix64(seed ^ (position as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        let mut order = 0usize;
+        let mut chosen = None;
+        tree.visit_training_paths(scope, |moves| {
+            let eligible = eligible_target_count(mode, start_turn, moves.len());
+            if eligible == 0 {
+                return ControlFlow::Continue(());
+            }
+            if order == selected_index {
+                let start_order = (start_seed as usize) % eligible;
+                chosen = eligible_target_index(mode, start_turn, moves.len(), start_order).map(
+                    |start| RandomPracticePath {
+                        path: TrainingPath {
+                            moves: moves.to_vec(),
+                        },
+                        start,
+                    },
+                );
+                return ControlFlow::Break(());
+            }
+            order += 1;
+            ControlFlow::Continue(())
+        })?;
+        if chosen.is_some() {
+            cursor.position = cursor.position.saturating_add(1);
+            Ok(chosen)
+        } else {
+            Err("random training path selection is inconsistent".to_owned())
+        }
     }
 
     /// Selects one route without materializing the complete path queue. Ordered
@@ -829,6 +955,9 @@ impl StatsData {
         self.practice_path_cursors.sort_by(|a, b| {
             (&a.repertoire_id, &a.mode, &a.scope).cmp(&(&b.repertoire_id, &b.mode, &b.scope))
         });
+        self.random_practice_cursors.sort_by(|a, b| {
+            (&a.repertoire_id, &a.mode, &a.scope).cmp(&(&b.repertoire_id, &b.mode, &b.scope))
+        });
         self.path_review_cursors
             .sort_by(|a, b| (&a.repertoire_id, &a.scope).cmp(&(&b.repertoire_id, &b.scope)));
     }
@@ -843,4 +972,70 @@ impl StatsData {
         };
         &mut self.move_stats[index]
     }
+}
+
+fn eligible_target_count(mode: TrainingMode, start_turn: Color, plies: usize) -> usize {
+    let Some(user_color) = mode.user_color() else {
+        return plies;
+    };
+    let first = usize::from(start_turn != user_color);
+    if plies <= first {
+        0
+    } else {
+        (plies - first).div_ceil(2)
+    }
+}
+
+fn eligible_target_index(
+    mode: TrainingMode,
+    start_turn: Color,
+    plies: usize,
+    order: usize,
+) -> Option<usize> {
+    let mut remaining = order;
+    for index in 0..plies {
+        let turn = if index % 2 == 0 {
+            start_turn
+        } else {
+            start_turn.other()
+        };
+        if mode.user_color().is_none_or(|color| color == turn) {
+            if remaining == 0 {
+                return Some(index);
+            }
+            remaining -= 1;
+        }
+    }
+    None
+}
+
+fn coprime_step(seed: u64, count: usize) -> usize {
+    if count == 1 {
+        return 0;
+    }
+    let mut step = (mix64(seed) % count as u64) as usize;
+    while gcd(step, count) != 1 {
+        step = (step + 1) % count;
+    }
+    step
+}
+
+fn gcd(mut left: usize, mut right: usize) -> usize {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
+}
+
+fn next_cycle_seed(seed: u64) -> u64 {
+    mix64(seed ^ 0x8ebc_6af0_9c88_c6e3)
+}
+
+fn mix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
 }

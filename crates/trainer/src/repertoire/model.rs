@@ -651,7 +651,7 @@ fn write_comment(comment: &str, out: &mut String) {
     }
 }
 
-fn stable_hash(bytes: &[u8]) -> u64 {
+pub(crate) fn stable_hash(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
     for byte in bytes {
         hash ^= u64::from(*byte);

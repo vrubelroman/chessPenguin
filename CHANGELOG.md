@@ -4,6 +4,13 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Desktop opening training: collect PGN repertoires, add a line from a game, and practise
+  for White, Black or both sides. Variations are dealt in random cycles without repeating
+  a full route; a route can start with automatic context, and its result offers both
+  «Next variation» and «Repeat path». Depth, scope and separate-position review controls
+  have been removed; the library shows the actual number of variations. The training
+  screen has no move list; previously shown positions can still be reviewed on the board.
+
 ## [2.1.5] — 2026-11-02
 
 - Preparing against an opponent is saved by itself: a preparation appears in the

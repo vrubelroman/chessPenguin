@@ -25,6 +25,24 @@ fn strings(moves: &[&str]) -> Vec<String> {
     moves.iter().map(|mv| (*mv).to_owned()).collect()
 }
 
+fn random_session(rep: &Repertoire, mode: TrainingMode, seed: u64) -> TrainingSession {
+    TrainingSession::scoped_random_with_seed(
+        rep,
+        TrainingScope::whole(),
+        mode,
+        StatsData::default(),
+        0,
+        seed,
+    )
+    .unwrap()
+}
+
+fn random_route(session: &TrainingSession) -> Vec<String> {
+    let mut route = session.scope().parent_prefix().to_vec();
+    route.extend(session.suggested_path().unwrap().iter().cloned());
+    route
+}
+
 fn path_key(rep: &Repertoire, scope: &TrainingScope, path: &[String]) -> PathKey {
     PathKey {
         repertoire_id: rep.id.clone(),
@@ -1244,4 +1262,311 @@ fn practice_next_branch_hint_follows_proposal_and_both_path_completion_is_once()
     // Deviating to another valid branch makes the hint follow that actual branch.
     session.play_uci("d2d4", 12).unwrap();
     assert_eq!(session.hint(13).unwrap().uci, "d7d5");
+}
+
+#[test]
+fn random_practice_is_deterministic_and_covers_every_route_before_a_new_cycle() {
+    let rep = repertoire("1. e4 e5 (1... c5) 2. Nf3 (2. c4) *");
+    let expected: std::collections::BTreeSet<Vec<String>> = RepertoireTree::new(&rep)
+        .training_paths(&TrainingScope::whole())
+        .unwrap()
+        .into_iter()
+        .map(|path| path.moves)
+        .collect();
+    assert_eq!(expected.len(), 3);
+    let mut left = random_session(&rep, TrainingMode::Both, 42);
+    let mut right = random_session(&rep, TrainingMode::Both, 42);
+    let mut routes = Vec::new();
+    for step in 0..6 {
+        assert_eq!(left.scope(), right.scope());
+        assert_eq!(random_route(&left), random_route(&right));
+        routes.push(random_route(&left));
+        if step < 5 {
+            left.next_path(step).unwrap();
+            right.next_path(step).unwrap();
+        }
+    }
+    for cycle in routes.chunks(3) {
+        let actual: std::collections::BTreeSet<Vec<String>> = cycle.iter().cloned().collect();
+        assert_eq!(actual.len(), 3);
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn random_practice_mid_path_context_has_the_correct_side_for_every_mode() {
+    let rep = repertoire("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *");
+    for mode in [TrainingMode::White, TrainingMode::Black, TrainingMode::Both] {
+        let mut session = None;
+        for seed in 0..64 {
+            let candidate = random_session(&rep, mode, seed);
+            if !candidate.path().is_empty() {
+                session = Some(candidate);
+                break;
+            }
+        }
+        let mut session = session.expect("a deterministic mid-path start");
+        let start = session.path().len();
+        assert!(start > 0);
+        assert!(session.path().iter().all(|played| played.automatic));
+        assert!(session.attempts().is_empty());
+        assert_eq!(session.scope().prefix.len(), start + 1);
+        assert_eq!(
+            session.scope().prefix.last().unwrap(),
+            &session.suggested_path().unwrap()[0]
+        );
+        assert_eq!(random_route(&session).len(), 6);
+        assert_eq!(
+            session.position_key(),
+            session.path().last().unwrap().position_after
+        );
+        if let Some(color) = mode.user_color() {
+            assert_eq!(session.position().turn(), color);
+        }
+        let target = session.suggested_path().unwrap()[0].clone();
+        assert!(matches!(
+            session.play_uci(&target, 1).unwrap(),
+            TrainingVerdict::Right | TrainingVerdict::Finished
+        ));
+        assert!(!session.path()[start].automatic);
+    }
+}
+
+#[test]
+fn random_repeat_preserves_actual_route_start_and_the_next_cursor() {
+    let rep = repertoire("1. e4 e5 (1... c5) 2. Nf3 (2. c4) *");
+    let mut session = (0..64)
+        .map(|seed| random_session(&rep, TrainingMode::Both, seed))
+        .find(|session| !session.path().is_empty())
+        .expect("a deterministic mid-path start");
+    let initial_scope = session.scope().clone();
+    let initial_context = session.path().to_vec();
+    let selected = session.suggested_path().unwrap().to_vec();
+    for (index, mv) in selected.iter().enumerate() {
+        session.play_uci(mv, index as i64).unwrap();
+    }
+    assert!(session.is_done());
+    let completed_path = session.path().to_vec();
+    let completed_route = random_route(&session);
+    let before_repeat = serde_json::to_vec(session.stats()).unwrap();
+
+    session.restart(10).unwrap();
+    assert_eq!(session.scope(), &initial_scope);
+    assert_eq!(session.path(), initial_context);
+    assert_eq!(serde_json::to_vec(session.stats()).unwrap(), before_repeat);
+    for (index, mv) in selected.iter().enumerate() {
+        session.play_uci(mv, 10 + index as i64).unwrap();
+    }
+    assert_eq!(session.path(), completed_path);
+
+    session.next_path(20).unwrap();
+    let next = random_route(&session);
+    assert_ne!(next, completed_route);
+    assert!(
+        RepertoireTree::new(&rep)
+            .training_paths(&TrainingScope::whole())
+            .unwrap()
+            .iter()
+            .any(|path| path.moves == next)
+    );
+}
+
+#[test]
+fn random_practice_path_count_change_starts_a_fresh_complete_cycle() {
+    let rep = repertoire("1. e4 (1. d4 d5) e5 *");
+    let mut initial = random_session(&rep, TrainingMode::Both, 7);
+    initial.next_path(1).unwrap();
+    let before = serde_json::to_value(initial.stats()).unwrap();
+    let old_seed = before["random_practice_cursors"][0]["seed"]
+        .as_u64()
+        .unwrap();
+    let stats = initial.into_stats();
+    let mut expanded = rep.clone();
+    expanded.pgn = chess_core::parse_str("1. e4 (1. d4 d5) (1. c4 e5) (1. Nf3 Nf6) e5 (1... c5) *")
+        .game
+        .to_pgn();
+    let mut session = TrainingSession::scoped_random_with_seed(
+        &expanded,
+        TrainingScope::whole(),
+        TrainingMode::Both,
+        stats,
+        2,
+        7,
+    )
+    .unwrap();
+    let after = serde_json::to_value(session.stats()).unwrap();
+    assert_ne!(
+        after["random_practice_cursors"][0]["seed"]
+            .as_u64()
+            .unwrap(),
+        old_seed
+    );
+    assert_eq!(after["random_practice_cursors"][0]["position"], 1);
+    assert_eq!(after["random_practice_cursors"][0]["count"], 5);
+
+    let mut routes = vec![random_route(&session)];
+    for now in 3..7 {
+        session.next_path(now).unwrap();
+        routes.push(random_route(&session));
+    }
+    let unique: std::collections::BTreeSet<Vec<String>> = routes.into_iter().collect();
+    assert_eq!(unique.len(), 5);
+}
+
+#[test]
+fn random_practice_reads_old_stats_without_the_random_cursor_field() {
+    let rep = repertoire("1. e4 e5 (1... c5) *");
+    let mut old = serde_json::to_value(StatsData::default()).unwrap();
+    assert!(
+        old.as_object_mut()
+            .unwrap()
+            .remove("random_practice_cursors")
+            .is_some()
+    );
+    let stats: StatsData = serde_json::from_value(old).unwrap();
+    let session = TrainingSession::scoped_random_with_seed(
+        &rep,
+        TrainingScope::whole(),
+        TrainingMode::Both,
+        stats,
+        0,
+        11,
+    )
+    .unwrap();
+    assert!(session.suggested_path().is_some());
+    let saved = serde_json::to_value(session.stats()).unwrap();
+    assert_eq!(saved["random_practice_cursors"][0]["position"], 1);
+}
+
+#[test]
+fn random_both_result_finishes_on_the_real_last_ply_beyond_legacy_depth() {
+    let mut rep = repertoire("1. e4 e5 2. Nf3 Nc6 *");
+    rep.max_plies = 1;
+    let mut session = (0..64)
+        .map(|seed| random_session(&rep, TrainingMode::Both, seed))
+        .find(|session| {
+            random_route(session).len() == 4 && session.suggested_path().unwrap().len() == 1
+        })
+        .expect("a deterministic start at the final ply");
+    assert_eq!(session.path().len(), 3);
+    assert!(session.path().iter().all(|played| played.automatic));
+    assert_eq!(
+        session.play_uci("b8c6", 1).unwrap(),
+        TrainingVerdict::Finished
+    );
+    assert_eq!(session.path().len(), 4);
+    assert_eq!(session.path().last().unwrap().uci, "b8c6");
+    assert!(!session.path().last().unwrap().automatic);
+    let record = session
+        .stats()
+        .runs(&rep.id, TrainingMode::Both)
+        .unwrap()
+        .recent
+        .last()
+        .unwrap();
+    assert_eq!(record.path, strings(&["b8c6"]));
+    assert_eq!(record.automatic_moves, 3);
+    assert_eq!(record.user_attempts, 1);
+}
+
+#[test]
+fn random_scoped_start_never_escapes_the_base_end_or_creates_an_invalid_scope() {
+    let rep = repertoire("1. e4 e5 2. Nf3 Nc6 (2... Nf6) 3. Bb5 a6 *");
+    let prefix = strings(&["e2e4", "e7e5", "g1f3"]);
+    let end = strings(&["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"]);
+    let base = TrainingScope::between(prefix.clone(), end.clone());
+    let mut saw_short = false;
+    let mut saw_end = false;
+    for seed in 0..64 {
+        let session = TrainingSession::scoped_random_with_seed(
+            &rep,
+            base.clone(),
+            TrainingMode::Both,
+            StatsData::default(),
+            0,
+            seed,
+        )
+        .unwrap();
+        let route = random_route(&session);
+        assert!(route.starts_with(&prefix));
+        assert!(route.len() <= end.len());
+        assert_eq!(session.scope().end_prefix.as_ref(), Some(&route));
+        saw_short |= route.len() < end.len();
+        saw_end |= route == end;
+    }
+    assert!(saw_short && saw_end);
+}
+
+#[test]
+fn random_practice_pgn_fingerprint_change_restarts_the_cycle_at_the_same_count() {
+    let rep = repertoire("1. e4 (1. d4 d5) e5 *");
+    let initial = random_session(&rep, TrainingMode::Both, 19);
+    let before = serde_json::to_value(initial.stats()).unwrap();
+    let old_seed = before["random_practice_cursors"][0]["seed"]
+        .as_u64()
+        .unwrap();
+    let old_fingerprint = before["random_practice_cursors"][0]["fingerprint"].clone();
+    assert_eq!(before["random_practice_cursors"][0]["position"], 1);
+    assert_eq!(before["random_practice_cursors"][0]["count"], 2);
+
+    let mut changed = rep.clone();
+    changed.pgn = chess_core::parse_str("1. c4 (1. Nf3 Nf6) e5 *")
+        .game
+        .to_pgn();
+    let mut session = TrainingSession::scoped_random_with_seed(
+        &changed,
+        TrainingScope::whole(),
+        TrainingMode::Both,
+        initial.into_stats(),
+        1,
+        19,
+    )
+    .unwrap();
+    let after = serde_json::to_value(session.stats()).unwrap();
+    assert_eq!(after["random_practice_cursors"][0]["count"], 2);
+    assert_eq!(after["random_practice_cursors"][0]["position"], 1);
+    assert_ne!(
+        after["random_practice_cursors"][0]["seed"]
+            .as_u64()
+            .unwrap(),
+        old_seed
+    );
+    assert_ne!(
+        after["random_practice_cursors"][0]["fingerprint"],
+        old_fingerprint
+    );
+    let first = random_route(&session);
+    session.next_path(2).unwrap();
+    assert_ne!(random_route(&session), first);
+}
+
+#[test]
+fn random_practice_cursor_without_fingerprint_safely_starts_a_new_cycle() {
+    let rep = repertoire("1. e4 (1. d4 d5) e5 *");
+    let initial = random_session(&rep, TrainingMode::Both, 23);
+    let mut old = serde_json::to_value(initial.stats()).unwrap();
+    let cursor = old["random_practice_cursors"][0].as_object_mut().unwrap();
+    assert!(cursor.remove("fingerprint").is_some());
+    let old_seed = cursor["seed"].as_u64().unwrap();
+    assert_eq!(cursor["position"], 1);
+    let stats: StatsData = serde_json::from_value(old).unwrap();
+
+    let session = TrainingSession::scoped_random_with_seed(
+        &rep,
+        TrainingScope::whole(),
+        TrainingMode::Both,
+        stats,
+        1,
+        23,
+    )
+    .unwrap();
+    let after = serde_json::to_value(session.stats()).unwrap();
+    assert!(after["random_practice_cursors"][0]["fingerprint"].is_number());
+    assert_eq!(after["random_practice_cursors"][0]["position"], 1);
+    assert_ne!(
+        after["random_practice_cursors"][0]["seed"]
+            .as_u64()
+            .unwrap(),
+        old_seed
+    );
 }

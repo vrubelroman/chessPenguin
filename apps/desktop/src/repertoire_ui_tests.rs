@@ -50,8 +50,7 @@ impl Fixture {
     }
 
     fn start(&mut self) {
-        self.ui.mode = TrainingMode::Both;
-        self.ui.queue = QueueMode::ReviewInOrder;
+        self.ui.mode = TrainingMode::White;
         self.ui.start(&mut self.settings);
         assert!(self.ui.preparing);
     }
@@ -61,6 +60,127 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+#[test]
+fn load_persists_migration_of_legacy_training_limits() {
+    let f = Fixture::new();
+    let store = LibraryStore::new(f.dir.join("legacy-limits.json"));
+    let mut library = Library::default();
+    let id = library
+        .create("Legacy limits", &chess_core::parse_str("1. e4 e5 *").game)
+        .unwrap();
+    let repertoire = library.repertoire_mut(&id).unwrap();
+    repertoire.max_plies = 1;
+    repertoire
+        .set_prefix_disabled(&["e2e4".to_owned()], true)
+        .unwrap();
+    let pgn = repertoire.pgn.clone();
+    store.save(&mut library).unwrap();
+
+    let ui = RepertoireUi::with_stores(
+        store.clone(),
+        StatsStore::new(f.dir.join("legacy-stats.json")),
+    );
+    assert!(ui.library_error.is_none(), "{:?}", ui.library_error);
+    let saved = store.load().unwrap();
+    for library in [&ui.library, &saved] {
+        let repertoire = library.repertoire(&id).unwrap();
+        assert_eq!(repertoire.max_plies, u32::MAX);
+        assert!(repertoire.disabled_prefixes.is_empty());
+        assert_eq!(repertoire.pgn, pgn);
+    }
+}
+
+#[test]
+fn migration_write_failure_keeps_the_loaded_library_available() {
+    let f = Fixture::new();
+    let store = LibraryStore::new(f.dir.join("migration-failure.json"));
+    let mut library = Library::default();
+    let id = library
+        .create(
+            "Read only migration",
+            &chess_core::parse_str("1. e4 e5 *").game,
+        )
+        .unwrap();
+    let repertoire = library.repertoire_mut(&id).unwrap();
+    repertoire.max_plies = 1;
+    repertoire
+        .set_prefix_disabled(&["e2e4".to_owned()], true)
+        .unwrap();
+    store.save(&mut library).unwrap();
+    let lock = f.dir.join("migration-failure.json.lock");
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::create_dir(lock).unwrap();
+
+    let ui = RepertoireUi::with_stores(
+        store.clone(),
+        StatsStore::new(f.dir.join("migration-failure-stats.json")),
+    );
+    assert!(ui.library_error.is_some());
+    let migrated = ui.library.repertoire(&id).unwrap();
+    assert_eq!(migrated.max_plies, u32::MAX);
+    assert!(migrated.disabled_prefixes.is_empty());
+    let on_disk = store.load().unwrap();
+    let unchanged = on_disk.repertoire(&id).unwrap();
+    assert_eq!(unchanged.max_plies, 1);
+    assert_eq!(unchanged.disabled_prefixes.len(), 1);
+}
+
+#[test]
+fn practice_count_requires_a_move_for_the_selected_color() {
+    let mut f = Fixture::new();
+    let mut library = f.ui.library.clone();
+    let id = library
+        .create("White only", &chess_core::parse_str("1. e4 *").game)
+        .unwrap();
+    assert!(f.ui.persist(library));
+    f.deliver(f.completed_job());
+
+    for (mode, expected) in [
+        (TrainingMode::White, 1),
+        (TrainingMode::Black, 0),
+        (TrainingMode::Both, 1),
+    ] {
+        let scope = TrainingScope::whole();
+        assert_eq!(
+            f.ui.task_count(&id, mode, QueueMode::Practice, SrsPolicy::Due, &scope),
+            None
+        );
+        f.deliver(f.completed_job());
+        assert_eq!(
+            f.ui.task_count(&id, mode, QueueMode::Practice, SrsPolicy::Due, &scope),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn persist_normalizes_limits_before_saving_and_indexing() {
+    let mut f = Fixture::new();
+    let mut library = f.ui.library.clone();
+    let repertoire = library.repertoire_mut(&f.id).unwrap();
+    repertoire.max_plies = 1;
+    repertoire
+        .set_prefix_disabled(&["e2e4".to_owned()], true)
+        .unwrap();
+    let pgn = repertoire.pgn.clone();
+
+    assert!(f.ui.persist(library));
+    let saved = f.ui.library_store.load().unwrap();
+    for library in [&f.ui.library, &saved] {
+        let repertoire = library.repertoire(&f.id).unwrap();
+        assert_eq!(repertoire.max_plies, u32::MAX);
+        assert!(repertoire.disabled_prefixes.is_empty());
+        assert_eq!(repertoire.pgn, pgn);
+    }
+    f.deliver(f.completed_job());
+    assert_eq!(
+        f.ui.trees[&f.id]
+            .training_path_count(&TrainingScope::whole())
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -132,11 +252,45 @@ fn async_start_can_finish_a_real_opening_and_persist_its_statistics() {
     assert!(!training.has_unsaved());
     let saved = f.ui.stats_store.load().unwrap();
     assert_eq!(
-        saved.runs(&f.id, TrainingMode::Both).unwrap().completions,
+        saved.runs(&f.id, TrainingMode::White).unwrap().completions,
         1
     );
-    assert_eq!(saved.move_stats.iter().map(|s| s.correct).sum::<u32>(), 2);
+    assert_eq!(saved.move_stats.iter().map(|s| s.correct).sum::<u32>(), 1);
     assert!(f.ui.error.is_none());
+}
+
+#[test]
+fn start_ignores_legacy_queue() {
+    let mut f = Fixture::new();
+    f.settings.repertoire_modes.insert(
+        f.id.to_string(),
+        (TrainingMode::White, QueueMode::SpacedRepetition),
+    );
+    f.ui.select(f.id.clone(), &f.settings);
+    assert_eq!(f.ui.mode, TrainingMode::White);
+
+    f.ui.start(&mut f.settings);
+    assert!(f.ui.preparing);
+    assert_eq!(
+        f.settings.repertoire_modes.get(f.id.as_str()),
+        Some(&(TrainingMode::White, QueueMode::Practice))
+    );
+
+    f.deliver(f.completed_job());
+    assert!(f.ui.training_visible);
+    f.ui.debug_moves("e2e4 e7e5");
+    let training = f.ui.training.as_ref().unwrap();
+    assert!(!training.target_available());
+    assert!(!training.has_unsaved());
+    assert_eq!(
+        f.ui.stats_store
+            .load()
+            .unwrap()
+            .runs(&f.id, TrainingMode::White)
+            .unwrap()
+            .completions,
+        1
+    );
 }
 
 #[test]
@@ -193,6 +347,70 @@ fn both_and_review_counts_have_no_minute_expiry_and_complete_asynchronously() {
         );
         assert!(matches!(f.ui.rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
     }
+}
+
+#[test]
+fn variant_count_does_not_depend_on_completed_training_runs() {
+    let mut f = Fixture::new();
+    let game = chess_core::parse_str("1. e4 e5 (1... c5) 2. Nf3 *").game;
+    let mut library = f.ui.library.clone();
+    let id = library.create("Two paths", &game).unwrap();
+    assert!(f.ui.persist(library));
+    f.deliver(f.completed_job());
+    assert!(f.ui.stats.runs(&id, TrainingMode::Both).is_none());
+
+    let scope = TrainingScope::whole();
+    assert_eq!(
+        f.ui.task_count(
+            &id,
+            TrainingMode::Both,
+            QueueMode::Practice,
+            SrsPolicy::Due,
+            &scope
+        ),
+        None
+    );
+    f.deliver(f.completed_job());
+    assert_eq!(
+        f.ui.task_count(
+            &id,
+            TrainingMode::Both,
+            QueueMode::Practice,
+            SrsPolicy::Due,
+            &scope
+        ),
+        Some(2)
+    );
+
+    f.ui.stats.runs.push(trainer::repertoire::RunStats {
+        repertoire_id: id.clone(),
+        mode: TrainingMode::Both,
+        completions: 7,
+        last: Some(now()),
+        recent: Vec::new(),
+    });
+    f.ui.stats.revision += 1;
+    assert_eq!(
+        f.ui.task_count(
+            &id,
+            TrainingMode::Both,
+            QueueMode::Practice,
+            SrsPolicy::Due,
+            &scope
+        ),
+        None
+    );
+    f.deliver(f.completed_job());
+    assert_eq!(
+        f.ui.task_count(
+            &id,
+            TrainingMode::Both,
+            QueueMode::Practice,
+            SrsPolicy::Due,
+            &scope
+        ),
+        Some(2)
+    );
 }
 
 #[test]
@@ -307,25 +525,4 @@ fn corpus_import_preserves_source_and_reports_real_outcome() {
             "corpus check changed source bytes"
         );
     }
-}
-
-#[test]
-fn expanding_and_collapsing_variations_only_changes_visible_rows() {
-    let game = chess_core::parse_str("1. e4 e5 (1... c5 2. Nf3) 2. Bc4 *").game;
-    let before = game.canonical_tree();
-    let e4 = game.children(NodeId::ROOT)[0];
-    let e5 = game.children(e4)[0];
-    let c5 = game.children(e4)[1];
-    let bc4 = game.children(e5)[0];
-    let nf3 = game.children(c5)[0];
-    let mut expanded = HashSet::new();
-    let collapsed = tree_rows(&game, &expanded);
-    assert_eq!(collapsed, vec![(e4, 0), (e5, 0), (bc4, 0)]);
-    expanded.insert(e4);
-    let visible = tree_rows(&game, &expanded);
-    assert_eq!(visible, vec![(e4, 0), (e5, 0), (bc4, 0), (c5, 1), (nf3, 1)]);
-    assert_eq!(game.canonical_tree(), before);
-    expanded.remove(&e4);
-    assert_eq!(tree_rows(&game, &expanded), collapsed);
-    assert_eq!(game.canonical_tree(), before);
 }
