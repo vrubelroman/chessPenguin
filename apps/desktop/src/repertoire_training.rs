@@ -1,6 +1,7 @@
 use std::{sync::mpsc, time::Duration};
 
 use chess_core::shakmaty::{Chess, Color, Move, Position, Square, uci::UciMove};
+use chess_core::{Annotation, CommentPart, MoveKind, parse_comment};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Ui, vec2};
 use trainer::repertoire::{
     Candidate, QueueMode, Repertoire, RepertoireTree, SessionError, SrsPolicy, StatsData,
@@ -8,7 +9,7 @@ use trainer::repertoire::{
 };
 
 use crate::assets::Sound;
-use crate::board::{Arrow, BoardState, BoardView};
+use crate::board::{Arrow, Badge, BoardState, BoardView};
 use crate::i18n::{tr, trf};
 use crate::settings::Settings;
 
@@ -31,6 +32,13 @@ struct Flash {
 struct NextPathJob {
     generation: u64,
     rx: mpsc::Receiver<(u64, Result<TrainingSession, String>)>,
+}
+
+#[derive(Default)]
+struct BoardAnnotations {
+    arrows: Vec<Arrow>,
+    circles: Vec<(Square, Color32)>,
+    badge: Option<Badge>,
 }
 
 pub struct TrainingUi {
@@ -521,20 +529,24 @@ impl TrainingUi {
                 ))
             })
         });
-        let arrows: Vec<Arrow> = self
-            .hint
-            .map(|(from, to)| Arrow {
-                from,
-                to,
-                color: Color32::from_rgba_unmultiplied(21, 120, 27, 190),
-                weight: 1.0,
-            })
-            .into_iter()
-            .collect();
+        let annotations = if self.view_ply + 1 == self.positions.len() {
+            pgn_annotations(&self.session)
+        } else {
+            BoardAnnotations::default()
+        };
+        let mut arrows = annotations.arrows;
+        arrows.extend(self.hint.map(|(from, to)| Arrow {
+            from,
+            to,
+            color: Color32::from_rgba_unmultiplied(21, 120, 27, 190),
+            weight: 1.0,
+        }));
+        let circles = annotations.circles;
         let area = ui.available_rect_before_wrap();
         let side = area.width().min(area.height()).max(1.0).floor();
         let left = area.left() + ((area.width() - side) / 2.0).max(0.0).floor();
-        let rect = egui::Rect::from_min_size(egui::pos2(left, area.top()), vec2(side, side));
+        let top = area.top() + ((area.height() - side) / 2.0).max(0.0).floor();
+        let rect = egui::Rect::from_min_size(egui::pos2(left, top), vec2(side, side));
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             let view = BoardView {
                 pos: &position,
@@ -545,8 +557,8 @@ impl TrainingUi {
                 },
                 last_move,
                 arrows: &arrows,
-                circles: &[],
-                badge: None,
+                circles: &circles,
+                badge: annotations.badge,
                 interactive: !self.is_finished()
                     && self.flash.is_none()
                     && self.save_error.is_none()
@@ -655,7 +667,7 @@ impl TrainingUi {
         card(ui, false).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(tr("Preparing the tree…"));
+                ui.label(tr("Preparing the training session…"));
             });
         });
     }
@@ -767,7 +779,13 @@ impl TrainingUi {
             });
     }
 
-    pub fn show(&mut self, ui: &mut Ui, settings: &Settings, name: &str) -> Vec<TrainingAction> {
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        settings: &Settings,
+        name: &str,
+        mut manager: impl FnMut(&mut Ui),
+    ) -> Vec<TrainingAction> {
         self.poll_next();
         let mut actions = Vec::new();
         if self.next_job.is_some() {
@@ -785,7 +803,7 @@ impl TrainingUi {
         }
         self.keyboard(ui, &mut actions);
         egui::Panel::top("repertoire_training_header").show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
                         self.next_job.is_none(),
@@ -801,29 +819,41 @@ impl TrainingUi {
                 }
                 ui.separator();
                 ui.label(mode_label(self.mode));
+                ui.add(egui::Label::new(RichText::new(name).heading()).truncate())
+                    .on_hover_text(name);
             });
-            ui.add(egui::Label::new(RichText::new(name).heading()).truncate())
-                .on_hover_text(name);
-            ui.add_space(2.0);
         });
         let width = ui.available_width();
         let height = ui.available_height();
         let stacked = width < 900.0 && height > width;
-        let side = if stacked {
-            egui::Panel::bottom("repertoire_training_side_stacked")
-                .resizable(true)
-                .default_size(320.0)
-                .size_range(300.0..=(height - 220.0).max(300.0))
-                .show(ui, |ui| self.side(ui, &mut actions))
+        if stacked {
+            let available = ui.available_rect_before_wrap();
+            let panel_height = (height * 0.52).clamp(340.0, 520.0);
+            let board_rect = egui::Rect::from_min_max(
+                available.min,
+                egui::pos2(available.right(), available.bottom() - panel_height),
+            );
+            let side_rect = egui::Rect::from_min_max(
+                egui::pos2(available.left(), board_rect.bottom()),
+                available.max,
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(board_rect), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| self.board(ui, settings, &mut actions));
+            });
+            ui.scope_builder(egui::UiBuilder::new().max_rect(side_rect), |ui| {
+                ui.set_clip_rect(side_rect);
+                egui::Frame::side_top_panel(ui.style())
+                    .show(ui, |ui| self.side(ui, &mut actions, &mut manager));
+            });
         } else {
-            egui::Panel::right("repertoire_training_side")
+            let side = egui::Panel::right("repertoire_workspace_side")
                 .resizable(true)
-                .default_size((width * 0.36).clamp(280.0, 430.0))
-                .size_range(240.0..=(width - 220.0).max(240.0))
-                .show(ui, |ui| self.side(ui, &mut actions))
-        };
-        crate::widgets::check_panel("repertoire_training_side", &side.response);
-        egui::CentralPanel::default().show(ui, |ui| self.board(ui, settings, &mut actions));
+                .default_size((width * 0.42).clamp(420.0, 560.0))
+                .size_range(360.0..=(width - 220.0).max(360.0))
+                .show(ui, |ui| self.side(ui, &mut actions, &mut manager));
+            crate::widgets::check_panel("repertoire_training_side", &side.response);
+            egui::CentralPanel::default().show(ui, |ui| self.board(ui, settings, &mut actions));
+        }
         if self.next_job.is_some() {
             self.discard_requested = false;
             actions.retain(|action| !matches!(action, TrainingAction::Back));
@@ -843,61 +873,47 @@ impl TrainingUi {
         actions
     }
 
-    fn side(&mut self, ui: &mut Ui, actions: &mut Vec<TrainingAction>) {
-        egui::ScrollArea::vertical()
-            .id_salt("repertoire_training_controls")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                self.save_strip(ui);
-                if self.next_job.is_some() {
-                    self.preparing(ui);
-                } else if self.is_finished() {
-                    self.result(ui, actions);
-                } else {
-                    self.task_card(ui);
-                    self.user_card(ui);
-                }
-                if self.next_job.is_none() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        for (label, ply) in [
-                            ("⏮", 0),
-                            ("◀", self.view_ply.saturating_sub(1)),
-                            (
-                                "▶",
-                                (self.view_ply + 1).min(self.positions.len().saturating_sub(1)),
-                            ),
-                            ("⏭", self.positions.len().saturating_sub(1)),
-                        ] {
-                            if ui
-                                .add_sized([30.0, 26.0], egui::Button::new(label))
-                                .clicked()
-                            {
-                                self.view_ply = ply;
-                            }
-                        }
-                        if ui
-                            .add_sized([30.0, 26.0], egui::Button::new("🔃"))
-                            .on_hover_text(tr("Flip board (F)"))
-                            .clicked()
-                        {
-                            self.flipped = !self.flipped;
-                        }
-                        if !self.is_finished() && ui.button(tr("↻ Restart")).clicked() {
-                            self.restart();
-                        }
-                    });
-                }
-                if self.next_job.is_none()
-                    && self.view_ply + 1 < self.positions.len()
-                    && ui
-                        .link(tr("Viewing an earlier position · back to training — End"))
-                        .clicked()
+    fn side(
+        &mut self,
+        ui: &mut Ui,
+        actions: &mut Vec<TrainingAction>,
+        manager: &mut impl FnMut(&mut Ui),
+    ) {
+        ui.spacing_mut().item_spacing.y = 8.0;
+        self.save_strip(ui);
+        if self.next_job.is_some() {
+            self.preparing(ui);
+        } else if self.is_finished() {
+            self.result(ui, actions);
+        } else {
+            self.task_card(ui);
+            self.user_card(ui);
+        }
+        if self.next_job.is_none() {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if ui
+                    .add_sized([30.0, 26.0], egui::Button::new("🔃"))
+                    .on_hover_text(tr("Flip board (F)"))
+                    .clicked()
                 {
-                    self.go_end();
+                    self.flipped = !self.flipped;
+                }
+                if !self.is_finished() && ui.button(tr("↻ Restart")).clicked() {
+                    self.restart();
                 }
             });
+        }
+        if self.next_job.is_none()
+            && self.view_ply + 1 < self.positions.len()
+            && ui
+                .link(tr("Viewing an earlier position · back to training — End"))
+                .clicked()
+        {
+            self.go_end();
+        }
+        ui.separator();
+        manager(ui);
     }
 
     pub fn debug_hint(&mut self) {
@@ -1008,6 +1024,54 @@ fn move_squares(candidate: &Candidate) -> Option<(Square, Square)> {
     ))
 }
 
+fn pgn_annotations(session: &TrainingSession) -> BoardAnnotations {
+    let mut out = BoardAnnotations::default();
+    let Some(node) = session.game().node(session.current_node()) else {
+        return out;
+    };
+    let square = node.game_move().and_then(|game_move| match game_move.kind {
+        MoveKind::Normal(mv) => Some(crate::board::ui_target(&mv)),
+        MoveKind::Null => None,
+    });
+    if let Some(square) = square {
+        out.badge = node
+            .nags()
+            .iter()
+            .copied()
+            .find(|nag| nag.is_move_assessment())
+            .and_then(|nag| {
+                Some(Badge {
+                    square,
+                    text: nag.symbol()?,
+                    color: crate::notation::assessment_color(nag)?,
+                })
+            });
+    }
+    for comment in node.comments_after() {
+        for part in parse_comment(comment) {
+            match part {
+                CommentPart::Annotation(Annotation::Arrows(list)) => {
+                    out.arrows
+                        .extend(list.into_iter().map(|(color, from, to)| Arrow {
+                            from,
+                            to,
+                            color: crate::game_view::shape_color(color),
+                            weight: 0.9,
+                        }));
+                }
+                CommentPart::Annotation(Annotation::Squares(list)) => {
+                    out.circles.extend(
+                        list.into_iter()
+                            .map(|(color, square)| (square, crate::game_view::shape_color(color))),
+                    );
+                }
+                CommentPart::Text(_) | CommentPart::Annotation(_) => {}
+            }
+        }
+    }
+    out
+}
+
 pub fn mode_label(mode: TrainingMode) -> &'static str {
     tr(match mode {
         TrainingMode::White => "White",
@@ -1070,6 +1134,53 @@ mod tests {
         assert_eq!(training.view_ply + 1, training.positions.len());
         assert_eq!(shown.fullmoves(), training.session.position().fullmoves());
         assert_eq!(shown.halfmoves(), training.session.position().halfmoves());
+    }
+
+    #[test]
+    fn pgn_badges_and_shapes_are_shown_for_the_current_move() {
+        use chess_core::{Nag, ShapeColor};
+
+        let mut training = training(
+            "1. e4!! {[%cal Re2e4,Ge7e5] [%csl Ye4,Re5]} e5?! {[%cal Bg1f3]} *",
+            TrainingMode::Both,
+            "annotations",
+        );
+        training.debug_moves("e2e4");
+        let annotations = pgn_annotations(&training.session);
+        let badge = annotations.badge.unwrap();
+        assert_eq!(badge.text, "!!");
+        assert_eq!(badge.square, Square::E4);
+        assert_eq!(
+            badge.color,
+            crate::notation::assessment_color(Nag::BRILLIANT_MOVE).unwrap()
+        );
+        assert_eq!(annotations.arrows.len(), 2);
+        assert!(annotations.arrows.iter().any(|arrow| {
+            arrow.from == Square::E2
+                && arrow.to == Square::E4
+                && arrow.color == crate::game_view::shape_color(ShapeColor::Red)
+        }));
+        assert!(annotations.arrows.iter().any(|arrow| {
+            arrow.from == Square::E7
+                && arrow.to == Square::E5
+                && arrow.color == crate::game_view::shape_color(ShapeColor::Green)
+        }));
+        assert_eq!(annotations.circles.len(), 2);
+        assert!(annotations.circles.iter().any(|(square, color)| {
+            *square == Square::E4 && *color == crate::game_view::shape_color(ShapeColor::Yellow)
+        }));
+        assert!(annotations.circles.iter().any(|(square, color)| {
+            *square == Square::E5 && *color == crate::game_view::shape_color(ShapeColor::Red)
+        }));
+
+        training.debug_moves("e7e5");
+        let annotations = pgn_annotations(&training.session);
+        assert_eq!(annotations.badge.unwrap().text, "?!");
+        assert!(annotations.arrows.iter().any(|arrow| {
+            arrow.from == Square::G1
+                && arrow.to == Square::F3
+                && arrow.color == crate::game_view::shape_color(ShapeColor::Blue)
+        }));
     }
 
     #[test]

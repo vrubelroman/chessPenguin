@@ -63,6 +63,118 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn creating_an_empty_repertoire_selects_it_in_the_workspace() {
+    let mut f = Fixture::new();
+    f.ui.open_library();
+    f.ui.edit_name = Some((None, "Empty opening".to_owned()));
+
+    f.ui.save_name(None, "Empty opening", &f.settings);
+
+    let created =
+        f.ui.library
+            .repertoires
+            .iter()
+            .find(|r| r.name == "Empty opening")
+            .expect("the repertoire is saved");
+    assert!(!f.ui.training_visible);
+    assert_eq!(f.ui.selected.as_ref(), Some(&created.id));
+    assert!(f.ui.edit_name.is_none());
+    assert!(f.ui.error.is_none());
+}
+
+#[test]
+fn clicking_a_row_selects_it_without_leaving_the_workspace() {
+    let mut f = Fixture::new();
+    f.ui.open_library();
+    f.ui.selected = None;
+    let ctx = egui::Context::default();
+    let mut frame = |time: f64, events: Vec<egui::Event>| {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 700.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    f.ui.show_library(ui, &f.settings);
+                });
+            },
+        )
+        .drop_without_applying_deltas();
+        (f.ui.selected.clone(), f.ui.training_visible)
+    };
+    let click = || {
+        let position = egui::pos2(200.0, 80.0);
+        vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+
+    frame(0.0, Vec::new());
+    let (selected, training) = frame(1.0, click());
+    assert_eq!(selected.as_ref(), Some(&f.id));
+    assert!(!training);
+    assert!(f.ui.tree.is_some());
+}
+
+#[test]
+fn opening_index_has_the_deepest_eco_and_variation_name() {
+    let game = chess_core::parse_str("1. e4 c5 2. Nf3 Nc6 3. Bb5 g6 4. O-O *").game;
+    let mut library = Library::default();
+    let id = library.create("Rossolimo", &game).unwrap();
+    let tree = RepertoireTree::new(library.repertoire(&id).unwrap());
+
+    let labels = opening_labels(&tree);
+
+    assert_eq!(labels.len(), 1);
+    assert_eq!(labels[0].eco, "B31");
+    assert!(
+        labels[0]
+            .name
+            .starts_with("Sicilian Defense: Nyezhmetdinov-Rossolimo Attack"),
+        "{}",
+        labels[0].name
+    );
+}
+
+#[test]
+fn rows_have_one_height_and_show_at_most_five_opening_names() {
+    let f = Fixture::new();
+    let row = |count: usize| LibraryRow {
+        id: f.id.clone(),
+        name: "Opening".to_owned(),
+        openings: (0..count)
+            .map(|index| OpeningLabel {
+                eco: format!("B{index:02}"),
+                name: format!("Opening {index}"),
+            })
+            .collect(),
+    };
+
+    assert_eq!(LibraryRow::height(), 28.0 + 22.0 * OPENING_LINES as f32);
+    assert_eq!(row(0).visible_openings().len(), 0);
+    assert_eq!(row(3).visible_openings().len(), 3);
+    assert_eq!(row(8).visible_openings().len(), OPENING_LINES);
+}
+
+#[test]
 fn load_persists_migration_of_legacy_training_limits() {
     let f = Fixture::new();
     let store = LibraryStore::new(f.dir.join("legacy-limits.json"));
@@ -201,14 +313,13 @@ fn stale_index_cannot_replace_a_newer_rebuild() {
 }
 
 #[test]
-fn completed_training_start_is_ignored_after_leaving_the_detail_screen() {
+fn completed_training_start_is_ignored_after_leaving_the_workspace() {
     let mut f = Fixture::new();
     f.start();
     let ready = f.completed_job();
     f.ui.open_library();
     f.deliver(ready);
     assert!(!f.ui.preparing);
-    assert!(!f.ui.detail);
     assert!(!f.ui.training_visible);
     assert!(f.ui.training.is_none());
     assert!(f.ui.error.is_none());
@@ -256,6 +367,32 @@ fn async_start_can_finish_a_real_opening_and_persist_its_statistics() {
         1
     );
     assert_eq!(saved.move_stats.iter().map(|s| s.correct).sum::<u32>(), 1);
+    assert!(f.ui.error.is_none());
+}
+
+#[test]
+fn reset_clears_the_saved_statistics_of_the_selected_mode() {
+    let mut f = Fixture::new();
+    f.start();
+    let ready = f.completed_job();
+    f.deliver(ready);
+    f.ui.debug_moves("e2e4 e7e5");
+    assert!(
+        f.ui.stats_store
+            .load()
+            .unwrap()
+            .runs(&f.id, TrainingMode::White)
+            .is_some()
+    );
+
+    f.ui.open_library();
+    f.ui.reset_stats = Some(f.id.clone());
+    f.ui.reset_statistics(&f.id);
+
+    let saved = f.ui.stats_store.load().unwrap();
+    assert!(saved.runs(&f.id, TrainingMode::White).is_none());
+    assert!(saved.move_stats.is_empty());
+    assert!(f.ui.reset_stats.is_none());
     assert!(f.ui.error.is_none());
 }
 

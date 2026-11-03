@@ -813,6 +813,7 @@ dependencies = [
  "base64 0.22.1",
  "chess-core",
  "chess-import",
+ "chess-openings",
  "chrono",
  "directories",
  "eframe",

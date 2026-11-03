@@ -870,6 +870,63 @@ fn removing_repertoire_cleans_all_modern_statistics_and_cursors_but_keeps_others
 }
 
 #[test]
+fn resetting_one_mode_preserves_other_modes_and_repertoires() {
+    let first = repertoire("1. e4 (1. d4) *");
+    let second = repertoire("1. Nf3 (1. c4) *");
+    let mut data = StatsData::default();
+    data.legacy_lines
+        .insert("original".into(), serde_json::json!({"runs": 3}));
+    for (rep, mode) in [
+        (&first, TrainingMode::White),
+        (&first, TrainingMode::Both),
+        (&second, TrainingMode::White),
+    ] {
+        let mut session = TrainingSession::new_random(rep, mode, data, 0).unwrap();
+        while !session.is_done() {
+            let mv = session.candidates()[0].uci.clone();
+            session.play_uci(&mv, 1).unwrap();
+        }
+        data = session.into_stats();
+    }
+
+    data.remove_repertoire_mode(&first.id, TrainingMode::White);
+
+    assert!(data.runs(&first.id, TrainingMode::White).is_none());
+    assert!(data.runs(&first.id, TrainingMode::Both).is_some());
+    assert!(data.runs(&second.id, TrainingMode::White).is_some());
+    assert!(
+        data.move_stats
+            .iter()
+            .all(|entry| entry.key.repertoire_id != first.id
+                || entry.key.mode != TrainingMode::White)
+    );
+    assert!(
+        data.move_stats.iter().any(
+            |entry| entry.key.repertoire_id == first.id && entry.key.mode == TrainingMode::Both
+        )
+    );
+    assert!(
+        data.path_stats
+            .iter()
+            .any(|entry| entry.key.repertoire_id == first.id)
+    );
+    let after = serde_json::to_value(&data).unwrap();
+    let cursors = after["random_practice_cursors"].as_array().unwrap();
+    assert!(cursors.iter().all(
+        |entry| entry["repertoire_id"] != serde_json::json!(first.id)
+            || entry["mode"] != serde_json::json!("White")
+    ));
+    assert!(cursors.iter().any(
+        |entry| entry["repertoire_id"] == serde_json::json!(first.id)
+            && entry["mode"] == serde_json::json!("Both")
+    ));
+    assert_eq!(
+        after["legacy_lines"],
+        serde_json::json!({"original": {"runs": 3}})
+    );
+}
+
+#[test]
 fn streaming_paths_stop_early_and_match_full_queue_across_wraps_and_history() {
     use std::ops::ControlFlow;
     let rep = repertoire(
@@ -1265,6 +1322,40 @@ fn practice_next_branch_hint_follows_proposal_and_both_path_completion_is_once()
 }
 
 #[test]
+fn source_paths_and_random_cycle_do_not_multiply_transpositions() {
+    let mut rep = repertoire(
+        "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 O-O (7... d6 8. c3 O-O 9. h3 Nb8 (9... Bb7 10. d4 Re8 11. Nbd2 Bf8) (9... Na5 10. Bc2 c5 11. d4 Qc7 12. Nbd2 cxd4) 10. d4 Nbd7) 8. c3 d6 9. h3 Na5 10. Bc2 c5 11. d4 Qc7 12. Nbd2 Bd7 13. Nf1 *",
+    );
+    rep.max_plies = u32::MAX;
+    let tree = RepertoireTree::new(&rep);
+    let source: std::collections::BTreeSet<Vec<String>> = {
+        let mut paths = std::collections::BTreeSet::new();
+        tree.visit_source_paths(&TrainingScope::whole(), |moves| {
+            paths.insert(moves.to_vec());
+            std::ops::ControlFlow::Continue(())
+        })
+        .unwrap();
+        paths
+    };
+    assert_eq!(source.len(), 4);
+    assert!(tree.training_paths(&TrainingScope::whole()).unwrap().len() > source.len());
+
+    let mut session = random_session(&rep, TrainingMode::Both, 42);
+    for step in 0..source.len() {
+        let route = random_route(&session);
+        assert!(
+            source.contains(&route),
+            "route={route:?}\nsource={source:?}"
+        );
+        if step + 1 < source.len() {
+            session.next_path(step as i64).unwrap();
+        }
+    }
+    let saved = serde_json::to_value(session.stats()).unwrap();
+    assert_eq!(saved["random_practice_cursors"][0]["count"], 4);
+}
+
+#[test]
 fn random_practice_is_deterministic_and_covers_every_route_before_a_new_cycle() {
     let rep = repertoire("1. e4 e5 (1... c5) 2. Nf3 (2. c4) *");
     let expected: std::collections::BTreeSet<Vec<String>> = RepertoireTree::new(&rep)
@@ -1295,7 +1386,7 @@ fn random_practice_is_deterministic_and_covers_every_route_before_a_new_cycle() 
 
 #[test]
 fn random_practice_mid_path_context_has_the_correct_side_for_every_mode() {
-    let rep = repertoire("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *");
+    let rep = repertoire("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 *");
     for mode in [TrainingMode::White, TrainingMode::Black, TrainingMode::Both] {
         let mut session = None;
         for seed in 0..64 {
@@ -1315,7 +1406,8 @@ fn random_practice_mid_path_context_has_the_correct_side_for_every_mode() {
             session.scope().prefix.last().unwrap(),
             &session.suggested_path().unwrap()[0]
         );
-        assert_eq!(random_route(&session).len(), 6);
+        assert_eq!(random_route(&session).len(), 12);
+        assert!(session.suggested_path().unwrap().len() >= stats::MIN_RANDOM_CONTINUATION_PLIES);
         assert_eq!(
             session.position_key(),
             session.path().last().unwrap().position_after
@@ -1334,7 +1426,7 @@ fn random_practice_mid_path_context_has_the_correct_side_for_every_mode() {
 
 #[test]
 fn random_repeat_preserves_actual_route_start_and_the_next_cursor() {
-    let rep = repertoire("1. e4 e5 (1... c5) 2. Nf3 (2. c4) *");
+    let rep = repertoire("1. e4 e5 (1... c5) 2. Nf3 (2. c4) Nc6 3. Bb5 a6 4. Ba4 Nf6 *");
     let mut session = (0..64)
         .map(|seed| random_session(&rep, TrainingMode::Both, seed))
         .find(|session| !session.path().is_empty())
@@ -1439,34 +1531,39 @@ fn random_practice_reads_old_stats_without_the_random_cursor_field() {
 }
 
 #[test]
-fn random_both_result_finishes_on_the_real_last_ply_beyond_legacy_depth() {
-    let mut rep = repertoire("1. e4 e5 2. Nf3 Nc6 *");
-    rep.max_plies = 1;
-    let mut session = (0..64)
-        .map(|seed| random_session(&rep, TrainingMode::Both, seed))
-        .find(|session| {
-            random_route(session).len() == 4 && session.suggested_path().unwrap().len() == 1
-        })
-        .expect("a deterministic start at the final ply");
-    assert_eq!(session.path().len(), 3);
-    assert!(session.path().iter().all(|played| played.automatic));
-    assert_eq!(
-        session.play_uci("b8c6", 1).unwrap(),
-        TrainingVerdict::Finished
-    );
-    assert_eq!(session.path().len(), 4);
-    assert_eq!(session.path().last().unwrap().uci, "b8c6");
-    assert!(!session.path().last().unwrap().automatic);
+fn random_start_keeps_seven_plies_and_finishes_on_the_actual_last_move() {
+    let mut long = repertoire("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 *");
+    long.max_plies = 1;
+    for seed in 0..64 {
+        let session = random_session(&long, TrainingMode::Both, seed);
+        assert_eq!(random_route(&session).len(), 12);
+        assert!(session.suggested_path().unwrap().len() >= stats::MIN_RANDOM_CONTINUATION_PLIES);
+    }
+
+    let short = repertoire("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *");
+    for seed in 0..64 {
+        let session = random_session(&short, TrainingMode::Both, seed);
+        assert!(session.path().is_empty());
+        assert_eq!(session.suggested_path().unwrap().len(), 6);
+    }
+
+    let mut session = random_session(&long, TrainingMode::Both, 42);
+    let selected = session.suggested_path().unwrap().to_vec();
+    let automatic = session.path().len();
+    for (index, mv) in selected.iter().enumerate() {
+        session.play_uci(mv, index as i64).unwrap();
+    }
+    assert!(session.is_done());
     let record = session
         .stats()
-        .runs(&rep.id, TrainingMode::Both)
+        .runs(&long.id, TrainingMode::Both)
         .unwrap()
         .recent
         .last()
         .unwrap();
-    assert_eq!(record.path, strings(&["b8c6"]));
-    assert_eq!(record.automatic_moves, 3);
-    assert_eq!(record.user_attempts, 1);
+    assert_eq!(record.path, selected);
+    assert_eq!(record.automatic_moves, automatic as u32);
+    assert_eq!(record.user_attempts, selected.len() as u32);
 }
 
 #[test]

@@ -21,6 +21,7 @@ path = "src/main.rs"
 
 [dependencies]
 chess-core.workspace = true
+chess-openings.workspace = true
 maia.workspace = true
 game-review.workspace = true
 prep.workspace = true

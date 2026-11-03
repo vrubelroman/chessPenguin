@@ -324,6 +324,52 @@ impl RepertoireTree {
         Ok(())
     }
 
+    /// Streams the routes explicitly present in PGN, without importing continuations
+    /// from other paths that reach the same position.
+    pub fn visit_source_paths(
+        &self,
+        scope: &TrainingScope,
+        mut visit: impl FnMut(&[String]) -> std::ops::ControlFlow<()>,
+    ) -> Result<(), String> {
+        let anchor = self.scope_anchor(scope)?;
+        let _ = self.visit_source(anchor, scope, &mut Vec::new(), &mut visit);
+        Ok(())
+    }
+
+    fn visit_source(
+        &self,
+        at: NodeId,
+        scope: &TrainingScope,
+        current: &mut Vec<String>,
+        visit: &mut impl FnMut(&[String]) -> std::ops::ControlFlow<()>,
+    ) -> std::ops::ControlFlow<()> {
+        let mut continued = false;
+        if scope.parent_prefix().len() + current.len() < self.max_plies as usize {
+            for child in self.game.children(at) {
+                let Some(game_move) = self.game.game_move(*child) else {
+                    continue;
+                };
+                let MoveKind::Normal(mv) = game_move.kind else {
+                    continue;
+                };
+                if !self.is_trainable_path(*child) || !self.scope_allows_child(*child, Some(scope))
+                {
+                    continue;
+                }
+                continued = true;
+                current.push(mv.to_uci(CastlingMode::Standard).to_string());
+                let result = self.visit_source(*child, scope, current, visit);
+                current.pop();
+                result?;
+            }
+        }
+        if current.is_empty() || continued {
+            std::ops::ControlFlow::Continue(())
+        } else {
+            visit(current)
+        }
+    }
+
     pub fn training_path_count(&self, scope: &TrainingScope) -> Result<usize, String> {
         let mut count = Some(0usize);
         self.visit_training_paths(scope, |_| {

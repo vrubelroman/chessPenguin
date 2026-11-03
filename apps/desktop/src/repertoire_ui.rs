@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -6,7 +6,7 @@ use std::sync::{
     mpsc::{self, Receiver, Sender},
 };
 
-use chess_core::shakmaty::Color;
+use chess_core::shakmaty::{Color, Position, uci::UciMove};
 use chess_core::{Game, NodeId, PgnDatabase, Severity};
 use egui::{Key, Modifiers, RichText, Ui};
 use trainer::repertoire::{
@@ -32,9 +32,29 @@ pub enum RepertoireAction {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct OpeningLabel {
+    eco: String,
+    name: String,
+}
+
 struct LibraryRow {
     id: RepertoireId,
     name: String,
+    openings: Vec<OpeningLabel>,
+}
+
+const OPENING_LINES: usize = 5;
+const ACTION_BUTTON_WIDTH: f32 = 120.0;
+
+impl LibraryRow {
+    fn height() -> f32 {
+        28.0 + 22.0 * OPENING_LINES as f32
+    }
+
+    fn visible_openings(&self) -> &[OpeningLabel] {
+        &self.openings[..self.openings.len().min(OPENING_LINES)]
+    }
 }
 
 struct ImportPreview {
@@ -65,7 +85,11 @@ struct CountKey {
 
 enum Event {
     Counted(CountKey, usize),
-    Indexed(u64, HashMap<RepertoireId, Arc<RepertoireTree>>),
+    Indexed(
+        u64,
+        HashMap<RepertoireId, Arc<RepertoireTree>>,
+        HashMap<RepertoireId, Vec<OpeningLabel>>,
+    ),
     TrainingReady(u64, Result<Box<TrainingUi>, String>),
     Imported(Result<ImportPreview, String>),
     Exported(Result<(), String>),
@@ -87,9 +111,10 @@ pub struct RepertoireUi {
     stats_error: Option<String>,
     error: Option<String>,
     selected: Option<RepertoireId>,
-    detail: bool,
+    scroll_to_selected: bool,
     tree: Option<Arc<RepertoireTree>>,
     trees: HashMap<RepertoireId, Arc<RepertoireTree>>,
+    openings: HashMap<RepertoireId, Vec<OpeningLabel>>,
     counts: HashMap<CountKey, Option<usize>>,
     index_generation: u64,
     indexing: bool,
@@ -104,6 +129,7 @@ pub struct RepertoireUi {
     add: Option<AddFromGame>,
     edit_name: Option<(Option<RepertoireId>, String)>,
     delete: Option<RepertoireId>,
+    reset_stats: Option<RepertoireId>,
     search: String,
     legacy: bool,
     import: Option<ImportPreview>,
@@ -139,9 +165,10 @@ impl RepertoireUi {
             stats_error,
             error: None,
             selected,
-            detail: false,
+            scroll_to_selected: true,
             tree: None,
             trees: HashMap::new(),
+            openings: HashMap::new(),
             counts: HashMap::new(),
             index_generation: 0,
             indexing: false,
@@ -156,6 +183,7 @@ impl RepertoireUi {
             add: None,
             edit_name: None,
             delete: None,
+            reset_stats: None,
             search: String::new(),
             legacy: false,
             import: None,
@@ -179,7 +207,10 @@ impl RepertoireUi {
     }
     pub fn open_library(&mut self) {
         self.preparing = false;
-        self.detail = false;
+        self.scroll_to_selected = true;
+        if let Some(training) = &self.training {
+            self.stats = training.stats().clone();
+        }
         self.training_visible = false;
     }
     pub fn open_from_toast(&mut self, id: RepertoireId, title: String, settings: &Settings) {
@@ -208,8 +239,11 @@ impl RepertoireUi {
     }
     fn select(&mut self, id: RepertoireId, settings: &Settings) {
         self.preparing = false;
+        self.training_visible = false;
+        self.training = None;
+        self.reset_stats = None;
+        self.scroll_to_selected = true;
         self.selected = Some(id.clone());
-        self.detail = true;
         self.mode = settings
             .repertoire_modes
             .get(id.as_str())
@@ -231,16 +265,20 @@ impl RepertoireUi {
         self.indexing = true;
         self.preparing = false;
         self.trees.clear();
+        self.openings.clear();
         self.update_selected_tree();
         let generation = self.index_generation;
         let repertoires = self.library.repertoires.clone();
         let tx = self.tx.clone();
         if let Err(error) = crate::platform::spawn("repertoire-index", move || {
-            let trees = repertoires
-                .into_iter()
-                .map(|r| (r.id.clone(), Arc::new(RepertoireTree::new(&r))))
-                .collect();
-            let _ = tx.send(Event::Indexed(generation, trees));
+            let mut trees = HashMap::new();
+            let mut openings = HashMap::new();
+            for r in repertoires {
+                let tree = Arc::new(RepertoireTree::new(&r));
+                openings.insert(r.id.clone(), opening_labels(&tree));
+                trees.insert(r.id.clone(), tree);
+            }
+            let _ = tx.send(Event::Indexed(generation, trees, openings));
         }) {
             self.indexing = false;
             self.error = Some(error.to_string());
@@ -310,6 +348,7 @@ impl RepertoireUi {
         settings
             .repertoire_modes
             .insert(r.id.to_string(), (mode, QueueMode::Practice));
+        self.scroll_to_selected = true;
         self.preparing = true;
         if let Err(error) = crate::platform::spawn("repertoire-training-start", move || {
             let result = TrainingUi::new_random(&repertoire, mode, stats, store, false)
@@ -438,9 +477,10 @@ impl RepertoireUi {
     fn poll(&mut self, settings: &mut Settings) {
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                Event::Indexed(generation, trees) => {
+                Event::Indexed(generation, trees, openings) => {
                     if generation == self.index_generation {
                         self.trees = trees;
+                        self.openings = openings;
                         self.indexing = false;
                         self.update_selected_tree();
                     }
@@ -497,24 +537,29 @@ impl RepertoireUi {
     pub fn show(&mut self, ui: &mut Ui, settings: &mut Settings) -> Vec<RepertoireAction> {
         self.poll(settings);
         let mut actions = Vec::new();
-        if self.training_visible {
-            if let Some(training) = self.training.as_mut() {
-                let name = self
-                    .library
-                    .repertoire(training.repertoire_id())
-                    .map(|r| r.name.as_str())
-                    .unwrap_or_default();
-                for action in training.show(ui, settings, name) {
-                    match action {
-                        TrainingAction::Back => {
-                            self.stats = training.stats().clone();
-                            self.training_visible = false;
-                        }
-                        TrainingAction::Sound(sound) => {
-                            actions.push(RepertoireAction::Sound(sound))
-                        }
-                        TrainingAction::Toast(text) => actions.push(RepertoireAction::Toast(text)),
+        if self.training_visible && self.training.is_some() {
+            let mut training = self.training.take().expect("checked training session");
+            let name = self
+                .library
+                .repertoire(training.repertoire_id())
+                .map(|r| r.name.clone())
+                .unwrap_or_default();
+            let locked = training.has_unsaved();
+            let emitted = training.show(ui, settings, &name, |ui| {
+                ui.add_enabled_ui(!locked, |ui| self.show_library(ui, settings));
+            });
+            self.stats = training.stats().clone();
+            if self.training_visible {
+                self.training = Some(training);
+            }
+            for action in emitted {
+                match action {
+                    TrainingAction::Back => {
+                        self.training_visible = false;
+                        self.scroll_to_selected = true;
                     }
+                    TrainingAction::Sound(sound) => actions.push(RepertoireAction::Sound(sound)),
+                    TrainingAction::Toast(text) => actions.push(RepertoireAction::Toast(text)),
                 }
             }
             return actions;
@@ -524,48 +569,29 @@ impl RepertoireUi {
             && self.add.is_none()
             && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
         {
-            if self.detail {
-                self.detail = false;
-                self.preparing = false;
-            } else {
-                actions.push(RepertoireAction::Close);
-            }
+            actions.push(RepertoireAction::Close);
         }
         egui::Panel::top("repertoire_header").show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 if ui
-                    .button(if self.detail {
-                        tr("← Repertoires")
-                    } else if self.return_to_game.is_some() {
+                    .button(if self.return_to_game.is_some() {
                         tr("← To game")
                     } else {
                         tr("← Databases")
                     })
                     .clicked()
                 {
-                    if self.detail {
-                        self.detail = false;
-                        self.preparing = false;
-                    } else {
-                        actions.push(RepertoireAction::Close);
-                    }
+                    actions.push(RepertoireAction::Close);
                 }
                 ui.heading(tr("Opening training"));
-                if ui.button("⚙").on_hover_text(tr("Settings")).clicked() {
-                    actions.push(RepertoireAction::OpenSettings);
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("⚙").on_hover_text(tr("Settings")).clicked() {
+                        actions.push(RepertoireAction::OpenSettings);
+                    }
+                });
             });
-            if self.detail && self.return_to_game.is_some() && ui.link(tr("← To game")).clicked()
-            {
-                actions.push(RepertoireAction::Close);
-            }
-            self.errors(ui);
         });
-        if self.detail {
-            self.show_detail(ui, settings, &mut actions);
-        } else {
-            egui::CentralPanel::default().show(ui, |ui| self.show_library(ui, settings));
-        }
+        self.show_workspace(ui, settings, &mut actions);
         self.show_add(ui, &mut actions);
         actions
     }
@@ -585,11 +611,19 @@ impl RepertoireUi {
         }
     }
     fn errors(&mut self, ui: &mut Ui) {
-        if self.indexing || self.preparing {
+        if self.indexing {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(tr("Preparing the tree…"));
+                ui.label(tr("Indexing variations and ECO names…"));
             });
+        }
+        if self.preparing {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(tr("Preparing the training session…"));
+            });
+        }
+        if self.indexing || self.preparing || self.cancel.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -631,7 +665,7 @@ impl RepertoireUi {
         if let Some(cancel) = &self.cancel {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(tr("Preparing the tree…"));
+                ui.label(tr("Importing PGN…"));
                 if ui.button(tr("Cancel")).clicked() {
                     cancel.store(true, Ordering::Relaxed);
                 }
@@ -639,6 +673,7 @@ impl RepertoireUi {
         }
     }
     fn show_library(&mut self, ui: &mut Ui, settings: &Settings) {
+        self.errors(ui);
         ui.horizontal_wrapped(|ui| {
             if ui.button(tr("+ Create")).clicked() {
                 self.edit_name = Some((None, String::new()));
@@ -652,16 +687,14 @@ impl RepertoireUi {
             {
                 self.pick_import(None, ui.ctx());
             }
-            ui.selectable_value(&mut self.legacy, false, tr("Repertoires"));
             if !self.stats.legacy_lines.is_empty() {
-                ui.selectable_value(
-                    &mut self.legacy,
-                    true,
-                    crate::i18n::trf(
-                        "Previous lines · {n}",
-                        &[("n", &self.stats.legacy_lines.len())],
-                    ),
+                let previous = crate::i18n::trf(
+                    "Previous lines · {n}",
+                    &[("n", &self.stats.legacy_lines.len())],
                 );
+                if ui.selectable_label(self.legacy, previous).clicked() {
+                    self.legacy = !self.legacy;
+                }
             }
         });
         self.name_editor(ui, settings);
@@ -716,6 +749,13 @@ impl RepertoireUi {
                     if library.delete(&id).is_ok() && self.persist(library) {
                         self.delete = None;
                         self.selected = None;
+                        self.update_selected_tree();
+                        if let Some(next) = self.library.repertoires.first().map(|r| r.id.clone()) {
+                            self.select(next, settings);
+                        } else {
+                            self.training_visible = false;
+                            self.training = None;
+                        }
                         self.cleanup = Some(id);
                         self.clean_deleted_stats();
                     }
@@ -731,29 +771,44 @@ impl RepertoireUi {
             .map(|r| LibraryRow {
                 id: r.id.clone(),
                 name: r.name.clone(),
+                openings: self.openings.get(&r.id).cloned().unwrap_or_default(),
             })
             .collect();
         rows.sort_by_key(|r| r.name.to_lowercase());
-        let mut open = None;
+        let scroll_row = if self.scroll_to_selected {
+            rows.iter()
+                .position(|r| Some(&r.id) == self.selected.as_ref())
+        } else {
+            None
+        };
+        let mut clicked = None;
         let mut import = None;
         let mut export = None;
         ui.add_space(8.0);
-        let compact = ui.available_width() < 760.0;
-        egui_extras::TableBuilder::new(ui)
+        let compact = ui.available_width() < 480.0;
+        ui.style_mut().interaction.selectable_labels = false;
+        let mut table = egui_extras::TableBuilder::new(ui)
             .id_salt("repertoire_table")
             .striped(true)
+            .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(egui_extras::Column::remainder().at_least(120.0))
+            .column(egui_extras::Column::remainder().at_least(120.0).clip(true))
+            .column(egui_extras::Column::exact(52.0))
             .column(egui_extras::Column::exact(if compact {
-                82.0
+                60.0
             } else {
-                110.0
+                70.0
             }))
-            .column(egui_extras::Column::exact(28.0))
-            .header(30.0, |mut header| {
-                for (column, key) in ["Name", "Variants", ""].into_iter().enumerate() {
+            .column(egui_extras::Column::exact(28.0));
+        if let Some(index) = scroll_row {
+            table = table.scroll_to_row(index, Some(egui::Align::Center));
+            self.scroll_to_selected = false;
+        }
+        table
+            .header(26.0, |mut header| {
+                for (column, key) in ["Name", "ECO", "Variants", ""].into_iter().enumerate() {
                     header.col(|ui| {
-                        if column == 1 {
+                        if column == 2 {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
@@ -770,22 +825,70 @@ impl RepertoireUi {
                 }
             })
             .body(|body| {
-                body.rows(32.0, rows.len(), |mut row| {
+                body.rows(LibraryRow::height(), rows.len(), |mut row| {
                     let r = &rows[row.index()];
+                    row.set_selected(self.selected.as_ref() == Some(&r.id));
                     row.col(|ui| {
-                        if ui
-                            .add(
-                                egui::Button::selectable(
-                                    self.selected.as_ref() == Some(&r.id),
-                                    &r.name,
-                                )
-                                .truncate(),
+                        ui.vertical(|ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(&r.name).strong())
+                                    .selectable(false)
+                                    .truncate(),
                             )
-                            .on_hover_text(&r.name)
-                            .clicked()
-                        {
-                            open = Some(r.id.clone());
-                        }
+                            .on_hover_text(&r.name);
+                            for (index, opening) in r.visible_openings().iter().enumerate() {
+                                let more =
+                                    index + 1 == OPENING_LINES && r.openings.len() > OPENING_LINES;
+                                let text = if more {
+                                    format!("{} …", opening.name)
+                                } else {
+                                    opening.name.clone()
+                                };
+                                let response = ui.add(
+                                    egui::Label::new(RichText::new(text).small())
+                                        .selectable(false)
+                                        .truncate(),
+                                );
+                                if more {
+                                    response.on_hover_text(
+                                        r.openings
+                                            .iter()
+                                            .map(|opening| {
+                                                format!("{} {}", opening.eco, opening.name)
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n"),
+                                    );
+                                } else {
+                                    response.on_hover_text(&opening.name);
+                                }
+                            }
+                        });
+                    });
+                    row.col(|ui| {
+                        ui.vertical(|ui| {
+                            if r.openings.is_empty() {
+                                ui.label(RichText::new("—").weak());
+                            } else {
+                                ui.add(
+                                    egui::Label::new(RichText::new(" ").strong()).selectable(false),
+                                );
+                                for (index, opening) in r.visible_openings().iter().enumerate() {
+                                    let more = index + 1 == OPENING_LINES
+                                        && r.openings.len() > OPENING_LINES;
+                                    let text = if more {
+                                        format!("{} …", opening.eco)
+                                    } else {
+                                        opening.eco.clone()
+                                    };
+                                    ui.add(
+                                        egui::Label::new(RichText::new(text).small())
+                                            .selectable(false)
+                                            .truncate(),
+                                    );
+                                }
+                            }
+                        });
                     });
                     row.col(|ui| {
                         let count = self.task_count(
@@ -817,16 +920,19 @@ impl RepertoireUi {
                             }
                         });
                     });
+                    if row.response().clicked() {
+                        clicked = Some(r.id.clone());
+                    }
                 });
             });
-        if let Some(id) = open {
+        if let Some(id) = clicked {
             self.select(id, settings);
         }
         if let Some(id) = import {
             self.pick_import(Some(id), ui.ctx());
         }
         if let Some(id) = export {
-            self.selected = Some(id);
+            self.select(id, settings);
             self.export(Some(ui.ctx().clone()));
         }
     }
@@ -851,25 +957,28 @@ impl RepertoireUi {
             self.edit_name = None;
         }
         if save {
-            match self.checked_name(&name, id.as_ref()) {
-                Ok(name) => {
-                    let mut library = self.library.clone();
-                    let result = if let Some(id) = id {
-                        library.rename(&id, name).map(|()| id)
-                    } else {
-                        library.create_empty(name)
-                    };
-                    match result {
-                        Ok(id) if self.persist(library.clone()) => {
-                            self.edit_name = None;
-                            self.select(id, settings);
-                        }
-                        Ok(_) => {}
-                        Err(e) => self.error = Some(e.to_string()),
+            self.save_name(id, &name, settings);
+        }
+    }
+    fn save_name(&mut self, id: Option<RepertoireId>, name: &str, settings: &Settings) {
+        match self.checked_name(name, id.as_ref()) {
+            Ok(name) => {
+                let mut library = self.library.clone();
+                let result = if let Some(id) = id {
+                    library.rename(&id, name).map(|()| id)
+                } else {
+                    library.create_empty(name)
+                };
+                match result {
+                    Ok(id) if self.persist(library.clone()) => {
+                        self.edit_name = None;
+                        self.select(id, settings);
                     }
+                    Ok(_) => {}
+                    Err(e) => self.error = Some(e.to_string()),
                 }
-                Err(e) => self.error = Some(e),
             }
+            Err(e) => self.error = Some(e),
         }
     }
     fn import_preview(&mut self, ui: &mut Ui, settings: &Settings) {
@@ -901,106 +1010,131 @@ impl RepertoireUi {
             }
         });
     }
-    fn show_detail(
+    fn show_workspace(
         &mut self,
         ui: &mut Ui,
         settings: &mut Settings,
         actions: &mut Vec<RepertoireAction>,
     ) {
-        let Some(id) = self.selected.clone() else {
-            self.detail = false;
-            return;
-        };
-        let Some(r) = self.library.repertoire(&id).cloned() else {
-            self.detail = false;
-            return;
-        };
-        let stacked = ui.available_width() < 850.0 && ui.available_height() > 520.0;
+        let width = ui.available_width();
+        let height = ui.available_height();
+        let stacked = width < 900.0 && height > width;
         if stacked {
-            let panel_height = (ui.available_height() * 0.48).clamp(300.0, 460.0);
-            egui::Panel::bottom("repertoire_detail_stacked")
-                .resizable(true)
-                .default_size(panel_height)
-                .size_range(panel_height..=ui.available_height().max(panel_height) * 0.7)
-                .show(ui, |ui| self.detail_panel(ui, settings, actions, &id, &r));
+            let available = ui.available_rect_before_wrap();
+            let panel_height = (height * 0.52).clamp(340.0, 520.0);
+            let board_rect = egui::Rect::from_min_max(
+                available.min,
+                egui::pos2(available.right(), available.bottom() - panel_height),
+            );
+            let side_rect = egui::Rect::from_min_max(
+                egui::pos2(available.left(), board_rect.bottom()),
+                available.max,
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(board_rect), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| self.preview_board(ui, settings));
+            });
+            ui.scope_builder(egui::UiBuilder::new().max_rect(side_rect), |ui| {
+                ui.set_clip_rect(side_rect);
+                egui::Frame::side_top_panel(ui.style())
+                    .show(ui, |ui| self.workspace_panel(ui, settings, actions));
+            });
         } else {
             let width = ui.available_width();
-            egui::Panel::right("repertoire_detail_side")
+            egui::Panel::right("repertoire_workspace_side")
                 .resizable(true)
-                .default_size((width * 0.40).clamp(300.0, 460.0))
-                .size_range(280.0..=(width - 220.0).max(280.0))
-                .show(ui, |ui| self.detail_panel(ui, settings, actions, &id, &r));
+                .default_size((width * 0.42).clamp(420.0, 560.0))
+                .size_range(360.0..=(width - 220.0).max(360.0))
+                .show(ui, |ui| self.workspace_panel(ui, settings, actions));
+            egui::CentralPanel::default().show(ui, |ui| self.preview_board(ui, settings));
         }
-        egui::CentralPanel::default().show(ui, |ui| self.preview_board(ui, settings));
     }
-    fn detail_panel(
+    fn workspace_panel(
         &mut self,
         ui: &mut Ui,
         settings: &mut Settings,
         actions: &mut Vec<RepertoireAction>,
-        id: &RepertoireId,
-        r: &Repertoire,
     ) {
-        egui::ScrollArea::vertical()
-            .id_salt("repertoire_detail_scroll")
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.add_enabled_ui(!self.preparing, |ui| {
-                    let previous_mode = self.mode;
-                    ui.add(egui::Label::new(RichText::new(&r.name).heading()).truncate())
-                        .on_hover_text(&r.name);
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        if ui.button(tr("Import PGN…")).clicked() {
-                            self.pick_import(Some(id.clone()), ui.ctx());
-                        }
-                        if ui.button(tr("Export PGN…")).clicked() {
-                            self.export(Some(ui.ctx().clone()));
-                        }
-                    });
-                    ui.separator();
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(tr("Color"));
-                        for mode in [TrainingMode::White, TrainingMode::Black, TrainingMode::Both] {
-                            ui.selectable_value(&mut self.mode, mode, mode_label(mode));
-                        }
-                    });
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        let available = self.available_tasks();
-                        if available.is_none() {
-                            ui.spinner();
-                            ui.ctx()
-                                .request_repaint_after(std::time::Duration::from_millis(100));
-                        }
-                        let count_label =
-                            available.map_or_else(|| "…".to_owned(), |n| n.to_string());
-                        ui.label(format!("{}: {count_label}", tr("Paths")));
-                        let ready = !self.preparing
-                            && available.is_some_and(|n| n > 0)
-                            && self.stats_error.is_none()
-                            && self.library_error.is_none();
-                        if ui
-                            .add_enabled(ready, egui::Button::new(tr("Start training")))
-                            .clicked()
-                        {
-                            self.start(settings);
+        ui.set_width(ui.available_width());
+        let selected = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.library.repertoire(id).cloned())
+            .map(|r| (r.id.clone(), r));
+        if let Some((id, r)) = selected {
+            egui::Frame::new()
+                .fill(ui.visuals().faint_bg_color)
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(!self.preparing, |ui| {
+                        let previous_mode = self.mode;
+                        ui.add(egui::Label::new(RichText::new(&r.name).heading()).truncate())
+                            .on_hover_text(&r.name);
+                        ui.add_space(6.0);
+                        egui::Grid::new("repertoire_selected_controls")
+                            .num_columns(2)
+                            .spacing([12.0, 6.0])
+                            .show(ui, |ui| {
+                                ui.label(tr("Color"));
+                                ui.horizontal(|ui| {
+                                    for mode in [
+                                        TrainingMode::White,
+                                        TrainingMode::Black,
+                                        TrainingMode::Both,
+                                    ] {
+                                        ui.selectable_value(&mut self.mode, mode, mode_label(mode));
+                                    }
+                                });
+                                ui.end_row();
+                                let available = self.available_tasks();
+                                ui.horizontal(|ui| {
+                                    ui.label(tr("Variants"));
+                                    if let Some(count) = available {
+                                        ui.label(count.to_string());
+                                    } else {
+                                        ui.spinner();
+                                        ui.ctx().request_repaint_after(
+                                            std::time::Duration::from_millis(100),
+                                        );
+                                    }
+                                });
+                                let ready = !self.preparing
+                                    && available.is_some_and(|n| n > 0)
+                                    && self.stats_error.is_none()
+                                    && self.library_error.is_none();
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.add_enabled_ui(ready, |ui| {
+                                            if crate::widgets::primary_wide(
+                                                ui,
+                                                tr("Start training"),
+                                                ACTION_BUTTON_WIDTH,
+                                            )
+                                            .clicked()
+                                            {
+                                                self.start(settings);
+                                                actions.push(RepertoireAction::SettingsChanged);
+                                            }
+                                        });
+                                    },
+                                );
+                                ui.end_row();
+                            });
+                        if previous_mode != self.mode {
+                            self.reset_stats = None;
+                            settings
+                                .repertoire_modes
+                                .insert(id.to_string(), (self.mode, QueueMode::Practice));
                             actions.push(RepertoireAction::SettingsChanged);
                         }
+                        ui.separator();
+                        self.statistics_panel(ui, &r);
                     });
-                    if previous_mode != self.mode {
-                        settings
-                            .repertoire_modes
-                            .insert(id.to_string(), (self.mode, QueueMode::Practice));
-                        actions.push(RepertoireAction::SettingsChanged);
-                    }
-                    if self.import.is_some() {
-                        self.import_preview(ui, settings);
-                    }
-                    ui.separator();
-                    self.statistics_panel(ui, r);
                 });
-            });
+        }
+        ui.separator();
+        self.show_library(ui, settings);
     }
     fn available_tasks(&mut self) -> Option<usize> {
         let id = self.selected.clone()?;
@@ -1060,7 +1194,7 @@ impl RepertoireUi {
                 use chess_core::shakmaty::Position;
                 let start_turn = tree.position(tree.root()).map(|position| position.turn());
                 let mut count = 0usize;
-                tree.visit_training_paths(&job_key.scope, |moves| {
+                tree.visit_source_paths(&job_key.scope, |moves| {
                     if start_turn.is_some_and(|turn| path_has_mode_move(mode, turn, moves.len())) {
                         count = count.saturating_add(1);
                     }
@@ -1087,22 +1221,26 @@ impl RepertoireUi {
         None
     }
     fn preview_board(&mut self, ui: &mut Ui, settings: &Settings) {
-        let Some(tree) = &self.tree else {
-            return;
-        };
-        let Some(pos) = tree.game().position(NodeId::ROOT) else {
-            return;
-        };
-        let side = ui.available_width().min(ui.available_height()).max(80.0);
+        let pos = self
+            .tree
+            .as_ref()
+            .and_then(|tree| tree.game().position(NodeId::ROOT))
+            .cloned()
+            .unwrap_or_default();
+        let side = ui
+            .available_width()
+            .min(ui.available_height())
+            .max(1.0)
+            .floor();
         let available = ui.available_size();
         let offset = egui::vec2(
-            (available.x - side).max(0.0) * 0.5,
-            (available.y - side).max(0.0) * 0.5,
+            ((available.x - side) / 2.0).max(0.0).floor(),
+            ((available.y - side) / 2.0).max(0.0).floor(),
         );
         let rect = egui::Rect::from_min_size(ui.cursor().min + offset, egui::vec2(side, side));
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             BoardView {
-                pos,
+                pos: &pos,
                 orientation: if self.mode == TrainingMode::Black {
                     Color::Black
                 } else {
@@ -1125,35 +1263,70 @@ impl RepertoireUi {
         });
     }
     fn statistics_panel(&mut self, ui: &mut Ui, r: &Repertoire) {
-        if self.tree.is_none() {
-            return;
-        }
-        egui::ScrollArea::vertical()
-            .id_salt("repertoire_statistics")
-            .show(ui, |ui| {
-                ui.strong(tr("Statistics"));
-                let stats: Vec<_> = self
-                    .stats
-                    .move_stats
-                    .iter()
-                    .filter(|s| s.key.repertoire_id == r.id && s.key.mode == self.mode)
-                    .collect();
-                ui.label(format!(
-                    "{}: {} · {}: {}",
-                    tr("Attempts"),
-                    stats.iter().map(|s| u64::from(s.attempts)).sum::<u64>(),
-                    tr("Mistakes"),
-                    stats.iter().map(|s| u64::from(s.wrong)).sum::<u64>()
-                ));
-                if let Some(run) = self.stats.runs(&r.id, self.mode) {
-                    ui.label(format!(
-                        "{}: {} · {}",
-                        tr("Completions"),
-                        run.completions,
-                        format_time(run.last)
-                    ));
+        let stats: Vec<_> = self
+            .stats
+            .move_stats
+            .iter()
+            .filter(|s| s.key.repertoire_id == r.id && s.key.mode == self.mode)
+            .collect();
+        let attempts = stats.iter().map(|s| u64::from(s.attempts)).sum::<u64>();
+        let mistakes = stats.iter().map(|s| u64::from(s.wrong)).sum::<u64>();
+        let run = self.stats.runs(&r.id, self.mode);
+        let has_data = !stats.is_empty() || run.is_some();
+        let (completions, last) = run
+            .map(|run| (run.completions, format_time(run.last)))
+            .unwrap_or_else(|| (0, "—".to_owned()));
+        ui.horizontal(|ui| {
+            ui.strong(tr("Statistics"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        has_data,
+                        egui::Button::new(tr("Reset"))
+                            .min_size(egui::vec2(ACTION_BUTTON_WIDTH, 26.0)),
+                    )
+                    .clicked()
+                {
+                    self.reset_stats = Some(r.id.clone());
                 }
             });
+        });
+        egui::Grid::new("repertoire_statistics")
+            .num_columns(4)
+            .spacing([10.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new(tr("Attempts")).weak());
+                ui.label(attempts.to_string());
+                ui.label(RichText::new(tr("Mistakes")).weak());
+                ui.label(mistakes.to_string());
+                ui.end_row();
+                ui.label(RichText::new(tr("Completions")).weak());
+                ui.label(format!("{completions} · {last}"));
+                ui.end_row();
+            });
+        if self.reset_stats.as_ref() == Some(&r.id) {
+            ui.label(tr("Reset statistics for this repertoire and color?"));
+            ui.horizontal(|ui| {
+                if ui.button(tr("Cancel")).clicked() {
+                    self.reset_stats = None;
+                }
+                if ui.button(tr("Reset")).clicked() {
+                    self.reset_statistics(&r.id);
+                }
+            });
+        }
+    }
+
+    fn reset_statistics(&mut self, id: &RepertoireId) {
+        let mut stats = self.stats.clone();
+        stats.remove_repertoire_mode(id, self.mode);
+        match self.stats_store.save(&mut stats) {
+            Ok(()) => {
+                self.stats = stats;
+                self.reset_stats = None;
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
     }
     fn show_add(&mut self, ui: &mut Ui, actions: &mut Vec<RepertoireAction>) {
         let Some(mut add) = self.add.take() else {
@@ -1271,8 +1444,7 @@ impl RepertoireUi {
             self.select(id, settings);
         }
         match what {
-            "library" => self.detail = false,
-            "detail" => {}
+            "library" | "detail" => {}
             "white" | "black" | "both" => {
                 if self.selected.is_none() || self.cancel.is_some() {
                     self.debug_start = Some(what.to_owned());
@@ -1385,6 +1557,36 @@ fn path_has_mode_move(mode: TrainingMode, start_turn: Color, plies: usize) -> bo
         None => plies > 0,
     }
 }
+fn opening_labels(tree: &RepertoireTree) -> Vec<OpeningLabel> {
+    let mut labels = BTreeSet::new();
+    let start = tree.game().start().position();
+    let _ = tree.visit_source_paths(&TrainingScope::whole(), |moves| {
+        let mut position = start.clone();
+        let mut keys = Vec::with_capacity(moves.len() + 1);
+        keys.push(chess_openings::key(&position));
+        for uci in moves {
+            let Some(mv) = uci
+                .parse::<UciMove>()
+                .ok()
+                .and_then(|uci| uci.to_move(&position).ok())
+            else {
+                return std::ops::ControlFlow::Continue(());
+            };
+            position.play_unchecked(mv);
+            keys.push(chess_openings::key(&position));
+        }
+        if let Some((_, id)) = chess_openings::deepest(&keys) {
+            let opening = chess_openings::get(id);
+            labels.insert(OpeningLabel {
+                eco: opening.eco.clone(),
+                name: opening.name.clone(),
+            });
+        }
+        std::ops::ControlFlow::Continue(())
+    });
+    labels.into_iter().collect()
+}
+
 fn count_cell(ui: &mut Ui, count: Option<usize>) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         if let Some(count) = count {

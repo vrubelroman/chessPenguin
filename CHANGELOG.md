@@ -7,9 +7,14 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 - Desktop opening training: collect PGN repertoires, add a line from a game, and practise
   for White, Black or both sides. Variations are dealt in random cycles without repeating
   a full route; a route can start with automatic context, and its result offers both
-  «Next variation» and «Repeat path». Depth, scope and separate-position review controls
-  have been removed; the library shows the actual number of variations. The training
-  screen has no move list; previously shown positions can still be reviewed on the board.
+  «Next variation» and «Repeat path». Random cycles use only the original PGN branches,
+  without multiplying them through transpositions, and leave at least seven plies to
+  play (short branches start at the beginning). Depth, scope and separate-position
+  review controls have been removed. The board workspace combines training and repertoire management:
+  its table shows ECO codes, opening names and the actual number of variations. The
+  training screen has no move list; previously shown positions can still be reviewed
+  on the board with the keyboard. NAG badges and the PGN arrows/circles are shown
+  on the current training position with the same colours as in the game view.
 
 ## [2.1.5] — 2026-11-02
 

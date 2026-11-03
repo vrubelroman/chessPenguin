@@ -5277,7 +5277,7 @@ fn move_squares(m: &Move) -> Option<(Square, Square)> {
     Some((m.from()?, board::ui_target(m)))
 }
 
-fn shape_color(c: ShapeColor) -> Color32 {
+pub(crate) fn shape_color(c: ShapeColor) -> Color32 {
     match c {
         ShapeColor::Red => Color32::from_rgba_unmultiplied(136, 32, 32, 170),
         ShapeColor::Green => Color32::from_rgba_unmultiplied(21, 120, 27, 170),

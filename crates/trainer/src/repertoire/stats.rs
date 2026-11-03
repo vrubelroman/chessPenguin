@@ -333,6 +333,25 @@ impl StatsData {
             .retain(|entry| &entry.repertoire_id != repertoire_id);
     }
 
+    pub fn remove_repertoire_mode(&mut self, repertoire_id: &RepertoireId, mode: TrainingMode) {
+        self.move_stats
+            .retain(|entry| &entry.key.repertoire_id != repertoire_id || entry.key.mode != mode);
+        self.runs
+            .retain(|entry| &entry.repertoire_id != repertoire_id || entry.mode != mode);
+        self.review_cursors
+            .retain(|entry| &entry.repertoire_id != repertoire_id || entry.mode != mode);
+        self.practice_path_cursors
+            .retain(|entry| &entry.repertoire_id != repertoire_id || entry.mode != mode);
+        self.random_practice_cursors
+            .retain(|entry| &entry.repertoire_id != repertoire_id || entry.mode != mode);
+        if mode == TrainingMode::Both {
+            self.path_stats
+                .retain(|entry| &entry.key.repertoire_id != repertoire_id);
+            self.path_review_cursors
+                .retain(|entry| &entry.repertoire_id != repertoire_id);
+        }
+    }
+
     pub fn get(&self, key: &MoveKey) -> Option<&MoveStats> {
         self.move_stats.iter().find(|stats| &stats.key == key)
     }
@@ -600,7 +619,7 @@ impl StatsData {
             .map(|position| position.turn())
             .ok_or_else(|| "scope start position is missing".to_owned())?;
         let mut count = Some(0usize);
-        tree.visit_training_paths(scope, |moves| {
+        tree.visit_source_paths(scope, |moves| {
             if eligible_target_count(mode, start_turn, moves.len()) == 0 {
                 return ControlFlow::Continue(());
             }
@@ -660,7 +679,7 @@ impl StatsData {
         let start_seed = mix64(seed ^ (position as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
         let mut order = 0usize;
         let mut chosen = None;
-        tree.visit_training_paths(scope, |moves| {
+        tree.visit_source_paths(scope, |moves| {
             let eligible = eligible_target_count(mode, start_turn, moves.len());
             if eligible == 0 {
                 return ControlFlow::Continue(());
@@ -974,15 +993,25 @@ impl StatsData {
     }
 }
 
+pub(crate) const MIN_RANDOM_CONTINUATION_PLIES: usize = 7;
+
+fn random_max_start(plies: usize) -> usize {
+    plies.saturating_sub(MIN_RANDOM_CONTINUATION_PLIES)
+}
+
 fn eligible_target_count(mode: TrainingMode, start_turn: Color, plies: usize) -> usize {
+    if plies == 0 {
+        return 0;
+    }
+    let max_start = random_max_start(plies);
     let Some(user_color) = mode.user_color() else {
-        return plies;
+        return usize::from(plies > 0) * (max_start + 1);
     };
     let first = usize::from(start_turn != user_color);
-    if plies <= first {
+    if max_start < first {
         0
     } else {
-        (plies - first).div_ceil(2)
+        (max_start - first) / 2 + 1
     }
 }
 
@@ -993,7 +1022,7 @@ fn eligible_target_index(
     order: usize,
 ) -> Option<usize> {
     let mut remaining = order;
-    for index in 0..plies {
+    for index in 0..=random_max_start(plies) {
         let turn = if index % 2 == 0 {
             start_turn
         } else {
