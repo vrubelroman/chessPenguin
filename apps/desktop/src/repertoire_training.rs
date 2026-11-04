@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{sync::mpsc, time::Duration};
 
 use chess_core::shakmaty::{Chess, Color, Move, Position, Square, uci::UciMove};

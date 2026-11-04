@@ -4,11 +4,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chess_core::shakmaty::uci::UciMove;
+use chess_core::shakmaty::{CastlingMode, Color, Position};
 use chess_core::{EditError, Game, MoveKind, NodeId, StartPosition, paste};
 use serde::{Deserialize, Serialize};
 use web_time::{SystemTime, UNIX_EPOCH};
 
-use super::tree::fen4;
+use super::tree::{RepertoireTree, fen4};
 
 pub const LIBRARY_VERSION: u32 = 1;
 pub const DEFAULT_MAX_PLIES: u32 = 20;
@@ -43,6 +44,31 @@ impl fmt::Display for RepertoireId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum LearningSide {
+    White,
+    Black,
+}
+
+impl LearningSide {
+    pub fn color(self) -> Color {
+        match self {
+            Self::White => Color::White,
+            Self::Black => Color::Black,
+        }
+    }
+}
+
+impl From<Color> for LearningSide {
+    fn from(color: Color) -> Self {
+        match color {
+            Color::White => Self::White,
+            Color::Black => Self::Black,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Repertoire {
@@ -51,6 +77,8 @@ pub struct Repertoire {
     pub pgn: String,
     pub max_plies: u32,
     pub disabled_prefixes: Vec<Vec<String>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub main_answer_overrides: BTreeMap<String, String>,
     pub path: Option<PathBuf>,
     pub detached: bool,
 }
@@ -63,6 +91,7 @@ impl Default for Repertoire {
             pgn: Game::new().to_pgn(),
             max_plies: DEFAULT_MAX_PLIES,
             disabled_prefixes: Vec::new(),
+            main_answer_overrides: BTreeMap::new(),
             path: None,
             detached: false,
         }
@@ -100,6 +129,69 @@ impl Repertoire {
         self.disabled_prefixes
             .iter()
             .any(|prefix| path.starts_with(prefix))
+    }
+
+    pub fn main_answer_override(&self, position_fen4: &str) -> Option<&str> {
+        self.main_answer_overrides
+            .get(position_fen4)
+            .map(String::as_str)
+    }
+
+    pub fn set_main_answer_override(
+        &mut self,
+        position_fen4: &str,
+        expected_uci: &str,
+        side: LearningSide,
+    ) -> Result<(), RepertoireError> {
+        let tree = RepertoireTree::new(self);
+        let game = tree.game();
+        let mut position_found = false;
+        for node in game.attached_nodes() {
+            if tree.position_key(node) != Some(position_fen4) || tree.path(node).is_none() {
+                continue;
+            }
+            position_found = true;
+            let actual_side = game
+                .position(node)
+                .map(|position| LearningSide::from(position.turn()));
+            if actual_side != Some(side) {
+                return Err(RepertoireError::MainAnswerWrongSide {
+                    position_fen4: position_fen4.to_owned(),
+                    expected: side,
+                    actual: actual_side,
+                });
+            }
+            let exists = game.children(node).iter().any(|child| {
+                let Some(game_move) = game.game_move(*child) else {
+                    return false;
+                };
+                match game_move.kind {
+                    MoveKind::Normal(mv) => {
+                        mv.to_uci(CastlingMode::Standard).to_string() == expected_uci
+                    }
+                    MoveKind::Null => false,
+                }
+            });
+            if exists {
+                self.main_answer_overrides
+                    .insert(position_fen4.to_owned(), expected_uci.to_owned());
+                return Ok(());
+            }
+        }
+        if position_found {
+            Err(RepertoireError::MainAnswerMoveNotFound {
+                position_fen4: position_fen4.to_owned(),
+                expected_uci: expected_uci.to_owned(),
+            })
+        } else {
+            Err(RepertoireError::MainAnswerPositionNotFound(
+                position_fen4.to_owned(),
+            ))
+        }
+    }
+
+    pub fn clear_main_answer_override(&mut self, position_fen4: &str) -> Option<String> {
+        self.main_answer_overrides.remove(position_fen4)
     }
 }
 
@@ -141,7 +233,20 @@ pub enum RepertoireError {
     NotFound(RepertoireId),
     DuplicateId(RepertoireId),
     EmptyDisabledPrefix,
-    DifferentStart { expected: String, actual: String },
+    MainAnswerPositionNotFound(String),
+    MainAnswerMoveNotFound {
+        position_fen4: String,
+        expected_uci: String,
+    },
+    MainAnswerWrongSide {
+        position_fen4: String,
+        expected: LearningSide,
+        actual: Option<LearningSide>,
+    },
+    DifferentStart {
+        expected: String,
+        actual: String,
+    },
     UnparsedMerge,
     Merge(String),
     Edit(EditError),
@@ -154,6 +259,27 @@ impl fmt::Display for RepertoireError {
             Self::NotFound(id) => write!(f, "repertoire not found: {id}"),
             Self::DuplicateId(id) => write!(f, "repertoire id is already present: {id}"),
             Self::EmptyDisabledPrefix => f.write_str("disabled UCI prefix must not be empty"),
+            Self::MainAnswerPositionNotFound(position) => {
+                write!(
+                    f,
+                    "main-answer position is not present in the PGN: {position}"
+                )
+            }
+            Self::MainAnswerMoveNotFound {
+                position_fen4,
+                expected_uci,
+            } => write!(
+                f,
+                "main answer {expected_uci} is not a PGN move at {position_fen4}"
+            ),
+            Self::MainAnswerWrongSide {
+                position_fen4,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "main answer side mismatch at {position_fen4}: requested {expected:?}, position has {actual:?}"
+            ),
             Self::DifferentStart { expected, actual } => write!(
                 f,
                 "different starting positions: repertoire has {expected}, imported game has {actual}"
@@ -221,6 +347,7 @@ impl Library {
             pgn: game.to_pgn(),
             max_plies: DEFAULT_MAX_PLIES,
             disabled_prefixes: Vec::new(),
+            main_answer_overrides: BTreeMap::new(),
             path: None,
             detached: false,
         });
@@ -374,6 +501,7 @@ impl Library {
                     pgn: Game::from_start(position).to_pgn(),
                     max_plies: DEFAULT_MAX_PLIES,
                     disabled_prefixes: Vec::new(),
+                    main_answer_overrides: BTreeMap::new(),
                     path: None,
                     detached: false,
                 });

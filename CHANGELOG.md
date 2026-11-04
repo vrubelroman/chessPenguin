@@ -4,17 +4,25 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
-- Desktop opening training: collect PGN repertoires, add a line from a game, and practise
-  for White, Black or both sides. Variations are dealt in random cycles without repeating
-  a full route; a route can start with automatic context, and its result offers both
-  «Next variation» and «Repeat path». Random cycles use only the original PGN branches,
-  without multiplying them through transpositions, and leave at least seven plies to
-  play (short branches start at the beginning). Depth, scope and separate-position
-  review controls have been removed. The board workspace combines training and repertoire management:
-  its table shows ECO codes, opening names and the actual number of variations. The
-  training screen has no move list; previously shown positions can still be reviewed
-  on the board with the keyboard. NAG badges and the PGN arrows/circles are shown
-  on the current training position with the same colours as in the game view.
+- Desktop opening training: collect PGN repertoires, add a line from a game, and learn
+  one main answer per position for White or Black. Learning history and the SRS schedule
+  are shared between transpositions and repertoires. Three independent correct answers
+  mark a move as learnt without ending reviews; mistakes, previews and replays after an
+  error are recorded separately and do not inflate independent accuracy. Persistent v3
+  JSON keeps atomic, idempotent session and event writes, migration backups and legacy data.
+- Opening training has spaced repetition, ordered review and least-recent modes, four
+  learning priorities, and resumable sessions. Automatic context plays one move at a time
+  with fixed or knowledge-adaptive animation; reinforcement, preview and replay are distinct
+  from independent answers. Each repertoire stores its context policy, while an active session
+  keeps the policy it started with. The editor preserves PGN while changing the main answer,
+  training depth and disabled branches.
+- The learning dashboard compares repertoires and their branches without double-counting
+  shared positions, and shows exact move analytics, daily history, scheduled reviews and
+  answer-sequence charts. Snapshots are captured automatically on the first daily view of
+  a scope and can also be saved explicitly without changing PGN or learning state. Full-line
+  statistics preserve shared moves on each actual PGN line while the global total deduplicates
+  them. The library table keeps ECO codes, opening names and the actual number of variations;
+  the training board has no move list and keeps PGN badges, arrows and circles.
 
 ## [2.1.5] — 2026-11-02
 

@@ -32,6 +32,9 @@ pub enum Drawn {
     Circle(chess_core::ShapeColor, Square),
 }
 
+#[cfg(test)]
+pub(crate) type TestAnimation<'a> = (f64, &'a [(Piece, Square, Square)], f32);
+
 #[derive(Default)]
 pub struct BoardState {
     selected: Option<Square>,
@@ -92,6 +95,12 @@ impl BoardState {
     /// A piece is selected or dragged, or a promotion is being chosen.
     pub fn is_busy(&self) -> bool {
         self.selected.is_some() || self.drag.is_some() || self.promotion.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn animation_at(&self, now: f64) -> Option<TestAnimation<'_>> {
+        let anim = self.anim.as_ref()?;
+        Some((anim.duration, &anim.slides, anim.rest(now)?))
     }
 }
 

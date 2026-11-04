@@ -168,6 +168,12 @@ pub struct Settings {
             trainer::repertoire::QueueMode,
         ),
     >,
+    #[serde(default)]
+    pub repertoire_priorities:
+        std::collections::HashMap<String, trainer::repertoire::LearningPriority>,
+    #[serde(default)]
+    pub repertoire_context_policies:
+        std::collections::HashMap<String, trainer::repertoire::LearningContextPolicy>,
 }
 
 /// Options of the opponent preparation; its engine search is the game analysis's.
@@ -236,6 +242,8 @@ impl Default for Settings {
             play: Default::default(),
             prep: PrepSettings::default(),
             repertoire_modes: Default::default(),
+            repertoire_priorities: Default::default(),
+            repertoire_context_policies: Default::default(),
             repertoire_flow_version: 0,
         }
     }
@@ -247,7 +255,13 @@ impl Settings {
             return false;
         }
         for (_, queue) in self.repertoire_modes.values_mut() {
-            *queue = trainer::repertoire::QueueMode::Practice;
+            if matches!(
+                queue,
+                trainer::repertoire::QueueMode::Practice
+                    | trainer::repertoire::QueueMode::SpacedRepetition
+            ) {
+                *queue = trainer::repertoire::QueueMode::SpacedRepetition;
+            }
         }
         self.repertoire_flow_version = 1;
         true
@@ -389,7 +403,7 @@ mod tests {
 #[cfg(test)]
 mod repertoire_flow_tests {
     use super::*;
-    use trainer::repertoire::{QueueMode, TrainingMode};
+    use trainer::repertoire::{LearningPriority, QueueMode, TrainingMode};
     #[test]
     fn old_training_preferences_migrate_once_without_resetting_color_or_custom_settings() {
         let mut settings = Settings::default();
@@ -400,7 +414,11 @@ mod repertoire_flow_tests {
         assert!(settings.migrate_repertoire_flow());
         assert_eq!(
             settings.repertoire_modes["old"],
-            (TrainingMode::Black, QueueMode::Practice)
+            (TrainingMode::Black, QueueMode::SpacedRepetition)
+        );
+        settings.repertoire_modes.insert(
+            "review".into(),
+            (TrainingMode::White, QueueMode::ReviewInOrder),
         );
         settings.repertoire_modes.get_mut("old").unwrap().1 = QueueMode::SpacedRepetition;
         assert!(!settings.migrate_repertoire_flow());
@@ -408,5 +426,62 @@ mod repertoire_flow_tests {
             settings.repertoire_modes["old"].1,
             QueueMode::SpacedRepetition
         );
+        assert_eq!(
+            settings.repertoire_modes["review"].1,
+            QueueMode::ReviewInOrder
+        );
+    }
+
+    #[test]
+    fn learning_mode_and_priority_roundtrip_and_default_for_legacy_settings() {
+        let mut settings = Settings::default();
+        settings.repertoire_modes.insert(
+            "opening".into(),
+            (TrainingMode::Black, QueueMode::LeastRecent),
+        );
+        settings
+            .repertoire_priorities
+            .insert("opening".into(), LearningPriority::MainLinesFirst);
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored.repertoire_modes["opening"],
+            (TrainingMode::Black, QueueMode::LeastRecent)
+        );
+        assert_eq!(
+            restored.repertoire_priorities["opening"],
+            LearningPriority::MainLinesFirst
+        );
+
+        let legacy: Settings = serde_json::from_str("{}").unwrap();
+        assert!(legacy.repertoire_priorities.is_empty());
+    }
+
+    #[test]
+    fn context_policies_roundtrip_and_default_for_legacy_json() {
+        let policy = trainer::repertoire::LearningContextPolicy {
+            reinforce_minimum_correct: 5,
+            reinforce_minimum_days: Some(14),
+            dont_show_start_moves_threshold: 8,
+            use_fixed_piece_speed: false,
+            move_speed_adjustment: 1.5,
+            consider_leadup_moves: true,
+        };
+        let mut settings = Settings::default();
+        settings
+            .repertoire_context_policies
+            .insert("opening".into(), policy);
+
+        let json = serde_json::to_string_pretty(&settings).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.repertoire_context_policies["opening"], policy);
+
+        let legacy = r#"{
+            "repertoire_modes": {},
+            "repertoire_priorities": {}
+        }"#;
+        let restored: Settings = serde_json::from_str(legacy).unwrap();
+        assert!(restored.repertoire_context_policies.is_empty());
     }
 }
