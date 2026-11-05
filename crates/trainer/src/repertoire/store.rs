@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -768,15 +768,20 @@ fn preserve_extensions(raw: &serde_json::Value, current: serde_json::Value) -> s
         }
         (serde_json::Value::Array(raw), serde_json::Value::Array(current)) => {
             let current_len = current.len();
+            // Match persisted records by identity once, rather than scanning the entire
+            // history for every event on every save. First match preserves legacy semantics.
+            let mut by_identity = HashMap::with_capacity(raw.len());
+            for previous in raw {
+                if let Some(identity) = stable_json_identity(previous) {
+                    by_identity.entry(identity).or_insert(previous);
+                }
+            }
             let merged = current
                 .into_iter()
                 .enumerate()
                 .map(|(index, value)| {
                     let previous = match stable_json_identity(&value) {
-                        Some(identity) => raw.iter().find(|candidate| {
-                            stable_json_identity(candidate)
-                                .is_some_and(|candidate| candidate == identity)
-                        }),
+                        Some(identity) => by_identity.get(&identity).copied(),
                         None if raw.len() == current_len => raw.get(index),
                         None => None,
                     };

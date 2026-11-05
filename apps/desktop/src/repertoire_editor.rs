@@ -14,6 +14,7 @@ use crate::settings::Settings;
 #[derive(Debug)]
 pub enum RepertoireEditorAction {
     Close,
+    OpenSettings,
     Cancel,
     Applied {
         repertoire_id: RepertoireId,
@@ -71,46 +72,42 @@ impl RepertoireEditorUi {
     ) -> Vec<RepertoireEditorAction> {
         let mut actions = Vec::new();
         let mut commands = Vec::new();
-        self.show_header(ui, &mut commands);
+        egui::Panel::top("repertoire_editor_header").show(ui, |ui| {
+            self.show_header(ui, &mut commands);
+        });
         let available = ui.available_rect_before_wrap();
-        if available.width() < 720.0 {
-            let board_bottom = available.top() + (available.height() * 0.46).max(100.0);
+        let width = available.width();
+        let height = available.height();
+        if width < 900.0 && height > width {
+            let panel_height = (height * 0.52).clamp(340.0, 520.0);
             let board_rect = egui::Rect::from_min_max(
                 available.min,
-                egui::pos2(available.right(), board_bottom.min(available.bottom())),
+                egui::pos2(available.right(), available.bottom() - panel_height),
             );
             let panel_rect = egui::Rect::from_min_max(
                 egui::pos2(available.left(), board_rect.bottom()),
                 available.max,
             );
             ui.scope_builder(egui::UiBuilder::new().max_rect(board_rect), |ui| {
-                self.show_board(ui, settings);
+                egui::CentralPanel::default().show(ui, |ui| self.show_board(ui, settings));
             });
             ui.scope_builder(egui::UiBuilder::new().max_rect(panel_rect), |ui| {
                 ui.set_clip_rect(panel_rect);
-                self.show_panel(ui, &mut commands);
+                egui::Frame::side_top_panel(ui.style())
+                    .show(ui, |ui| self.show_panel(ui, &mut commands));
             });
         } else {
-            let panel_width = (available.width() * 0.44).clamp(320.0, 500.0);
-            let panel_rect = egui::Rect::from_min_max(
-                egui::pos2(available.right() - panel_width, available.top()),
-                available.max,
-            );
-            let board_rect = egui::Rect::from_min_max(
-                available.min,
-                egui::pos2(panel_rect.left(), available.bottom()),
-            );
-            ui.scope_builder(egui::UiBuilder::new().max_rect(board_rect), |ui| {
-                self.show_board(ui, settings);
-            });
-            ui.scope_builder(egui::UiBuilder::new().max_rect(panel_rect), |ui| {
-                ui.set_clip_rect(panel_rect);
-                self.show_panel(ui, &mut commands);
-            });
+            egui::Panel::right("repertoire_workspace_side")
+                .resizable(true)
+                .default_size((width * 0.42).clamp(420.0, 560.0))
+                .size_range(360.0..=(width - 220.0).max(360.0))
+                .show(ui, |ui| self.show_panel(ui, &mut commands));
+            egui::CentralPanel::default().show(ui, |ui| self.show_board(ui, settings));
         }
         for command in commands {
             match command {
                 EditorCommand::Close => actions.push(RepertoireEditorAction::Close),
+                EditorCommand::OpenSettings => actions.push(RepertoireEditorAction::OpenSettings),
                 EditorCommand::Cancel => {
                     self.cancel();
                     actions.push(RepertoireEditorAction::Cancel);
@@ -154,24 +151,39 @@ impl RepertoireEditorUi {
     }
 
     fn show_header(&self, ui: &mut Ui, commands: &mut Vec<EditorCommand>) {
-        ui.horizontal_wrapped(|ui| {
-            if ui.button(tr("Close")).clicked() {
+        let compact = ui.available_width() < 600.0;
+        ui.horizontal(|ui| {
+            ui.set_min_height(26.0);
+            if ui
+                .button(format!("← {}", tr("Back to repertoire")))
+                .clicked()
+            {
                 commands.push(EditorCommand::Close);
             }
-            if let Some(repertoire) = self.draft.repertoire(&self.repertoire_id) {
-                ui.add(egui::Label::new(RichText::new(&repertoire.name).heading()).truncate())
-                    .on_hover_text(&repertoire.name);
-            }
-            if ui.button(tr("Cancel")).clicked() {
-                commands.push(EditorCommand::Cancel);
-            }
-            ui.add_enabled_ui(self.has_unsaved(), |ui| {
-                if crate::widgets::primary(ui, tr("Save")).clicked() {
-                    commands.push(EditorCommand::Save);
+            ui.separator();
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::widgets::settings_button(ui, compact).clicked() {
+                    commands.push(EditorCommand::OpenSettings);
+                }
+                ui.separator();
+                ui.add_enabled_ui(self.has_unsaved(), |ui| {
+                    if ui.button(tr("Save")).clicked() {
+                        commands.push(EditorCommand::Save);
+                    }
+                });
+                if ui.button(tr("Cancel")).clicked() {
+                    commands.push(EditorCommand::Cancel);
+                }
+                if let Some(repertoire) = self.draft.repertoire(&self.repertoire_id) {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new(&repertoire.name).heading()).truncate(),
+                        )
+                        .on_hover_text(&repertoire.name);
+                    });
                 }
             });
         });
-        ui.separator();
     }
 
     fn show_board(&mut self, ui: &mut Ui, settings: &Settings) {
@@ -232,6 +244,19 @@ impl RepertoireEditorUi {
     }
 
     fn show_panel(&mut self, ui: &mut Ui, commands: &mut Vec<EditorCommand>) {
+        let tree_height = (ui.available_height() * 0.55).max(160.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), tree_height),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("repertoire_editor_tree")
+                    .max_height(tree_height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.show_tree(ui, commands));
+            },
+        );
+        ui.separator();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -245,24 +270,38 @@ impl RepertoireEditorUi {
                     ui.separator();
                 }
                 if let Some(repertoire) = self.draft.repertoire(&self.repertoire_id) {
-                    let mut depth = repertoire.max_plies;
-                    ui.horizontal(|ui| {
-                        ui.label(tr("Depth"));
-                        if ui
-                            .add(egui::DragValue::new(&mut depth).range(0..=u32::MAX))
-                            .changed()
-                        {
-                            commands.push(EditorCommand::SetDepth(depth));
-                        }
-                        ui.label(tr("plies"));
-                    });
+                    let mut unlimited = repertoire.max_plies == u32::MAX;
+                    if ui.checkbox(&mut unlimited, tr("No depth limit")).changed() {
+                        commands.push(EditorCommand::SetDepth(if unlimited {
+                            u32::MAX
+                        } else {
+                            20
+                        }));
+                    }
+                    if !unlimited {
+                        let mut depth = if repertoire.max_plies == u32::MAX {
+                            20
+                        } else {
+                            repertoire.max_plies
+                        };
+                        ui.horizontal(|ui| {
+                            ui.label(tr("Depth"));
+                            if ui
+                                .add(egui::DragValue::new(&mut depth).range(0..=u32::MAX - 1))
+                                .changed()
+                            {
+                                commands.push(EditorCommand::SetDepth(depth));
+                            }
+                            ui.label(tr("plies"));
+                        });
+                    }
                 }
                 ui.separator();
                 self.show_selected(ui, commands);
                 ui.separator();
-                self.show_analytics(ui);
-                ui.separator();
-                self.show_tree(ui, commands);
+                egui::CollapsingHeader::new(tr("Move analytics"))
+                    .id_salt("repertoire_editor_analytics")
+                    .show(ui, |ui| self.show_analytics(ui));
             });
     }
 
@@ -329,11 +368,7 @@ impl RepertoireEditorUi {
         ui.strong(tr("PGN tree"));
         let root = self.tree.root();
         if ui
-            .add(
-                egui::Button::new(tr("Initial position"))
-                    .selected(self.selected == root)
-                    .truncate(),
-            )
+            .add(egui::Button::selectable(self.selected == root, tr("Initial position")).truncate())
             .clicked()
         {
             commands.push(EditorCommand::Select(root));
@@ -368,9 +403,10 @@ impl RepertoireEditorUi {
                 let indentation = (row.indentation as f32 * 14.0).min(ui.available_width() * 0.35);
                 ui.add_space(indentation);
                 if ui
-                    .add(
-                        egui::Button::new(label)
-                            .selected(self.selected == row.node)
+                    .add_sized(
+                        [ui.available_width(), 24.0],
+                        egui::Button::selectable(self.selected == row.node, "")
+                            .left_text(label)
                             .truncate(),
                     )
                     .clicked()
@@ -382,7 +418,6 @@ impl RepertoireEditorUi {
     }
 
     fn show_analytics(&mut self, ui: &mut Ui) {
-        ui.strong(tr("Move analytics"));
         if self.selected == self.tree.root() {
             ui.label(tr("Select a move to see its learning analytics"));
             return;
@@ -563,6 +598,7 @@ impl RepertoireEditorUi {
 #[derive(Clone, Copy)]
 enum EditorCommand {
     Close,
+    OpenSettings,
     Cancel,
     Save,
     Select(NodeId),
@@ -766,6 +802,51 @@ mod tests {
 
     fn child(editor: &RepertoireEditorUi, index: usize) -> NodeId {
         editor.tree.game().children(editor.tree.root())[index]
+    }
+
+    #[test]
+    fn depth_controls_hide_unlimited_sentinel_and_keep_odd_half_moves() {
+        let (library, id) = library();
+        let mut editor = RepertoireEditorUi::new(&library, id.clone()).unwrap();
+        for depth in [u32::MAX, 7] {
+            editor
+                .draft
+                .repertoire_mut(&id)
+                .unwrap()
+                .set_max_plies(depth);
+            let ctx = egui::Context::default();
+            let mut commands = Vec::new();
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(420.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| editor.show_panel(ui, &mut commands),
+            );
+            let texts: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| {
+                    if let egui::Shape::Text(shape) = &clipped.shape {
+                        Some(shape.galley.text().to_owned())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert!(texts.iter().any(|text| text == "No depth limit"));
+            assert!(!texts.iter().any(|text| text.contains("4294967295")));
+            if depth == 7 {
+                assert!(texts.iter().any(|text| text == "7"));
+                assert!(texts.iter().any(|text| text == "plies"));
+            }
+            assert!(commands.is_empty());
+            assert_eq!(editor.draft.repertoire(&id).unwrap().max_plies, depth);
+            output.drop_without_applying_deltas();
+        }
     }
 
     #[test]

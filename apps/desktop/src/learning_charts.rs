@@ -159,9 +159,9 @@ pub fn sequences(ui: &mut Ui, histograms: &SequenceHistograms) {
 fn history_legend(ui: &mut Ui, palette: &[Color32; 3]) {
     ui.horizontal_wrapped(|ui| {
         for (key, color, marker) in [
-            ("Learning", palette[0], Marker::Circle),
-            ("Learnt", palette[1], Marker::Square),
-            ("Uncertain", palette[2], Marker::Diamond),
+            ("Still learning", palette[0], Marker::Circle),
+            ("Learnt moves", palette[1], Marker::Square),
+            ("Long overdue learnt moves", palette[2], Marker::Diamond),
         ] {
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(18.0, 12.0), Sense::hover());

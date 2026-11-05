@@ -6,11 +6,9 @@ use trainer::repertoire::{BranchLearningAnalytics, RepertoireId};
 
 use crate::i18n::tr;
 
-const WIDE_WIDTH: f32 = 900.0;
 const HEADER_HEIGHT: f32 = 40.0;
-const ROW_HEIGHT: f32 = 24.0;
+const ROW_HEIGHT: f32 = 32.0;
 const BODY_TEXT_SIZE: f32 = 14.0;
-const WIDE_NUMERIC_WIDTHS: [f32; 9] = [56.0, 60.0, 80.0, 64.0, 108.0, 96.0, 88.0, 64.0, 136.0];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchSelection {
@@ -38,36 +36,29 @@ pub fn show(
         *selected = Some(selection_for(&rows[0]));
     }
 
-    let wide = ui.available_width() >= WIDE_WIDTH;
-    let include_repertoire = include_repertoire_names(rows, names);
+    ui.add(
+        egui::Label::new(tr(
+            "Continuations to review. Shared moves may appear in several variations.",
+        ))
+        .wrap(),
+    );
+    ui.add_space(6.0);
+    let include_repertoire = include_repertoire_names(rows);
     let mut clicked = None;
-    if wide {
-        show_wide(
-            ui,
-            rows,
-            names,
-            labels,
-            include_repertoire,
-            selected.as_ref(),
-            &mut clicked,
-        );
-    } else {
-        show_narrow(
-            ui,
-            rows,
-            names,
-            labels,
-            include_repertoire,
-            selected.as_ref(),
-            &mut clicked,
-        );
-    }
+    show_table(
+        ui,
+        rows,
+        names,
+        labels,
+        include_repertoire,
+        selected.as_ref(),
+        &mut clicked,
+    );
     if let Some(selection) = clicked {
         *selected = Some(selection);
     }
 
-    if !wide
-        && let Some(selection) = selected.as_ref()
+    if let Some(selection) = selected.as_ref()
         && let Some(row) = rows.iter().find(|row| selection == &selection_for(row))
     {
         ui.separator();
@@ -82,15 +73,11 @@ fn selection_for(row: &BranchLearningAnalytics) -> BranchSelection {
     }
 }
 
-fn include_repertoire_names(
-    rows: &[BranchLearningAnalytics],
-    names: &HashMap<RepertoireId, String>,
-) -> bool {
-    names.len() > 1
-        || rows.first().is_some_and(|first| {
-            rows.iter()
-                .any(|row| row.repertoire_id != first.repertoire_id)
-        })
+fn include_repertoire_names(rows: &[BranchLearningAnalytics]) -> bool {
+    rows.first().is_some_and(|first| {
+        rows.iter()
+            .any(|row| row.repertoire_id != first.repertoire_id)
+    })
 }
 
 fn san_path(
@@ -134,7 +121,7 @@ fn branch_text(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn show_wide(
+fn show_table(
     ui: &mut Ui,
     rows: &[BranchLearningAnalytics],
     names: &HashMap<RepertoireId, String>,
@@ -143,91 +130,19 @@ fn show_wide(
     selected: Option<&BranchSelection>,
     clicked: &mut Option<BranchSelection>,
 ) {
-    let headers = [
-        "Branch",
-        "Total",
-        "Unseen",
-        "Learning",
-        "Learnt",
-        "Uncertain",
-        "Due",
-        "Accuracy",
-        "Learnt %",
-        "Last trained",
-    ];
-    let mut table = TableBuilder::new(ui)
-        .id_salt("learning_branches_wide")
-        .striped(true)
-        .sense(Sense::click())
-        .max_scroll_height(360.0)
-        .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::remainder().at_least(120.0).clip(true));
-    for width in WIDE_NUMERIC_WIDTHS {
-        table = table.column(Column::exact(width).clip(true));
-    }
-    table
-        .header(HEADER_HEIGHT, |mut header| {
-            for (index, key) in headers.into_iter().enumerate() {
-                header.col(|ui| {
-                    header_cell(ui, tr(key), index > 0);
-                });
-            }
-        })
-        .body(|body| {
-            body.rows(ROW_HEIGHT, rows.len(), |mut table_row| {
-                let row = &rows[table_row.index()];
-                let selection = selection_for(row);
-                table_row.set_selected(selected == Some(&selection));
-                table_row.col(|ui| {
-                    let text = branch_text(row, names, labels, include_repertoire);
-                    text_cell(ui, &text, false).on_hover_text(text);
-                });
-                let summary = &row.summary;
-                let values = [
-                    summary.total.to_string(),
-                    summary.unseen.to_string(),
-                    summary.learning.to_string(),
-                    summary.learnt.to_string(),
-                    summary.uncertain.to_string(),
-                    summary.due.to_string(),
-                    format_percent(summary.accuracy_percent),
-                    format_percent(summary.learnt_percent),
-                    format_time(row.last_independent_at),
-                ];
-                for value in values {
-                    table_row.col(|ui| {
-                        text_cell(ui, &value, true);
-                    });
-                }
-                if table_row.response().clicked() {
-                    *clicked = Some(selection);
-                }
-            });
-        });
-}
-
-#[allow(clippy::too_many_arguments)]
-fn show_narrow(
-    ui: &mut Ui,
-    rows: &[BranchLearningAnalytics],
-    names: &HashMap<RepertoireId, String>,
-    labels: &HashMap<(RepertoireId, Vec<String>), Vec<String>>,
-    include_repertoire: bool,
-    selected: Option<&BranchSelection>,
-    clicked: &mut Option<BranchSelection>,
-) {
+    let numeric_width = (ui.available_width() - 3.0 * ui.spacing().item_spacing.x) * 0.4 / 3.0;
     TableBuilder::new(ui)
-        .id_salt("learning_branches_narrow")
+        .id_salt("learning_branches")
         .striped(true)
         .sense(Sense::click())
         .max_scroll_height(192.0)
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::remainder().at_least(88.0).clip(true))
-        .column(Column::exact(62.0).clip(true))
-        .column(Column::exact(52.0).clip(true))
-        .column(Column::exact(76.0).clip(true))
+        .column(Column::remainder().clip(true))
+        .column(Column::exact(numeric_width).clip(true))
+        .column(Column::exact(numeric_width).clip(true))
+        .column(Column::exact(numeric_width).clip(true))
         .header(HEADER_HEIGHT, |mut header| {
-            for (index, key) in ["Branch", "Total", "Due", "Learnt %"]
+            for (index, key) in ["Variation start", "Learnt", "Due now", "Accuracy"]
                 .into_iter()
                 .enumerate()
             {
@@ -246,9 +161,9 @@ fn show_narrow(
                     text_cell(ui, &text, false).on_hover_text(text);
                 });
                 for value in [
-                    row.summary.total.to_string(),
+                    format!("{} / {}", row.summary.learnt, row.summary.total),
                     row.summary.due.to_string(),
-                    format_percent(row.summary.learnt_percent),
+                    format_percent(row.summary.accuracy_percent),
                 ] {
                     table_row.col(|ui| {
                         text_cell(ui, &value, true);
@@ -273,13 +188,13 @@ fn show_details(
         .on_hover_text(branch);
     ui.add_space(4.0);
     let details = [
-        ("Unseen", row.summary.unseen.to_string()),
-        ("Learning", row.summary.learning.to_string()),
-        ("Learnt", row.summary.learnt.to_string()),
-        ("Uncertain", row.summary.uncertain.to_string()),
-        ("Due", row.summary.due.to_string()),
+        (
+            "Learnt moves",
+            format!("{} / {}", row.summary.learnt, row.summary.total),
+        ),
+        ("Due now", row.summary.due.to_string()),
+        ("Not practised yet", row.summary.unseen.to_string()),
         ("Accuracy", format_percent(row.summary.accuracy_percent)),
-        ("Last trained", format_time(row.last_independent_at)),
     ];
     show_details_rows(ui, &details);
 }
@@ -293,7 +208,7 @@ fn show_details_rows(ui: &mut Ui, details: &[(&'static str, String)]) {
         .column(Column::exact(label_width).clip(true))
         .column(Column::remainder().at_least(80.0).clip(true))
         .body(|body| {
-            body.rows(ROW_HEIGHT * 1.5, details.len(), |mut row| {
+            body.rows(36.0, details.len(), |mut row| {
                 let (label, value) = &details[row.index()];
                 row.col(|ui| {
                     ui.add(
@@ -318,16 +233,6 @@ fn text_cell(ui: &mut Ui, text: &str, _numeric: bool) -> egui::Response {
 
 fn format_percent(value: Option<f64>) -> String {
     value.map_or_else(|| "—".to_owned(), |value| format!("{value:.0} %"))
-}
-
-fn format_time(at: Option<i64>) -> String {
-    at.and_then(|at| chrono::DateTime::from_timestamp(at, 0))
-        .map(|at| {
-            at.with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M")
-                .to_string()
-        })
-        .unwrap_or_else(|| "—".to_owned())
 }
 
 #[cfg(test)]
@@ -513,7 +418,7 @@ mod tests {
         assert!(has_text(&shapes, "First · 1.e4 1...e5"));
         assert!(has_text(&shapes, "Second · 1.e4 e7e5"));
 
-        let names = HashMap::from([(fixture.rows[0].repertoire_id.clone(), "First".to_owned())]);
+        let names = fixture.names.clone();
         let shapes = render(
             &ctx,
             1200.0,
@@ -530,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn wide_and_narrow_layouts_stay_in_bounds_in_light_and_dark() {
+    fn unified_layout_stays_in_bounds_in_light_and_dark() {
         let fixture = fixture();
         for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
             for (width, height) in [(1400.0, 900.0), (960.0, 600.0), (640.0, 480.0)] {
@@ -551,39 +456,18 @@ mod tests {
                     );
                     assert!(!shapes.is_empty());
                     assert_bounds(&shapes, width, height);
-                    if width < WIDE_WIDTH {
-                        for key in [
-                            "Unseen",
-                            "Learning",
-                            "Learnt",
-                            "Uncertain",
-                            "Due",
-                            "Accuracy",
-                            "Last trained",
-                        ] {
-                            assert!(
-                                has_translated_text(&shapes, key),
-                                "missing narrow detail {key}"
-                            );
-                        }
-                    } else {
-                        for key in [
-                            "Branch",
-                            "Total",
-                            "Unseen",
-                            "Learning",
-                            "Learnt",
-                            "Uncertain",
-                            "Due",
-                            "Accuracy",
-                            "Learnt %",
-                            "Last trained",
-                        ] {
-                            assert!(
-                                has_translated_text(&shapes, key),
-                                "missing wide header {key}"
-                            );
-                        }
+                    for key in [
+                        "Variation start",
+                        "Learnt",
+                        "Due now",
+                        "Accuracy",
+                        "Learnt moves",
+                        "Not practised yet",
+                    ] {
+                        assert!(
+                            has_translated_text(&shapes, key),
+                            "missing header/detail {key}"
+                        );
                     }
                 }
             }
@@ -591,32 +475,10 @@ mod tests {
     }
 
     #[test]
-    fn wide_headers_fit_accepted_matrix_in_russian_and_german() {
+    fn headers_fit_accepted_matrix_in_russian_and_german() {
         let cases = [
-            [
-                "Ветка",
-                "Итого",
-                "Новый",
-                "Изучается",
-                "Изучено",
-                "Не подтверждено",
-                "К повторению",
-                "Точность",
-                "Изучено %",
-                "Последняя тренировка",
-            ],
-            [
-                "Variante",
-                "Gesamt",
-                "Neu",
-                "Lernen",
-                "Gelernt",
-                "Unsicher",
-                "Fällig",
-                "Genauigkeit",
-                "Gelernt %",
-                "Letztes Training",
-            ],
+            ["Начало варианта", "Изучено", "Повторить", "Точность"],
+            ["Variantenanfang", "Gelernt", "Wiederholen", "Genauigkeit"],
         ];
         for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
             for (width, height) in [(960.0, 600.0), (1400.0, 900.0)] {
@@ -632,12 +494,15 @@ mod tests {
                             ..Default::default()
                         },
                         |ui| {
+                            let numeric_width =
+                                (ui.available_width() - 3.0 * ui.spacing().item_spacing.x) * 0.4
+                                    / 3.0;
                             let mut table = TableBuilder::new(ui)
                                 .id_salt("learning_branches_wide_header_test")
                                 .cell_layout(Layout::left_to_right(Align::Center))
                                 .column(Column::remainder().at_least(120.0).clip(true));
-                            for width in WIDE_NUMERIC_WIDTHS {
-                                table = table.column(Column::exact(width).clip(true));
+                            for _ in 0..3 {
+                                table = table.column(Column::exact(numeric_width).clip(true));
                             }
                             table.header(HEADER_HEIGHT, |mut header| {
                                 for (index, key) in headers.iter().enumerate() {
@@ -684,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn narrow_details_are_visible_and_click_selects_the_branch() {
+    fn details_are_visible_and_click_selects_the_branch() {
         let fixture = fixture();
         let ctx = egui::Context::default();
         let mut selected = None;
@@ -715,21 +580,13 @@ mod tests {
         );
         assert_eq!(selected, Some(selection_for(&fixture.rows[1])));
         assert!(text_occurrences(&shapes, "Second · 1.e4 e7e5") >= 2);
-        for key in [
-            "Unseen",
-            "Learning",
-            "Learnt",
-            "Uncertain",
-            "Due",
-            "Accuracy",
-            "Last trained",
-        ] {
+        for key in ["Learnt moves", "Due now", "Not practised yet", "Accuracy"] {
             assert!(has_translated_text(&shapes, key), "missing detail {key}");
         }
     }
 
     #[test]
-    fn narrow_details_keep_long_labels_readable_at_all_widths() {
+    fn details_keep_long_labels_readable_at_all_widths() {
         let cases: Vec<Vec<(&str, String)>> = vec![
             vec![
                 ("Новый", "2".to_owned()),
@@ -801,7 +658,7 @@ mod tests {
     }
 
     #[test]
-    fn null_accuracy_and_last_training_render_as_dashes() {
+    fn null_accuracy_renders_as_dashes_in_table_and_details() {
         let fixture = fixture();
         let mut row = fixture.rows[0].clone();
         row.summary.accuracy_percent = None;
@@ -823,12 +680,65 @@ mod tests {
             &mut selected,
         );
         let dashes = text_occurrences(&shapes, "—");
-        assert!(dashes >= 3, "expected null metrics as dashes: {dashes}");
+        assert!(
+            dashes >= 2,
+            "expected null accuracy in table and details: {dashes}"
+        );
         assert_eq!(format_percent(None), "—");
-        assert_eq!(format_time(None), "—");
-        assert_eq!(format_time(Some(i64::MAX)), "—");
         assert_eq!(format_percent(Some(75.0)), "75 %");
-        assert!(format_time(Some(BASE)).contains('-'));
+    }
+
+    #[test]
+    fn long_selected_notation_wraps_in_details_and_row_retains_wide_column() {
+        let mut fixture = fixture();
+        fixture.rows.truncate(1);
+        fixture.rows[0].branch_root = (0..40).map(|i| format!("move{i}")).collect();
+        let notation: Vec<_> = (1..=40).map(|i| format!("{i}.Nf3")).collect();
+        fixture.labels.insert(
+            (
+                fixture.rows[0].repertoire_id.clone(),
+                fixture.rows[0].branch_root.clone(),
+            ),
+            notation,
+        );
+        let expected = san_path(&fixture.rows[0], &fixture.labels);
+        for width in [960.0, 1400.0] {
+            let ctx = egui::Context::default();
+            let mut selected = None;
+            let shapes = render(
+                &ctx,
+                width,
+                900.0,
+                0.0,
+                Vec::new(),
+                &fixture.rows,
+                &fixture.names,
+                &fixture.labels,
+                &mut selected,
+            );
+            assert_bounds(&shapes, width, 900.0);
+            let texts: Vec<_> = shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) if text.galley.text() == expected => {
+                        Some((clipped, text))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts.len(), 2, "table row and full selected notation");
+            assert!(texts[0].0.clip_rect.width() >= width * 0.5);
+            assert_eq!(
+                texts[0].1.galley.rows.len(),
+                1,
+                "table notation stays on one line"
+            );
+            assert!(
+                texts[1].1.galley.rows.len() > 1,
+                "full selected notation wraps"
+            );
+            assert!(has_text(&shapes, "4 / 8"));
+        }
     }
 
     #[test]

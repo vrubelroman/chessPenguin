@@ -18,7 +18,7 @@ use trainer::repertoire::{
 };
 
 use crate::board::{BoardState, BoardView};
-use crate::i18n::tr;
+use crate::i18n::{tr, trf};
 use crate::learning_dashboard::{LearningDashboardAction, LearningDashboardUi};
 use crate::learning_training::{LearningTrainingAction as TrainingAction, LearningTrainingUi};
 use crate::repertoire_editor::{RepertoireEditorAction, RepertoireEditorUi};
@@ -50,7 +50,6 @@ struct LibraryRow {
 }
 
 const OPENING_LINES: usize = 5;
-const ACTION_BUTTON_WIDTH: f32 = 120.0;
 const ROW_VERTICAL_PADDING: f32 = 8.0;
 const ROW_BOTTOM_PADDING: f32 = 4.0;
 const TITLE_HEIGHT: f32 = 24.0;
@@ -145,6 +144,7 @@ struct TestLayout {
     table: Option<egui::Rect>,
     reset_review: Option<egui::Rect>,
     editor: Option<egui::Rect>,
+    action_buttons: [Option<egui::Rect>; 3],
 }
 
 pub struct RepertoireUi {
@@ -156,6 +156,8 @@ pub struct RepertoireUi {
     learning_error: Option<String>,
     error: Option<String>,
     selected: Option<RepertoireId>,
+    initial_selection_pending: bool,
+    parameters_open: bool,
     scroll_to_selected: bool,
     tree: Option<Arc<RepertoireTree>>,
     trees: HashMap<RepertoireId, Arc<RepertoireTree>>,
@@ -219,6 +221,8 @@ impl RepertoireUi {
             learning_error,
             error: None,
             selected,
+            initial_selection_pending: true,
+            parameters_open: false,
             scroll_to_selected: true,
             tree: None,
             trees: HashMap::new(),
@@ -315,8 +319,9 @@ impl RepertoireUi {
         self.editor = None;
         self.editor_id = None;
     }
-    fn handle_editor_action(&mut self, action: RepertoireEditorAction) {
+    fn handle_editor_action(&mut self, action: RepertoireEditorAction) -> Option<RepertoireAction> {
         match action {
+            RepertoireEditorAction::OpenSettings => return Some(RepertoireAction::OpenSettings),
             RepertoireEditorAction::Close | RepertoireEditorAction::Cancel => self.close_editor(),
             RepertoireEditorAction::Applied {
                 repertoire_id,
@@ -334,6 +339,7 @@ impl RepertoireUi {
             }
             RepertoireEditorAction::Error(error) => self.error = Some(error),
         }
+        None
     }
     pub fn open_library(&mut self) {
         self.preparing = false;
@@ -368,6 +374,7 @@ impl RepertoireUi {
         });
     }
     fn select(&mut self, id: RepertoireId, settings: &Settings) {
+        self.initial_selection_pending = false;
         if self
             .editor
             .as_ref()
@@ -823,6 +830,12 @@ impl RepertoireUi {
         }
     }
     fn poll(&mut self, settings: &mut Settings) {
+        if self.initial_selection_pending {
+            self.initial_selection_pending = false;
+            if let Some(id) = self.selected.clone() {
+                self.select(id, settings);
+            }
+        }
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Aggregated(key, result) => {
@@ -969,6 +982,7 @@ impl RepertoireUi {
                         self.training_visible = false;
                         self.scroll_to_selected = true;
                     }
+                    TrainingAction::OpenSettings => actions.push(RepertoireAction::OpenSettings),
                     TrainingAction::Sound(sound) => actions.push(RepertoireAction::Sound(sound)),
                     TrainingAction::Toast(text) => actions.push(RepertoireAction::Toast(text)),
                 }
@@ -976,7 +990,6 @@ impl RepertoireUi {
             return actions;
         }
         if self.editor.is_some() {
-            self.errors(ui);
             #[cfg(test)]
             {
                 self.debug_layout.editor = Some(ui.available_rect_before_wrap());
@@ -984,7 +997,7 @@ impl RepertoireUi {
             let mut editor = self.editor.take().expect("checked repertoire editor");
             let emitted = editor.show(ui, settings, &self.library_store);
             for action in emitted {
-                self.handle_editor_action(action);
+                actions.extend(self.handle_editor_action(action));
             }
             if self.editor_id.is_some() {
                 self.editor = Some(editor);
@@ -993,9 +1006,11 @@ impl RepertoireUi {
         }
         if self.dashboard.is_some() {
             let mut dashboard = self.dashboard.take().expect("checked learning dashboard");
-            let close = dashboard
-                .show(ui, settings)
-                .contains(&LearningDashboardAction::Close);
+            let emitted = dashboard.show(ui, settings);
+            let close = emitted.contains(&LearningDashboardAction::Close);
+            if emitted.contains(&LearningDashboardAction::OpenSettings) {
+                actions.push(RepertoireAction::OpenSettings);
+            }
             if close {
                 self.reload_learning();
             } else {
@@ -1011,27 +1026,23 @@ impl RepertoireUi {
             actions.push(RepertoireAction::Close);
         }
         egui::Panel::top("repertoire_header").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui
-                    .button(if self.return_to_game.is_some() {
-                        tr("← To game")
-                    } else {
-                        tr("← Databases")
-                    })
-                    .clicked()
-                {
-                    actions.push(RepertoireAction::Close);
-                }
-                ui.heading(tr("Opening training"));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("⚙").on_hover_text(tr("Settings")).clicked() {
-                        actions.push(RepertoireAction::OpenSettings);
-                    }
-                });
-            });
+            let back = if self.return_to_game.is_some() {
+                tr("← To game")
+            } else {
+                tr("← Databases")
+            };
+            let (back, settings) =
+                crate::widgets::section_header(ui, back, tr("Opening training (α version)"));
+            if back {
+                actions.push(RepertoireAction::Close);
+            }
+            if settings {
+                actions.push(RepertoireAction::OpenSettings);
+            }
         });
         self.show_workspace(ui, settings, &mut actions);
         self.show_add(ui, &mut actions);
+        self.parameters_window(ui.ctx(), settings, &mut actions);
         actions
     }
     fn errors(&mut self, ui: &mut Ui) {
@@ -1124,20 +1135,29 @@ impl RepertoireUi {
     }
     fn show_library(&mut self, ui: &mut Ui, settings: &Settings) {
         self.errors(ui);
-        ui.horizontal_wrapped(|ui| {
-            if ui.button(tr("+ Create")).clicked() {
-                self.edit_name = Some((None, String::new()));
-            }
-            if ui
-                .add_enabled(
-                    self.cancel.is_none() && self.library_error.is_none(),
-                    egui::Button::new(tr("Import PGN…")),
-                )
-                .clicked()
-            {
-                self.pick_import(None, ui.ctx());
-            }
-        });
+        egui::Panel::bottom("repertoire_library_footer")
+            .resizable(false)
+            .exact_size(44.0)
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_sized([120.0, 28.0], egui::Button::new(tr("+ Create")))
+                        .clicked()
+                    {
+                        self.edit_name = Some((None, String::new()));
+                    }
+                    if ui
+                        .add_enabled(
+                            self.cancel.is_none() && self.library_error.is_none(),
+                            egui::Button::new(tr("Import PGN…")).min_size(egui::vec2(120.0, 28.0)),
+                        )
+                        .clicked()
+                    {
+                        self.pick_import(None, ui.ctx());
+                    }
+                });
+            });
         self.name_editor(ui, settings);
         if self.import.is_some() {
             self.import_preview(ui, settings);
@@ -1196,6 +1216,7 @@ impl RepertoireUi {
         let mut clicked = None;
         let mut import = None;
         let mut export = None;
+        let mut edit = None;
         ui.add_space(8.0);
         let compact = ui.available_width() < 480.0;
         ui.style_mut().interaction.selectable_labels = false;
@@ -1323,6 +1344,16 @@ impl RepertoireUi {
                     });
                     row.col(|ui| {
                         ui.menu_button("⋯", |ui| {
+                            if ui
+                                .add_enabled(
+                                    !self.has_unsaved() && !self.preparing,
+                                    egui::Button::new(tr("Edit")),
+                                )
+                                .clicked()
+                            {
+                                edit = Some(r.id.clone());
+                                ui.close();
+                            }
                             if ui.button(tr("Rename")).clicked() {
                                 self.edit_name = Some((Some(r.id.clone()), r.name.clone()));
                                 ui.close();
@@ -1356,6 +1387,10 @@ impl RepertoireUi {
         }
         if let Some(id) = clicked {
             self.select(id, settings);
+        }
+        if let Some(id) = edit {
+            self.select(id, settings);
+            self.open_editor();
         }
         if let Some(id) = import {
             self.pick_import(Some(id), ui.ctx());
@@ -1489,250 +1524,262 @@ impl RepertoireUi {
             .as_ref()
             .and_then(|id| self.library.repertoire(id).cloned())
             .map(|r| (r.id.clone(), r));
-        let selected_height = (ui.available_height() * 0.48).clamp(180.0, 520.0);
-        egui::ScrollArea::vertical()
-            .id_salt("repertoire_selected_scroll")
-            .max_height(selected_height)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                if let Some((id, r)) = selected {
-                    egui::Frame::new()
-                        .fill(ui.visuals().faint_bg_color)
-                        .corner_radius(6.0)
-                        .inner_margin(egui::Margin::symmetric(10, 8))
-                        .show(ui, |ui| {
-                            ui.add_enabled_ui(!self.preparing, |ui| {
-                                let previous_side = self.side;
-                                let previous_queue = self.queue;
-                                let previous_priority = self.priority;
-                                ui.horizontal(|ui| {
-                                    ui.add(
-                                        egui::Label::new(RichText::new(&r.name).heading())
-                                            .truncate(),
-                                    )
-                                    .on_hover_text(&r.name);
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui
-                                                .add_enabled(
-                                                    !self.has_unsaved(),
-                                                    egui::Button::new(tr("Edit")),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.open_editor();
-                                            }
-                                        },
-                                    );
-                                });
-                                ui.add_space(6.0);
-                                egui::Grid::new("repertoire_selected_controls")
-                                    .num_columns(2)
-                                    .spacing([12.0, 6.0])
-                                    .show(ui, |ui| {
-                                        ui.label(tr("Color"));
-                                        ui.horizontal(|ui| {
-                                            for side in [LearningSide::White, LearningSide::Black] {
-                                                ui.selectable_value(
-                                                    &mut self.side,
-                                                    side,
-                                                    learning_side_label(side),
-                                                );
-                                            }
-                                        });
-                                        ui.end_row();
-                                        ui.label(tr("Mode"));
-                                        egui::ComboBox::from_id_salt("repertoire_learning_mode")
-                                            .selected_text(queue_mode_label(self.queue))
-                                            .width(220.0)
-                                            .truncate()
-                                            .show_ui(ui, |ui| {
-                                                for queue in [
-                                                    QueueMode::SpacedRepetition,
-                                                    QueueMode::ReviewInOrder,
-                                                    QueueMode::LeastRecent,
-                                                ] {
-                                                    ui.selectable_value(
-                                                        &mut self.queue,
-                                                        queue,
-                                                        queue_mode_label(queue),
-                                                    );
-                                                }
-                                            });
-                                        ui.end_row();
-                                        if self.queue != QueueMode::SpacedRepetition {
-                                            ui.label(tr("Learning priority"));
-                                            egui::ComboBox::from_id_salt(
-                                                "repertoire_learning_priority",
-                                            )
-                                            .selected_text(learning_priority_label(self.priority))
-                                            .width(220.0)
-                                            .truncate()
-                                            .show_ui(
-                                                ui,
-                                                |ui| {
-                                                    for priority in [
-                                                        LearningPriority::DepthFirst,
-                                                        LearningPriority::BreadthOverDepth,
-                                                        LearningPriority::MainLinesFirst,
-                                                        LearningPriority::CommonPositionsFirst,
-                                                    ] {
-                                                        ui.selectable_value(
-                                                            &mut self.priority,
-                                                            priority,
-                                                            learning_priority_label(priority),
-                                                        );
-                                                    }
-                                                },
-                                            );
-                                            ui.end_row();
-                                        }
-                                        ui.horizontal(|ui| {
-                                            ui.label(tr("Variants"));
-                                            if let Some(count) = self.variant_counts.get(&id) {
-                                                ui.label(count.to_string());
-                                            } else {
-                                                ui.add(egui::Spinner::new().size(16.0));
-                                                ui.ctx().request_repaint_after(
-                                                    std::time::Duration::from_millis(100),
-                                                );
-                                            }
-                                        });
-                                        let aggregate = self
-                                            .selected_aggregate()
-                                            .map(|scoped| scoped.summary.clone());
-                                        let resume = self.queue == QueueMode::SpacedRepetition
-                                            && self.has_unfinished_review_snapshot();
-                                        let kind = aggregate
-                                            .as_ref()
-                                            .map_or(StartKind::Unavailable, |summary| {
-                                                self.selected_start_kind(summary)
-                                            });
-                                        let ready = kind != StartKind::Unavailable
-                                            && !self.preparing
-                                            && self.learning_error.is_none()
-                                            && self.library_error.is_none();
-                                        let cta = match (self.queue, kind) {
-                                            (QueueMode::SpacedRepetition, StartKind::Review)
-                                                if resume =>
-                                            {
-                                                tr("Continue").to_owned()
-                                            }
-                                            (QueueMode::SpacedRepetition, StartKind::Review) => {
-                                                format!(
-                                                    "{} · {}",
-                                                    tr("Start training"),
-                                                    aggregate
-                                                        .as_ref()
-                                                        .map_or(0, |summary| summary.due)
-                                                )
-                                            }
-                                            (
-                                                QueueMode::SpacedRepetition,
-                                                StartKind::IntroduceNew,
-                                            ) => tr("Introduce new moves").to_owned(),
-                                            _ => tr("Start training").to_owned(),
-                                        };
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                ui.add_enabled_ui(ready, |ui| {
-                                                    if crate::widgets::primary_wide(
-                                                        ui,
-                                                        &cta,
-                                                        ACTION_BUTTON_WIDTH,
-                                                    )
-                                                    .clicked()
-                                                    {
-                                                        self.start(settings);
-                                                        if self.preparing {
-                                                            actions.push(
-                                                                RepertoireAction::SettingsChanged,
-                                                            );
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                        );
-                                        ui.end_row();
-                                    });
-                                if self.queue == QueueMode::ReviewInOrder {
-                                    ui.horizontal(|ui| {
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                #[cfg(test)]
-                                                {
-                                                    self.debug_layout.reset_review =
-                                                        Some(ui.max_rect());
-                                                }
-                                                let enabled = self.has_review_snapshot()
-                                                    && !self.review_reset_pending
-                                                    && !self.has_unsaved();
-                                                if ui
-                                                    .add_enabled(
-                                                        enabled,
-                                                        egui::Button::new(tr("Reset Review Order"))
-                                                            .min_size(egui::vec2(
-                                                                ACTION_BUTTON_WIDTH,
-                                                                26.0,
-                                                            )),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    self.reset_review_cursor();
-                                                }
-                                                if self.review_reset_pending {
-                                                    ui.add(egui::Spinner::new().size(16.0));
-                                                    ui.ctx().request_repaint_after(
-                                                        std::time::Duration::from_millis(100),
-                                                    );
-                                                }
-                                            },
-                                        );
-                                    });
-                                }
-                                ui.add_space(8.0);
-                                let mut context_policy = settings
-                                    .repertoire_context_policies
-                                    .get(id.as_str())
-                                    .copied()
-                                    .unwrap_or_default();
-                                if crate::learning_context_controls::show(ui, &mut context_policy) {
-                                    settings
-                                        .repertoire_context_policies
-                                        .insert(id.to_string(), context_policy);
-                                    actions.push(RepertoireAction::SettingsChanged);
-                                }
-                                ui.add_space(6.0);
-                                let preferences_changed = previous_side != self.side
-                                    || previous_queue != self.queue
-                                    || previous_priority != self.priority;
-                                if previous_side != self.side || previous_queue != self.queue {
-                                    settings.repertoire_modes.insert(
-                                        id.to_string(),
-                                        (training_mode(self.side), self.queue),
-                                    );
-                                }
-                                if previous_priority != self.priority {
-                                    settings
-                                        .repertoire_priorities
-                                        .insert(id.to_string(), self.priority);
-                                }
-                                if preferences_changed {
-                                    self.close_editor();
-                                    self.invalidate_reset_jobs();
-                                    actions.push(RepertoireAction::SettingsChanged);
-                                }
-                                ui.separator();
-                                self.statistics_panel(ui);
-                            });
+        if let Some((id, r)) = selected {
+            ui.add_enabled_ui(!self.preparing, |ui| {
+                let previous_side = self.side;
+                let previous_queue = self.queue;
+                let previous_priority = self.priority;
+                ui.add(egui::Label::new(RichText::new(&r.name).heading()).truncate())
+                    .on_hover_text(&r.name);
+                ui.add_space(6.0);
+                egui::Grid::new("repertoire_selected_controls")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(tr("Color"));
+                        ui.horizontal(|ui| {
+                            for side in [LearningSide::White, LearningSide::Black] {
+                                ui.selectable_value(
+                                    &mut self.side,
+                                    side,
+                                    learning_side_label(side),
+                                );
+                            }
                         });
+                        ui.end_row();
+                        ui.label(tr("Mode"));
+                        egui::ComboBox::from_id_salt("repertoire_learning_mode")
+                            .selected_text(queue_mode_label(self.queue))
+                            .width(220.0)
+                            .truncate()
+                            .show_ui(ui, |ui| {
+                                for queue in [
+                                    QueueMode::SpacedRepetition,
+                                    QueueMode::ReviewInOrder,
+                                    QueueMode::LeastRecent,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut self.queue,
+                                        queue,
+                                        queue_mode_label(queue),
+                                    );
+                                }
+                            });
+                        ui.end_row();
+                    });
+                ui.add_space(8.0);
+                let aggregate = self
+                    .selected_aggregate()
+                    .map(|scoped| scoped.summary.clone());
+                let resume = self.queue == QueueMode::SpacedRepetition
+                    && self.has_unfinished_review_snapshot();
+                let kind = aggregate
+                    .as_ref()
+                    .map_or(StartKind::Unavailable, |summary| {
+                        self.selected_start_kind(summary)
+                    });
+                let ready = kind != StartKind::Unavailable
+                    && !self.preparing
+                    && self.learning_error.is_none()
+                    && self.library_error.is_none();
+                let cta = match (self.queue, kind) {
+                    (QueueMode::SpacedRepetition, StartKind::Review) if resume => tr("Continue"),
+                    _ => tr("Train"),
+                };
+                self.statistics_panel(ui);
+                if r.max_plies != u32::MAX {
+                    ui.label(RichText::new(tr("Training scope: selected part")).weak());
+                }
+                ui.add_space(8.0);
+                let button_width = (ui.available_width() - 16.0) / 3.0;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.add_enabled_ui(ready, |ui| {
+                        let response = crate::widgets::primary_wide(ui, cta, button_width);
+                        let response = if kind == StartKind::Unavailable
+                            && aggregate.as_ref().is_some_and(|s| s.total > 0)
+                            && self.learning_error.is_none()
+                            && self.library_error.is_none()
+                        {
+                            response.on_disabled_hover_text(tr(
+                                "Nothing is due yet. Choose a review mode to practise now.",
+                            ))
+                        } else {
+                            response
+                        };
+                        #[cfg(test)]
+                        {
+                            self.debug_layout.action_buttons[0] = Some(response.rect);
+                        }
+                        if response.clicked() {
+                            self.start(settings);
+                            if self.preparing {
+                                actions.push(RepertoireAction::SettingsChanged);
+                            }
+                        }
+                    });
+                    let parameters = ui.add(
+                        egui::Button::new(tr("Parameters"))
+                            .min_size(egui::vec2(button_width, 30.0)),
+                    );
+                    if parameters.clicked() {
+                        self.parameters_open = true;
+                    }
+                    #[cfg(test)]
+                    {
+                        self.debug_layout.action_buttons[1] = Some(parameters.rect);
+                    }
+                    let response = ui.add_enabled(
+                        !self.has_unsaved() && !self.preparing,
+                        egui::Button::new(tr("Statistics"))
+                            .min_size(egui::vec2(button_width, 30.0)),
+                    );
+                    #[cfg(test)]
+                    {
+                        self.debug_layout.action_buttons[2] = Some(response.rect);
+                    }
+                    if response.clicked() {
+                        self.open_dashboard();
+                    }
+                });
+                self.shared_reset_panel(ui);
+                let preferences_changed = previous_side != self.side
+                    || previous_queue != self.queue
+                    || previous_priority != self.priority;
+                if previous_side != self.side || previous_queue != self.queue {
+                    settings
+                        .repertoire_modes
+                        .insert(id.to_string(), (training_mode(self.side), self.queue));
+                }
+                if previous_priority != self.priority {
+                    settings
+                        .repertoire_priorities
+                        .insert(id.to_string(), self.priority);
+                }
+                if preferences_changed {
+                    self.close_editor();
+                    self.invalidate_reset_jobs();
+                    actions.push(RepertoireAction::SettingsChanged);
                 }
             });
+        }
         ui.separator();
         self.show_library(ui, settings);
+    }
+    fn parameters_window(
+        &mut self,
+        ctx: &egui::Context,
+        settings: &mut Settings,
+        actions: &mut Vec<RepertoireAction>,
+    ) {
+        if !self.parameters_open {
+            return;
+        }
+        let Some(id) = self.selected.clone() else {
+            self.parameters_open = false;
+            return;
+        };
+        let name = self
+            .library
+            .repertoire(&id)
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let aggregate = self.selected_aggregate().map(|a| a.summary.clone());
+        let previous_priority = self.priority;
+        let mut close = false;
+        let modal = egui::Modal::new(egui::Id::new("repertoire_parameters")).show(ctx, |ui| {
+            ui.set_width((ctx.content_rect().width() - 40.0).clamp(240.0, 440.0));
+            ui.heading(tr("Training parameters"));
+            ui.add(egui::Label::new(egui::RichText::new(&name).strong()).truncate())
+                .on_hover_text(&name);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(tr("Changes apply to new sessions. Continuing a saved session keeps its previous settings.")).weak(),
+                )
+                .wrap(),
+            );
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .id_salt("repertoire_parameters_scroll")
+                .max_height((ctx.content_rect().height() - 200.0).max(100.0))
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    if self.queue != QueueMode::SpacedRepetition {
+                        ui.label(tr("Learning priority"));
+                        egui::ComboBox::from_id_salt("repertoire_learning_priority")
+                            .selected_text(learning_priority_label(self.priority))
+                            .width(280.0)
+                            .truncate()
+                            .show_ui(ui, |ui| {
+                                for priority in [
+                                    LearningPriority::DepthFirst,
+                                    LearningPriority::BreadthOverDepth,
+                                    LearningPriority::MainLinesFirst,
+                                    LearningPriority::CommonPositionsFirst,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut self.priority,
+                                        priority,
+                                        learning_priority_label(priority),
+                                    );
+                                }
+                            });
+                        ui.separator();
+                    }
+                    let mut context_policy = settings
+                        .repertoire_context_policies
+                        .get(id.as_str())
+                        .copied()
+                        .unwrap_or_default();
+                    if crate::learning_context_controls::show(ui, &mut context_policy) {
+                        settings
+                            .repertoire_context_policies
+                            .insert(id.to_string(), context_policy);
+                        actions.push(RepertoireAction::SettingsChanged);
+                    }
+                    ui.separator();
+                    if self.queue == QueueMode::ReviewInOrder {
+                        let enabled = self.has_review_snapshot()
+                            && !self.review_reset_pending
+                            && !self.has_unsaved();
+                        let response =
+                            ui.add_enabled(enabled, egui::Button::new(tr("Reset Review Order")));
+                        #[cfg(test)]
+                        {
+                            self.debug_layout.reset_review = Some(response.rect);
+                        }
+                        if response.clicked() {
+                            self.reset_review_cursor();
+                        }
+                    }
+                    let enabled = aggregate.as_ref().is_some_and(|summary| summary.total > 0)
+                        && !self.has_unsaved()
+                        && !self.preparing;
+                    if ui
+                        .add_enabled(enabled, egui::Button::new(tr("Reset learning progress…")))
+                        .clicked()
+                        && let Some(scope) =
+                            self.selected_aggregate().map(|scoped| scoped.scope.clone())
+                    {
+                        self.begin_shared_reset(scope);
+                        close = true;
+                    }
+                });
+            ui.separator();
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                close |= ui.button(tr("Close")).clicked();
+            });
+        });
+        if self.priority != previous_priority {
+            settings
+                .repertoire_priorities
+                .insert(id.to_string(), self.priority);
+            self.invalidate_reset_jobs();
+            actions.push(RepertoireAction::SettingsChanged);
+        }
+        if close || modal.should_close() {
+            self.parameters_open = false;
+        }
     }
     fn current_aggregate_key(&self) -> Option<AggregateKey> {
         Some(AggregateKey {
@@ -1823,106 +1870,38 @@ impl RepertoireUi {
         });
     }
     fn statistics_panel(&mut self, ui: &mut Ui) {
-        let aggregate = self
+        let summary = self
             .selected_aggregate()
-            .map(|scoped| (scoped.scope.clone(), scoped.summary.clone()));
-        let summary = aggregate.as_ref().map(|(_, summary)| summary);
+            .map(|scoped| scoped.summary.clone());
+        if summary.as_ref().is_some_and(|summary| summary.total == 0) {
+            ui.strong(tr("No moves to train"));
+            ui.label(tr("Add variations in the editor or import PGN"));
+            return;
+        }
         let count = |metric: fn(&LearningAggregate) -> usize| {
-            summary.map_or_else(|| "…".to_owned(), |summary| metric(summary).to_string())
+            summary
+                .as_ref()
+                .map_or_else(|| "…".to_owned(), |summary| metric(summary).to_string())
         };
-        let percent = |metric: fn(&LearningAggregate) -> Option<f64>| {
-            summary.map_or_else(|| "…".to_owned(), |summary| format_percent(metric(summary)))
-        };
-        ui.horizontal(|ui| {
-            ui.strong(tr("Statistics"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let enabled = summary.is_some_and(|summary| summary.total > 0)
-                    && !self.has_unsaved()
-                    && !self.preparing;
-                if ui
-                    .add_enabled(
-                        enabled,
-                        egui::Button::new(tr("Reset"))
-                            .min_size(egui::vec2(ACTION_BUTTON_WIDTH, 26.0)),
-                    )
-                    .clicked()
-                    && let Some((scope, _)) = aggregate.clone()
-                {
-                    self.begin_shared_reset(scope);
-                }
-                if ui
-                    .add_enabled(
-                        !self.has_unsaved() && !self.preparing,
-                        egui::Button::new(tr("Details"))
-                            .min_size(egui::vec2(ACTION_BUTTON_WIDTH, 26.0)),
-                    )
-                    .clicked()
-                {
-                    self.open_dashboard();
-                }
-            });
-        });
-        self.shared_reset_panel(ui);
-        ui.add(
-            egui::Label::new(format!(
-                "{} · {}",
-                tr("Scope: whole repertoire"),
-                learning_side_label(self.side)
-            ))
-            .truncate(),
-        );
-        ui.label(format!(
-            "{}: {}",
-            tr("Calculated at"),
-            aggregate.as_ref().map_or_else(
-                || "…".to_owned(),
-                |(scope, _)| format_time(Some(scope.as_of))
-            )
+        ui.strong(trf(
+            "Learnt {learnt} of {total} moves",
+            &[
+                ("learnt", &count(|summary| summary.learnt)),
+                ("total", &count(|summary| summary.total)),
+            ],
+        ))
+        .on_hover_text(tr("A move is learnt after 3 correct answers in a row without hints. Only main replies for the selected colour count; shared positions count once. A wrong answer resets the streak."));
+        ui.label(trf(
+            "Unseen: {unseen} · Due now: {due}",
+            &[
+                ("unseen", &count(|summary| summary.unseen)),
+                ("due", &count(|summary| summary.due)),
+            ],
         ));
         if summary.is_none() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
-        egui::Grid::new("repertoire_statistics")
-            .num_columns(4)
-            .spacing([10.0, 4.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new(tr("Total")).weak());
-                ui.label(count(|summary| summary.total));
-                ui.label(RichText::new(tr("Unseen")).weak());
-                ui.label(count(|summary| summary.unseen));
-                ui.end_row();
-                ui.label(RichText::new(tr("Learning")).weak());
-                ui.label(count(|summary| summary.learning));
-                ui.label(RichText::new(tr("Learnt")).weak());
-                ui.label(count(|summary| summary.learnt));
-                ui.end_row();
-                ui.label(RichText::new(tr("Uncertain")).weak());
-                ui.label(count(|summary| summary.uncertain));
-                ui.label(RichText::new(tr("Due")).weak());
-                ui.label(count(|summary| summary.due));
-                ui.end_row();
-                ui.label(RichText::new(tr("Learnt %")).weak());
-                ui.label(percent(|summary| summary.learnt_percent));
-                ui.label(RichText::new(tr("Confident %")).weak());
-                ui.label(percent(|summary| summary.confident_percent));
-                ui.end_row();
-                ui.label(RichText::new(tr("Next review")).weak());
-                ui.label(summary.map_or_else(
-                    || "…".to_owned(),
-                    |summary| format_time(summary.next_due_at),
-                ));
-                ui.end_row();
-            });
-        ui.add(
-            egui::Label::new(
-                RichText::new(tr(
-                    "Learnt = Confident + Uncertain · percentages use Total.",
-                ))
-                .weak(),
-            )
-            .wrap(),
-        );
     }
     fn shared_reset_panel(&mut self, ui: &mut Ui) {
         let Some(state) = &self.shared_reset else {
@@ -2256,7 +2235,7 @@ fn mode_start_kind(queue: QueueMode, summary: &LearningAggregate) -> StartKind {
 }
 fn queue_mode_label(queue: QueueMode) -> &'static str {
     tr(match queue {
-        QueueMode::Practice | QueueMode::SpacedRepetition => "Review individual moves",
+        QueueMode::Practice | QueueMode::SpacedRepetition => "On schedule",
         QueueMode::ReviewInOrder => "Review in order",
         QueueMode::LeastRecent => "Least recent and unseen first",
     })
@@ -2280,9 +2259,6 @@ fn learning_side_label(side: LearningSide) -> &'static str {
         LearningSide::White => "White",
         LearningSide::Black => "Black",
     })
-}
-fn format_percent(value: Option<f64>) -> String {
-    value.map_or_else(|| "—".to_owned(), |value| format!("{value:.0} %"))
 }
 fn opening_labels(tree: &RepertoireTree) -> Vec<OpeningLabel> {
     let mut labels = BTreeSet::new();
@@ -2376,16 +2352,6 @@ fn stores() -> (LibraryStore, LearningStore) {
         LibraryStore::new(dir.join("repertoires.json")),
         LearningStore::with_legacy(dir.join("repertoire-training.json"), legacy),
     )
-}
-
-fn format_time(at: Option<i64>) -> String {
-    at.and_then(|at| chrono::DateTime::from_timestamp(at, 0))
-        .map(|at| {
-            at.with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M")
-                .to_string()
-        })
-        .unwrap_or_else(|| "—".to_owned())
 }
 
 #[cfg(test)]

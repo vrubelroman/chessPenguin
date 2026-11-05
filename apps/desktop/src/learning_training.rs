@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeSet, VecDeque},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
     time::Duration,
 };
 
@@ -11,8 +14,8 @@ use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Ui, vec2};
 use trainer::repertoire::{
     AttemptApplication, LearningContextPolicy, LearningContextStep, LearningData,
     LearningPresentation, LearningSessionPhase, LearningSessionSnapshot, LearningSide,
-    LearningStore, Library, QueueMode, SrsSettings, StatsScope, TrainingAttempt, TrainingEventType,
-    TrainingMode, fen4,
+    LearningStore, Library, PersistedSessionAttempt, QueueMode, RepertoireId, SrsSettings,
+    StatsScope, TrainingAttempt, TrainingEventType, TrainingMode, fen4,
 };
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -27,6 +30,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub enum LearningTrainingAction {
     Back,
+    OpenSettings,
     Sound(Sound),
     Toast(String),
 }
@@ -53,11 +57,19 @@ enum PlayOutcome {
 #[derive(Clone)]
 enum CommitKind {
     Context,
+    ReusedContext,
     Play {
         visual: Box<VisualMove>,
         outcome: PlayOutcome,
+        shown_prefix: ShownPrefix,
     },
     Preview,
+}
+
+#[derive(Clone)]
+struct ShownPrefix {
+    repertoire_id: RepertoireId,
+    path: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -98,12 +110,16 @@ pub struct LearningTrainingUi {
     presentation: Option<LearningPresentation>,
     completed_attempt_ids: BTreeSet<String>,
     pending_commit: Option<PendingCommit>,
+    commit_in_flight: Option<mpsc::Receiver<Result<PersistedSessionAttempt, String>>>,
+    #[cfg(test)]
+    synchronous_commits: bool,
     save_error: Option<String>,
     error: Option<String>,
     board: BoardState,
     board_position: Chess,
     board_shown: bool,
     pending_automatic: Option<VecDeque<LearningContextStep>>,
+    shown_prefix: Option<ShownPrefix>,
     playback: Option<Playback>,
     pause_requested: bool,
     stopped: bool,
@@ -247,12 +263,16 @@ impl LearningTrainingUi {
             presentation: None,
             completed_attempt_ids,
             pending_commit: None,
+            commit_in_flight: None,
+            #[cfg(test)]
+            synchronous_commits: false,
             save_error: None,
             error: None,
             board: BoardState::default(),
             board_position: Chess::default(),
             board_shown: false,
             pending_automatic: None,
+            shown_prefix: None,
             playback: None,
             pause_requested: false,
             stopped: false,
@@ -316,6 +336,7 @@ impl LearningTrainingUi {
 
     fn tick_at(&mut self, now: Instant, animation: Duration, happened_at: i64) {
         self.animation = animation;
+        self.poll_commit(now);
         if self.stopped || self.has_unsaved() {
             return;
         }
@@ -330,6 +351,10 @@ impl LearningTrainingUi {
         loop {
             if self.stopped || self.has_unsaved() || self.error.is_some() {
                 return;
+            }
+            if self.needs_prepare {
+                self.prepare_presentation(now);
+                continue;
             }
             let Some(deadline) = self.playback_deadline() else {
                 return;
@@ -385,7 +410,7 @@ impl LearningTrainingUi {
         self.error = None;
         self.needs_prepare = false;
         self.presentation = Some(presentation.clone());
-        let Some(current) = presentation.current_position else {
+        let Some(ref current) = presentation.current_position else {
             self.ready_since = None;
             self.pending_automatic = None;
             if self.session.queue.is_empty() && self.message.is_none() {
@@ -394,6 +419,13 @@ impl LearningTrainingUi {
             }
             return;
         };
+        // A following task may extend the line that is already on the board. Keep
+        // its context journal, but do not rewind and animate those same moves again.
+        // The complete path and repertoire must match; a transposed FEN is not enough.
+        if self.reuse_shown_context(&presentation, now) {
+            return;
+        }
+        self.shown_prefix = None;
         if !presentation.automatic_context.is_empty() {
             let mut steps = VecDeque::new();
             for step in presentation.automatic_context {
@@ -425,7 +457,7 @@ impl LearningTrainingUi {
             return;
         }
         self.pending_automatic = None;
-        let position = match parse_position(&current) {
+        let position = match parse_position(current) {
             Ok(position) => position,
             Err(error) => {
                 self.error = Some(error);
@@ -469,6 +501,40 @@ impl LearningTrainingUi {
                 ));
             }
         }
+    }
+
+    fn reuse_shown_context(&mut self, presentation: &LearningPresentation, at: Instant) -> bool {
+        let Some(prefix) = &self.shown_prefix else {
+            return false;
+        };
+        let Some(target) = self.session.current_target() else {
+            return false;
+        };
+        let Some(remaining) = prefix.path.len().checked_sub(self.session.context_index) else {
+            return false;
+        };
+        if remaining == 0
+            || target.repertoire_id != prefix.repertoire_id
+            || !presentation.target_path.starts_with(&prefix.path)
+            // An independent context question must still be asked. Only reuse a
+            // prefix that the core explicitly allows to be automatic in full.
+            || presentation.automatic_context.len() < remaining
+            || presentation.automatic_context[remaining - 1].to.fen4 != fen4(&self.board_position)
+        {
+            return false;
+        }
+        let id = unique_id(self.session.id());
+        match self
+            .session
+            .advance_context_with_learning(&self.library, &self.learning, id, now())
+        {
+            Ok(attempt) => {
+                self.ready_since = None;
+                self.begin_commit(attempt, CommitKind::ReusedContext, at);
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+        true
     }
 
     fn start_next_automatic(
@@ -644,6 +710,13 @@ impl LearningTrainingUi {
             self.start_playback(visual, PlayOutcome::WrongReplay, now);
             return true;
         }
+        let Some(target) = self.session.current_target() else {
+            return false;
+        };
+        let shown_prefix = ShownPrefix {
+            repertoire_id: target.repertoire_id.clone(),
+            path: target.path[..=self.session.context_index].to_vec(),
+        };
         let response_time_ms = independent.then(|| {
             self.ready_since.map_or(0, |ready| {
                 u64::try_from(now.saturating_duration_since(ready).as_millis()).unwrap_or(u64::MAX)
@@ -673,11 +746,17 @@ impl LearningTrainingUi {
                 return false;
             }
         };
+        // The legal move is visible immediately, including while its event is
+        // being saved. Input stays blocked until persistence acknowledges it.
+        // In particular a dropped piece must not jump back to its source square.
+        self.board_position = visual.after.clone();
+        self.last_move = Some((visual.from, visual.to));
         self.begin_commit(
             attempt,
             CommitKind::Play {
                 visual: Box::new(visual),
                 outcome,
+                shown_prefix,
             },
             now,
         );
@@ -804,14 +883,59 @@ impl LearningTrainingUi {
         self.persist_pending(now);
     }
 
-    fn persist_pending(&mut self, now: Instant) {
+    fn persist_pending(&mut self, _now: Instant) {
         let Some(pending) = self.pending_commit.clone() else {
             return;
         };
-        match self
-            .store
-            .apply_attempt_and_session(pending.attempt.clone(), &mut self.session)
-        {
+        if self.commit_in_flight.is_some() {
+            return;
+        }
+        #[cfg(test)]
+        if self.synchronous_commits {
+            let result = self
+                .store
+                .apply_attempt_and_session(pending.attempt.clone(), &mut self.session)
+                .map_err(|error| error.to_string());
+            self.finish_commit(result, _now);
+            return;
+        }
+        let store = self.store.clone();
+        let mut session = self.session.clone();
+        let (tx, rx) = mpsc::channel();
+        self.commit_in_flight = Some(rx);
+        self.save_error = None;
+        if let Err(error) = crate::platform::spawn("learning-save-attempt", move || {
+            let result = store
+                .apply_attempt_and_session(pending.attempt, &mut session)
+                .map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        }) {
+            self.commit_in_flight = None;
+            self.save_error = Some(error.to_string());
+            self.ready_since = None;
+        }
+    }
+
+    fn poll_commit(&mut self, now: Instant) {
+        let Some(receiver) = &self.commit_in_flight else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("learning save worker disconnected".to_owned())
+            }
+        };
+        self.commit_in_flight = None;
+        self.finish_commit(result, now);
+    }
+
+    fn finish_commit(&mut self, result: Result<PersistedSessionAttempt, String>, now: Instant) {
+        let Some(pending) = self.pending_commit.clone() else {
+            return;
+        };
+        match result {
             Ok(persisted) => {
                 let duplicate = persisted.application == AttemptApplication::Duplicate;
                 self.learning = persisted.learning;
@@ -823,6 +947,7 @@ impl LearningTrainingUi {
                 self.confirm_discard = false;
                 if duplicate {
                     self.playback = None;
+                    self.shown_prefix = None;
                     self.pause_requested = false;
                     self.ready_since = None;
                     self.needs_prepare = true;
@@ -831,7 +956,17 @@ impl LearningTrainingUi {
                 }
                 match pending.kind {
                     CommitKind::Context => self.finish_context(now),
-                    CommitKind::Play { visual, outcome } => {
+                    CommitKind::ReusedContext => self.needs_prepare = true,
+                    CommitKind::Play {
+                        visual,
+                        outcome,
+                        shown_prefix,
+                    } => {
+                        self.shown_prefix = (!matches!(
+                            outcome,
+                            PlayOutcome::WrongIndependent | PlayOutcome::WrongReplay
+                        ))
+                        .then_some(shown_prefix);
                         self.start_playback(*visual, outcome, now);
                     }
                     CommitKind::Preview => {
@@ -869,7 +1004,7 @@ impl LearningTrainingUi {
     }
 
     fn keyboard(&mut self, ui: &Ui, actions: &mut Vec<LearningTrainingAction>) {
-        if ui.ctx().egui_wants_keyboard_input() {
+        if ui.ctx().egui_wants_keyboard_input() || crate::app::overlay_open(ui.ctx()) {
             return;
         }
         let autoplay = self.is_autoplay();
@@ -992,71 +1127,91 @@ impl LearningTrainingUi {
 
     fn status_card(&mut self, ui: &mut Ui) {
         let alert = matches!(self.playback, Some(Playback::Wrong { .. }));
-        fixed_block(ui, 144.0, |ui| {
-            card(ui, alert).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.set_clip_rect(ui.max_rect());
-                if self.is_finished() {
-                    ui.label(RichText::new(tr("Training complete")).strong().size(17.0));
-                } else if let Some(Playback::Automatic {
-                    completed, total, ..
-                }) = &self.playback
-                {
-                    ui.label(
-                        RichText::new(trf(
-                            "Automatic context · {current} of {total}",
-                            &[("current", &(completed + 1)), ("total", total)],
-                        ))
-                        .strong(),
-                    );
-                } else if let Some(Playback::Paused {
-                    remaining,
-                    completed,
-                }) = &self.playback
-                {
-                    let progress = trf(
+        card(ui, alert).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.set_clip_rect(ui.max_rect());
+            if self.is_finished() {
+                ui.label(RichText::new(tr("Training complete")).strong().size(17.0));
+            } else if let Some(Playback::Automatic {
+                completed, total, ..
+            }) = &self.playback
+            {
+                ui.label(
+                    RichText::new(trf(
                         "Automatic context · {current} of {total}",
-                        &[
-                            ("current", completed),
-                            ("total", &completed.saturating_add(remaining.len())),
-                        ],
-                    );
-                    ui.label(RichText::new(format!("{} · {progress}", tr("Paused"))).strong());
-                } else if self.session.phase == LearningSessionPhase::PreviewedReplay {
-                    ui.label(RichText::new("PREVIEWED").strong());
-                } else if self.session.phase == LearningSessionPhase::AwaitingReplayAfterError {
-                    ui.label(RichText::new(tr("Wrong")).strong());
-                }
-                if let Some(error) = self.error.clone().or_else(|| self.save_error.clone()) {
-                    let text = self.save_error.as_ref().map_or(error.clone(), |error| {
-                        trf("Could not save changes: {error}", &[("error", error)])
-                    });
-                    ui.add(
-                        egui::Label::new(RichText::new(text).color(ui.visuals().error_fg_color))
-                            .truncate(),
-                    );
-                    if self.pending_commit.is_some() {
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.button(tr("Retry")).clicked() {
-                                self.retry_pending(Instant::now());
-                            }
-                            if self.confirm_discard {
-                                if ui.button(tr("Leave without saving")).clicked() {
-                                    self.discard_requested = true;
-                                }
-                            } else if ui.button(tr("Back to repertoire")).clicked() {
-                                self.confirm_discard = true;
-                            }
+                        &[("current", &(completed + 1)), ("total", total)],
+                    ))
+                    .strong(),
+                );
+            } else if let Some(Playback::Paused {
+                remaining,
+                completed,
+            }) = &self.playback
+            {
+                let progress = trf(
+                    "Automatic context · {current} of {total}",
+                    &[
+                        ("current", completed),
+                        ("total", &completed.saturating_add(remaining.len())),
+                    ],
+                );
+                ui.label(RichText::new(format!("{} · {progress}", tr("Paused"))).strong());
+            } else if self.session.phase == LearningSessionPhase::PreviewedReplay {
+                ui.label(RichText::new(tr("Hint")).strong());
+            } else if self.session.phase == LearningSessionPhase::AwaitingReplayAfterError {
+                ui.label(RichText::new(tr("Mistake")).strong());
+            }
+            if let Some(error) = self.error.clone().or_else(|| self.save_error.clone()) {
+                ui.colored_label(
+                    ui.visuals().error_fg_color,
+                    if self.save_error.is_some() {
+                        tr("Could not save")
+                    } else {
+                        tr("Mistake")
+                    },
+                );
+                egui::CollapsingHeader::new(tr("Details")).show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(120.0)
+                        .show(ui, |ui| {
+                            ui.add(egui::Label::new(error).wrap());
                         });
-                    }
-                } else if let Some(message) = &self.message {
-                    ui.add(egui::Label::new(message).wrap());
-                }
-            });
+                });
+            } else if let Some(message) = &self.message
+                && !(self.autoplay_paused() && message == tr("Paused"))
+            {
+                ui.add(egui::Label::new(message).wrap());
+            }
         });
     }
 
     fn side(&mut self, ui: &mut Ui, actions: &mut Vec<LearningTrainingAction>) {
+        let rect = ui.available_rect_before_wrap();
+        let footer = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), (rect.bottom() - 44.0).max(rect.top())),
+            rect.max,
+        );
+        let body = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), footer.top()));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+            ui.set_clip_rect(body);
+            self.side_body(ui, actions);
+        });
+        ui.scope_builder(egui::UiBuilder::new().max_rect(footer), |ui| {
+            ui.separator();
+            if ui
+                .add_sized(
+                    [30.0, 30.0],
+                    egui::Button::new(RichText::new("🔃").size(18.0)),
+                )
+                .on_hover_text(tr("Flip board (F)"))
+                .clicked()
+            {
+                self.flipped = !self.flipped;
+            }
+        });
+    }
+
+    fn side_body(&mut self, ui: &mut Ui, actions: &mut Vec<LearningTrainingAction>) {
         ui.spacing_mut().item_spacing.y = 6.0;
         fixed_block(ui, 44.0, |ui| {
             let (done, total) = main_task_progress(&self.session);
@@ -1083,43 +1238,78 @@ impl LearningTrainingUi {
                 .truncate(),
             );
         });
-        self.status_card(ui);
-        ui.horizontal_wrapped(|ui| {
-            if self.is_autoplay() {
+        let button_width = ((ui.available_width() - 8.0) / 2.0).clamp(80.0, 180.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let save_failed = self.pending_commit.is_some() && self.save_error.is_some();
+            if save_failed {
+                if ui
+                    .add_sized([button_width, 30.0], egui::Button::new(tr("Retry")))
+                    .clicked()
+                {
+                    self.retry_pending(Instant::now());
+                }
+            } else if self.is_autoplay() {
                 let paused = self.autoplay_paused();
                 let label = if paused { tr("Continue") } else { tr("Pause") };
-                if ui.button(label).on_hover_text("Space / P").clicked() {
+                if ui
+                    .add_sized([button_width, 30.0], egui::Button::new(label))
+                    .on_hover_text("Space / P")
+                    .clicked()
+                {
                     if paused {
                         self.continue_autoplay(Instant::now());
                     } else {
                         self.request_pause();
                     }
                 }
-                if ui.button(tr("Stop")).on_hover_text("Escape").clicked() {
-                    self.stop_autoplay(actions);
-                }
             } else if self.is_finished() {
-                if crate::widgets::primary(ui, tr("Next"))
+                if crate::widgets::primary_wide(ui, tr("Back to repertoire"), button_width)
                     .on_hover_text("Enter")
                     .clicked()
                 {
                     self.request_back(actions);
                 }
             } else if ui
-                .add_enabled(self.can_hint(), egui::Button::new(tr("Hint")))
+                .add_enabled(
+                    self.can_hint(),
+                    egui::Button::new(tr("Hint")).min_size(vec2(button_width, 30.0)),
+                )
                 .clicked()
             {
                 let id = unique_id(self.session.id());
                 self.request_hint_with_id_at(id, Instant::now(), now());
             }
-            if ui
-                .button("🔃")
-                .on_hover_text(tr("Flip board (F)"))
-                .clicked()
-            {
-                self.flipped = !self.flipped;
+            if save_failed {
+                let label = if self.confirm_discard {
+                    tr("Exit")
+                } else {
+                    tr("Back to repertoire")
+                };
+                if ui
+                    .add_sized([button_width, 30.0], egui::Button::new(label))
+                    .clicked()
+                {
+                    if self.confirm_discard {
+                        self.discard_requested = true;
+                    } else {
+                        self.confirm_discard = true;
+                    }
+                }
+            } else if self.is_autoplay() {
+                if ui
+                    .add_sized([button_width, 30.0], egui::Button::new(tr("Stop")))
+                    .on_hover_text("Escape")
+                    .clicked()
+                {
+                    self.stop_autoplay(actions);
+                }
+            } else {
+                ui.allocate_space(vec2(button_width, 30.0));
             }
         });
+        ui.add_space(2.0);
+        self.status_card(ui);
         if self.confirm_discard && self.has_unsaved() {
             ui.add(
                 egui::Label::new(
@@ -1141,7 +1331,9 @@ impl LearningTrainingUi {
     ) -> Vec<LearningTrainingAction> {
         let animation = Duration::from_secs_f32(settings.animation.seconds());
         self.tick_at(Instant::now(), animation, now());
-        if let Some(deadline) = self.playback_deadline() {
+        if self.commit_in_flight.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(16));
+        } else if let Some(deadline) = self.playback_deadline() {
             ui.ctx()
                 .request_repaint_after(deadline.saturating_duration_since(Instant::now()));
         } else if self.needs_prepare || self.pending_automatic.is_some() {
@@ -1150,19 +1342,18 @@ impl LearningTrainingUi {
         let mut actions = Vec::new();
         self.keyboard(ui, &mut actions);
         egui::Panel::top("learning_training_header").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let back = if ui.available_width() < 600.0 {
-                    tr("Back")
-                } else {
-                    tr("Back to repertoire")
-                };
-                if ui.button(format!("← {back}")).clicked() {
-                    self.request_back(&mut actions);
-                }
-                ui.separator();
-                ui.add(egui::Label::new(RichText::new(name).heading()).truncate())
-                    .on_hover_text(name);
-            });
+            let back = if ui.available_width() < 600.0 {
+                tr("Back")
+            } else {
+                tr("Back to repertoire")
+            };
+            let (back, settings) = crate::widgets::section_header(ui, &format!("← {back}"), name);
+            if back {
+                self.request_back(&mut actions);
+            }
+            if settings {
+                actions.push(LearningTrainingAction::OpenSettings);
+            }
         });
         let available = ui.available_rect_before_wrap();
         let background = ui.visuals().window_fill();
@@ -1170,11 +1361,9 @@ impl LearningTrainingUi {
             .rect_filled(available, 0.0, background);
         let width = available.width();
         let height = available.height();
-        let stacked = width < 760.0 || (width < 900.0 && height > width);
+        let stacked = width < 900.0 && height > width;
         if stacked {
-            let panel_height = (height * 0.52)
-                .clamp(250.0, 300.0)
-                .min((height - 160.0).max(120.0));
+            let panel_height = (height * 0.52).clamp(340.0, 520.0);
             let board_rect = egui::Rect::from_min_max(
                 available.min,
                 egui::pos2(available.right(), available.bottom() - panel_height),
@@ -1191,10 +1380,10 @@ impl LearningTrainingUi {
                 egui::Frame::side_top_panel(ui.style()).show(ui, |ui| self.side(ui, &mut actions));
             });
         } else {
-            let side = egui::Panel::right("learning_training_side")
+            let side = egui::Panel::right("repertoire_workspace_side")
                 .resizable(true)
-                .default_size((width * 0.32).clamp(320.0, 420.0))
-                .size_range(300.0..=(width - 240.0).max(300.0))
+                .default_size((width * 0.42).clamp(420.0, 560.0))
+                .size_range(360.0..=(width - 220.0).max(360.0))
                 .show(ui, |ui| self.side(ui, &mut actions));
             crate::widgets::check_panel("learning_training_side", &side.response);
             egui::CentralPanel::default().show(ui, |ui| self.board_ui(ui, settings));
@@ -1214,18 +1403,39 @@ impl LearningTrainingUi {
     }
 
     pub fn debug_settle(&mut self) {
-        let started = Instant::now();
-        let at = self
-            .playback_deadline()
-            .map_or(started, |deadline| deadline.max(started));
-        self.tick_at(at, Duration::ZERO, now());
-        if self.pending_automatic.is_some() {
-            self.board_shown = true;
+        // Only this explicit QA hook waits. Normal frames poll workers without blocking.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if self.commit_in_flight.is_some() {
+                self.poll_commit(Instant::now());
+                if Instant::now() >= deadline {
+                    return;
+                }
+                if self.commit_in_flight.is_some() {
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+            }
+            if self.has_unsaved() {
+                return;
+            }
+            if self.pending_automatic.is_some() {
+                self.board_shown = true;
+            }
+            let at = self
+                .playback_deadline()
+                .map_or_else(Instant::now, |at| at.max(Instant::now()));
             self.tick_at(at, Duration::ZERO, now());
-        }
-        if matches!(self.playback, Some(Playback::Wrong { .. })) {
-            let until = self.playback_deadline().unwrap_or(at);
-            self.tick_at(until, Duration::ZERO, now());
+            if self.commit_in_flight.is_none()
+                && self.pending_automatic.is_none()
+                && !self.needs_prepare
+                && self.playback_deadline().is_none()
+            {
+                return;
+            }
+            if Instant::now() >= deadline {
+                return;
+            }
         }
     }
 
@@ -1297,7 +1507,7 @@ fn main_task_progress(session: &LearningSessionSnapshot) -> (usize, usize) {
 
 pub fn queue_mode_label(mode: QueueMode) -> &'static str {
     tr(match mode {
-        QueueMode::SpacedRepetition | QueueMode::Practice => "Review individual moves",
+        QueueMode::SpacedRepetition | QueueMode::Practice => "On schedule",
         QueueMode::ReviewInOrder => "Review in order",
         QueueMode::LeastRecent => "Least recent and unseen first",
     })
@@ -1333,10 +1543,9 @@ fn now() -> i64 {
 fn fixed_block(ui: &mut Ui, height: f32, add: impl FnOnce(&mut Ui)) {
     let width = ui.available_width().max(1.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.set_clip_rect(rect);
-        add(ui);
-    });
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    child.set_clip_rect(rect);
+    add(&mut child);
 }
 
 fn card(ui: &Ui, alert: bool) -> egui::Frame {
@@ -1361,6 +1570,28 @@ mod tests {
     use trainer::repertoire::{
         LearningItemKey, LearningPriority, LearningStoreData, active_learning_memberships,
     };
+
+    #[test]
+    fn status_growth_does_not_move_training_controls() {
+        let mut positions = Vec::new();
+        for message in [
+            "Your turn",
+            "Hint\nReplay the shown move\nNo independent success",
+        ] {
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    fixed_block(ui, 144.0, |ui| {
+                        ui.label(message);
+                    });
+                    positions.push(ui.button("Hint").rect.top());
+                });
+            });
+            output.drop_without_applying_deltas();
+        }
+        assert_eq!(positions[0], positions[1]);
+        assert!(positions[0] >= 144.0);
+    }
 
     const NOW: i64 = 1_800_000_000;
     static NEXT_TEST: AtomicU64 = AtomicU64::new(1);
@@ -1440,6 +1671,7 @@ mod tests {
             )
             .unwrap();
             ui.board_shown = true;
+            ui.synchronous_commits = true;
             Self {
                 _dir: dir,
                 library,
@@ -1493,6 +1725,7 @@ mod tests {
             )
             .unwrap();
             ui.board_shown = true;
+            ui.synchronous_commits = true;
             Self {
                 _dir: dir,
                 library,
@@ -1734,7 +1967,7 @@ mod tests {
     }
 
     #[test]
-    fn next_target_primes_a_new_automatic_sequence_without_reverse_slide() {
+    fn next_target_continues_the_shown_line_without_reverse_slide() {
         fn settle_to_input(f: &mut Fixture, at: Instant) {
             let mut at = at;
             for _ in 0..32 {
@@ -1776,7 +2009,14 @@ mod tests {
         );
 
         let prime_at = start + Duration::from_secs(3) + normal();
-        f.ui.tick_at(prime_at, normal(), NOW);
+        // Each reused context step still has its own persisted event. No move
+        // animates while those acknowledgements complete.
+        for _ in 0..8 {
+            f.ui.tick_at(prime_at, normal(), NOW);
+            if f.ui.pending_automatic.is_some() {
+                break;
+            }
+        }
         assert!(f.ui.pending_automatic.is_some());
         assert!(!f.ui.board_shown);
         let ctx = egui::Context::default();
@@ -1791,7 +2031,7 @@ mod tests {
         let duration = automatic_duration(&f);
         assert_eq!(duration, Duration::from_millis(1000));
         board_frame(&mut f, &ctx, 10.01, &settings);
-        assert_current_slide(&f, 10.01, duration, Square::E2, Square::E4);
+        assert_current_slide(&f, 10.01, duration, Square::F1, Square::B5);
         let (_, slides, _) = f.ui.board.animation_at(10.01).unwrap();
         assert!(
             slides
@@ -1801,8 +2041,168 @@ mod tests {
         );
         assert!(matches!(
             f.ui.playback,
-            Some(Playback::Automatic { total: 5, .. })
+            Some(Playback::Automatic { total: 1, .. })
         ));
+    }
+
+    fn emitted_sounds(f: &mut Fixture, ctx: &egui::Context, settings: &Settings) -> Vec<Sound> {
+        let mut sounds = Vec::new();
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(960.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                sounds.extend(
+                    f.ui.show(ui, settings, "Test")
+                        .into_iter()
+                        .filter_map(|action| {
+                            if let LearningTrainingAction::Sound(sound) = action {
+                                Some(sound)
+                            } else {
+                                None
+                            }
+                        }),
+                );
+            },
+        )
+        .drop_without_applying_deltas();
+        sounds
+    }
+
+    #[test]
+    fn accepted_move_emits_once_and_next_task_only_animates_the_opponent_reply() {
+        for side in [LearningSide::White, LearningSide::Black] {
+            for animation in [
+                crate::settings::Animation::Normal,
+                crate::settings::Animation::Off,
+            ] {
+                for replay in [false, true] {
+                    let (due, reply, wrong) = match side {
+                        LearningSide::White => (["e2e4", "g1f3"], "e7e5", "d2d4"),
+                        LearningSide::Black => (["e7e5", "b8c6"], "g1f3", "d7d5"),
+                    };
+                    let mut f =
+                        Fixture::new("1. e4 e5 2. Nf3 Nc6 *", side, &due, "continuous-feedback");
+                    tick_with_prime(&mut f.ui, Instant::now(), Duration::ZERO, NOW);
+                    let ctx = egui::Context::default();
+                    let settings = Settings {
+                        animation,
+                        ..Settings::default()
+                    };
+                    let at = Instant::now() + Duration::from_secs(60);
+                    let duration = Duration::from_secs_f32(animation.seconds());
+                    f.ui.animation = duration;
+                    f.ui.pending_sounds.clear();
+                    f.ui.visual_log.clear();
+                    if replay {
+                        assert!(f.ui.play_uci_with_id_at(
+                            wrong,
+                            "wrong".into(),
+                            at - WRONG_SHOWN,
+                            NOW
+                        ));
+                        f.ui.tick_at(at, duration, NOW);
+                        assert_eq!(emitted_sounds(&mut f, &ctx, &settings), [Sound::Wrong]);
+                    }
+                    assert!(f.ui.play_uci_with_id_at(due[0], "accepted".into(), at, NOW));
+                    let accepted_position = fen4(&f.ui.board_position);
+                    assert_eq!(emitted_sounds(&mut f, &ctx, &settings), [Sound::Move]);
+                    for _ in 0..8 {
+                        f.ui.tick_at(at + duration, duration, NOW);
+                        assert_eq!(
+                            fen4(&f.ui.board_position),
+                            accepted_position,
+                            "accepted move must not rewind"
+                        );
+                        if f.ui.pending_automatic.is_some() {
+                            break;
+                        }
+                    }
+                    assert!(f.ui.pending_automatic.is_some());
+                    // The prime frame is silent; a separate later frame emits the
+                    // opponent move, so queue coalescing cannot conceal a duplicate.
+                    assert!(emitted_sounds(&mut f, &ctx, &settings).is_empty());
+                    assert_eq!(emitted_sounds(&mut f, &ctx, &settings), [Sound::Move]);
+                    assert_eq!(f.ui.visual_log, [reply]);
+                    f.ui.debug_settle();
+                    assert_eq!(f.ui.session.current_expected_uci(), Some(due[1]));
+                    let attempts = f.attempts();
+                    assert_eq!(
+                        attempts
+                            .iter()
+                            .filter(|event| event.event_type.is_independent())
+                            .count(),
+                        1
+                    );
+                    assert!(attempts.iter().any(|event| event.expected_uci == due[0]
+                        && event.event_type == TrainingEventType::AutoContext));
+                    assert_eq!(
+                        attempts
+                            .iter()
+                            .filter(|event| event.event_type == TrainingEventType::ReplayAfterError)
+                            .count(),
+                        usize::from(replay)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shown_context_requires_the_same_history_and_never_bypasses_a_question() {
+        let mut f = Fixture::new(
+            "1. Nf3 Nf6 2. g3 g6 3. Bg2 *",
+            LearningSide::White,
+            &["f1g2"],
+            "context-identity",
+        );
+        let presentation =
+            f.ui.session
+                .presentation_with_learning(&f.library, &f.ui.learning)
+                .unwrap();
+        f.ui.board_position = parse_position(&presentation.automatic_context[3].to).unwrap();
+        let id = f.ui.session.current_target().unwrap().repertoire_id.clone();
+        // Even with an identical final position, a different move order must not
+        // reuse context. A matching FEN alone cannot establish repetition history.
+        f.ui.shown_prefix = Some(ShownPrefix {
+            repertoire_id: id.clone(),
+            path: vec!["g2g3".into(), "g7g6".into(), "g1f3".into(), "g8f6".into()],
+        });
+        assert!(!f.ui.reuse_shown_context(&presentation, Instant::now()));
+        assert!(f.attempts().is_empty());
+        let mut f = Fixture::new(
+            "1. e4 e5 2. Nf3 Nc6 *",
+            LearningSide::White,
+            &["g1f3"],
+            "context-question",
+        );
+        let presentation =
+            f.ui.session
+                .presentation_with_learning(&f.library, &f.ui.learning)
+                .unwrap();
+        f.ui.board_position = parse_position(&presentation.automatic_context[1].to).unwrap();
+        f.ui.shown_prefix = Some(ShownPrefix {
+            repertoire_id: f.ui.session.current_target().unwrap().repertoire_id.clone(),
+            path: vec!["e2e4".into(), "e7e5".into()],
+        });
+        f.ui.session.context_policy.consider_leadup_moves = true;
+        let question =
+            f.ui.session
+                .presentation_with_learning(&f.library, &f.ui.learning)
+                .unwrap();
+        assert_eq!(
+            question.phase,
+            LearningSessionPhase::AwaitingContextIndependent
+        );
+        assert!(!f.ui.reuse_shown_context(&question, Instant::now()));
+        f.ui.prepare_presentation(Instant::now());
+        assert!(f.ui.can_input());
+        assert_eq!(f.ui.session.current_expected_uci(), Some("e2e4"));
+        assert!(f.attempts().is_empty());
     }
 
     #[test]
@@ -2287,6 +2687,7 @@ mod tests {
         .unwrap();
         assert_eq!(resumed.session_id(), id);
         assert_eq!(resumed.session.context_index, 1);
+        resumed.synchronous_commits = true;
         tick_with_prime(&mut resumed, start + normal() * 2, Duration::ZERO, NOW);
         assert_eq!(resumed.session.context_index, 3);
         assert_eq!(context.store.load().unwrap().learning.attempts.len(), 3);
@@ -2607,7 +3008,7 @@ mod tests {
         );
         assert_eq!(
             queue_mode_label(QueueMode::SpacedRepetition),
-            tr("Review individual moves")
+            tr("On schedule")
         );
         assert_eq!(
             queue_mode_label(QueueMode::ReviewInOrder),
@@ -2660,5 +3061,547 @@ mod tests {
         }
         assert!(f.ui.target_available());
         assert!(!f.ui.has_unsaved());
+    }
+    fn wait_for_commit(ui: &mut LearningTrainingUi) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while ui.commit_in_flight.is_some() {
+            assert!(Instant::now() < deadline, "commit worker did not finish");
+            ui.poll_commit(Instant::now());
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn async_commit_keeps_frames_responsive_under_store_lock_and_commits_once() {
+        let mut f = Fixture::new("1. e4 *", LearningSide::White, &["e2e4"], "async-lock");
+        f.ui.synchronous_commits = false;
+        tick_with_prime(&mut f.ui, Instant::now(), normal(), NOW);
+        let lock_path = f.store.path().with_file_name("learning.json.lock");
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .unwrap();
+        lock.lock().unwrap();
+        let unlock = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(600));
+            drop(lock);
+        });
+        let start = Instant::now();
+        assert!(f.ui.play_uci_with_id_at("e2e4", "async-answer".to_owned(), start, NOW));
+        assert!(
+            start.elapsed() < Duration::from_millis(300),
+            "input waited for storage lock"
+        );
+        assert!(f.ui.has_unsaved());
+        assert!(f.ui.commit_in_flight.is_some());
+        assert!(!f.ui.can_input());
+        assert!(
+            !f.ui
+                .play_uci_with_id_at("e2e4", "async-answer".to_owned(), Instant::now(), NOW)
+        );
+        f.ui.retry_pending(Instant::now());
+        let ctx = egui::Context::default();
+        let frame = Instant::now();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            f.ui.show(ui, &Settings::default(), "Test");
+        })
+        .drop_without_applying_deltas();
+        assert!(
+            frame.elapsed() < Duration::from_millis(300),
+            "frame waited for storage lock"
+        );
+        unlock.join().unwrap();
+        wait_for_commit(&mut f.ui);
+        assert!(!f.ui.has_unsaved());
+        assert!(matches!(f.ui.playback, Some(Playback::Accepted { .. })));
+        assert_eq!(f.attempts().len(), 1);
+        let revision = f.ui.session.revision;
+        f.ui.poll_commit(Instant::now());
+        f.ui.retry_pending(Instant::now());
+        assert_eq!(f.ui.session.revision, revision);
+        assert_eq!(f.attempts().len(), 1);
+    }
+
+    fn pointer_board_frame(
+        f: &mut Fixture,
+        ctx: &egui::Context,
+        time: f64,
+        events: Vec<egui::Event>,
+        settings: &Settings,
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(800.0, 800.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| f.ui.board_ui(ui, settings),
+        );
+        output.textures_delta.clear();
+        output
+    }
+
+    fn piece_meshes(output: &egui::FullOutput) -> Vec<(egui::TextureId, egui::Rect)> {
+        fn collect(shape: &egui::Shape, meshes: &mut Vec<(egui::TextureId, egui::Rect)>) {
+            match shape {
+                egui::Shape::Mesh(mesh) => meshes.push((mesh.texture_id, mesh.calc_bounds())),
+                egui::Shape::Rect(rect) => {
+                    if let Some(brush) = &rect.brush {
+                        meshes.push((brush.fill_texture_id, rect.rect));
+                    }
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, meshes);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut meshes = Vec::new();
+        for shape in &output.shapes {
+            collect(&shape.shape, &mut meshes);
+        }
+        meshes
+    }
+
+    fn pointer_button(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn pointer_move_stays_at_destination_during_async_save_without_a_second_animation() {
+        for drag in [true, false] {
+            for wrong in [false, true] {
+                for animation in [
+                    crate::settings::Animation::Normal,
+                    crate::settings::Animation::Off,
+                ] {
+                    let mut f =
+                        Fixture::new("1. e4 *", LearningSide::White, &["e2e4"], "pointer-pending");
+                    f.ui.synchronous_commits = false;
+                    let settings = Settings {
+                        animation,
+                        ..Settings::default()
+                    };
+                    let duration = Duration::from_secs_f32(animation.seconds());
+                    f.ui.tick_at(Instant::now(), duration, NOW);
+                    let ctx = egui::Context::default();
+                    crate::assets::install(&ctx);
+                    let from = egui::pos2(450.0, 650.0);
+                    let to = egui::pos2(450.0, if wrong { 550.0 } else { 450.0 });
+                    let initial = pointer_board_frame(&mut f, &ctx, 1.0, vec![], &settings);
+                    let pawn = piece_meshes(&initial)
+                        .into_iter()
+                        .find(|(_, rect)| rect.contains(from))
+                        .expect("painted pawn at e2")
+                        .0;
+                    initial.drop_without_applying_deltas();
+                    pointer_board_frame(
+                        &mut f,
+                        &ctx,
+                        1.01,
+                        vec![egui::Event::PointerMoved(from), pointer_button(from, true)],
+                        &settings,
+                    )
+                    .drop_without_applying_deltas();
+                    if drag {
+                        pointer_board_frame(
+                            &mut f,
+                            &ctx,
+                            1.02,
+                            vec![egui::Event::PointerMoved(to)],
+                            &settings,
+                        )
+                        .drop_without_applying_deltas();
+                    } else {
+                        pointer_board_frame(
+                            &mut f,
+                            &ctx,
+                            1.02,
+                            vec![pointer_button(from, false)],
+                            &settings,
+                        )
+                        .drop_without_applying_deltas();
+                        pointer_board_frame(
+                            &mut f,
+                            &ctx,
+                            1.03,
+                            vec![egui::Event::PointerMoved(to), pointer_button(to, true)],
+                            &settings,
+                        )
+                        .drop_without_applying_deltas();
+                    }
+                    let lock = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(f.store.path().with_file_name("learning.json.lock"))
+                        .unwrap();
+                    lock.lock().unwrap();
+                    let released = pointer_board_frame(
+                        &mut f,
+                        &ctx,
+                        1.04,
+                        vec![pointer_button(to, false)],
+                        &settings,
+                    );
+                    let assert_pawn_at_destination = |output: &egui::FullOutput| {
+                        let meshes = piece_meshes(output);
+                        assert!(
+                            meshes
+                                .iter()
+                                .any(|(texture, rect)| *texture == pawn && rect.contains(to)),
+                            "pawn not painted at destination"
+                        );
+                        assert!(
+                            !meshes
+                                .iter()
+                                .any(|(texture, rect)| *texture == pawn && rect.contains(from)),
+                            "pawn snapped back to e2"
+                        );
+                    };
+                    assert!(f.ui.has_unsaved(), "drag={drag} wrong={wrong}");
+                    assert!(!f.ui.can_input());
+                    assert!(f.ui.pending_sounds.is_empty());
+                    if drag {
+                        assert_pawn_at_destination(&released);
+                    }
+                    released.drop_without_applying_deltas();
+                    let frame = Instant::now();
+                    let waiting = pointer_board_frame(&mut f, &ctx, 1.05, vec![], &settings);
+                    assert!(frame.elapsed() < Duration::from_millis(300));
+                    if drag {
+                        assert_pawn_at_destination(&waiting);
+                        assert!(
+                            f.ui.board
+                                .animation_at(1.05)
+                                .is_none_or(|(_, slides, _)| slides.is_empty())
+                        );
+                    } else if !duration.is_zero() {
+                        assert!(
+                            f.ui.board
+                                .animation_at(1.05)
+                                .unwrap()
+                                .1
+                                .iter()
+                                .any(|(_, source, _)| *source == Square::E2),
+                            "click move must still animate"
+                        );
+                    }
+                    waiting.drop_without_applying_deltas();
+                    let waiting = pointer_board_frame(&mut f, &ctx, 2.0, vec![], &settings);
+                    assert_pawn_at_destination(&waiting);
+                    waiting.drop_without_applying_deltas();
+                    assert!(
+                        f.ui.learning.attempts.is_empty(),
+                        "unconfirmed answer affected learning data"
+                    );
+                    drop(lock);
+                    wait_for_commit(&mut f.ui);
+                    let confirmed = pointer_board_frame(&mut f, &ctx, 2.01, vec![], &settings);
+                    assert_pawn_at_destination(&confirmed);
+                    confirmed.drop_without_applying_deltas();
+                    assert!(
+                        f.ui.board.animation_at(2.01).is_none(),
+                        "commit restarted the move animation"
+                    );
+                    assert_eq!(f.attempts().len(), 1);
+                    assert_eq!(
+                        f.ui.pending_sounds,
+                        [if wrong { Sound::Wrong } else { Sound::Move }]
+                    );
+                    if wrong {
+                        f.ui.tick_at(f.ui.playback_deadline().unwrap(), duration, NOW);
+                        pointer_board_frame(&mut f, &ctx, 2.02, vec![], &settings)
+                            .drop_without_applying_deltas();
+                        assert_eq!(fen4(&f.ui.board_position), fen4(&Chess::default()));
+                        if !duration.is_zero() {
+                            assert!(
+                                f.ui.board
+                                    .animation_at(2.02)
+                                    .unwrap()
+                                    .1
+                                    .iter()
+                                    .any(|(_, _, target)| *target == Square::E2),
+                                "wrong move must return to source"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dragged_special_moves_keep_auxiliary_effects_and_retry_does_not_move_again() {
+        let cases = [
+            (
+                "4k3/8/8/8/8/8/8/4K2R w K - 0 1",
+                "O-O",
+                "e1g1",
+                Square::E1,
+                Square::G1,
+                None,
+                false,
+            ),
+            (
+                "4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1",
+                "exd5",
+                "e4d5",
+                Square::E4,
+                Square::D5,
+                Some(Square::D5),
+                false,
+            ),
+            (
+                "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+                "exd6",
+                "e5d6",
+                Square::E5,
+                Square::D6,
+                Some(Square::D5),
+                false,
+            ),
+            (
+                "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+                "a8=Q+",
+                "a7a8q",
+                Square::A7,
+                Square::A8,
+                None,
+                true,
+            ),
+        ];
+        let center = |sq: Square| {
+            egui::pos2(
+                (u32::from(sq.file()) as f32 + 0.5) * 100.0,
+                (7.5 - u32::from(sq.rank()) as f32) * 100.0,
+            )
+        };
+        for (fen, san, uci, from, to, captured, promotion) in cases {
+            let pgn = format!("[SetUp \"1\"]\n[FEN \"{fen}\"]\n\n1. {san} *");
+            let mut f = Fixture::new(&pgn, LearningSide::White, &[uci], "special-drag");
+            f.ui.synchronous_commits = false;
+            f.ui.tick_at(Instant::now(), normal(), NOW);
+            let valid_store = f.ui.store.clone();
+            f.ui.store = LearningStore::with_legacy(valid_store.path(), valid_store.path());
+            let ctx = egui::Context::default();
+            crate::assets::install(&ctx);
+            let settings = Settings::default();
+            let initial = pointer_board_frame(&mut f, &ctx, 1.0, vec![], &settings);
+            let captured_texture = captured.map(|sq| {
+                piece_meshes(&initial)
+                    .into_iter()
+                    .find(|(_, rect)| rect.contains(center(sq)))
+                    .unwrap()
+                    .0
+            });
+            initial.drop_without_applying_deltas();
+            pointer_board_frame(
+                &mut f,
+                &ctx,
+                1.01,
+                vec![
+                    egui::Event::PointerMoved(center(from)),
+                    pointer_button(center(from), true),
+                ],
+                &settings,
+            )
+            .drop_without_applying_deltas();
+            pointer_board_frame(
+                &mut f,
+                &ctx,
+                1.02,
+                vec![egui::Event::PointerMoved(center(to))],
+                &settings,
+            )
+            .drop_without_applying_deltas();
+            let released = pointer_board_frame(
+                &mut f,
+                &ctx,
+                1.03,
+                vec![pointer_button(center(to), false)],
+                &settings,
+            );
+            if uci == "e1g1" {
+                let (_, slides, _) = f.ui.board.animation_at(1.03).unwrap();
+                assert_eq!(slides.len(), 1);
+                assert_eq!(
+                    (slides[0].1, slides[0].2),
+                    (Square::H1, Square::F1),
+                    "only the rook should animate after a dragged castle"
+                );
+            }
+            if let Some(texture) = captured_texture {
+                assert!(
+                    piece_meshes(&released).iter().any(
+                        |(id, rect)| *id == texture && rect.contains(center(captured.unwrap()))
+                    ),
+                    "captured piece must still fade out"
+                );
+            }
+            released.drop_without_applying_deltas();
+            if promotion {
+                assert!(
+                    !f.ui.has_unsaved(),
+                    "promotion must wait for the chosen piece"
+                );
+                pointer_board_frame(
+                    &mut f,
+                    &ctx,
+                    1.04,
+                    vec![pointer_button(center(to), true)],
+                    &settings,
+                )
+                .drop_without_applying_deltas();
+                pointer_board_frame(
+                    &mut f,
+                    &ctx,
+                    1.05,
+                    vec![pointer_button(center(to), false)],
+                    &settings,
+                )
+                .drop_without_applying_deltas();
+                assert_eq!(
+                    f.ui.board_position.board().piece_at(to).unwrap().role,
+                    chess_core::shakmaty::Role::Queen
+                );
+            }
+            assert!(f.ui.has_unsaved());
+            let after = fen4(&f.ui.board_position);
+            wait_for_commit(&mut f.ui);
+            assert!(f.ui.save_error.is_some());
+            assert!(f.attempts().is_empty());
+            assert!(f.ui.pending_sounds.is_empty());
+            pointer_board_frame(&mut f, &ctx, 1.1, vec![], &settings)
+                .drop_without_applying_deltas();
+            let waiting = pointer_board_frame(&mut f, &ctx, 2.0, vec![], &settings);
+            if let Some(texture) = captured_texture {
+                assert!(
+                    !piece_meshes(&waiting).iter().any(
+                        |(id, rect)| *id == texture && rect.contains(center(captured.unwrap()))
+                    )
+                );
+            }
+            waiting.drop_without_applying_deltas();
+            f.ui.store = valid_store;
+            f.ui.retry_pending(Instant::now());
+            f.ui.retry_pending(Instant::now());
+            wait_for_commit(&mut f.ui);
+            pointer_board_frame(&mut f, &ctx, 2.01, vec![], &settings)
+                .drop_without_applying_deltas();
+            assert_eq!(fen4(&f.ui.board_position), after);
+            assert!(f.ui.board.animation_at(2.01).is_none());
+            assert_eq!(f.attempts().len(), 1);
+            assert_eq!(f.ui.pending_sounds, [Sound::Move]);
+        }
+    }
+
+    #[test]
+    fn reused_context_retry_stays_silent_and_responsive_and_persists_once() {
+        let mut f = Fixture::new(
+            "1. e4 e5 2. Nf3 Nc6 *",
+            LearningSide::White,
+            &["e2e4", "g1f3"],
+            "reuse-retry",
+        );
+        let at = Instant::now();
+        tick_with_prime(&mut f.ui, at, normal(), NOW);
+        assert!(f.ui.play_uci_with_id_at("e2e4", "own-answer".into(), at, NOW));
+        let position = fen4(&f.ui.board_position);
+        assert_eq!(std::mem::take(&mut f.ui.pending_sounds), [Sound::Move]);
+        let valid_store = f.ui.store.clone();
+        f.ui.synchronous_commits = false;
+        f.ui.store = LearningStore::with_legacy(valid_store.path(), valid_store.path());
+        f.ui.tick_at(at + normal(), normal(), NOW);
+        wait_for_commit(&mut f.ui);
+        assert!(f.ui.save_error.is_some());
+        assert!(matches!(
+            f.ui.pending_commit.as_ref().unwrap().kind,
+            CommitKind::ReusedContext
+        ));
+        let reused_id =
+            f.ui.pending_commit
+                .as_ref()
+                .unwrap()
+                .attempt
+                .client_attempt_id
+                .clone();
+        assert_eq!(fen4(&f.ui.board_position), position);
+        assert!(f.ui.pending_sounds.is_empty());
+        f.ui.store = valid_store;
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(f.store.path().with_file_name("learning.json.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        let unlock = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(600));
+            drop(lock);
+        });
+        f.ui.retry_pending(Instant::now());
+        f.ui.retry_pending(Instant::now());
+        let frame = Instant::now();
+        assert!(emitted_sounds(&mut f, &egui::Context::default(), &Settings::default()).is_empty());
+        assert!(
+            frame.elapsed() < Duration::from_millis(300),
+            "reused context blocked the frame"
+        );
+        assert_eq!(fen4(&f.ui.board_position), position);
+        assert!(!f.ui.can_input());
+        unlock.join().unwrap();
+        wait_for_commit(&mut f.ui);
+        assert!(f.ui.pending_sounds.is_empty());
+        f.ui.debug_settle();
+        assert_eq!(f.ui.visual_log, ["e7e5"]);
+        assert_eq!(f.ui.session.current_expected_uci(), Some("g1f3"));
+        let attempts = f.attempts();
+        assert_eq!(attempts.len(), 3);
+        assert_eq!(
+            attempts
+                .iter()
+                .filter(|event| event.client_attempt_id == reused_id)
+                .count(),
+            1
+        );
+        assert_eq!(
+            attempts
+                .iter()
+                .filter(|event| event.event_type.is_independent())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn async_failed_commit_preserves_event_for_retry_without_double_counting() {
+        let mut f = Fixture::new("1. e4 *", LearningSide::White, &["e2e4"], "async-retry");
+        f.ui.synchronous_commits = false;
+        tick_with_prime(&mut f.ui, Instant::now(), normal(), NOW);
+        let valid_store = f.ui.store.clone();
+        f.ui.store = LearningStore::with_legacy(valid_store.path(), valid_store.path());
+        assert!(f.ui.play_uci_with_id_at("e2e4", "async-retry".to_owned(), Instant::now(), NOW));
+        wait_for_commit(&mut f.ui);
+        assert!(f.ui.save_error.is_some());
+        assert!(f.ui.has_unsaved());
+        assert!(f.attempts().is_empty());
+        f.ui.store = valid_store;
+        f.ui.retry_pending(Instant::now());
+        f.ui.retry_pending(Instant::now());
+        wait_for_commit(&mut f.ui);
+        assert!(!f.ui.has_unsaved());
+        assert_eq!(f.attempts().len(), 1);
+        assert_eq!(f.attempts()[0].client_attempt_id, "async-retry");
     }
 }

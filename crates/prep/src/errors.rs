@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use chess_core::shakmaty::san::SanPlus;
 use chess_core::shakmaty::uci::UciMove;
-use chess_core::shakmaty::{Chess, Color, Position};
+use chess_core::shakmaty::{Chess, Position};
 use game_review::{Eval, Judgement, PosEval, SEARCH_VERSION};
 use serde::{Deserialize, Serialize};
 
@@ -118,7 +118,10 @@ impl RepeatedError {
 
 /// Judges the player's moves in `games[g]` for `g` in `which` from `evals`: the
 /// move is not the engine's best, and the evaluations before and after it say it
-/// lost enough (the rules of the game analysis, [`game_review::judge`]).
+/// lost enough (the rules of the game analysis, [`game_review::judge`]). Only the
+/// prefix before the opponent's first inaccuracy/mistake/blunder is eligible.
+/// A missing opponent evaluation or best move stops the prefix too: later player
+/// errors are not published until those preceding moves have been checked.
 pub fn judge_games(
     games: &[GameInfo],
     which: &[u32],
@@ -127,11 +130,6 @@ pub fn judge_games(
     let mut out = Vec::new();
     for &g in which {
         let game = &games[g as usize];
-        let mover = if game.white {
-            Color::White
-        } else {
-            Color::Black
-        };
         let mut pos = Chess::default();
         for (i, uci) in game.ucis.iter().enumerate() {
             let Some(m) = uci
@@ -141,13 +139,19 @@ pub fn judge_games(
             else {
                 break;
             };
-            if game.player_moves_at(i)
-                && let (Some(before), Some(after)) =
-                    (evals.get(&game.keys[i]), evals.get(&game.keys[i + 1]))
-                && let Some(best) = before.best()
+            let evaluated = evals
+                .get(&game.keys[i])
+                .and_then(|before| Some((before, evals.get(&game.keys[i + 1])?, before.best()?)));
+            if !game.player_moves_at(i) && evaluated.is_none() {
+                break;
+            }
+            if let Some((before, after, best)) = evaluated
                 && best != uci
-                && let Some(judgement) = game_review::judge(before.eval, after.eval, mover)
+                && let Some(judgement) = game_review::judge(before.eval, after.eval, pos.turn())
             {
+                if !game.player_moves_at(i) {
+                    break;
+                }
                 let best_san = best
                     .parse::<UciMove>()
                     .ok()
@@ -382,6 +386,137 @@ mod tests {
         assert!(judge_games(&games, &[0, 1, 2], &partial).is_empty());
         // One game less: nothing repeats.
         assert!(repeated(&judge_games(&games, &[0, 2], &evals), &games).is_empty());
+    }
+
+    fn line_evals(game: &GameInfo, values: &[i32]) -> HashMap<u64, PositionEval> {
+        game.keys
+            .iter()
+            .enumerate()
+            .map(|(ply, &key)| {
+                (
+                    key,
+                    eval(
+                        1000,
+                        values[ply],
+                        game.ucis.get(ply).map_or("", String::as_str),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_opponent_error_category_stops_later_errors_for_both_colours() {
+        for white in [true, false] {
+            for (loss, category) in [
+                (60, Judgement::Inaccuracy),
+                (150, Judgement::Mistake),
+                (500, Judgement::Blunder),
+            ] {
+                let game = game(0, white, &["e4", "e5", "Qh5", "Nc6"], "*", "", 0);
+                let (opponent_ply, player_ply, values) = if white {
+                    (1, 2, vec![0, 0, loss, -150, -150])
+                } else {
+                    (0, 1, vec![0, -loss, 150, 150, 150])
+                };
+                let mut evals = line_evals(&game, &values);
+                evals.get_mut(&game.keys[opponent_ply]).unwrap().pv =
+                    vec![if white { "c7c5" } else { "d2d4" }.to_owned()];
+                evals.get_mut(&game.keys[player_ply]).unwrap().pv =
+                    vec![if white { "g1f3" } else { "c7c5" }.to_owned()];
+                let mover = if white {
+                    chess_core::shakmaty::Color::Black
+                } else {
+                    chess_core::shakmaty::Color::White
+                };
+                assert_eq!(
+                    game_review::judge(
+                        Eval::Cp(values[opponent_ply]),
+                        Eval::Cp(values[opponent_ply + 1]),
+                        mover
+                    ),
+                    Some(category)
+                );
+                assert!(judge_games(std::slice::from_ref(&game), &[0], &evals).is_empty());
+                // The engine's own best move is exempt even if evaluations differ.
+                evals.get_mut(&game.keys[opponent_ply]).unwrap().pv =
+                    vec![game.ucis[opponent_ply].clone()];
+                let errors = judge_games(std::slice::from_ref(&game), &[0], &evals);
+                assert_eq!(errors.len(), 1);
+                assert_eq!(errors[0].ply, player_ply as u32);
+            }
+        }
+    }
+
+    #[test]
+    fn earlier_player_errors_survive_but_the_whole_later_suffix_is_excluded() {
+        for white in [true, false] {
+            let game = game(
+                0,
+                white,
+                &["e4", "e5", "Qh5", "Nc6", "Bc4", "Nf6"],
+                "*",
+                "",
+                0,
+            );
+            let values = if white {
+                vec![0, -150, 0, -150, -150, -300, -300]
+            } else {
+                vec![0, 0, 150, 0, 150, 0, 150]
+            };
+            let mut evals = line_evals(&game, &values);
+            let first_player = usize::from(!white);
+            let opponent = first_player + 1;
+            let alternatives = if white {
+                ["d2d4", "c7c5", "g1f3", "d2d3"]
+            } else {
+                ["c7c5", "g1f3", "g8f6", "d7d6"]
+            };
+            for (ply, best) in [first_player, opponent, first_player + 2, first_player + 4]
+                .into_iter()
+                .zip(alternatives)
+            {
+                evals.get_mut(&game.keys[ply]).unwrap().pv = vec![best.to_owned()];
+            }
+            let errors = judge_games(std::slice::from_ref(&game), &[0], &evals);
+            assert_eq!(errors.len(), 1);
+            assert_eq!(errors[0].ply, first_player as u32);
+        }
+    }
+
+    #[test]
+    fn incomplete_opponent_prefix_withholds_errors_until_checked() {
+        let game = game(0, true, &["e4", "e5", "Qh5", "Nc6"], "*", "", 0);
+        let mut complete = line_evals(&game, &[0, 0, 0, -150, -150]);
+        complete.get_mut(&game.keys[2]).unwrap().pv = vec!["g1f3".to_owned()];
+        for missing in [game.keys[1], game.keys[2]] {
+            let mut partial = complete.clone();
+            partial.remove(&missing);
+            assert!(judge_games(std::slice::from_ref(&game), &[0], &partial).is_empty());
+        }
+        let mut missing_best = complete.clone();
+        missing_best.get_mut(&game.keys[1]).unwrap().pv.clear();
+        assert!(judge_games(std::slice::from_ref(&game), &[0], &missing_best).is_empty());
+        assert_eq!(
+            judge_games(std::slice::from_ref(&game), &[0], &complete).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn opponent_allowing_mate_is_judged_from_the_actual_mover() {
+        for white in [true, false] {
+            let game = game(0, white, &["e4", "e5", "Qh5", "Nc6"], "*", "", 0);
+            let opponent = usize::from(white);
+            let mut evals = line_evals(&game, &[0, 0, 0, 0, 0]);
+            evals.get_mut(&game.keys[opponent]).unwrap().pv =
+                vec![if white { "c7c5" } else { "d2d4" }.to_owned()];
+            evals.get_mut(&game.keys[opponent + 1]).unwrap().eval = Eval::Mate { white, moves: 3 };
+            evals.get_mut(&game.keys[opponent + 1]).unwrap().pv =
+                vec![if white { "g1f3" } else { "c7c5" }.to_owned()];
+            // The player's next move lets that forced mate go, normally an error.
+            assert!(judge_games(std::slice::from_ref(&game), &[0], &evals).is_empty());
+        }
     }
 
     #[test]

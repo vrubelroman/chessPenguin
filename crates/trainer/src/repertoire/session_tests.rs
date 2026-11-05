@@ -766,3 +766,117 @@ fn transposition_target_replays_its_saved_membership_path_after_reload() {
     );
     assert_eq!(session.phase, LearningSessionPhase::Finished);
 }
+
+#[test]
+fn learnt_counter_tracks_persisted_independent_answers_for_both_sides_and_shared_scopes() {
+    for side in [LearningSide::White, LearningSide::Black] {
+        let (mut library, first) = library("1. e4 e5 *");
+        let second = library
+            .create(
+                "Shared continuation",
+                &chess_core::parse_str("1. e4 e5 2. Nf3 *").game,
+            )
+            .unwrap();
+        let expected = if side == LearningSide::White {
+            "e2e4"
+        } else {
+            "e7e5"
+        };
+        let wrong = if side == LearningSide::White {
+            "d2d4"
+        } else {
+            "c7c5"
+        };
+        let key = key_for(&library, &scope(first.clone(), side), expected);
+        let dir = TestDir::new("learnt-counter-lifecycle");
+        let store = dir.store();
+        let mut at = NOW;
+        for (cycle, action) in ["correct", "correct", "preview", "correct", "wrong"]
+            .into_iter()
+            .enumerate()
+        {
+            let learning = store.load().unwrap().learning;
+            let mut selected = scope(first.clone(), side);
+            selected.as_of = at;
+            let mut session = due_session(
+                &format!("counter-{cycle}"),
+                &library,
+                &learning,
+                selected.clone(),
+            );
+            if cycle == 0 {
+                assert_eq!(session.introduce_new(&library, &learning).unwrap(), 1);
+            }
+            while session.phase == LearningSessionPhase::AdvancingContext {
+                let event_id = format!("counter-{cycle}-auto-{}", session.context_index);
+                advance(&store, &library, &mut session, &event_id, at);
+            }
+            assert_eq!(session.phase, LearningSessionPhase::AwaitingIndependent);
+            if action == "preview" {
+                let preview = session
+                    .preview(format!("counter-{cycle}-preview"), at)
+                    .unwrap()
+                    .unwrap();
+                commit(&store, &mut session, preview);
+            }
+            let played = if action == "wrong" { wrong } else { expected };
+            let attempt = session
+                .play_uci(
+                    &library,
+                    played,
+                    format!("counter-{cycle}-answer"),
+                    at,
+                    Some(100),
+                )
+                .unwrap();
+            let result = commit(&store, &mut session, attempt.clone());
+            let duplicate = commit(&store, &mut session, attempt);
+            assert_eq!(duplicate.application, AttemptApplication::Duplicate);
+            assert_eq!(duplicate.learning, result.learning);
+            if action == "wrong" {
+                play(
+                    &store,
+                    &library,
+                    &mut session,
+                    expected,
+                    "counter-replay",
+                    at,
+                    None,
+                );
+            }
+            // Reload exactly what the UI uses after leaving a training session.
+            let learning = store.load().unwrap().learning;
+            let expected_streak = [1, 2, 2, 3, 0][cycle];
+            let learnt = usize::from(expected_streak >= 3);
+            assert_eq!(learning.item(&key).unwrap().correct_streak, expected_streak);
+            let first_summary =
+                aggregate_scope(&library, &learning, &selected, &SrsSettings::default())
+                    .unwrap()
+                    .summary;
+            assert_eq!((first_summary.learnt, first_summary.total), (learnt, 1));
+            let shared_scope = StatsScope::new([first.clone(), second.clone()], side, at);
+            let shared =
+                aggregate_scope(&library, &learning, &shared_scope, &SrsSettings::default())
+                    .unwrap()
+                    .summary;
+            let expected_total = if side == LearningSide::White { 2 } else { 1 };
+            assert_eq!((shared.learnt, shared.total), (learnt, expected_total));
+            let second_summary = aggregate_scope(
+                &library,
+                &learning,
+                &scope(second.clone(), side),
+                &SrsSettings::default(),
+            )
+            .unwrap()
+            .summary;
+            assert_eq!(second_summary.learnt, learnt);
+            assert_eq!(
+                first_summary.total,
+                first_summary.unseen + first_summary.learning + first_summary.learnt
+            );
+            assert_eq!(first_summary.accuracy_correct, [1, 2, 2, 3, 3][cycle]);
+            assert_eq!(first_summary.accuracy_wrong, u64::from(action == "wrong"));
+            at = learning.item(&key).unwrap().next_review_at.unwrap();
+        }
+    }
+}

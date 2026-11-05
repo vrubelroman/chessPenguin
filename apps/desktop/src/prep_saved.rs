@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::prep_ui::ColorChoice;
 
+/// Version of the eligibility rules used for the saved error counters.
+pub const ERROR_SELECTION_VERSION: u32 = 1;
+
 /// What the list of preparations knows of one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedPrep {
@@ -34,6 +37,14 @@ pub struct SavedPrep {
     pub errors: ErrorCounts,
     /// The errors were searched (else the counts mean nothing).
     pub evaluated: bool,
+    #[serde(default)]
+    pub error_selection_version: u32,
+}
+
+impl SavedPrep {
+    pub fn errors_current(&self) -> bool {
+        self.error_selection_version == ERROR_SELECTION_VERSION
+    }
 }
 
 /// The folder of the saved preparations.
@@ -111,7 +122,11 @@ pub fn get(dir: &Path, id: &str) -> Option<SavedPrep> {
 
 /// Its report, if it can be read.
 pub fn report(dir: &Path, id: &str) -> Option<PrepReport> {
-    serde_json::from_slice(&std::fs::read(report_path(dir, id)).ok()?).ok()
+    let mut report: PrepReport =
+        serde_json::from_slice(&std::fs::read(report_path(dir, id)).ok()?).ok()?;
+    // Stored evaluations remain useful when the rules for selecting errors change.
+    report.refresh();
+    Some(report)
 }
 
 /// Keeps `meta` and `report` as the preparation of their player and database (the
@@ -170,7 +185,25 @@ mod tests {
             games: 3,
             errors: ErrorCounts::default(),
             evaluated: false,
+            error_selection_version: ERROR_SELECTION_VERSION,
         }
+    }
+
+    #[test]
+    fn legacy_error_counts_are_not_marked_current() {
+        let current = meta("/db/a.pgn", [7], "Target", 10);
+        assert!(current.errors_current());
+        let mut json = serde_json::to_value(&current).expect("metadata");
+        json.as_object_mut()
+            .unwrap()
+            .remove("error_selection_version");
+        let legacy: SavedPrep = serde_json::from_value(json).expect("legacy metadata");
+        assert!(!legacy.errors_current());
+        let future = SavedPrep {
+            error_selection_version: ERROR_SELECTION_VERSION + 1,
+            ..current
+        };
+        assert!(!future.errors_current());
     }
 
     #[test]
@@ -224,6 +257,71 @@ mod tests {
         loaded.book = a.book.clone();
         save_meta(&dir, &loaded).expect("save legacy book");
         assert_eq!(get(&dir, &ida).expect("metadata").book, a.book);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saved_report_rejudges_stale_errors_without_losing_evaluations() {
+        let dir = std::env::temp_dir().join(format!("cp-prep-rejudge-{}", std::process::id()));
+        let mut stale: PrepReport = serde_json::from_str(REPORT).expect("report");
+        stale.search = game_review::SEARCH_VERSION;
+        stale.games.push(prep::GameInfo {
+            index: 0,
+            white: true,
+            opponent: "Other".into(),
+            opponent_elo: 0,
+            date: String::new(),
+            outcome: prep::Outcome::Unknown,
+            ucis: vec!["e2e4".into(), "e7e5".into(), "g1f3".into()],
+            sans: vec!["e4".into(), "e5".into(), "Nf3".into()],
+            keys: vec![1, 2, 3, 4],
+            opening: None,
+            named: None,
+            book: None,
+        });
+        stale.white.games = vec![0];
+        for (key, cp, best) in [
+            (1, 0, "e2e4"),
+            (2, 0, "c7c5"),
+            (3, 150, "f1c4"),
+            (4, 0, "b8c6"),
+        ] {
+            stale.evals.insert(
+                key,
+                prep::PositionEval {
+                    nodes: 1000,
+                    eval: prep::Eval::Cp(cp),
+                    pv: vec![best.into()],
+                    depth: 10,
+                },
+            );
+        }
+        // This cached Nf3 error followed Black's earlier error, so it no longer
+        // belongs in preparation despite its evaluations being fully cached.
+        stale.white.errors.push(prep::OpeningError {
+            game: 0,
+            ply: 2,
+            key: 3,
+            uci: "g1f3".into(),
+            san: "Nf3".into(),
+            best_uci: "f1c4".into(),
+            best_san: "Bc4".into(),
+            judgement: prep::Judgement::Mistake,
+            before: prep::Eval::Cp(150),
+            after: prep::Eval::Cp(0),
+            opening: None,
+        });
+        stale.white.counts.mistakes = 1;
+        let metadata = meta("/db/stale.pgn", [7], "Target", 10);
+        save(&dir, &metadata, &stale).expect("save stale report");
+        let key = id(&metadata.path, &metadata.names);
+        let stored = std::fs::read(report_path(&dir, &key)).expect("stored bytes");
+        let loaded = super::report(&dir, &key).expect("load saved report");
+        assert!(loaded.white.errors.is_empty());
+        assert_eq!(loaded.white.counts.total(), 0);
+        assert_eq!(loaded.evals, stale.evals);
+        assert_eq!(loaded.games, stale.games);
+        assert_eq!(std::fs::read(report_path(&dir, &key)).unwrap(), stored);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

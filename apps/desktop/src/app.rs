@@ -3694,7 +3694,10 @@ impl App {
             );
         }
         self.desktop.was_focused = focused;
-        let events = self.desktop.online.show(ctx, &self.desktop.online_probe);
+        let events = self
+            .desktop
+            .online
+            .show(ctx, &mut self.desktop.online_probe);
         for e in events {
             match e {
                 crate::online_ui::OnlineEvent::Added(p) => {

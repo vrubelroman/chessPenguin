@@ -151,6 +151,38 @@ fn click_events(position: egui::Pos2) -> Vec<egui::Event> {
     ]
 }
 
+#[test]
+fn first_entry_restores_selected_preferences_and_starts_without_reselecting() {
+    let mut f = Fixture::new();
+    f.settings.repertoire_modes.insert(
+        f.id.to_string(),
+        (TrainingMode::Black, QueueMode::ReviewInOrder),
+    );
+    f.settings
+        .repertoire_priorities
+        .insert(f.id.to_string(), LearningPriority::BreadthOverDepth);
+    f.ui = RepertoireUi::with_stores(f.ui.library_store.clone(), f.ui.learning_store.clone());
+    assert_eq!(f.ui.selected.as_ref(), Some(&f.id));
+    let ctx = egui::Context::default();
+    // Production entry: show(), without the debug_open/select hooks.
+    render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 0.0, Vec::new());
+    assert_eq!(f.ui.side, LearningSide::Black);
+    assert_eq!(f.ui.queue, QueueMode::ReviewInOrder);
+    assert_eq!(f.ui.priority, LearningPriority::BreadthOverDepth);
+    f.aggregate();
+    render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 1.0, Vec::new());
+    let train = f.ui.debug_layout.action_buttons[0].unwrap().center();
+    render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 2.0, click_events(train));
+    assert!(
+        f.ui.preparing,
+        "the selected repertoire starts on the first click"
+    );
+    while f.ui.preparing {
+        f.deliver(f.completed_job());
+    }
+    assert!(f.ui.training_visible);
+}
+
 fn text_click_position(shapes: &[egui::epaint::ClippedShape], text: &str) -> egui::Pos2 {
     shapes
         .iter()
@@ -178,7 +210,7 @@ fn dashboard_close_reloads_learning_and_preserves_repertoire_selection() {
     f.ui.side = LearningSide::Black;
     let ctx = egui::Context::default();
     let (_, shapes) = render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 0.0, Vec::new());
-    let details = text_click_position(&shapes, "Details");
+    let details = text_click_position(&shapes, "Statistics");
 
     let (actions, _) =
         render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 1.0, click_events(details));
@@ -214,7 +246,7 @@ fn dashboard_close_reloads_learning_and_preserves_repertoire_selection() {
     .unwrap();
     let (actions, shapes) = render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 2.0, Vec::new());
     assert!(actions.is_empty());
-    let close = text_click_position(&shapes, "Close");
+    let close = text_click_position(&shapes, "← Back to repertoire");
     f.ui.scroll_to_selected = false;
 
     let (actions, _) =
@@ -265,7 +297,7 @@ fn dashboard_close_reloads_learning_and_preserves_repertoire_selection() {
 }
 
 #[test]
-fn compact_statistics_names_total_and_explains_percentages() {
+fn compact_statistics_shows_actionable_counts() {
     let mut f = Fixture::new();
     f.aggregate();
     let ctx = egui::Context::default();
@@ -284,10 +316,8 @@ fn compact_statistics_names_total_and_explains_percentages() {
             matches!(&clipped.shape, egui::Shape::Text(shape) if shape.galley.text().replace('\n', " ") == expected)
         })
     };
-    assert!(has_text("Total"));
-    assert!(has_text(
-        "Learnt = Confident + Uncertain · percentages use Total."
-    ));
+    assert!(has_text("Learnt 0 of 1 moves"));
+    assert!(has_text("Unseen: 1 · Due now: 0"));
     output.drop_without_applying_deltas();
 }
 
@@ -330,10 +360,10 @@ fn dashboard_uses_the_full_workspace_at_both_window_sizes() {
             },
         );
         let dashboard_visible = output.shapes.iter().any(|clipped| {
-            matches!(&clipped.shape, egui::Shape::Text(shape) if shape.galley.text() == "Learning dashboard")
+            matches!(&clipped.shape, egui::Shape::Text(shape) if shape.galley.text() == "Training statistics")
         });
         let repertoire_header_visible = output.shapes.iter().any(|clipped| {
-            matches!(&clipped.shape, egui::Shape::Text(shape) if shape.galley.text() == "Opening training")
+            matches!(&clipped.shape, egui::Shape::Text(shape) if shape.galley.text() == "Opening training (α version)")
         });
         output.drop_without_applying_deltas();
 
@@ -442,7 +472,7 @@ fn applied_editor_library_is_adopted_without_a_second_save() {
     let expected = applied.clone();
     let generation = f.ui.index_generation;
 
-    f.ui.handle_editor_action(RepertoireEditorAction::Applied {
+    let _ = f.ui.handle_editor_action(RepertoireEditorAction::Applied {
         repertoire_id: f.id.clone(),
         library: applied,
     });
@@ -464,7 +494,7 @@ fn cancelling_editor_does_not_change_library_bytes() {
     let before = std::fs::read(f.ui.library_store.path()).unwrap();
     let library = f.ui.library.clone();
 
-    f.ui.handle_editor_action(RepertoireEditorAction::Cancel);
+    let _ = f.ui.handle_editor_action(RepertoireEditorAction::Cancel);
 
     assert!(f.ui.editor.is_none());
     assert_eq!(
@@ -585,7 +615,7 @@ fn stale_applied_is_ignored_after_changing_repertoire() {
     stale.repertoire_mut(&f.id).unwrap().set_max_plies(3);
     f.ui.select(second.clone(), &f.settings);
 
-    f.ui.handle_editor_action(RepertoireEditorAction::Applied {
+    let _ = f.ui.handle_editor_action(RepertoireEditorAction::Applied {
         repertoire_id: f.id.clone(),
         library: stale,
     });
@@ -1229,39 +1259,25 @@ fn review_order_reset_changes_only_the_cycle_cursor() {
 #[test]
 fn review_reset_controls_keep_statistics_and_library_visible() {
     let mut f = Fixture::new();
-    let mut settings = f.settings.clone();
-    let mut actions = Vec::new();
-    {
-        let mut run = |queue| {
-            f.ui.queue = queue;
-            f.ui.debug_layout.reset_review = None;
-            let ctx = egui::Context::default();
-            ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(640.0, 480.0),
-                    )),
-                    ..Default::default()
-                },
-                |ui| {
-                    egui::CentralPanel::default().show(ui, |ui| {
-                        f.ui.show_workspace(ui, &mut settings, &mut actions);
-                    });
-                },
-            )
-            .drop_without_applying_deltas();
-            let table = f.ui.debug_layout.table.expect("library table");
-            assert!(
-                table.top() < 480.0,
-                "table is outside the viewport: {table:?}"
-            );
-            assert!(table.height() > 0.0);
-            f.ui.debug_layout.reset_review.is_some()
-        };
-
-        assert!(run(QueueMode::ReviewInOrder));
-        assert!(!run(QueueMode::LeastRecent));
+    for queue in [QueueMode::ReviewInOrder, QueueMode::LeastRecent] {
+        f.ui.queue = queue;
+        f.ui.parameters_open = false;
+        f.ui.debug_layout.reset_review = None;
+        let ctx = egui::Context::default();
+        let (_, shapes) = render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 0.0, Vec::new());
+        let parameters = text_click_position(&shapes, "Parameters");
+        render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 0.1, click_events(parameters));
+        render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 0.2, Vec::new());
+        let table = f.ui.debug_layout.table.expect("library table");
+        assert!(
+            table.top() < 600.0,
+            "table is outside the viewport: {table:?}"
+        );
+        assert!(table.height() > 0.0);
+        assert_eq!(
+            f.ui.debug_layout.reset_review.is_some(),
+            queue == QueueMode::ReviewInOrder
+        );
     }
 }
 
@@ -1294,7 +1310,6 @@ fn due_start_has_priority_and_there_is_no_hidden_early_or_empty_start() {
         start_kind(&LearningAggregate::default()),
         StartKind::Unavailable
     );
-    assert_eq!(format_percent(None), "—");
 }
 
 #[test]
@@ -1628,6 +1643,18 @@ fn training_scope_uses_repertoire_depth_and_custom_context_policy() {
     assert_eq!(scoped.scope.max_depth, Some(2));
     assert_eq!(scoped.summary.total, 1);
 
+    let ctx = egui::Context::default();
+    let (_, shapes) = render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 0.0, Vec::new());
+    assert!(shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(shape) if shape.galley.text() == "Learnt 0 of 1 moves")
+    }));
+    assert!(!shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(shape) if shape.galley.text().contains("Depth") || shape.galley.text().contains("4294967295"))
+    }));
+    assert!(!shapes.iter().any(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(shape) if shape.galley.text().contains("Scope: whole repertoire"))
+    }));
+
     f.start();
     f.deliver(f.completed_job());
 
@@ -1645,10 +1672,10 @@ fn context_control_changes_are_saved_from_the_workspace() {
     let mut f = Fixture::new();
     let ctx = egui::Context::default();
     let (_, shapes) = render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 0.0, Vec::new());
-    let header = text_click_position(&shapes, "Context and move speed");
-    let (_, shapes) =
-        render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 1.0, click_events(header));
-    let fixed = text_click_position(&shapes, "Use fixed piece movement speed");
+    let settings = text_click_position(&shapes, "Parameters");
+    render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 0.1, click_events(settings));
+    let (_, shapes) = render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 0.2, Vec::new());
+    let fixed = text_click_position(&shapes, "Speed up familiar moves");
 
     let (actions, _) =
         render_repertoire_frame(&mut f, &ctx, 1400.0, 900.0, 2.0, click_events(fixed));
@@ -1664,4 +1691,37 @@ fn context_control_changes_are_saved_from_the_workspace() {
         .get(f.id.as_str())
         .unwrap();
     assert!(!policy.use_fixed_piece_speed);
+}
+
+#[test]
+fn preparation_actions_share_one_size_and_row() {
+    let mut f = Fixture::new();
+    f.aggregate();
+    for (width, height) in [(960.0, 600.0), (1400.0, 900.0)] {
+        let ctx = egui::Context::default();
+        render_repertoire_frame(&mut f, &ctx, width, height, 0.0, Vec::new());
+        let buttons = f.ui.debug_layout.action_buttons.map(Option::unwrap);
+        for button in buttons {
+            assert_eq!(button.size(), buttons[0].size());
+            assert_eq!(button.top(), buttons[0].top());
+            assert_eq!(button.height(), 30.0);
+            assert!(button.right() <= width);
+        }
+        assert!(buttons[0].right() < buttons[1].left());
+        assert!(buttons[1].right() < buttons[2].left());
+    }
+}
+
+#[test]
+fn repertoire_row_menu_opens_editor() {
+    let mut f = Fixture::new();
+    let ctx = egui::Context::default();
+    let (_, shapes) = render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 0.0, Vec::new());
+    let menu = text_click_position(&shapes, "⋯");
+    render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 0.1, click_events(menu));
+    let (_, shapes) = render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 0.2, Vec::new());
+    let edit = text_click_position(&shapes, "Edit");
+    render_repertoire_frame(&mut f, &ctx, 960.0, 600.0, 0.3, click_events(edit));
+    assert_eq!(f.ui.editor_id.as_ref(), Some(&f.id));
+    assert!(f.ui.editor.is_some());
 }

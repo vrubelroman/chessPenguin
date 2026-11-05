@@ -23,6 +23,7 @@ use crate::settings::Settings;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LearningDashboardAction {
     Close,
+    OpenSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,7 +61,6 @@ struct DashboardView {
 }
 
 struct DashboardData {
-    side: LearningSide,
     as_of: i64,
     timezone: LocalDatePolicy,
     summary: Vec<SummaryRow>,
@@ -243,65 +243,76 @@ impl LearningDashboardUi {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
 
-        ui.set_width(ui.available_width());
-        ui.horizontal(|ui| {
-            ui.heading(tr("Learning dashboard"));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button(tr("Close")).clicked() {
-                    actions.push(LearningDashboardAction::Close);
-                }
-            });
+        egui::Panel::top("learning_dashboard_header").show(ui, |ui| {
+            let back = if ui.available_width() < 600.0 {
+                tr("Back")
+            } else {
+                tr("Back to repertoire")
+            };
+            let (back, settings) =
+                crate::widgets::section_header(ui, &format!("← {back}"), tr("Training statistics"));
+            if back {
+                actions.push(LearningDashboardAction::Close);
+            }
+            if settings {
+                actions.push(LearningDashboardAction::OpenSettings);
+            }
         });
-        ui.add_space(4.0);
-        self.scope_controls(ui);
-        self.scope_line(ui);
-        self.capture_line(ui);
-        self.tabs(ui);
-        ui.separator();
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.add_space(4.0);
+            self.scope_controls(ui);
 
-        egui::ScrollArea::vertical()
-            .id_salt("learning_dashboard_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                if self.loading && self.data.is_none() {
-                    loading_body(ui);
-                    return;
-                }
-                if let Some(error) = self.error.clone() {
-                    error_body(ui, &error);
-                    if ui.button(tr("Retry")).clicked() {
-                        self.reload();
+            self.tabs(ui);
+            ui.separator();
+            if self.tab == DashboardTab::History {
+                self.capture_line(ui);
+            }
+
+            egui::ScrollArea::vertical()
+                .id_salt("learning_dashboard_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    if self.loading && self.data.is_none() {
+                        loading_body(ui);
+                        return;
                     }
-                    return;
-                }
-                let Some(data) = self.data.as_ref() else {
-                    loading_body(ui);
-                    return;
-                };
-                let Some(view) = data
-                    .views
-                    .iter()
-                    .find(|view| view.selection == self.selection)
-                else {
-                    self.error = Some(tr("The selected scope is no longer available").to_owned());
-                    return;
-                };
-                match self.tab {
-                    DashboardTab::Summary => show_summary(ui, data, view),
-                    DashboardTab::Branches => crate::learning_branches::show(
-                        ui,
-                        &view.branches,
-                        &data.names,
-                        &data.labels,
-                        &mut self.selected_branch,
-                    ),
-                    DashboardTab::History => show_history(ui, view),
-                    DashboardTab::Scheduled => show_scheduled(ui, view),
-                    DashboardTab::Sequences => show_sequences(ui, view),
-                    DashboardTab::Moves => show_moves(ui, view, &mut self.selected_move),
-                }
-            });
+                    if let Some(error) = self.error.clone() {
+                        error_body(ui, &error);
+                        if ui.button(tr("Retry")).clicked() {
+                            self.reload();
+                        }
+                        return;
+                    }
+                    let Some(data) = self.data.as_ref() else {
+                        loading_body(ui);
+                        return;
+                    };
+                    let Some(view) = data
+                        .views
+                        .iter()
+                        .find(|view| view.selection == self.selection)
+                    else {
+                        self.error =
+                            Some(tr("The selected scope is no longer available").to_owned());
+                        return;
+                    };
+                    match self.tab {
+                        DashboardTab::Summary => show_summary(ui, data, view),
+                        DashboardTab::Branches => crate::learning_branches::show(
+                            ui,
+                            &view.branches,
+                            &data.names,
+                            &data.labels,
+                            &mut self.selected_branch,
+                        ),
+                        DashboardTab::History => show_history(ui, view),
+                        DashboardTab::Scheduled => show_scheduled(ui, view),
+                        DashboardTab::Sequences => show_sequences(ui, view),
+                        DashboardTab::Moves => show_moves(ui, view, &mut self.selected_move),
+                    }
+                });
+        });
         actions
     }
 
@@ -412,15 +423,24 @@ impl LearningDashboardUi {
         let enabled = !self.loading && !self.snapshot_pending;
         ui.add_enabled_ui(enabled, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(tr("Scope")).weak());
+                ui.label(RichText::new(tr("Repertoire")).weak())
+                    .on_hover_text(format!(
+                        "{}: {}",
+                        tr("Calculated at"),
+                        self.data
+                            .as_ref()
+                            .map_or_else(|| "…".to_owned(), |data| format_time(Some(data.as_of)))
+                    ));
                 let selected_text = self.selection_label(&self.selection);
                 egui::ComboBox::from_id_salt("learning_dashboard_scope")
                     .selected_text(selected_text)
+                    .width(260.0)
+                    .truncate()
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut self.selection,
                             ScopeSelection::Global,
-                            tr("All repertoires (union)"),
+                            tr("All repertoires"),
                         );
                         for repertoire in &self.library.repertoires {
                             ui.selectable_value(
@@ -455,24 +475,6 @@ impl LearningDashboardUi {
         }
     }
 
-    fn scope_line(&self, ui: &mut Ui) {
-        let (side, as_of) = self.data.as_ref().map_or_else(
-            || (self.side, "…".to_owned()),
-            |data| (data.side, format_time(Some(data.as_of))),
-        );
-        let text = format!(
-            "{}: {} · {}: {} · {}: {}",
-            tr("Scope"),
-            self.selection_label(&self.selection),
-            tr("Side"),
-            side_label(side),
-            tr("Calculated at"),
-            as_of
-        );
-        ui.add(egui::Label::new(&text).truncate())
-            .on_hover_text(text);
-    }
-
     fn selected_capture(&self) -> Option<(StatsScope, LocalDatePolicy)> {
         let data = self.data.as_ref()?;
         let view = data
@@ -483,43 +485,22 @@ impl LearningDashboardUi {
     }
 
     fn capture_line(&mut self, ui: &mut Ui) {
-        let capture = self.selected_capture();
-        let width = ui.available_width();
-        ui.allocate_ui_with_layout(
-            egui::vec2(width, 30.0),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                let response = ui
-                    .add_enabled(
-                        capture.is_some() && !self.snapshot_pending && !self.loading,
-                        egui::Button::new(tr("Save statistics to History")),
-                    )
-                    .on_hover_text(tr(
-                        "Save the current numbers for the selected scope and side. PGN and learning progress do not change.",
-                    ));
-                if response.clicked()
-                    && let Some((scope, timezone)) = capture
+        ui.label(
+            egui::RichText::new(tr("History is saved automatically once a day when viewed."))
+                .weak(),
+        );
+        if let Some(error) = self.snapshot_error.clone() {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+                if ui
+                    .add_enabled(!self.snapshot_pending, egui::Button::new(tr("Retry")))
+                    .clicked()
+                    && let Some((scope, timezone)) = self.selected_capture()
                 {
                     self.capture_snapshot(scope, timezone);
                 }
-                if self.snapshot_pending {
-                    ui.spinner();
-                }
-                let message = self
-                    .snapshot_error
-                    .as_ref()
-                    .or(self.snapshot_message.as_ref());
-                if let Some(message) = message {
-                    let color = if self.snapshot_error.is_some() {
-                        ui.visuals().error_fg_color
-                    } else {
-                        ui.visuals().text_color()
-                    };
-                    ui.add(egui::Label::new(RichText::new(message).color(color)).truncate())
-                        .on_hover_text(message);
-                }
-            },
-        );
+            });
+        }
     }
 
     fn capture_snapshot(&mut self, scope: StatsScope, timezone: LocalDatePolicy) {
@@ -542,23 +523,37 @@ impl LearningDashboardUi {
     fn tabs(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             for (tab, label) in [
-                (DashboardTab::Summary, tr("Summary")),
-                (DashboardTab::Branches, tr("Branches")),
-                (DashboardTab::History, tr("History")),
+                (DashboardTab::Summary, tr("Overview")),
+                (DashboardTab::History, tr("Progress over time")),
                 (DashboardTab::Scheduled, tr("Scheduled")),
-                (DashboardTab::Sequences, tr("Sequences")),
                 (DashboardTab::Moves, tr("Moves")),
             ] {
                 if ui.selectable_label(self.tab == tab, label).clicked() {
                     self.tab = tab;
                 }
             }
+            let extra = match self.tab {
+                DashboardTab::Branches => tr("Variants"),
+                DashboardTab::Sequences => tr("Sequences"),
+                _ => tr("More statistics"),
+            };
+            ui.menu_button(extra, |ui| {
+                for (tab, label) in [
+                    (DashboardTab::Branches, tr("Variants")),
+                    (DashboardTab::Sequences, tr("Sequences")),
+                ] {
+                    if ui.selectable_label(self.tab == tab, label).clicked() {
+                        self.tab = tab;
+                        ui.close();
+                    }
+                }
+            });
         });
     }
 
     fn selection_label(&self, selection: &ScopeSelection) -> String {
         match selection {
-            ScopeSelection::Global => tr("All repertoires (union)").to_owned(),
+            ScopeSelection::Global => tr("All repertoires").to_owned(),
             ScopeSelection::Repertoire(id) => self
                 .library
                 .repertoire(id)
@@ -624,7 +619,6 @@ impl DashboardData {
         });
         log_dashboard_global_total_invariant(global_total, &summary);
         Ok(Self {
-            side,
             as_of,
             timezone,
             summary,
@@ -805,143 +799,108 @@ fn error_body(ui: &mut Ui, error: &str) {
     );
 }
 
-const SUMMARY_HEADER_HEIGHT: f32 = 40.0;
-
-fn summary_number_width(ui: &Ui) -> f32 {
-    let available_width = ui.available_width();
-    if available_width < 700.0 {
-        60.0
-    } else {
-        (available_width / 9.0)
-            .min(108.0)
-            .min((available_width - 80.0 - 8.0 * ui.spacing().item_spacing.x) / 8.0)
-    }
-}
-
 fn show_summary(ui: &mut Ui, data: &DashboardData, view: &DashboardView) {
-    let compact = ui.available_width() < 700.0;
-    let number_width = summary_number_width(ui);
-    let headers = [
-        "Name",
-        "Total",
-        "Unseen",
-        "Learning",
-        "Learnt",
-        "Uncertain",
-        "Due",
-        "Learnt %",
-        "Confident %",
-    ];
-    let mut table = TableBuilder::new(ui)
+    let summary = &view.summary;
+    ui.add_space(8.0);
+    ui.heading(trf(
+        "Learnt {learnt} of {total} moves",
+        &[("learnt", &summary.learnt), ("total", &summary.total)],
+    ))
+    .on_hover_text(tr("A move is learnt after 3 correct answers in a row without hints. Only main replies for the selected colour count; shared positions count once. A wrong answer resets the streak."));
+    ui.add_space(8.0);
+    ui.add(
+        egui::ProgressBar::new(summary.learnt_percent.unwrap_or(0.0) as f32 / 100.0)
+            .desired_width(ui.available_width().min(600.0))
+            .text(format_percent(summary.learnt_percent)),
+    );
+    ui.add_space(12.0);
+    egui::Grid::new("learning_overview_counts")
+        .spacing([24.0, 10.0])
+        .show(ui, |ui| {
+            for (label, value) in [
+                ("Due now", summary.due),
+                ("Not practised yet", summary.unseen),
+                ("Still learning", summary.learning),
+                ("Long overdue learnt moves", summary.uncertain),
+            ] {
+                let response = ui.label(tr(label));
+                if label == "Long overdue learnt moves" {
+                    response.on_hover_text(tr("Of the moves already learnt"));
+                }
+                ui.strong(value.to_string());
+                ui.end_row();
+            }
+        });
+    ui.add_space(8.0);
+    ui.label(tr(
+        "Progress counts your repertoire moves, with shared positions counted once.",
+    ));
+    ui.add_space(12.0);
+    egui::CollapsingHeader::new(tr("Learning details")).show(ui, |ui| {
+        egui::Grid::new("learning_overview_details")
+            .spacing([24.0, 8.0])
+            .show(ui, |ui| {
+                for (label, value) in [
+                    ("Accuracy", format_percent(summary.accuracy_percent)),
+                    ("Confident %", format_percent(summary.confident_percent)),
+                    ("Next review", format_time(summary.next_due_at)),
+                ] {
+                    ui.label(tr(label));
+                    ui.label(value);
+                    ui.end_row();
+                }
+            });
+        ui.label(tr(
+            "Learnt = Confident + Uncertain · percentages use Total.",
+        ));
+    });
+    if view.selection != ScopeSelection::Global {
+        return;
+    }
+    ui.add_space(16.0);
+    ui.strong(tr("All repertoires"));
+    let number_width = (ui.available_width() * 0.14).clamp(80.0, 140.0);
+    TableBuilder::new(ui)
         .id_salt("learning_dashboard_summary")
         .striped(true)
         .vscroll(false)
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::remainder().at_least(80.0).clip(true));
-    for _ in 1..headers.len() {
-        table = table.column(Column::exact(number_width).clip(true));
-    }
-    table
-        .header(SUMMARY_HEADER_HEIGHT, |mut header| {
-            for (index, key) in headers.into_iter().enumerate() {
-                header.col(|ui| {
-                    let response = if index == 0 {
-                        header_cell(ui, tr(key), false)
-                    } else {
-                        summary_metric_header(ui, tr(key), compact)
-                    };
-                    response.on_hover_text(match key {
-                        "Total" => tr("Total = Unseen + Learning + Learnt."),
-                        "Uncertain" => {
-                            tr("Learnt = Confident + Uncertain · percentages use Total.")
-                        }
-                        _ => tr(key),
-                    });
-                });
+        .column(Column::remainder().at_least(160.0).clip(true))
+        .column(Column::exact(number_width))
+        .column(Column::exact(number_width))
+        .column(Column::exact(number_width))
+        .column(Column::exact(number_width))
+        .header(40.0, |mut header| {
+            for (index, label) in ["Repertoire", "Learnt moves", "Learnt %", "Due now", "Not practised yet"].into_iter().enumerate() {
+                header.col(|ui| { header_cell(ui, tr(label), index > 0); });
             }
         })
         .body(|body| {
-            body.rows(24.0, data.summary.len(), |mut row| {
-                let summary_row = &data.summary[row.index()];
-                let summary = &summary_row.summary;
-                let strong = summary_row.id.is_none();
+            body.rows(32.0, data.summary.len(), |mut row| {
+                let item = &data.summary[row.index()];
+                let global = item.id.is_none();
                 row.col(|ui| {
-                    let name = if strong {
-                        tr("Global total")
-                    } else {
-                        &summary_row.name
-                    };
-                    let response = text_cell(ui, name, strong, false);
-                    if strong {
-                        response.on_hover_text(tr(
-                            "Global total counts each shared learning item once; repertoire rows can add up to more.",
-                        ));
-                    } else {
-                        response.on_hover_text(&summary_row.name);
-                    }
+                    text_cell(ui, if global { tr("Total without duplicates") } else { &item.name }, global, false)
+                        .on_hover_text(tr("Global total counts each shared learning item once; repertoire rows can add up to more."));
                 });
-                let values = [
-                    summary.total.to_string(),
-                    summary.unseen.to_string(),
-                    summary.learning.to_string(),
-                    summary.learnt.to_string(),
-                    summary.uncertain.to_string(),
-                    summary.due.to_string(),
-                    format_percent(summary.learnt_percent),
-                    format_percent(summary.confident_percent),
-                ];
-                for value in values {
-                    row.col(|ui| {
-                        text_cell(ui, &value, strong, true);
-                    });
+                for text in [format!("{} / {}", item.summary.learnt, item.summary.total), format_percent(item.summary.learnt_percent), item.summary.due.to_string(), item.summary.unseen.to_string()] {
+                    row.col(|ui| { text_cell(ui, &text, global, true); });
                 }
             });
         });
-    ui.add_space(6.0);
-    ui.label(format!(
-        "{}: {}",
-        tr("Next due at"),
-        format_time(view.summary.next_due_at)
-    ));
-    ui.add(
-        egui::Label::new(
-            RichText::new(tr(
-                "Learnt = Confident + Uncertain · percentages use Total.",
-            ))
-            .weak(),
-        )
-        .wrap(),
-    );
 }
 
 fn show_history(ui: &mut Ui, view: &DashboardView) {
     if view.history.is_empty() {
         ui.label(tr(
-            "No snapshots yet. Save statistics to History to record the current scope.",
+            "Progress history will appear after your first daily snapshot.",
         ));
-        ui.add(
-            egui::Label::new(
-                RichText::new(tr(
-                    "Save the current numbers for the selected scope and side. PGN and learning progress do not change.",
-                ))
-                .weak(),
-            )
-            .wrap(),
-        );
         return;
     }
     crate::learning_charts::history(ui, &view.history);
     ui.add_space(8.0);
-    let number_width = 60.0;
-    let headers = [
-        "Date",
-        "Total",
-        "Unseen",
-        "Learning",
-        "Learnt",
-        "Uncertain",
-        "Due",
-    ];
+    let number_width = (ui.available_width() * 0.18).clamp(100.0, 160.0);
+    let headers = ["Date", "Learnt moves", "Not practised yet", "Due now"];
     let mut table = TableBuilder::new(ui)
         .id_salt("learning_dashboard_history")
         .striped(true)
@@ -952,7 +911,7 @@ fn show_history(ui: &mut Ui, view: &DashboardView) {
         table = table.column(Column::exact(number_width));
     }
     table
-        .header(28.0, |mut header| {
+        .header(40.0, |mut header| {
             for (index, key) in headers.into_iter().enumerate() {
                 header.col(|ui| {
                     header_cell(ui, tr(key), index > 0);
@@ -969,14 +928,7 @@ fn show_history(ui: &mut Ui, view: &DashboardView) {
                         format_time(Some(snapshot.as_of))
                     ));
                 });
-                let values = [
-                    snapshot.total,
-                    snapshot.unseen,
-                    snapshot.learning,
-                    snapshot.learnt,
-                    snapshot.uncertain,
-                    snapshot.due,
-                ];
+                let values = [snapshot.learnt, snapshot.unseen, snapshot.due];
                 for value in values {
                     row.col(|ui| {
                         text_cell(ui, &value.to_string(), false, true);
@@ -1386,13 +1338,6 @@ fn header_cell(ui: &mut Ui, text: &str, numeric: bool) -> egui::Response {
     }
 }
 
-fn summary_metric_header(ui: &mut Ui, text: &str, compact: bool) -> egui::Response {
-    let text = RichText::new(text)
-        .strong()
-        .size(if compact { 12.0 } else { 14.0 });
-    ui.add(egui::Label::new(text).wrap())
-}
-
 fn text_cell(ui: &mut Ui, text: &str, strong: bool, numeric: bool) -> egui::Response {
     let text = if strong {
         RichText::new(text).strong()
@@ -1401,8 +1346,8 @@ fn text_cell(ui: &mut Ui, text: &str, strong: bool, numeric: bool) -> egui::Resp
     };
     if numeric {
         let size = egui::vec2(ui.available_width(), ui.available_height());
-        ui.allocate_ui_with_layout(size, Layout::left_to_right(Align::Center), |ui| {
-            ui.add(egui::Label::new(text).truncate().halign(Align::Max))
+        ui.allocate_ui_with_layout(size, Layout::right_to_left(Align::Center), |ui| {
+            ui.add(egui::Label::new(text).truncate())
         })
         .inner
     } else {
@@ -1563,7 +1508,7 @@ mod tests {
             library,
             learning_store,
             selection,
-            side: data.side,
+            side: data.views[0].scope.side,
             tab: DashboardTab::Summary,
             data: Some(data),
             loading: false,
@@ -1618,50 +1563,22 @@ mod tests {
 
     fn assert_narrow_summary(shapes: &[egui::epaint::ClippedShape]) {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0));
-        let mut confident_height = 0.0;
         for expected in [
-            "Name",
+            "Learnt 1 of 2 moves",
+            "Not practised yet",
+            "Still learning",
+            "Due now",
+        ] {
+            assert!(shapes.iter().any(|clipped| matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == expected)), "missing overview text {expected}");
+        }
+        for excluded in [
+            "Save statistics to History",
             "Total",
             "Unseen",
-            "Learning",
-            "Learnt",
-            "Uncertain",
-            "Due",
-            "Learnt %",
-            "Confident %",
+            "Global total",
         ] {
-            let (rect, clip) = shapes
-                .iter()
-                .find_map(|clipped| match &clipped.shape {
-                    egui::Shape::Text(text)
-                        if text.galley.text().replace('\n', " ") == expected =>
-                    {
-                        Some((
-                            egui::Rect::from_min_size(text.pos, text.galley.size()),
-                            clipped.clip_rect,
-                        ))
-                    }
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("missing full summary header {expected}"));
-            assert!(
-                rect.min.x >= clip.min.x - 0.1 && rect.max.x <= clip.max.x + 0.1,
-                "clipped summary header {expected}: {rect:?} {clip:?}"
-            );
-            if expected != "Name" {
-                assert!(
-                    rect.width() <= 60.1,
-                    "numeric header {expected} exceeds 60 px: {rect:?}"
-                );
-            }
-            if expected == "Confident %" {
-                confident_height = rect.height();
-            }
+            assert!(!shapes.iter().any(|clipped| matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == excluded)), "unexpected technical or unrelated text {excluded}");
         }
-        assert!(
-            confident_height > 20.0,
-            "Confident % should wrap onto two lines"
-        );
         for clipped in shapes {
             if let egui::Shape::Text(text) = &clipped.shape {
                 let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
@@ -1757,7 +1674,7 @@ mod tests {
         let dashboard = build(&Library::default(), &LearningStoreData::default()).unwrap();
 
         assert_eq!(GLOBAL_TOTAL_INVARIANT_CALLS.with(|calls| calls.get()), 1);
-        assert_eq!(dashboard.side, LearningSide::White);
+        assert_eq!(dashboard.views[0].scope.side, LearningSide::White);
         assert_eq!(dashboard.as_of, BASE);
         assert_eq!(dashboard.timezone, LocalDatePolicy::UTC);
         assert_eq!(dashboard.summary.len(), 1);
@@ -1962,7 +1879,7 @@ mod tests {
 
         assert_eq!(after, before);
         assert!(output.shapes.iter().any(|clipped| {
-            matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "Global total")
+            matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "Learnt 0 of 2 moves")
         }));
         assert!(!output.shapes.iter().any(|clipped| {
             matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "Loading learning statistics…")
@@ -1970,143 +1887,6 @@ mod tests {
         output.drop_without_applying_deltas();
         dashboard.wait_until_idle_for_test();
         assert_eq!(store.load().unwrap().snapshots.len(), 1);
-    }
-
-    #[test]
-    fn accepted_summary_headers_fit_full_russian_and_german_words() {
-        let cases = [
-            [
-                "Название",
-                "Итого",
-                "Новый",
-                "Изучается",
-                "Изучено",
-                "Не подтверждено",
-                "К повторению",
-                "Изучено %",
-                "Надёжно изучено",
-            ],
-            [
-                "Name",
-                "Gesamt",
-                "Neu",
-                "Lernen",
-                "Gelernt",
-                "Unsicher",
-                "Fällig",
-                "Gelernt %",
-                "Bestätigt %",
-            ],
-        ];
-        for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
-            for (width, height) in [(960.0, 600.0), (1400.0, 900.0)] {
-                for headers in &cases {
-                    let ctx = egui::Context::default();
-                    ctx.set_visuals(visuals.clone());
-                    let mut expected_number_width = 0.0;
-                    let output = ctx.run_ui(
-                        egui::RawInput {
-                            screen_rect: Some(egui::Rect::from_min_size(
-                                egui::Pos2::ZERO,
-                                egui::vec2(width, height),
-                            )),
-                            ..Default::default()
-                        },
-                        |ui| {
-                            expected_number_width = summary_number_width(ui);
-                            let number_width = expected_number_width;
-                            let mut table = TableBuilder::new(ui)
-                                .id_salt("learning_dashboard_summary_header_test")
-                                .cell_layout(Layout::left_to_right(Align::Center))
-                                .column(Column::remainder().at_least(80.0).clip(true));
-                            for _ in 1..headers.len() {
-                                table = table.column(Column::exact(number_width).clip(true));
-                            }
-                            table.header(SUMMARY_HEADER_HEIGHT, |mut header| {
-                                for (index, key) in headers.iter().enumerate() {
-                                    header.col(|ui| {
-                                        if index == 0 {
-                                            header_cell(ui, tr(key), false)
-                                        } else {
-                                            summary_metric_header(ui, tr(key), false)
-                                        }
-                                        .on_hover_text(tr(key));
-                                    });
-                                }
-                            });
-                        },
-                    );
-                    let shapes = output.shapes.clone();
-                    output.drop_without_applying_deltas();
-                    for clipped in &shapes {
-                        let bounds = clipped.shape.visual_bounding_rect();
-                        if bounds.is_finite() && bounds.is_positive() {
-                            assert!(
-                                bounds.min.x >= -0.1
-                                    && bounds.min.y >= -0.1
-                                    && bounds.max.x <= width + 0.1
-                                    && bounds.max.y <= height + 0.1,
-                                "summary shape outside {width}x{height}: {bounds:?}"
-                            );
-                        }
-                    }
-                    for (index, &expected) in headers.iter().enumerate() {
-                        let (rect, clip, lines) = shapes
-                            .iter()
-                            .find_map(|clipped| match &clipped.shape {
-                                egui::Shape::Text(text)
-                                    if text.galley.text().replace('\n', " ") == expected =>
-                                {
-                                    Some((
-                                        egui::Rect::from_min_size(text.pos, text.galley.size()),
-                                        clipped.clip_rect,
-                                        text.galley.text().lines().count(),
-                                    ))
-                                }
-                                _ => None,
-                            })
-                            .unwrap_or_else(|| {
-                                panic!("missing full summary header {expected} at {width}x{height}")
-                            });
-                        assert!(lines <= 2, "summary header wraps too much: {expected}");
-                        assert!(
-                            text_lines_have_complete_words(&shapes, expected),
-                            "summary header has a one-character fragment: {expected}"
-                        );
-                        assert!(
-                            rect.min.x >= clip.min.x - 0.1
-                                && rect.min.y >= clip.min.y - 0.1
-                                && rect.max.x <= clip.max.x + 0.1
-                                && rect.max.y <= clip.max.y + 0.1,
-                            "clipped summary header {expected}: {rect:?} {clip:?}"
-                        );
-                        assert!(clip.height() >= SUMMARY_HEADER_HEIGHT);
-                        if index == 0 {
-                            assert!(clip.width() >= 80.0);
-                        } else {
-                            assert!(
-                                (clip.width() - expected_number_width).abs() < 0.1,
-                                "numeric width at {width}: {clip:?}"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn text_lines_have_complete_words(
-        shapes: &[egui::epaint::ClippedShape],
-        expected: &str,
-    ) -> bool {
-        shapes.iter().any(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.text().replace('\n', " ") == expected => text
-                .galley
-                .text()
-                .lines()
-                .all(|line| line.chars().count() > 1),
-            _ => false,
-        })
     }
 
     #[test]

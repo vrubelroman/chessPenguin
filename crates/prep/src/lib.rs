@@ -609,8 +609,10 @@ impl PrepReport {
             report.evals.retain(|_, e| e.nodes == EXACT);
             report.engine = None;
             report.search = SEARCH_VERSION;
-            report.refresh();
         }
+        // Errors and their aggregates are derived data. Reapply current eligibility
+        // rules even when cached evaluations came from the same engine search.
+        report.refresh();
         Some(report)
     }
 
@@ -986,7 +988,17 @@ mod tests {
             let pv = if key == before_bb5 {
                 vec!["d2d4".to_owned()]
             } else {
-                Vec::new()
+                report
+                    .games
+                    .iter()
+                    .find_map(|game| {
+                        game.keys
+                            .iter()
+                            .position(|&k| k == key)
+                            .and_then(|ply| game.ucis.get(ply))
+                            .map(|uci| vec![uci.clone()])
+                    })
+                    .unwrap_or_default()
             };
             let event = JobEvent::Eval {
                 key: t.key.clone(),
@@ -1076,6 +1088,102 @@ mod tests {
         assert_eq!(old.missing(), total);
         assert_eq!(old.search, SEARCH_VERSION);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cached_errors_and_all_aggregates_are_rejudged_after_opponent_error() {
+        let db = database(
+            r#"[White "Target"]
+[Black "A"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0
+
+[White "Target"]
+[Black "B"]
+[Result "0-1"]
+
+1. Nf3 Nc6 2. e4 e5 3. Bb5 a6 0-1
+"#,
+        );
+        let (list, _) = candidates(&db, "Target", 1);
+        let player = Player::new([list[0].id]);
+        let options = Options::default();
+        let mut report = build(
+            &db,
+            &player,
+            &options,
+            &AtomicUsize::new(0),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        for game in &report.games {
+            for (ply, &key) in game.keys.iter().enumerate() {
+                report.evals.insert(
+                    key,
+                    PositionEval {
+                        nodes: SEARCH_NODES,
+                        eval: Eval::Cp(0),
+                        pv: game.ucis.get(ply).cloned().into_iter().collect(),
+                        depth: 12,
+                    },
+                );
+            }
+        }
+        let first = &report.games[0];
+        let before_bb5 = first.keys[4];
+        report.evals.get_mut(&before_bb5).unwrap().pv = vec!["d2d4".to_owned()];
+        report.evals.get_mut(&first.keys[5]).unwrap().eval = Eval::Cp(-150);
+        report.refresh();
+        assert_eq!(report.white.errors.len(), 2);
+        assert_eq!(report.white.repeated.len(), 1);
+        assert_eq!(report.white.repeated[0].times(), 2);
+        let eval_count = report.evals.len();
+        // Only the first move order contains this earlier error by Black. The
+        // second game transposes into the same Bb5 error through a clean prefix.
+        report.evals.get_mut(&report.games[0].keys[1]).unwrap().pv = vec!["c7c5".to_owned()];
+        report.evals.get_mut(&report.games[0].keys[2]).unwrap().eval = Eval::Cp(150);
+        // Persist intentionally stale derived errors with current search metadata.
+        let dir = std::env::temp_dir().join(format!("prep-prefix-cache-{}", std::process::id()));
+        report.save(&dir).unwrap();
+        let mut loaded = PrepReport::load(&dir, &db, &player, &options).unwrap();
+        assert_eq!(loaded.search, SEARCH_VERSION);
+        assert_eq!(loaded.evals.len(), eval_count);
+        assert_eq!(loaded.take_cached(&PositionCache::default()), 0);
+        assert_eq!(loaded.white.errors.len(), 1);
+        assert_eq!(loaded.white.errors[0].game, 1);
+        assert!(loaded.white.repeated.is_empty());
+        assert_eq!(loaded.white.counts.total(), 1);
+        assert_eq!(
+            loaded
+                .white
+                .families
+                .iter()
+                .map(|f| f.errors.total())
+                .sum::<u32>(),
+            1
+        );
+        let variants: Vec<_> = loaded
+            .white
+            .families
+            .iter()
+            .flat_map(|f| &f.variations)
+            .collect();
+        assert_eq!(variants.iter().map(|v| v.errors.total()).sum::<u32>(), 1);
+        assert_eq!(
+            variants
+                .iter()
+                .flat_map(|v| &v.error_list)
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![0]
+        );
+        assert_eq!(
+            loaded.games.len(),
+            2,
+            "the repertoire itself is not filtered"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// The fake engine of the `uci` crate (`cargo build -p uci --bin fake_uci`).

@@ -826,7 +826,6 @@ impl LargeView {
         if let Some((b, work)) = &self.booster {
             let p = (b.progress() as f32 / (*work).max(1) as f32).min(1.0);
             ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new().size(14.0));
                 ui.label(
                     RichText::new(trf(
                         "Speeding up search in this database (once)… {p} %",
@@ -1838,7 +1837,6 @@ impl LargeView {
                 ui.label(text);
             }
             if let Some(p) = progress {
-                ui.add(egui::Spinner::new().size(14.0));
                 ui.label(RichText::new(format!("{:.0} %", p * 100.0)).weak());
             }
             if notes > 0 && crate::widgets::notes_button(ui, notes).clicked() {
@@ -1855,7 +1853,6 @@ impl LargeView {
             // A database from Lichess and Chess.com: its new games.
             if let Some(online) = &header.online {
                 if online.busy {
-                    ui.add(egui::Spinner::new().size(14.0));
                     ui.label(RichText::new(tr("updating…")).weak());
                 } else if ui
                     .add_enabled(online.enabled, egui::Button::new(tr("⟳ New games")).small())

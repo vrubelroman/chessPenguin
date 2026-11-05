@@ -274,7 +274,8 @@ impl OnlineDialog {
     }
 
     /// Collects finished work; the window itself when open.
-    pub fn show(&mut self, ctx: &egui::Context, probe: &Probe) -> Vec<OnlineEvent> {
+    pub fn show(&mut self, ctx: &egui::Context, probe: &mut Probe) -> Vec<OnlineEvent> {
+        probe.poll();
         let mut events = Vec::new();
         if let Some(l) = &self.lookup
             && let Some(r) = l.poll()
@@ -354,7 +355,7 @@ impl OnlineDialog {
         events
     }
 
-    fn body(&mut self, ui: &mut Ui, probe: &Probe, events: &mut Vec<OnlineEvent>) {
+    fn body(&mut self, ui: &mut Ui, probe: &mut Probe, events: &mut Vec<OnlineEvent>) {
         ui.label(
             RichText::new(tr(
                 "Any player's games — yours, a pupil's, an opponent's — become a database here, to search and analyse. Only the nickname is needed, no login.",
@@ -362,6 +363,22 @@ impl OnlineDialog {
             .weak(),
         );
         ui.add_space(6.0);
+        if !probe.any() {
+            if probe.pending() {
+                ui.add(egui::Label::new(tr("Checking access to Lichess and Chess.com…")).wrap());
+            } else {
+                ui.add(
+                    egui::Label::new(tr(
+                        "Couldn't connect. Check your internet connection and try again.",
+                    ))
+                    .wrap(),
+                );
+                if ui.button(tr("Retry")).clicked() {
+                    probe.retry();
+                }
+            }
+            ui.add_space(6.0);
+        }
         let both = probe.has(Platform::Lichess) && probe.has(Platform::ChessCom);
         let mut enter = false;
         ui.horizontal(|ui| {
@@ -691,5 +708,76 @@ impl OnlineDialog {
             let o = self.results.remove(k);
             self.start(o.accounts, o.path, o.update, ui.ctx());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rendered_text(dialog: &mut OnlineDialog, probe: &mut Probe) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut text = Vec::new();
+        for frame in 0..2 {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(960.0, 900.0),
+                    )),
+                    time: Some(f64::from(frame)),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        dialog.body(ui, probe, &mut Vec::new());
+                    });
+                },
+            );
+            text = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+        }
+        text
+    }
+
+    #[test]
+    fn early_online_entry_explains_probe_state_and_only_offers_ready_platforms() {
+        let ctx = egui::Context::default();
+        let (mut probe, tx) = Probe::pending_for_test(&ctx);
+        let mut dialog = OnlineDialog::default();
+        dialog.open();
+        dialog.nick = "SomePlayer".to_owned();
+        let text = rendered_text(&mut dialog, &mut probe);
+        assert!(
+            text.iter()
+                .any(|t| t == tr("Checking access to Lichess and Chess.com…"))
+        );
+        assert!(!text.iter().any(|t| t == "Lichess" || t == "Chess.com"));
+        tx.send([false, false]).unwrap();
+        probe.poll();
+        let text = rendered_text(&mut dialog, &mut probe);
+        assert!(text.iter().any(|t| t == tr("Couldn't connect. Check your internet connection and try again.")));
+        assert!(text.iter().any(|t| t == tr("Retry")));
+        assert_eq!(dialog.nick, "SomePlayer");
+
+        let (mut probe, tx) = Probe::pending_for_test(&ctx);
+        tx.send([true, false]).unwrap();
+        probe.poll();
+        let text = rendered_text(&mut dialog, &mut probe);
+        assert!(text.iter().any(|t| t == "Lichess"));
+        assert!(!text.iter().any(|t| t == "Chess.com"));
+        assert!(
+            !text
+                .iter()
+                .any(|t| t == tr("Checking access to Lichess and Chess.com…"))
+        );
+        assert_eq!(dialog.nick, "SomePlayer");
     }
 }

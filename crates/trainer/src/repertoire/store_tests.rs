@@ -779,3 +779,26 @@ fn unreadable_missing_and_unsupported_versions_are_errors_not_empty_data() {
         "unexpected result: {result:?}"
     );
 }
+
+#[test]
+fn extension_merge_tracks_reordered_identities_and_keeps_first_duplicate() {
+    let raw = serde_json::json!([
+        {"user_id":"u", "client_attempt_id":"a", "known":0, "plugin":{"first":true}},
+        {"user_id":"u", "client_attempt_id":"b", "known":0, "plugin":{"second":true}},
+        {"user_id":"u", "client_attempt_id":"a", "known":0, "plugin":{"wrong":true}}
+    ]);
+    let current = serde_json::json!([
+        {"user_id":"u", "client_attempt_id":"b", "known":2},
+        {"user_id":"u", "client_attempt_id":"a", "known":1},
+        {"user_id":"u", "client_attempt_id":"c", "known":3}
+    ]);
+    let merged = preserve_extensions(&raw, current);
+    assert_eq!(
+        merged,
+        serde_json::json!([
+            {"user_id":"u", "client_attempt_id":"b", "known":2, "plugin":{"second":true}},
+            {"user_id":"u", "client_attempt_id":"a", "known":1, "plugin":{"first":true}},
+            {"user_id":"u", "client_attempt_id":"c", "known":3}
+        ])
+    );
+}

@@ -2,6 +2,33 @@
 
 use egui::{Color32, Sense, Stroke, Ui, vec2};
 
+/// The application's settings action, shared by screen headers.
+pub fn settings_button(ui: &mut Ui, compact: bool) -> egui::Response {
+    let tr = crate::i18n::tr;
+    ui.button(if compact { "⚙" } else { tr("⚙ Settings") })
+        .on_hover_text(format!("{} (Ctrl+,)", tr("Settings")))
+}
+
+/// A section header: reserve global actions before laying out a long title.
+/// Returns (back, settings).
+pub fn section_header(ui: &mut Ui, back: &str, title: &str) -> (bool, bool) {
+    let mut clicked = (false, false);
+    let compact = ui.available_width() < 600.0;
+    ui.horizontal(|ui| {
+        ui.set_min_height(26.0);
+        clicked.0 = ui.button(back).clicked();
+        ui.separator();
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            clicked.1 = settings_button(ui, compact).clicked();
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(title).heading()).truncate())
+                    .on_hover_text(title);
+            });
+        });
+    });
+    clicked
+}
+
 /// A dev check (`CP_PANEL_CHECK=1`): a panel whose content is wider than the panel. egui
 /// then moves a right panel out (its left part under the central panel, its right part
 /// off the window); the content of every panel must fit its least width

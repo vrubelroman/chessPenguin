@@ -1153,11 +1153,7 @@ impl GameView {
                 },
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(if compact { "⚙" } else { tr("⚙ Settings") })
-                    .on_hover_text(if compact { format!("{} (Ctrl+,)", tr("Settings")) } else { "Ctrl+,".to_owned() })
-                    .clicked()
-                {
+                if crate::widgets::settings_button(ui, compact).clicked() {
                     actions.push(GameAction::OpenSettings);
                 }
                 #[cfg(not(web))]
