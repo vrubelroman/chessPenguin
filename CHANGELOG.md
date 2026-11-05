@@ -24,7 +24,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
   a scope without changing PGN or learning state. Full-line
   statistics preserve shared moves on each actual PGN line while the global total deduplicates
   them. The library table keeps ECO codes, opening names and the actual number of variations;
-  the training board has no move list and keeps PGN badges, arrows and circles.
+  the training board has no move list. PGN annotations are preserved, but the new alpha
+  training screen does not yet display move badges, PGN arrows or marked squares.
 - Training follows the main application's layout: clearer progress labels and settings,
   consistent buttons, compact session controls and board rotation in the bottom toolbar.
   The selected repertoire is ready to train on entry; its saved colour and mode are restored.

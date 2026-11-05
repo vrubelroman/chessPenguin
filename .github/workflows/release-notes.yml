@@ -1,0 +1,52 @@
+name: Release notes
+
+# Corrections to the changelog must also reach an already published release,
+# without moving its tag or rebuilding the signed packages.
+on:
+  push:
+    branches: [main]
+    paths: [CHANGELOG.md]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Update the current release notes if it has been published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, tomllib, urllib.error, urllib.request
+
+          version = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version']
+          heading = f'## [{version}]'
+          lines = pathlib.Path('CHANGELOG.md').read_text().splitlines()
+          start = next(i for i, line in enumerate(lines) if line.startswith(heading)) + 1
+          end = next((i for i in range(start, len(lines)) if lines[i].startswith('## [')), len(lines))
+          body = '\n'.join(lines[start:end]).strip()
+          assert body, 'Release notes must not be empty'
+          api = f'https://api.github.com/repos/{os.environ["GH_REPO"]}/releases'
+          headers = {'Authorization': f'Bearer {os.environ["GH_TOKEN"]}',
+                     'Accept': 'application/vnd.github+json', 'User-Agent': 'ChessPenguin-release-notes'}
+          try:
+              with urllib.request.urlopen(urllib.request.Request(f'{api}/tags/v{version}', headers=headers), timeout=30) as response:
+                  release = json.load(response)
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise
+              print(f'v{version} is not published yet; the release workflow will supply its notes.')
+          else:
+              data = json.dumps({'body': body}).encode()
+              request = urllib.request.Request(f'{api}/{release["id"]}', data=data,
+                                               headers={**headers, 'Content-Type': 'application/json'}, method='PATCH')
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  updated = json.load(response)
+              assert updated['body'].strip() == body
+              print(f'Updated notes for v{version}: {updated["html_url"]}')
+          PY
