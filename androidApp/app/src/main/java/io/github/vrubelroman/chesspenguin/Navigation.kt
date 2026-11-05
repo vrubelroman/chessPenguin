@@ -16,6 +16,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -77,17 +79,67 @@ fun MainNavigation() {
         backStack.add(Games(entry.id))
         if (entry.games == 1) backStack.add(GameAt(entry.id, 0))
     }
+    fun showPasted(entry: DbEntry) {
+        while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+        backStack.add(Games(entry.id))
+        backStack.add(GameAt(entry.id, 0))
+    }
     val app = app()
     val incoming by app.incoming.collectAsState()
     LaunchedEffect(incoming) {
-        (incoming as? Incoming.Opened)?.let {
-            app.incoming.value = null
-            show(it.entry)
+        when (val i = incoming) {
+            is Incoming.Opened -> {
+                if (app.incoming.compareAndSet(i, null)) show(i.entry)
+            }
+            is Incoming.Pasted -> {
+                if (app.incoming.compareAndSet(i, null)) {
+                    resetPastedView(app.shown, app.lastOpened, i.entry.id)
+                    showPasted(i.entry)
+                }
+            }
+            else -> {}
         }
     }
     // The app's update, over any screen (android-ui.md §25.3).
     val updateSheet by app.updates.sheet.collectAsState()
     if (updateSheet) UpdateSheet()
+    val clipboardUnblocked = incoming == null && !updateSheet
+    val context = LocalContext.current
+    LaunchedEffect(clipboardUnblocked) {
+        if (clipboardUnblocked) app.clipboardPgn.check(clipboardText(context))
+    }
+    val clipboardOffer by app.clipboardPgn.offer.collectAsState()
+    if (clipboardUnblocked) {
+        clipboardOffer?.let { offer ->
+            val clipboardName = stringResource(R.string.clipboard_database_name)
+            AlertDialog(
+                onDismissRequest = { app.clipboardPgn.dismiss(offer) },
+                title = { Text(pluralStringResource(R.plurals.clipboard_open_title, offer.games, offer.games)) },
+                text = {
+                    Text(
+                        if (offer.games == 1) {
+                            stringResource(R.string.clipboard_open_one)
+                        } else {
+                            stringResource(
+                                R.string.clipboard_open_many,
+                                pluralStringResource(R.plurals.games_count, offer.games, offer.games),
+                            )
+                        },
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { app.openClipboard(offer, clipboardName) }) {
+                        Text(stringResource(R.string.clipboard_open))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { app.clipboardPgn.dismiss(offer) }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
+        }
+    }
     when (val i = incoming) {
         Incoming.Opening -> Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
             Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
@@ -99,10 +151,10 @@ fun MainNavigation() {
             }
         }
         is Incoming.Failed -> AlertDialog(
-            onDismissRequest = { app.incoming.value = null },
+            onDismissRequest = { app.incoming.compareAndSet(i, null) },
             title = { Text(stringResource(R.string.file_failed)) },
             text = { Text(incomingProblem(i.error)) },
-            confirmButton = { TextButton(onClick = { app.incoming.value = null }) { Text(stringResource(R.string.ok)) } },
+            confirmButton = { TextButton(onClick = { app.incoming.compareAndSet(i, null) }) { Text(stringResource(R.string.ok)) } },
         )
         else -> {}
     }
@@ -166,6 +218,15 @@ fun MainNavigation() {
             }
         },
     )
+}
+
+internal fun resetPastedView(
+    shown: HashMap<String, List<UInt>>,
+    lastOpened: HashMap<String, Pair<String, Int>>,
+    id: String,
+) {
+    shown.remove(id)
+    lastOpened.remove(id)
 }
 
 /// Why a file from another app did not open; it never got on the list, so the advice is

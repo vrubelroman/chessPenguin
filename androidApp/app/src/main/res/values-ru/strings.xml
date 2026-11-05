@@ -221,6 +221,16 @@
     <string name="add_paste_hint">Партии, скопированные в другом приложении</string>
     <string name="paste_none">В буфере нет партий в формате PGN</string>
     <string name="paste_db">Из буфера, %1$s</string>
+    <plurals name="clipboard_open_title">
+        <item quantity="one">%1$s партия в буфере обмена</item>
+        <item quantity="few">%1$s партии в буфере обмена</item>
+        <item quantity="many">%1$s партий в буфере обмена</item>
+        <item quantity="other">%1$s партии в буфере обмена</item>
+    </plurals>
+    <string name="clipboard_open_one">Сохранить PGN-партию и открыть её на доске?</string>
+    <string name="clipboard_open_many">Сохранить %1$s и открыть первую партию на доске? Все партии останутся в локальной копии.</string>
+    <string name="clipboard_open">Открыть</string>
+    <string name="clipboard_database_name">Буфер обмена</string>
     <string name="opening_file">Открываю файл…</string>
     <string name="file_failed">Файл не открылся</string>
     <string name="file_no_games">В этом файле нет шахматных партий.</string>

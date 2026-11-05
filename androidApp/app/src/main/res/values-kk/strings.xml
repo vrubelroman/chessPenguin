@@ -213,6 +213,14 @@
     <string name="add_paste_hint">Басқа бағдарламада көшірілген партиялар</string>
     <string name="paste_none">Алмасу буферінде PGN партиясы жоқ</string>
     <string name="paste_db">Қойылды: %1$s</string>
+    <plurals name="clipboard_open_title">
+        <item quantity="one">Алмасу буферіндегі партия</item>
+        <item quantity="other">Алмасу буферіндегі партиялар</item>
+    </plurals>
+    <string name="clipboard_open_one">Осы PGN партиясын сақтап, тақтада ашу керек пе?</string>
+    <string name="clipboard_open_many">%1$s сақтап, бірінші партияны тақтада ашу керек пе? Барлық партиялар жергілікті көшірмеде сақталады.</string>
+    <string name="clipboard_open">Ашу</string>
+    <string name="clipboard_database_name">Алмасу буфері</string>
     <string name="opening_file">Файл ашылуда…</string>
     <string name="file_failed">Файлды ашу мүмкін болмады</string>
     <string name="file_no_games">Бұл файлда шахмат партиялары жоқ.</string>

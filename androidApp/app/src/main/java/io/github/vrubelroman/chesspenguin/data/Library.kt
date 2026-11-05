@@ -251,6 +251,27 @@ class Library(private val context: Context) {
         return entry
     }
 
+    /// Counts real games in PGN text without keeping a copy of it.
+    suspend fun countPgnGames(text: String): Int? = countPgnGames(clipboardUtf8(text))
+
+    suspend fun countPgnGames(bytes: ByteArray): Int? = withContext(Dispatchers.IO) {
+        if (!clipboardPgnWithinLimit(bytes.size)) return@withContext null
+        val db = runCatching { openBytes("clipboard.pgn", bytes) }.getOrNull() ?: return@withContext null
+        try {
+            val count = db.len().toInt()
+            if (count == 0) {
+                null
+            } else {
+                val first = db.game(0u)
+                if (firstPgnGameIsMeaningful(count, first.tags.size, first.nodes.size)) count else null
+            }
+        } catch (_: ApiException) {
+            null
+        } finally {
+            db.close()
+        }
+    }
+
     /// Keeps a copy of `input` (named `fileName`, for its format) in the app and puts it
     /// on the list, or gives the entry of the same copy already there. Throws [NoGames]
     /// when there is no game in it, or the core's error when it cannot be read; nothing
@@ -272,7 +293,7 @@ class Library(private val context: Context) {
             }
             val sum = digest.digest().joinToString("") { "%02x".format(it) }
             lock.withLock {
-                _entries.value.firstOrNull { it.source == Source.Copy && it.sha256 == sum }?.let { return@withContext it }
+                copyWithDigest(_entries.value, sum)?.let { return@withContext it }
             }
             val id = UUID.randomUUID().toString()
             val kept = File(copies, "$id.$ext")
@@ -305,6 +326,11 @@ class Library(private val context: Context) {
                 sha256 = sum,
             )
             lock.withLock {
+                copyWithDigest(_entries.value, sum)?.let { existing ->
+                    db.close()
+                    kept.delete()
+                    return@withContext existing
+                }
                 open[id] = db
                 update { it + entry }
             }
@@ -626,6 +652,12 @@ class Library(private val context: Context) {
         result
     }
 }
+
+internal fun firstPgnGameIsMeaningful(count: Int, tags: Int, nodes: Int): Boolean =
+    count > 0 && (tags > 0 || nodes > 1)
+
+internal fun copyWithDigest(entries: List<DbEntry>, digest: String): DbEntry? =
+    entries.firstOrNull { it.source == Source.Copy && it.sha256 == digest }
 
 private fun sha256(bytes: ByteArray): String =
     java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

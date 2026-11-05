@@ -4,6 +4,12 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Android: when the app opens or returns to the foreground, a PGN in the clipboard can be
+  opened from a small confirmation dialog. One or several games are stored as a local copy,
+  and the first game always opens on the board. Opening or dismissing the same text is remembered
+  across restarts; an unsuccessful import can be retried. Clipboard checks are local, generation-safe,
+  limited to 8 MiB and never start an import without confirmation.
+
 ## [2.1.5] — 2026-11-02
 
 - Preparing against an opponent is saved by itself: a preparation appears in the
