@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc,
@@ -10,18 +10,21 @@ use std::{
 use chess_core::shakmaty::{
     CastlingMode, Chess, Color, Move, Position, Square, fen::Fen, uci::UciMove,
 };
+use chess_core::{Game, NodeId};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText, Ui, vec2};
 use trainer::repertoire::{
-    AttemptApplication, LearningContextPolicy, LearningContextStep, LearningData,
-    LearningPresentation, LearningSessionPhase, LearningSessionSnapshot, LearningSide,
-    LearningStore, Library, PersistedSessionAttempt, QueueMode, RepertoireId, SrsSettings,
-    StatsScope, TrainingAttempt, TrainingEventType, TrainingMode, fen4,
+    AttemptApplication, LearningContextPolicy, LearningContextStep, LearningData, LearningItemKey,
+    LearningPresentation, LearningSessionError, LearningSessionPhase, LearningSessionSnapshot,
+    LearningSide, LearningStore, Library, PersistedSessionAttempt, QueueMode, RepertoireId,
+    SrsSettings, StatsScope, TrainingAttempt, TrainingEventType, TrainingMode,
+    active_learning_keys, fen4,
 };
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::assets::Sound;
 use crate::board::{Arrow, BoardState, BoardView};
 use crate::i18n::{tr, trf};
+use crate::repertoire_training::{BoardAnnotations, pgn_annotations_at};
 use crate::settings::Settings;
 
 const WRONG_SHOWN: Duration = Duration::from_millis(400);
@@ -74,7 +77,7 @@ struct ShownPrefix {
 
 #[derive(Clone)]
 struct PendingCommit {
-    attempt: TrainingAttempt,
+    attempts: Vec<TrainingAttempt>,
     kind: CommitKind,
 }
 
@@ -92,6 +95,10 @@ enum Playback {
         completed: usize,
     },
     Wrong {
+        visual: Box<VisualMove>,
+        until: Instant,
+    },
+    Alternative {
         visual: Box<VisualMove>,
         until: Instant,
     },
@@ -117,6 +124,11 @@ pub struct LearningTrainingUi {
     error: Option<String>,
     board: BoardState,
     board_position: Chess,
+    // Parsed once in the training-start worker, never in a frame or save callback.
+    annotation_games: BTreeMap<RepertoireId, Game>,
+    repertoire_answers: BTreeSet<LearningItemKey>,
+    // The visible node is independent of the session's already-advanced target.
+    displayed_node: Option<(RepertoireId, NodeId)>,
     board_shown: bool,
     pending_automatic: Option<VecDeque<LearningContextStep>>,
     shown_prefix: Option<ShownPrefix>,
@@ -255,6 +267,20 @@ impl LearningTrainingUi {
             LearningSide::White => flipped,
             LearningSide::Black => !flipped,
         };
+        let repertoire_answers = active_learning_keys(&library, &session.stats_scope)
+            .map_err(|error| error.to_string())?;
+        let annotation_games = session
+            .queue
+            .iter()
+            .map(|target| target.repertoire_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|id| {
+                library
+                    .repertoire(&id)
+                    .map(|repertoire| (id, repertoire.game()))
+            })
+            .collect();
         Ok(Self {
             library,
             store,
@@ -270,6 +296,9 @@ impl LearningTrainingUi {
             error: None,
             board: BoardState::default(),
             board_position: Chess::default(),
+            annotation_games,
+            repertoire_answers,
+            displayed_node: None,
             board_shown: false,
             pending_automatic: None,
             shown_prefix: None,
@@ -363,7 +392,9 @@ impl LearningTrainingUi {
                 return;
             }
             match self.playback {
-                Some(Playback::Wrong { .. }) => self.finish_wrong(now),
+                Some(Playback::Wrong { .. } | Playback::Alternative { .. }) => {
+                    self.finish_temporary_move(now);
+                }
                 Some(Playback::Accepted { .. }) => self.finish_accepted(now),
                 Some(Playback::Automatic { .. }) => {
                     let id = unique_id(self.session.id());
@@ -389,7 +420,9 @@ impl LearningTrainingUi {
                 duration,
                 ..
             }) => Some(*started_at + *duration),
-            Some(Playback::Wrong { until, .. }) => Some(*until),
+            Some(Playback::Wrong { until, .. } | Playback::Alternative { until, .. }) => {
+                Some(*until)
+            }
             Some(Playback::Paused { .. }) | None => None,
         }
     }
@@ -450,6 +483,7 @@ impl LearningTrainingUi {
                     return;
                 }
             };
+            self.set_displayed_context(self.session.context_index);
             self.board_shown = false;
             self.pending_automatic = Some(steps);
             self.playback = None;
@@ -469,18 +503,19 @@ impl LearningTrainingUi {
             self.last_move = None;
         }
         self.board_position = position;
+        self.set_displayed_context(self.session.context_index);
         self.playback = None;
         match self.session.phase {
             LearningSessionPhase::AwaitingIndependent => {
                 self.ready_since = Some(now);
-                self.message = Some(tr("Your turn: play the main repertoire move.").to_owned());
+                self.message = Some(tr("Your turn: play a repertoire move.").to_owned());
             }
             LearningSessionPhase::AwaitingContextIndependent => {
                 self.ready_since = Some(now);
                 self.message = Some(format!(
                     "{} · {}",
                     tr("Automatic move/context"),
-                    tr("Your turn: play the main repertoire move.")
+                    tr("Your turn: play a repertoire move.")
                 ));
             }
             LearningSessionPhase::AwaitingReplayAfterError => {
@@ -523,17 +558,34 @@ impl LearningTrainingUi {
         {
             return false;
         }
-        let id = unique_id(self.session.id());
-        match self
-            .session
-            .advance_context_with_learning(&self.library, &self.learning, id, now())
-        {
-            Ok(attempt) => {
-                self.ready_since = None;
-                self.begin_commit(attempt, CommitKind::ReusedContext, at);
+        // These moves are already visible. Preserve each AUTO_CONTEXT event,
+        // but commit the whole prefix once instead of rereading/writing all
+        // history and rebuilding the presentation once per old move.
+        let mut next_session = self.session.clone();
+        let mut attempts = Vec::with_capacity(remaining);
+        let happened_at = now();
+        for _ in 0..remaining {
+            let id = unique_id(next_session.id());
+            match next_session.advance_context_with_learning(
+                &self.library,
+                &self.learning,
+                id,
+                happened_at,
+            ) {
+                Ok(attempt) => attempts.push(attempt),
+                Err(error) => {
+                    self.error = Some(error.to_string());
+                    return true;
+                }
             }
-            Err(error) => self.error = Some(error.to_string()),
         }
+        self.session = next_session;
+        self.ready_since = None;
+        self.pending_commit = Some(PendingCommit {
+            attempts,
+            kind: CommitKind::ReusedContext,
+        });
+        self.persist_pending(at);
         true
     }
 
@@ -557,6 +609,7 @@ impl LearningTrainingUi {
             }
         };
         self.board_position = current.after.clone();
+        self.set_displayed_context(self.session.context_index + 1);
         self.last_move = Some((current.from, current.to));
         self.message = None;
         self.playback = Some(Playback::Automatic {
@@ -706,31 +759,48 @@ impl LearningTrainingUi {
             LearningSessionPhase::AwaitingIndependent
                 | LearningSessionPhase::AwaitingContextIndependent
         );
-        if !independent && uci != expected_uci {
-            self.start_playback(visual, PlayOutcome::WrongReplay, now);
-            return true;
-        }
         let Some(target) = self.session.current_target() else {
             return false;
         };
+        let Some(prefix) = target.path.get(..self.session.context_index) else {
+            return false;
+        };
+        let mut path = prefix.to_vec();
+        path.push(uci.clone());
         let shown_prefix = ShownPrefix {
             repertoire_id: target.repertoire_id.clone(),
-            path: target.path[..=self.session.context_index].to_vec(),
+            path,
         };
+        if !independent && uci != expected_uci {
+            let key = LearningItemKey::new(target.key.user_id.clone(), fen4(&visual.before), &uci);
+            if self.repertoire_answers.contains(&key) {
+                let already_completed = self.session.completed_keys.contains(&key);
+                self.show_repertoire_alternative(visual, &shown_prefix, already_completed, now);
+                return true;
+            }
+            self.set_displayed_path(Some(&shown_prefix));
+            self.start_playback(visual, PlayOutcome::WrongReplay, now);
+            return true;
+        }
         let response_time_ms = independent.then(|| {
             self.ready_since.map_or(0, |ready| {
                 u64::try_from(now.saturating_duration_since(ready).as_millis()).unwrap_or(u64::MAX)
             })
         });
-        let attempt = match self.session.play_uci_with_learning(
+        let attempt = match self.session.play_uci_with_learning_answers(
             &self.library,
             &self.learning,
+            &self.repertoire_answers,
             &uci,
             client_attempt_id,
             happened_at,
             response_time_ms,
         ) {
             Ok(attempt) => attempt,
+            Err(LearningSessionError::RepertoireAlternative { already_completed }) => {
+                self.show_repertoire_alternative(visual, &shown_prefix, already_completed, now);
+                return true;
+            }
             Err(error) => {
                 self.error = Some(error.to_string());
                 return false;
@@ -750,6 +820,7 @@ impl LearningTrainingUi {
         // being saved. Input stays blocked until persistence acknowledges it.
         // In particular a dropped piece must not jump back to its source square.
         self.board_position = visual.after.clone();
+        self.set_displayed_path(Some(&shown_prefix));
         self.last_move = Some((visual.from, visual.to));
         self.begin_commit(
             attempt,
@@ -825,15 +896,47 @@ impl LearningTrainingUi {
         }
     }
 
-    fn finish_wrong(&mut self, now: Instant) {
-        let Some(Playback::Wrong { visual, .. }) = self.playback.take() else {
-            return;
+    fn show_repertoire_alternative(
+        &mut self,
+        visual: VisualMove,
+        shown_prefix: &ShownPrefix,
+        already_completed: bool,
+        now: Instant,
+    ) {
+        self.ready_since = None;
+        self.board_position = visual.after.clone();
+        self.set_displayed_path(Some(shown_prefix));
+        self.last_move = Some((visual.from, visual.to));
+        self.message = Some(
+            tr(if already_completed {
+                "This repertoire move has already been reviewed in this session."
+            } else {
+                "This move is in your repertoire, but is not a task in this session."
+            })
+            .to_owned(),
+        );
+        self.playback = Some(Playback::Alternative {
+            visual: Box::new(visual),
+            until: now + WRONG_SHOWN.max(self.animation),
+        });
+    }
+
+    fn finish_temporary_move(&mut self, now: Instant) {
+        let (visual, explanation) = match self.playback.take() {
+            Some(Playback::Wrong { visual, .. }) => (visual, None),
+            Some(Playback::Alternative { visual, .. }) => (visual, self.message.clone()),
+            _ => return,
         };
-        let visual = *visual;
         self.board_position = visual.before;
         self.last_move = None;
         self.needs_prepare = true;
         self.prepare_presentation(now);
+        if let Some(explanation) = explanation {
+            self.message = Some(format!(
+                "{explanation} {}",
+                self.message.as_deref().unwrap_or_default()
+            ));
+        }
     }
 
     fn finish_accepted(&mut self, now: Instant) {
@@ -879,7 +982,10 @@ impl LearningTrainingUi {
                 Some("another learning event is still waiting to be saved".to_owned());
             return;
         }
-        self.pending_commit = Some(PendingCommit { attempt, kind });
+        self.pending_commit = Some(PendingCommit {
+            attempts: vec![attempt],
+            kind,
+        });
         self.persist_pending(now);
     }
 
@@ -894,7 +1000,7 @@ impl LearningTrainingUi {
         if self.synchronous_commits {
             let result = self
                 .store
-                .apply_attempt_and_session(pending.attempt.clone(), &mut self.session)
+                .apply_attempts_and_session(pending.attempts.clone(), &mut self.session)
                 .map_err(|error| error.to_string());
             self.finish_commit(result, _now);
             return;
@@ -906,7 +1012,7 @@ impl LearningTrainingUi {
         self.save_error = None;
         if let Err(error) = crate::platform::spawn("learning-save-attempt", move || {
             let result = store
-                .apply_attempt_and_session(pending.attempt, &mut session)
+                .apply_attempts_and_session(pending.attempts, &mut session)
                 .map_err(|error| error.to_string());
             let _ = tx.send(result);
         }) {
@@ -940,8 +1046,12 @@ impl LearningTrainingUi {
                 let duplicate = persisted.application == AttemptApplication::Duplicate;
                 self.learning = persisted.learning;
                 self.session = persisted.session;
-                self.completed_attempt_ids
-                    .insert(pending.attempt.client_attempt_id.clone());
+                self.completed_attempt_ids.extend(
+                    pending
+                        .attempts
+                        .iter()
+                        .map(|attempt| attempt.client_attempt_id.clone()),
+                );
                 self.pending_commit = None;
                 self.save_error = None;
                 self.confirm_discard = false;
@@ -1067,9 +1177,54 @@ impl LearningTrainingUi {
         }
     }
 
+    fn set_displayed_context(&mut self, played: usize) {
+        let prefix = self.session.current_target().and_then(|target| {
+            Some(ShownPrefix {
+                repertoire_id: target.repertoire_id.clone(),
+                path: target.path.get(..played)?.to_vec(),
+            })
+        });
+        self.set_displayed_path(prefix.as_ref());
+    }
+
+    fn set_displayed_path(&mut self, prefix: Option<&ShownPrefix>) {
+        self.displayed_node = prefix.and_then(|prefix| {
+            let game = self.annotation_games.get(&prefix.repertoire_id)?;
+            let mut at = NodeId::ROOT;
+            for uci in &prefix.path {
+                let mv = uci
+                    .parse::<UciMove>()
+                    .ok()?
+                    .to_move(game.position(at)?)
+                    .ok()?;
+                at = game.find_child(at, mv)?;
+            }
+            Some((prefix.repertoire_id.clone(), at))
+        });
+    }
+
+    fn displayed_annotations(&self) -> BoardAnnotations {
+        let Some((id, at)) = &self.displayed_node else {
+            return BoardAnnotations::default();
+        };
+        let Some(game) = self.annotation_games.get(id) else {
+            return BoardAnnotations::default();
+        };
+        // A visual wrong move outside the source tree must never inherit the
+        // expected move's badge or arrows merely because the task advanced.
+        if game
+            .position(*at)
+            .is_none_or(|position| position != &self.board_position)
+        {
+            return BoardAnnotations::default();
+        }
+        pgn_annotations_at(game, *at)
+    }
+
     fn board_ui(&mut self, ui: &mut Ui, settings: &Settings) {
         let interactive = self.can_input();
-        let mut arrows = Vec::new();
+        let annotations = self.displayed_annotations();
+        let mut arrows = annotations.arrows;
         if self.playback.is_none()
             && let Some(uci) = self
                 .presentation
@@ -1106,8 +1261,8 @@ impl LearningTrainingUi {
                 },
                 last_move: self.last_move,
                 arrows: &arrows,
-                circles: &[],
-                badge: None,
+                circles: &annotations.circles,
+                badge: annotations.badge,
                 interactive,
                 show_coords: settings.show_coords,
                 theme: settings.board_theme.theme(),
@@ -1160,6 +1315,18 @@ impl LearningTrainingUi {
                 ui.label(RichText::new(tr("Hint")).strong());
             } else if self.session.phase == LearningSessionPhase::AwaitingReplayAfterError {
                 ui.label(RichText::new(tr("Mistake")).strong());
+            }
+            if self.can_input() {
+                let count = self
+                    .session
+                    .pending_answers_for_position(&fen4(&self.board_position))
+                    .len();
+                if count > 1 {
+                    ui.label(trf(
+                        "Repertoire answers remaining here: {count}",
+                        &[("count", &count)],
+                    ));
+                }
             }
             if let Some(error) = self.error.clone().or_else(|| self.save_error.clone()) {
                 ui.colored_label(
@@ -1854,6 +2021,7 @@ mod tests {
             return;
         }
         let ctx = egui::Context::default();
+        crate::assets::install(&ctx);
         let settings = Settings::default();
         ctx.run_ui(
             egui::RawInput {
@@ -2009,8 +2177,9 @@ mod tests {
         );
 
         let prime_at = start + Duration::from_secs(3) + normal();
-        // Each reused context step still has its own persisted event. No move
-        // animates while those acknowledgements complete.
+        // Every old move keeps its event, but a long visible prefix requires
+        // only one store transaction before the next opponent move.
+        let before_reuse = f.store.load().unwrap();
         for _ in 0..8 {
             f.ui.tick_at(prime_at, normal(), NOW);
             if f.ui.pending_automatic.is_some() {
@@ -2018,6 +2187,16 @@ mod tests {
             }
         }
         assert!(f.ui.pending_automatic.is_some());
+        let after_reuse = f.store.load().unwrap();
+        assert_eq!(after_reuse.revision, before_reuse.revision + 1);
+        let added = &after_reuse.learning.attempts[before_reuse.learning.attempts.len()..];
+        assert_eq!(added.len(), 4);
+        assert!(
+            added
+                .iter()
+                .all(|event| event.event_type == TrainingEventType::AutoContext)
+        );
+        assert_eq!(f.ui.session.context_index, 4);
         assert!(!f.ui.board_shown);
         let ctx = egui::Context::default();
         let settings = Settings::default();
@@ -2203,6 +2382,363 @@ mod tests {
         assert!(f.ui.can_input());
         assert_eq!(f.ui.session.current_expected_uci(), Some("e2e4"));
         assert!(f.attempts().is_empty());
+    }
+
+    fn assert_annotation_badge(ui: &LearningTrainingUi, text: &str, square: Square) {
+        let annotation = ui.displayed_annotations();
+        let badge = annotation.badge.expect("PGN move badge");
+        assert_eq!(badge.text, text);
+        assert_eq!(badge.square, square);
+    }
+
+    #[test]
+    fn pgn_annotations_follow_visible_user_and_automatic_moves_not_the_next_task() {
+        let mut f = Fixture::new(
+            "1. e4!! {[%cal Re2e4,Ge7e5] [%csl Ye4,Re5]} e5?! {[%cal Bg1f3]} 2. Nf3! {[%csl Gf3]} Nc6 *",
+            LearningSide::White,
+            &["e2e4", "g1f3"],
+            "visible-pgn-annotations",
+        );
+        let original =
+            f.ui.library
+                .repertoire(f.scope.repertoire_ids.iter().next().unwrap())
+                .unwrap()
+                .pgn
+                .clone();
+        let start = Instant::now();
+        f.ui.tick_at(start, normal(), NOW);
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        assert!(f.ui.displayed_annotations().arrows.is_empty());
+        // A hint reveals the expected move, not that future node's annotations.
+        assert!(f.ui.request_hint_with_id_at("annotation-hint".into(), start, NOW));
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        assert!(f.ui.displayed_annotations().arrows.is_empty());
+        assert!(f.ui.play_uci_with_id_at("e2e4", "annotation-e4".into(), start, NOW));
+        assert_eq!(
+            f.ui.session.current_target().unwrap().key.expected_uci,
+            "g1f3"
+        );
+        assert_annotation_badge(&f.ui, "!!", Square::E4);
+        let annotation = f.ui.displayed_annotations();
+        assert_eq!(annotation.arrows.len(), 2);
+        assert_eq!(annotation.circles.len(), 2);
+        assert!(
+            annotation
+                .arrows
+                .iter()
+                .any(|arrow| arrow.from == Square::E2
+                    && arrow.to == Square::E4
+                    && arrow.color == crate::game_view::shape_color(chess_core::ShapeColor::Red))
+        );
+        // Verify the helper's data actually reaches the rendered BoardView.
+        let ctx = egui::Context::default();
+        crate::assets::install(&ctx);
+        let output = pointer_board_frame(&mut f, &ctx, 1.0, vec![], &Settings::default());
+        assert!(output.shapes.iter().any(
+            |shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "!!")
+        ));
+        output.drop_without_applying_deltas();
+        f.ui.tick_at(start + normal(), normal(), NOW);
+        assert_annotation_badge(&f.ui, "!!", Square::E4);
+        assert!(f.ui.visual_log.is_empty(), "reused e4 must not play again");
+        for _ in 0..8 {
+            tick_with_prime(&mut f.ui, start + normal(), normal(), NOW);
+            if matches!(f.ui.playback, Some(Playback::Automatic { .. })) {
+                break;
+            }
+        }
+        assert_eq!(f.ui.visual_log, ["e7e5"]);
+        assert_annotation_badge(&f.ui, "?!", Square::E5);
+        assert_eq!(f.ui.displayed_annotations().arrows[0].from, Square::G1);
+        f.ui.tick_at(f.ui.playback_deadline().unwrap(), normal(), NOW);
+        assert!(f.ui.can_input());
+        assert_annotation_badge(&f.ui, "?!", Square::E5);
+        assert!(
+            f.ui.displayed_annotations().circles.is_empty(),
+            "future Nf3 circle leaked before the answer"
+        );
+        assert!(f.ui.play_uci_with_id_at(
+            "g1f3",
+            "annotation-nf3".into(),
+            start + Duration::from_secs(1),
+            NOW
+        ));
+        assert_annotation_badge(&f.ui, "!", Square::F3);
+        assert_eq!(f.ui.displayed_annotations().circles[0].0, Square::F3);
+        f.ui.debug_settle();
+        assert_annotation_badge(&f.ui, "!", Square::F3);
+        assert_eq!(
+            f.ui.library
+                .repertoire(f.scope.repertoire_ids.iter().next().unwrap())
+                .unwrap()
+                .pgn,
+            original
+        );
+    }
+
+    #[test]
+    fn pgn_annotations_clear_for_wrong_moves_and_survive_failed_async_save_and_retry() {
+        let mut f = Fixture::new(
+            "1. e4!! {[%csl Ge4]} *",
+            LearningSide::White,
+            &["e2e4"],
+            "annotations-retry",
+        );
+        let start = Instant::now();
+        f.ui.tick_at(start, normal(), NOW);
+        assert!(f.ui.play_uci_with_id_at("d2d4", "annotations-wrong".into(), start, NOW));
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        assert!(f.ui.displayed_annotations().circles.is_empty());
+        f.ui.tick_at(start + WRONG_SHOWN, normal(), NOW);
+        assert!(f.ui.can_input());
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        // Another wrong move during replay must not inherit the revealed e4 badge.
+        assert!(f.ui.play_uci_with_id_at(
+            "d2d4",
+            "annotations-wrong-replay".into(),
+            start + WRONG_SHOWN,
+            NOW
+        ));
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        f.ui.tick_at(start + WRONG_SHOWN * 2, normal(), NOW);
+        let store = f.ui.store.clone();
+        f.ui.synchronous_commits = false;
+        f.ui.store = LearningStore::with_legacy(store.path(), store.path());
+        assert!(f.ui.play_uci_with_id_at(
+            "e2e4",
+            "annotations-replay".into(),
+            start + WRONG_SHOWN * 2,
+            NOW
+        ));
+        assert!(f.ui.has_unsaved());
+        assert_annotation_badge(&f.ui, "!!", Square::E4);
+        wait_for_commit(&mut f.ui);
+        assert!(f.ui.save_error.is_some());
+        assert_annotation_badge(&f.ui, "!!", Square::E4);
+        f.ui.store = store;
+        f.ui.retry_pending(Instant::now());
+        wait_for_commit(&mut f.ui);
+        assert_annotation_badge(&f.ui, "!!", Square::E4);
+        assert_eq!(
+            f.attempts()
+                .iter()
+                .filter(|attempt| attempt.event_type.is_independent())
+                .count(),
+            1
+        );
+        assert_eq!(
+            f.attempts().last().unwrap().event_type,
+            TrainingEventType::ReplayAfterError
+        );
+    }
+
+    #[test]
+    fn alternative_answer_credits_actual_move_and_completed_answer_is_silent_and_neutral() {
+        let mut f = Fixture::new(
+            "1. e4! (1. d4!! {[%csl Gd4]}) *",
+            LearningSide::White,
+            &["e2e4", "d2d4"],
+            "alternative-answers",
+        );
+        let start = Instant::now();
+        f.ui.tick_at(start, normal(), NOW);
+        let original = f.ui.session.current_expected_uci().unwrap().to_owned();
+        let (played, badge, square) = if original == "e2e4" {
+            ("d2d4", "!!", Square::D4)
+        } else {
+            ("e2e4", "!", Square::E4)
+        };
+        let initial_position = f.ui.board_position.clone();
+        assert_eq!(
+            f.ui.session
+                .pending_answers_for_position(&fen4(&initial_position))
+                .len(),
+            2
+        );
+        let ctx = egui::Context::default();
+        crate::assets::install(&ctx);
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| f.ui.status_card(ui));
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.text().contains("2"))));
+        output.drop_without_applying_deltas();
+        assert!(f.ui.play_uci_with_id_at(played, "actual-alternative".into(), start, NOW));
+        assert_annotation_badge(&f.ui, badge, square);
+        assert_eq!(f.attempts().len(), 1);
+        assert_eq!(f.attempts()[0].expected_uci, played);
+        assert_eq!(
+            f.attempts()[0].event_type,
+            TrainingEventType::CorrectIndependent
+        );
+        assert_eq!(f.ui.session.current_expected_uci(), Some(original.as_str()));
+        assert_eq!(std::mem::take(&mut f.ui.pending_sounds), [Sound::Move]);
+        f.ui.tick_at(start + normal(), normal(), NOW);
+        assert_eq!(f.ui.board_position, initial_position);
+        assert!(f.ui.play_uci_with_id_at(
+            played,
+            "repeat-alternative".into(),
+            start + normal(),
+            NOW
+        ));
+        assert!(matches!(f.ui.playback, Some(Playback::Alternative { .. })));
+        assert_annotation_badge(&f.ui, badge, square);
+        assert!(f.ui.message.as_deref().unwrap().contains(tr(
+            "This repertoire move has already been reviewed in this session."
+        )));
+        assert!(f.ui.save_error.is_none() && f.ui.error.is_none());
+        assert!(emitted_sounds(&mut f, &ctx, &Settings::default()).is_empty());
+        f.ui.tick_at(start + normal() + WRONG_SHOWN, normal(), NOW);
+        assert_eq!(f.ui.board_position, initial_position);
+        assert!(f.ui.can_input());
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        assert_eq!(f.attempts().len(), 1);
+        assert_eq!(f.ui.session.remaining(), 1);
+        assert!(emitted_sounds(&mut f, &ctx, &Settings::default()).is_empty());
+    }
+
+    #[test]
+    fn move_input_uses_the_startup_answer_snapshot_in_independent_and_replay_phases() {
+        let mut f = Fixture::new(
+            "1. e4 (1. d4) *",
+            LearningSide::White,
+            &["e2e4"],
+            "cached-repertoire-answers",
+        );
+        let start = Instant::now();
+        f.ui.tick_at(start, normal(), NOW);
+        let key = key_for(&f.library, &f.scope, "d2d4");
+        assert!(f.ui.repertoire_answers.contains(&key));
+        // The production library is immutable for the UI's lifetime. Change it
+        // only here to detect any accidental rebuilding in the input hot path.
+        let id = f.scope.repertoire_ids.iter().next().unwrap();
+        f.ui.library
+            .repertoire_mut(id)
+            .unwrap()
+            .set_prefix_disabled(&["d2d4".to_owned()], true)
+            .unwrap();
+        assert!(
+            !active_learning_keys(&f.ui.library, &f.scope)
+                .unwrap()
+                .contains(&key)
+        );
+        assert!(f.ui.play_uci_with_id_at("d2d4", "cached-independent".into(), start, NOW));
+        assert!(matches!(f.ui.playback, Some(Playback::Alternative { .. })));
+        assert!(f.attempts().is_empty());
+        f.ui.tick_at(start + WRONG_SHOWN, normal(), NOW);
+        assert!(f.ui.request_hint_with_id_at("cached-preview".into(), start + WRONG_SHOWN, NOW));
+        assert!(f.ui.play_uci_with_id_at("d2d4", "cached-replay".into(), start + WRONG_SHOWN, NOW));
+        assert!(matches!(f.ui.playback, Some(Playback::Alternative { .. })));
+        assert_eq!(f.attempts().len(), 1);
+        assert_eq!(f.attempts()[0].event_type, TrainingEventType::Previewed);
+        assert!(f.ui.pending_sounds.is_empty());
+    }
+
+    #[test]
+    fn known_unscheduled_answer_during_hint_is_neutral_but_outside_move_still_wrong() {
+        let mut f = Fixture::new(
+            "1. e4! (1. d4!! {[%csl Gd4]}) *",
+            LearningSide::White,
+            &["e2e4"],
+            "hint-alternative",
+        );
+        let start = Instant::now();
+        f.ui.tick_at(start, normal(), NOW);
+        assert!(f.ui.request_hint_with_id_at("preview-alternative".into(), start, NOW));
+        let attempts = f.attempts().len();
+        let snapshot = f.ui.session.clone();
+        assert!(f.ui.play_uci_with_id_at("d2d4", "unscheduled-alternative".into(), start, NOW));
+        assert!(matches!(f.ui.playback, Some(Playback::Alternative { .. })));
+        assert_annotation_badge(&f.ui, "!!", Square::D4);
+        assert_eq!(f.ui.session, snapshot);
+        assert!(f.ui.pending_sounds.is_empty());
+        f.ui.tick_at(start + WRONG_SHOWN, normal(), NOW);
+        assert_eq!(f.attempts().len(), attempts);
+        assert!(f.ui.can_input());
+        assert!(f.ui.message.as_deref().unwrap().contains(tr(
+            "This move is in your repertoire, but is not a task in this session."
+        )));
+        assert!(f.ui.play_uci_with_id_at(
+            "g1f3",
+            "outside-repertoire".into(),
+            start + WRONG_SHOWN,
+            NOW
+        ));
+        assert!(matches!(f.ui.playback, Some(Playback::Wrong { .. })));
+        assert_eq!(f.ui.pending_sounds, [Sound::Wrong]);
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        assert_eq!(f.attempts().len(), attempts);
+    }
+
+    #[test]
+    fn authored_wrong_branch_has_its_own_annotations_only_after_it_is_played() {
+        let mut f = Fixture::new(
+            "1. e4! (1. d4?? {[%csl Rd4]}) e5 *",
+            LearningSide::White,
+            &["e2e4"],
+            "wrong-branch-annotations",
+        );
+        let start = Instant::now();
+        f.ui.tick_at(start, normal(), NOW);
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        assert!(f.ui.play_uci_with_id_at("d2d4", "authored-wrong-branch".into(), start, NOW));
+        assert_annotation_badge(&f.ui, "??", Square::D4);
+        assert_eq!(
+            f.ui.displayed_annotations().circles[0],
+            (
+                Square::D4,
+                crate::game_view::shape_color(chess_core::ShapeColor::Red)
+            )
+        );
+        f.ui.tick_at(start + WRONG_SHOWN, normal(), NOW);
+        assert!(f.ui.displayed_annotations().badge.is_none());
+        assert!(f.ui.displayed_annotations().circles.is_empty());
+    }
+
+    #[test]
+    fn pgn_annotation_cursor_distinguishes_transposed_paths_and_repertoire_sources() {
+        let mut f = Fixture::new(
+            "1. Nf3 (1. g3 g6 2. Nf3 Nf6? {[%csl Rf6]} 3. Bg2) Nf6 2. g3 g6! {[%csl Gg6]} 3. Bg2 *",
+            LearningSide::White,
+            &["f1g2"],
+            "annotations-transposition",
+        );
+        let id = f.ui.session.current_target().unwrap().repertoire_id.clone();
+        let mut position_keys = Vec::new();
+        for (path, badge, square) in [
+            (["g1f3", "g8f6", "g2g3", "g7g6"], "!", Square::G6),
+            (["g2g3", "g7g6", "g1f3", "g8f6"], "?", Square::F6),
+        ] {
+            f.ui.set_displayed_path(Some(&ShownPrefix {
+                repertoire_id: id.clone(),
+                path: path.map(str::to_owned).to_vec(),
+            }));
+            let (_, node) = f.ui.displayed_node.as_ref().expect("exact PGN branch");
+            f.ui.board_position = f.ui.annotation_games[&id].position(*node).unwrap().clone();
+            position_keys.push(fen4(&f.ui.board_position));
+            assert_annotation_badge(&f.ui, badge, square);
+            assert_eq!(f.ui.displayed_annotations().circles[0].0, square);
+        }
+        assert_eq!(
+            position_keys[0], position_keys[1],
+            "fixture must really transpose"
+        );
+        let other_id =
+            f.ui.library
+                .create("Other annotations", &Game::new())
+                .unwrap();
+        f.ui.annotation_games.insert(
+            other_id.clone(),
+            chess_core::parse_str("1. Nf3 Nf6 2. g3 g6?? {[%csl Yg6]} *").game,
+        );
+        f.ui.set_displayed_path(Some(&ShownPrefix {
+            repertoire_id: other_id.clone(),
+            path: ["g1f3", "g8f6", "g2g3", "g7g6"].map(str::to_owned).to_vec(),
+        }));
+        let (_, node) = f.ui.displayed_node.as_ref().unwrap();
+        f.ui.board_position = f.ui.annotation_games[&other_id]
+            .position(*node)
+            .unwrap()
+            .clone();
+        assert_annotation_badge(&f.ui, "??", Square::G6);
     }
 
     #[test]
@@ -3530,13 +4066,9 @@ mod tests {
             f.ui.pending_commit.as_ref().unwrap().kind,
             CommitKind::ReusedContext
         ));
-        let reused_id =
-            f.ui.pending_commit
-                .as_ref()
-                .unwrap()
-                .attempt
-                .client_attempt_id
-                .clone();
+        let reused_id = f.ui.pending_commit.as_ref().unwrap().attempts[0]
+            .client_attempt_id
+            .clone();
         assert_eq!(fen4(&f.ui.board_position), position);
         assert!(f.ui.pending_sounds.is_empty());
         f.ui.store = valid_store;

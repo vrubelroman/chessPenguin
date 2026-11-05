@@ -802,3 +802,120 @@ fn extension_merge_tracks_reordered_identities_and_keeps_first_duplicate() {
         ])
     );
 }
+
+#[test]
+fn context_batch_is_atomic_retryable_and_preserves_every_event() {
+    let dir = TestDir::new("context-batch");
+    let store = LearningStore::new(dir.join("learning.json"));
+    let mut library = Library::default();
+    let id = library
+        .create(
+            "Context",
+            &chess_core::parse_str("1. e4 e5 2. Nf3 Nc6 3. Bb5 *").game,
+        )
+        .unwrap();
+    let scope = StatsScope::for_repertoire(id, LearningSide::White, 100);
+    let mut learning = LearningData::default();
+    let key = crate::repertoire::active_learning_memberships(&library, &scope)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.key.expected_uci == "f1b5")
+        .unwrap()
+        .key;
+    let item = learning.ensure_item(key);
+    item.introduced = true;
+    item.next_review_at = Some(0);
+    let mut session = LearningSessionSnapshot::new(
+        "context-batch",
+        &library,
+        &learning,
+        scope,
+        SrsSettings::default(),
+    )
+    .unwrap();
+    store.save_session(&mut session).unwrap();
+    let start = store.load().unwrap();
+    let original = std::fs::read(store.path()).unwrap();
+    let mut events = Vec::new();
+    for i in 0..4 {
+        events.push(
+            session
+                .advance_context_with_learning(&library, &learning, format!("context-{i}"), 100)
+                .unwrap(),
+        );
+    }
+    assert_eq!(session.context_index, 4);
+    let retry = session.clone();
+    assert!(
+        store
+            .apply_attempts_and_session(vec![], &mut session)
+            .is_err()
+    );
+    let mut invalid = events.clone();
+    invalid[3].client_attempt_id.clear();
+    assert!(
+        store
+            .apply_attempts_and_session(invalid, &mut session)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(store.path()).unwrap(), original);
+    assert_eq!(session, retry);
+    assert!(
+        store
+            .apply_attempts_and_session(vec![events[0].clone(), events[0].clone()], &mut session)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(store.path()).unwrap(), original);
+
+    let saved = store
+        .apply_attempts_and_session(events.clone(), &mut session)
+        .unwrap();
+    assert_eq!(saved.application, AttemptApplication::Applied);
+    assert_eq!(
+        saved.revision,
+        start.revision + 1,
+        "one transaction for the whole prefix"
+    );
+    assert_eq!(saved.session.revision, retry.revision + 1);
+    assert_eq!(saved.learning.attempts, events);
+    assert!(
+        saved
+            .learning
+            .items
+            .iter()
+            .all(|item| item.correct_streak == 0)
+    );
+    let bytes = std::fs::read(store.path()).unwrap();
+    let mut stale = retry.clone();
+    let duplicate = store
+        .apply_attempts_and_session(events.clone(), &mut stale)
+        .unwrap();
+    assert_eq!(duplicate.application, AttemptApplication::Duplicate);
+    assert_eq!(duplicate.session, saved.session);
+    assert_eq!(std::fs::read(store.path()).unwrap(), bytes);
+
+    let mut partial = events.clone();
+    partial[3].client_attempt_id = "new-id".into();
+    assert!(
+        store
+            .apply_attempts_and_session(partial, &mut session)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(store.path()).unwrap(), bytes);
+    let mut concurrent = events.clone();
+    for event in &mut concurrent {
+        event.client_attempt_id.push_str("-concurrent");
+    }
+    assert!(matches!(
+        store.apply_attempts_and_session(concurrent, &mut stale),
+        Err(StoreError::SessionConflict { .. })
+    ));
+    assert_eq!(std::fs::read(store.path()).unwrap(), bytes);
+    let loaded = store.load().unwrap();
+    loaded
+        .session_snapshot("context-batch")
+        .unwrap()
+        .validate(&library)
+        .unwrap();
+    assert_eq!(loaded.learning.attempts, events);
+}

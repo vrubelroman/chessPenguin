@@ -461,7 +461,7 @@ fn at_30_lines_overlap_but_repertoire_is_not_an_arithmetic_mean() {
 }
 
 #[test]
-fn default_main_answer_is_pgn_deterministic_and_depth_is_shortest_active_path() {
+fn all_answers_keep_real_pgn_context_and_shortest_graph_depth() {
     let (library, id) = single_repertoire(
         "1. e4 d5 (1... Nf6 2. d4 d5 3. g3) 2. d4 Nh6 3. Nf3 Ng8 4. Ng1 Nf6 5. c4 *",
     );
@@ -472,11 +472,19 @@ fn default_main_answer_is_pgn_deterministic_and_depth_is_shortest_active_path() 
         .find(|membership| membership.key.expected_uci == "c2c4")
         .unwrap();
     assert_eq!(c4.min_depth, 5);
-    assert_eq!(c4.path.len(), 5);
+    assert_eq!(c4.path.len(), 9);
+    let tree = RepertoireTree::from_game(
+        library.repertoire(&id).unwrap().game(),
+        u32::MAX,
+        Vec::new(),
+    );
+    assert!(
+        tree.node_at_path(&c4.path).is_some(),
+        "context must be an actual annotated PGN path"
+    );
     assert_eq!(c4.path.last().map(String::as_str), Some("c2c4"));
     assert!(
-        !full
-            .iter()
+        full.iter()
             .any(|membership| membership.key.expected_uci == "g2g3")
     );
 
@@ -491,8 +499,8 @@ fn default_main_answer_is_pgn_deterministic_and_depth_is_shortest_active_path() 
 
     let short_branch = scope(id, LearningSide::White).with_branch_root(strings(&["e2e4", "g8f6"]));
     let short_keys = active_learning_keys(&library, &short_branch).unwrap();
-    assert_eq!(short_keys.len(), 1);
-    assert!(!short_keys.iter().any(|key| key.expected_uci == "g2g3"));
+    assert_eq!(short_keys.len(), 2);
+    assert!(short_keys.iter().any(|key| key.expected_uci == "g2g3"));
     assert!(!short_keys.iter().any(|key| key.expected_uci == "c2c4"));
 }
 
@@ -507,7 +515,7 @@ fn main_answer_override_validates_side_and_pgn_move_and_roundtrips() {
     let selected = scope(id.clone(), LearningSide::White);
     let default_keys = active_learning_keys(&library, &selected).unwrap();
     assert!(default_keys.contains(&e4));
-    assert!(!default_keys.contains(&d4));
+    assert!(default_keys.contains(&d4));
 
     let mut changed = repertoire.clone();
     changed
@@ -544,7 +552,12 @@ fn main_answer_override_validates_side_and_pgn_move_and_roundtrips() {
     overridden_library.repertoires.push(changed.clone());
     let overridden = active_learning_keys(&overridden_library, &selected).unwrap();
     assert!(overridden.contains(&d4));
-    assert!(!overridden.contains(&e4));
+    assert!(overridden.contains(&e4));
+    assert_eq!(overridden, default_keys);
+    let ordered = active_learning_memberships(&overridden_library, &selected).unwrap();
+    let preferred = ordered.iter().find(|item| item.key == d4).unwrap();
+    let other = ordered.iter().find(|item| item.key == e4).unwrap();
+    assert!(preferred.pgn_order < other.pgn_order);
     assert_eq!(
         changed.clear_main_answer_override(&start).as_deref(),
         Some("d2d4")
@@ -664,7 +677,7 @@ fn reset_impact_projects_n_m_and_names_without_resetting() {
 }
 
 #[test]
-fn disabled_main_answer_does_not_fall_back_to_an_enabled_alternative() {
+fn disabling_one_answer_keeps_other_active_variations() {
     let (mut library, id) = single_repertoire("1. e4 (1. d4) e5 *");
     let selected = scope(id.clone(), LearningSide::White);
     let root = fen4(Game::new().start().position());
@@ -673,10 +686,9 @@ fn disabled_main_answer_does_not_fall_back_to_an_enabled_alternative() {
         .unwrap()
         .set_prefix_disabled(&strings(&["e2e4"]), true)
         .unwrap();
-    assert!(
-        active_learning_keys(&library, &selected)
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        active_learning_keys(&library, &selected).unwrap(),
+        BTreeSet::from([LearningItemKey::local(root.clone(), "d2d4")])
     );
 
     library

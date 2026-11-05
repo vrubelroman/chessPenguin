@@ -562,23 +562,48 @@ impl LearningStore {
         attempt: TrainingAttempt,
         session: &mut LearningSessionSnapshot,
     ) -> Result<PersistedSessionAttempt, StoreError> {
+        self.apply_attempts_and_session(vec![attempt], session)
+    }
+
+    /// Persists an already displayed context prefix in one atomic transaction.
+    /// Every event is retained, but the store is read and replaced only once.
+    /// A retry must contain the whole batch: partial duplicates are rejected.
+    pub fn apply_attempts_and_session(
+        &self,
+        attempts: Vec<TrainingAttempt>,
+        session: &mut LearningSessionSnapshot,
+    ) -> Result<PersistedSessionAttempt, StoreError> {
         self.check_legacy_path()?;
-        if attempt.session_id != session.session.id {
-            return Err(StoreError::SessionMismatch {
-                attempt_session_id: attempt.session_id,
-                session_id: session.session.id.clone(),
-            });
+        let invalid = |message| StoreError::Session(LearningSessionError::InvalidSnapshot(message));
+        if attempts.is_empty() {
+            return Err(invalid("an attempt batch must not be empty"));
+        }
+        let mut identities = BTreeSet::new();
+        for attempt in &attempts {
+            if attempt.session_id != session.session.id {
+                return Err(StoreError::SessionMismatch {
+                    attempt_session_id: attempt.session_id.clone(),
+                    session_id: session.session.id.clone(),
+                });
+            }
+            if !identities.insert((&attempt.user_id, &attempt.client_attempt_id)) {
+                return Err(invalid("an attempt batch contains duplicate event IDs"));
+            }
         }
         let _lock = lock_store(&self.path)?;
         let mut loaded = self.load_latest()?;
-        let duplicate = loaded.data.learning.attempts.iter().any(|existing| {
-            existing.user_id == attempt.user_id
-                && existing.client_attempt_id == attempt.client_attempt_id
-        });
-        if duplicate {
+        let mut unseen = identities;
+        for existing in &loaded.data.learning.attempts {
+            unseen.remove(&(&existing.user_id, &existing.client_attempt_id));
+            if unseen.is_empty() {
+                break;
+            }
+        }
+        let duplicate_count = attempts.len() - unseen.len();
+        if duplicate_count == attempts.len() {
             let persisted_session = loaded
                 .data
-                .session_snapshot(&attempt.session_id)
+                .session_snapshot(&session.session.id)
                 .cloned()
                 .unwrap_or_else(|| session.clone());
             return Ok(PersistedSessionAttempt {
@@ -588,13 +613,18 @@ impl LearningStore {
                 session: persisted_session,
             });
         }
+        if duplicate_count != 0 {
+            return Err(invalid("an attempt batch is only partially persisted"));
+        }
 
         session.validate_configuration()?;
         check_session_revision(&loaded.data, session)?;
-        let application = loaded
-            .data
-            .learning
-            .apply_attempt(attempt, &session.session.settings)?;
+        for attempt in attempts {
+            loaded
+                .data
+                .learning
+                .apply_attempt(attempt, &session.session.settings)?;
+        }
         let previous = session.revision;
         session.revision = session.revision.saturating_add(1);
         upsert_session(&mut loaded.data, session);
@@ -603,7 +633,7 @@ impl LearningStore {
             return Err(error);
         }
         Ok(PersistedSessionAttempt {
-            application,
+            application: AttemptApplication::Applied,
             revision: loaded.data.revision,
             learning: loaded.data.learning,
             session: session.clone(),

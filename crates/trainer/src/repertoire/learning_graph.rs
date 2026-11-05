@@ -163,6 +163,8 @@ impl TryFrom<TrainingMode> for LearningSide {
 
 #[derive(Clone, Debug)]
 struct GraphEdge {
+    /// Actual PGN occurrence; graph shortcuts must not invent a context path.
+    source_path: Vec<String>,
     uci: String,
     to: String,
     parent_order: usize,
@@ -284,34 +286,36 @@ pub fn reset_impact(
     })
 }
 
-fn pgn_main_answers(tree: &RepertoireTree) -> BTreeMap<String, Vec<String>> {
-    let game = tree.game();
-    let mut answers: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for node in game.attached_nodes() {
-        if tree.path(node).is_none() {
-            continue;
-        }
-        let Some(position_fen4) = tree.position_key(node).map(str::to_owned) else {
-            continue;
-        };
-        for child in game.children(node) {
-            if tree.path(*child).is_none() {
-                continue;
-            }
-            let Some(game_move) = game.game_move(*child) else {
-                continue;
-            };
-            let MoveKind::Normal(mv) = game_move.kind else {
-                continue;
-            };
-            let uci = mv.to_uci(CastlingMode::Standard).to_string();
-            let candidates = answers.entry(position_fen4.clone()).or_default();
-            if !candidates.contains(&uci) {
-                candidates.push(uci);
-            }
-        }
+// Preferred answers order the traversal, but never remove another PGN answer.
+fn preferred_children(
+    repertoire: &Repertoire,
+    tree: &RepertoireTree,
+    node: chess_core::NodeId,
+) -> Vec<chess_core::NodeId> {
+    let mut children = tree.game().children(node).to_vec();
+    if let Some(preferred) = tree
+        .position_key(node)
+        .and_then(|position| repertoire.main_answer_override(position))
+    {
+        children.sort_by_key(|child| {
+            tree.game()
+                .game_move(*child)
+                .and_then(|mv| mv.uci())
+                .as_deref()
+                != Some(preferred)
+        });
     }
-    answers
+    children
+}
+
+fn preferred_node_order(repertoire: &Repertoire, tree: &RepertoireTree) -> Vec<chess_core::NodeId> {
+    let mut nodes = Vec::new();
+    let mut stack = vec![tree.root()];
+    while let Some(node) = stack.pop() {
+        nodes.push(node);
+        stack.extend(preferred_children(repertoire, tree, node).into_iter().rev());
+    }
+    nodes
 }
 
 fn repertoire_memberships(
@@ -319,7 +323,6 @@ fn repertoire_memberships(
     scope: &StatsScope,
 ) -> Result<Vec<LearningItemMembership>, LearningGraphError> {
     let tree = RepertoireTree::from_game(repertoire.game(), u32::MAX, Vec::new());
-    let main_answers = pgn_main_answers(&tree);
     let game = tree.game();
     let branch_root = scope.branch_root.as_deref();
     let path_allowed = |path: &[String]| {
@@ -327,7 +330,7 @@ fn repertoire_memberships(
             && (!scope.only_active || !repertoire.is_prefix_disabled(path))
     };
 
-    let attached_nodes = game.attached_nodes();
+    let attached_nodes = preferred_node_order(repertoire, &tree);
     let pgn_orders: BTreeMap<_, _> = attached_nodes
         .iter()
         .enumerate()
@@ -361,7 +364,10 @@ fn repertoire_memberships(
                 side: LearningSide::from(position.turn()),
                 edges: Vec::new(),
             });
-        for (child_order, child) in game.children(node).iter().enumerate() {
+        for (child_order, child) in preferred_children(repertoire, &tree, node)
+            .iter()
+            .enumerate()
+        {
             if !tree.path(*child).is_some_and(path_allowed) {
                 continue;
             }
@@ -375,6 +381,7 @@ fn repertoire_memberships(
                 continue;
             };
             entry.edges.push(GraphEdge {
+                source_path: tree.path(*child).expect("checked PGN path").to_vec(),
                 uci: mv.to_uci(CastlingMode::Standard).to_string(),
                 to,
                 parent_order,
@@ -399,8 +406,12 @@ fn repertoire_memberships(
 
     for entry in positions.values_mut() {
         entry.edges.sort_by(|left, right| {
-            (left.parent_order, left.child_order)
-                .cmp(&(right.parent_order, right.child_order))
+            (left.source_path.len(), left.parent_order, left.child_order)
+                .cmp(&(
+                    right.source_path.len(),
+                    right.parent_order,
+                    right.child_order,
+                ))
                 .then_with(|| left.uci.cmp(&right.uci))
                 .then_with(|| left.to.cmp(&right.to))
         });
@@ -427,24 +438,7 @@ fn repertoire_memberships(
             continue;
         };
         let own_position = entry.side == scope.side;
-        let main_answer = main_answers.get(&position_fen4).and_then(|candidates| {
-            if let Some(override_uci) = repertoire
-                .main_answer_override(&position_fen4)
-                .filter(|override_uci| candidates.iter().any(|uci| uci == override_uci))
-            {
-                Some(override_uci)
-            } else {
-                candidates.first().map(String::as_str)
-            }
-        });
-        let edges: Vec<&GraphEdge> = if own_position {
-            main_answer
-                .and_then(|uci| entry.edges.iter().find(|edge| edge.uci == uci))
-                .into_iter()
-                .collect()
-        } else {
-            entry.edges.iter().collect()
-        };
+        let edges = &entry.edges;
 
         for edge in edges {
             let next_depth = depth
@@ -463,7 +457,7 @@ fn repertoire_memberships(
                         repertoire_id: repertoire.id.clone(),
                         key,
                         min_depth: next_depth,
-                        path: next_path.clone(),
+                        path: edge.source_path.clone(),
                         pgn_order: edge.pgn_order,
                         variation_depth: next_variation_depth,
                     });
@@ -502,7 +496,6 @@ struct AllPathContext<'a> {
     repertoire: &'a Repertoire,
     scope: &'a StatsScope,
     tree: &'a RepertoireTree,
-    main_answers: &'a BTreeMap<String, Vec<String>>,
     pgn_orders: &'a BTreeMap<chess_core::NodeId, usize>,
 }
 
@@ -537,18 +530,16 @@ fn all_path_repertoire_memberships(
     };
     let base_depth = u32::try_from(branch_root.unwrap_or_default().len())
         .map_err(|_| LearningGraphError::DepthOverflow(repertoire.id.clone()))?;
-    let attached_nodes = game.attached_nodes();
+    let attached_nodes = preferred_node_order(repertoire, &tree);
     let pgn_orders: BTreeMap<_, _> = attached_nodes
         .iter()
         .enumerate()
         .map(|(order, node)| (*node, order))
         .collect();
-    let main_answers = pgn_main_answers(&tree);
     let context = AllPathContext {
         repertoire,
         scope,
         tree: &tree,
-        main_answers: &main_answers,
         pgn_orders: &pgn_orders,
     };
     let mut memberships = Vec::new();
@@ -579,23 +570,12 @@ fn visit_all_path_memberships(
         return Ok(());
     };
     let own_position = LearningSide::from(position.turn()) == context.scope.side;
-    let main_answer = context
-        .main_answers
-        .get(position_fen4)
-        .and_then(|candidates| {
-            if let Some(override_uci) = context
-                .repertoire
-                .main_answer_override(position_fen4)
-                .filter(|override_uci| candidates.iter().any(|uci| uci == override_uci))
-            {
-                Some(override_uci)
-            } else {
-                candidates.first().map(String::as_str)
-            }
-        });
     let game = context.tree.game();
     let mut seen_uci = BTreeSet::new();
-    for (child_order, child) in game.children(node).iter().enumerate() {
+    for (child_order, child) in preferred_children(context.repertoire, context.tree, node)
+        .iter()
+        .enumerate()
+    {
         if !context.tree.path(*child).is_some_and(|child_path| {
             context
                 .scope
@@ -614,9 +594,6 @@ fn visit_all_path_memberships(
             continue;
         };
         let uci = mv.to_uci(CastlingMode::Standard).to_string();
-        if own_position && main_answer != Some(uci.as_str()) {
-            continue;
-        }
         if !seen_uci.insert(uci.clone()) {
             continue;
         }

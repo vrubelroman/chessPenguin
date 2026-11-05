@@ -4,6 +4,19 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-11-06
+
+- Desktop opening training (α version) avoids repeated PGN parsing and repeated context planning during
+  automatic moves. Previously displayed context is persisted in one atomic batch,
+  retaining every progress event without rewriting the entire history for each old move.
+- Opening training displays the PGN author's move badges, arrows and marked squares
+  after the user's moves and during automatic playback, using the same appearance as
+  the game viewer. Annotations follow the displayed PGN node, including pauses and retries.
+- All enabled repertoire variations can be trained, including several own answers in
+  one position. A pending alternative credits the move actually played; another known
+  answer is handled without an error penalty. Preferred moves affect order rather than
+  excluding alternatives. Shared position-and-move statistics remain deduplicated.
+
 ## [2.2.0] — 2026-11-06
 
 - Desktop opening training (α version): collect PGN repertoires, add a line from a game, and learn

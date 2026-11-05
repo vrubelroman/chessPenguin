@@ -192,7 +192,7 @@ fn introduction_is_explicit_and_does_not_introduce_until_an_answer() {
 }
 
 #[test]
-fn illegal_input_is_not_an_answer_and_alternative_main_line_is_wrong() {
+fn illegal_input_and_unscheduled_repertoire_answer_do_not_change_learning() {
     let (library, id) = library("1. e4 (1. d4) e5 *");
     let scope = scope(id, LearningSide::White);
     let e4 = key_for(&library, &scope, "e2e4");
@@ -221,25 +221,17 @@ fn illegal_input_is_not_an_answer_and_alternative_main_line_is_wrong() {
     assert_eq!(session.phase, LearningSessionPhase::AwaitingIndependent);
     assert_eq!(illegal.learning.item(&e4), Some(&before));
 
-    let wrong = play(
-        &store,
-        &library,
-        &mut session,
-        "d2d4",
-        "legal-alternative",
-        NOW + 1,
-        Some(250),
-    );
-    assert_eq!(
-        wrong.learning.attempts[1].event_type,
-        TrainingEventType::IncorrectIndependent
-    );
-    assert_eq!(
-        session.phase,
-        LearningSessionPhase::AwaitingReplayAfterError
-    );
-    assert_eq!(wrong.learning.item(&e4).unwrap().wrong_count, 1);
-    assert_eq!(wrong.learning.item(&e4).unwrap().correct_count, 0);
+    let before_session = session.clone();
+    assert!(matches!(
+        session.play_uci(&library, "d2d4", "legal-alternative", NOW + 1, Some(250)),
+        Err(LearningSessionError::RepertoireAlternative {
+            already_completed: false
+        })
+    ));
+    assert_eq!(session, before_session);
+    let unchanged = store.load().unwrap().learning;
+    assert_eq!(unchanged.attempts.len(), 1);
+    assert_eq!(unchanged.item(&e4), Some(&before));
 }
 
 #[test]
@@ -322,6 +314,188 @@ fn at_05_wrong_then_repeated_replay_records_one_independent_wrong() {
     );
     assert_eq!(session.phase, LearningSessionPhase::Finished);
     assert!(session.completed_keys.contains(&e4));
+}
+
+#[test]
+fn pending_alternative_credits_only_the_played_answer_and_keeps_original_pending() {
+    let (library, id) = library("1. e4 (1. d4) *");
+    let scope = scope(id, LearningSide::White);
+    let e4 = key_for(&library, &scope, "e2e4");
+    let d4 = key_for(&library, &scope, "d2d4");
+    let mut session = due_session("alternatives", &library, &LearningData::default(), scope);
+    assert_eq!(
+        session
+            .introduce_new(&library, &LearningData::default())
+            .unwrap(),
+        2
+    );
+    assert_eq!(session.current_target().unwrap().key, e4);
+    let dir = TestDir::new("alternatives");
+    let store = dir.store();
+    let first = play(
+        &store,
+        &library,
+        &mut session,
+        "d2d4",
+        "d4-first",
+        NOW,
+        Some(123),
+    );
+    assert_eq!(first.learning.attempts[0].item_key(), d4);
+    assert_eq!(first.learning.item(&d4).unwrap().correct_count, 1);
+    assert!(first.learning.item(&e4).is_none());
+    assert_eq!(session.current_target().unwrap().key, e4);
+    assert_eq!(session.remaining(), 1);
+    session = restore(&store, &library, "alternatives");
+    let before = session.clone();
+    assert!(matches!(
+        session.play_uci(&library, "d2d4", "d4-again", NOW + 1, Some(12)),
+        Err(LearningSessionError::RepertoireAlternative {
+            already_completed: true
+        })
+    ));
+    assert_eq!(session, before);
+    assert_eq!(store.load().unwrap().learning.attempts.len(), 1);
+    let second = play(
+        &store,
+        &library,
+        &mut session,
+        "e2e4",
+        "e4-next",
+        NOW + 2,
+        Some(124),
+    );
+    assert_eq!(second.learning.item(&e4).unwrap().correct_count, 1);
+    assert_eq!(second.learning.item(&d4).unwrap().correct_count, 1);
+    assert_eq!(session.phase, LearningSessionPhase::Finished);
+    assert_eq!(session.completed_keys.len(), 2);
+}
+
+#[test]
+fn prepared_answer_cache_preserves_live_classification_and_credit() {
+    let (library, id) = library("1. e4 (1. d4) (1. c4) *");
+    let selected = scope(id, LearningSide::White);
+    let answers = active_learning_keys(&library, &selected).unwrap();
+    let mut learning = LearningData::default();
+    for uci in ["e2e4", "d2d4"] {
+        introduce_at(&mut learning, key_for(&library, &selected, uci), NOW);
+    }
+    let original = due_session("answer-cache", &library, &learning, selected);
+    for uci in ["e2e4", "d2d4", "c2c4", "a2a3", "e2e5"] {
+        let mut direct = original.clone();
+        let mut cached = original.clone();
+        let first =
+            direct.play_uci_with_learning(&library, &learning, uci, "answer", NOW, Some(123));
+        let second = cached.play_uci_with_learning_answers(
+            &library,
+            &learning,
+            &answers,
+            uci,
+            "answer",
+            NOW,
+            Some(123),
+        );
+        assert_eq!(first, second, "different event for {uci}");
+        assert_eq!(direct, cached, "different session transition for {uci}");
+    }
+}
+
+#[test]
+fn alternative_during_context_does_not_continue_the_unplayed_branch() {
+    let (library, id) = library("1. e4 (1. d4 d5 2. c4) e5 2. Nf3 (2. Bc4) Nc6 *");
+    let scope = scope(id, LearningSide::White);
+    let mut session = LearningSessionSnapshot::new_with_mode(
+        "context-alternative",
+        &library,
+        &LearningData::default(),
+        scope,
+        SrsSettings::default(),
+        QueueMode::LeastRecent,
+    )
+    .unwrap();
+    let deep = session
+        .queue
+        .iter()
+        .position(|target| target.key.expected_uci == "g1f3")
+        .unwrap();
+    session.queue.swap(0, deep);
+    session.phase = LearningSessionPhase::AwaitingContextIndependent;
+    session.context_index = 0;
+    let original = session.current_target().unwrap().key.clone();
+    session.validate(&library).unwrap();
+    let dir = TestDir::new("context-alternative");
+    let first = play(
+        &dir.store(),
+        &library,
+        &mut session,
+        "d2d4",
+        "d4-context",
+        NOW,
+        Some(300),
+    );
+    assert_eq!(first.learning.attempts[0].expected_uci, "d2d4");
+    assert_eq!(
+        first.learning.attempts[0].event_type,
+        TrainingEventType::CorrectIndependent
+    );
+    assert!(!session.completed_keys.contains(&original));
+    assert!(
+        session
+            .queue
+            .iter()
+            .skip(session.current_index)
+            .any(|target| target.key == original)
+    );
+    assert_eq!(
+        session.context_index, 0,
+        "do not increment the e4 path after playing d4"
+    );
+    session.validate(&library).unwrap();
+    let restored = restore(&dir.store(), &library, "context-alternative");
+    assert_eq!(restored, session);
+}
+
+#[test]
+fn replay_stays_on_revealed_answer_and_disabled_alternative_is_not_accepted() {
+    let (mut library, id) = library("1. e4 (1. d4) *");
+    let selected = scope(id.clone(), LearningSide::White);
+    let mut session = due_session(
+        "replay-choices",
+        &library,
+        &LearningData::default(),
+        selected.clone(),
+    );
+    session
+        .introduce_new(&library, &LearningData::default())
+        .unwrap();
+    session.preview("preview", NOW).unwrap();
+    let before = session.clone();
+    assert!(matches!(
+        session.play_uci(&library, "d2d4", "other-preview", NOW, None),
+        Err(LearningSessionError::RepertoireAlternative {
+            already_completed: false
+        })
+    ));
+    assert_eq!(session, before);
+    library
+        .repertoire_mut(&id)
+        .unwrap()
+        .set_prefix_disabled(&["d2d4".to_owned()], true)
+        .unwrap();
+    let mut session = due_session(
+        "disabled-choice",
+        &library,
+        &LearningData::default(),
+        selected,
+    );
+    session
+        .introduce_new(&library, &LearningData::default())
+        .unwrap();
+    let attempt = session
+        .play_uci(&library, "d2d4", "disabled", NOW, Some(123))
+        .unwrap();
+    assert_eq!(attempt.expected_uci, "e2e4");
+    assert_eq!(attempt.event_type, TrainingEventType::IncorrectIndependent);
 }
 
 #[test]
@@ -722,7 +896,9 @@ fn transposition_target_replays_its_saved_membership_path_after_reload() {
     let mut session = due_session("transposition", &library, &learning, scope);
     assert_eq!(
         session.current_target().unwrap().path,
-        ["e2e4", "d7d5", "d2d4", "g8f6", "c2c4"]
+        [
+            "e2e4", "d7d5", "d2d4", "g8h6", "g1f3", "h6g8", "f3g1", "g8f6", "c2c4"
+        ]
     );
     store.save_session(&mut session).unwrap();
     session = restore(&store, &library, "transposition");
@@ -732,10 +908,10 @@ fn transposition_target_replays_its_saved_membership_path_after_reload() {
             .unwrap()
             .automatic_context
             .len(),
-        4
+        8
     );
 
-    for index in 0..4 {
+    for index in 0..8 {
         advance(
             &store,
             &library,
@@ -879,4 +1055,124 @@ fn learnt_counter_tracks_persisted_independent_answers_for_both_sides_and_shared
             at = learning.item(&key).unwrap().next_review_at.unwrap();
         }
     }
+}
+
+#[test]
+fn runtime_replay_cache_is_shared_but_never_persisted_or_stale_after_source_changes() {
+    let (mut library, id) = library("1. e4 e5 2. Nf3 Nc6 3. Bb5 *");
+    let selected = scope(id.clone(), LearningSide::White);
+    let mut learning = LearningData::default();
+    introduce_at(&mut learning, key_for(&library, &selected, "f1b5"), NOW);
+    let mut session = due_session("runtime-cache", &library, &learning, selected);
+    let initial = session
+        .presentation_with_learning(&library, &learning)
+        .unwrap();
+    let (parses, replays, _) = session.runtime_work_counts();
+    assert_eq!((parses, replays), (1, 1));
+    let mut clone = session.clone();
+    for _ in 0..8 {
+        assert_eq!(
+            clone
+                .presentation_with_learning(&library, &learning)
+                .unwrap(),
+            initial
+        );
+    }
+    assert_eq!(clone.runtime_work_counts().0, 1);
+    assert_eq!(clone.runtime_work_counts().1, 1);
+    let json = serde_json::to_value(&session).unwrap();
+    assert!(json.get("runtime").is_none());
+    let mut restored: LearningSessionSnapshot = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, session);
+    assert_eq!(restored.runtime_work_counts(), (0, 0, 0));
+    assert_eq!(
+        restored
+            .presentation_with_learning(&library, &learning)
+            .unwrap(),
+        initial
+    );
+    assert_eq!(restored.runtime_work_counts().0, 1);
+
+    // Public PGN can change without a revision API. Compare exact source bytes;
+    // a shared clone must not retain old positions after a source edit.
+    let old_library = library.clone();
+    library
+        .repertoire_mut(&id)
+        .unwrap()
+        .pgn
+        .push_str(" {edited}");
+    assert_eq!(
+        clone
+            .presentation_with_learning(&library, &learning)
+            .unwrap(),
+        initial
+    );
+    assert_eq!(session.runtime_work_counts().0, 2);
+    assert_eq!(
+        session
+            .presentation_with_learning(&old_library, &learning)
+            .unwrap(),
+        initial
+    );
+    assert_eq!(session.runtime_work_counts().0, 3);
+    library.repertoire_mut(&id).unwrap().pgn =
+        "[SetUp \"1\"]\n[FEN \"rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1\"]\n\n*"
+            .into();
+    assert!(matches!(
+        clone.presentation_with_learning(&library, &learning),
+        Err(LearningSessionError::InvalidTargetPath { .. })
+    ));
+    assert_eq!(clone.runtime_work_counts().0, 4);
+    assert_eq!(
+        session
+            .presentation_with_learning(&old_library, &learning)
+            .unwrap(),
+        initial
+    );
+}
+
+#[test]
+fn context_presentation_plans_once_per_call_instead_of_once_per_prefix_move() {
+    // A long legal path with repeated positions; the saved PGN occurrence must
+    // retain its full history, while planning work stays constant per call.
+    let pgn = format!("{} e4 *", "Nf3 Nf6 Ng1 Ng8 ".repeat(64));
+    let (library, id) = library(&pgn);
+    let selected = scope(id, LearningSide::White);
+    let mut learning = LearningData::default();
+    introduce_at(&mut learning, key_for(&library, &selected, "e2e4"), NOW);
+    let mut session = due_session("linear-context-plan", &library, &learning, selected);
+    assert_eq!(session.current_target().unwrap().path.len(), 257);
+    let before = session.runtime_work_counts();
+    let presentation = session
+        .presentation_with_learning(&library, &learning)
+        .unwrap();
+    assert_eq!(presentation.automatic_context.len(), 256);
+    let after = session.runtime_work_counts();
+    assert_eq!((after.0, after.1), (before.0, before.1));
+    // One phase synchronisation plus one presentation, independent of path length.
+    assert_eq!(after.2 - before.2, 2);
+    let mut clone = session.clone();
+    for index in 0..8 {
+        let attempt = clone
+            .advance_context_with_learning(
+                &library,
+                &learning,
+                format!("cached-context-{index}"),
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(attempt.event_type, TrainingEventType::AutoContext);
+    }
+    assert_eq!(clone.context_index, 8);
+    assert_eq!(clone.runtime_work_counts().0, 1);
+    assert_eq!(clone.runtime_work_counts().1, 1);
+    // Policy remains live; no cached plan may hide a newly required question.
+    clone.context_policy.consider_leadup_moves = true;
+    assert_eq!(
+        clone
+            .presentation_with_learning(&library, &learning)
+            .unwrap()
+            .phase,
+        LearningSessionPhase::AwaitingContextIndependent
+    );
 }

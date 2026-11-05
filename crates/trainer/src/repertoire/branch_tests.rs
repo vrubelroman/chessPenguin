@@ -463,7 +463,7 @@ fn branch_projection_is_deterministic_and_sorted() {
 }
 
 #[test]
-fn all_path_projection_honours_main_answer_override_and_disabled_main() {
+fn all_path_projection_keeps_all_answers_and_honours_disabled_branches() {
     let (mut library, id) = single_repertoire("1. e4 (1. d4 d5) e5 *");
     let selected = scope(id.clone());
     let learning = LearningData::default();
@@ -473,18 +473,20 @@ fn all_path_projection_honours_main_answer_override_and_disabled_main() {
         branch(&default_rows, &id, &["e2e4"]).unwrap().summary.total,
         1
     );
-    assert!(branch(&default_rows, &id, &["d2d4"]).is_none());
+    assert_eq!(
+        branch(&default_rows, &id, &["d2d4"]).unwrap().summary.total,
+        1
+    );
 
     library
         .repertoire_mut(&id)
         .unwrap()
         .set_prefix_disabled(&strings(&["e2e4"]), true)
         .unwrap();
-    assert!(
-        branch_learning_analytics(&library, &learning, &selected, &SrsSettings::default(),)
-            .unwrap()
-            .is_empty()
-    );
+    let active =
+        branch_learning_analytics(&library, &learning, &selected, &SrsSettings::default()).unwrap();
+    assert!(branch(&active, &id, &["e2e4"]).is_none());
+    assert_eq!(branch(&active, &id, &["d2d4"]).unwrap().summary.total, 1);
 
     library
         .repertoire_mut(&id)
@@ -503,7 +505,10 @@ fn all_path_projection_honours_main_answer_override_and_disabled_main() {
         .unwrap();
     let overridden =
         branch_learning_analytics(&library, &learning, &selected, &SrsSettings::default()).unwrap();
-    assert!(branch(&overridden, &id, &["e2e4"]).is_none());
+    assert_eq!(
+        branch(&overridden, &id, &["e2e4"]).unwrap().summary.total,
+        1
+    );
     assert_eq!(
         branch(&overridden, &id, &["d2d4"]).unwrap().summary.total,
         1

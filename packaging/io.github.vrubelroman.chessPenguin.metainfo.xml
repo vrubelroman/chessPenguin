@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.3.0" date="2026-11-06">
+      <description>
+        <p>Desktop opening training shows PGN move badges, arrows and marked squares during user moves and automatic playback. All enabled variations can be trained. Automatic context avoids repeated PGN parsing and redundant progress writes.</p>
+      </description>
+    </release>
     <release version="2.2.0" date="2026-11-06">
       <description>
         <p>Opening repertoire training (alpha) with spaced repetition, resumable sessions and learning statistics. Clearer training controls, smoother moves and a stable startup toolbar. Opponent preparation excludes mistakes after the opponent went wrong first. Android can open PGN from the clipboard with confirmation.</p>
