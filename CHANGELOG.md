@@ -4,7 +4,9 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
-- Desktop opening training: collect PGN repertoires, add a line from a game, and learn
+## [2.2.0] — 2026-11-06
+
+- Desktop opening training (α version): collect PGN repertoires, add a line from a game, and learn
   one main answer per position for White or Black. Learning history and the SRS schedule
   are shared between transpositions and repertoires. Three independent correct answers
   mark a move as learnt without ending reviews; mistakes, previews and replays after an
@@ -19,10 +21,21 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 - The learning dashboard compares repertoires and their branches without double-counting
   shared positions, and shows exact move analytics, daily history, scheduled reviews and
   answer-sequence charts. Snapshots are captured automatically on the first daily view of
-  a scope and can also be saved explicitly without changing PGN or learning state. Full-line
+  a scope without changing PGN or learning state. Full-line
   statistics preserve shared moves on each actual PGN line while the global total deduplicates
   them. The library table keeps ECO codes, opening names and the actual number of variations;
   the training board has no move list and keeps PGN badges, arrows and circles.
+- Training follows the main application's layout: clearer progress labels and settings,
+  consistent buttons, compact session controls and board rotation in the bottom toolbar.
+  The selected repertoire is ready to train on entry; its saved colour and mode are restored.
+  Progress saves in the background without a repeated status message or blocking the board.
+- Moves no longer jump back after a drag while progress is being saved. A completed move
+  reused as the next task's context does not repeat its animation or sound.
+- Opponent preparation ignores a player's later mistakes once their opponent has made the
+  first mistake. Saved reports and cached evaluations are rechecked without rerunning the engine.
+- The main toolbar keeps its position and button appearance while the app starts and checks
+  the network. Online games can be opened immediately; connection status and retry are shown
+  inside that dialog. Startup spinners have been removed from the main screen.
 - Android: when the app opens or returns to the foreground, a PGN in the clipboard can be
   opened from a small confirmation dialog. One or several games are stored as a local copy,
   and the first game always opens on the board. Opening or dismissing the same text is remembered
