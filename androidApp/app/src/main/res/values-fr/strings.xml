@@ -217,6 +217,15 @@
     <string name="add_paste_hint">Parties copiées dans une autre application</string>
     <string name="paste_none">Aucune partie PGN dans le presse-papiers</string>
     <string name="paste_db">Collé le %1$s</string>
+    <plurals name="clipboard_open_title">
+        <item quantity="one">%1$s partie dans le presse-papiers</item>
+        <item quantity="many">%1$s parties dans le presse-papiers</item>
+        <item quantity="other">%1$s parties dans le presse-papiers</item>
+    </plurals>
+    <string name="clipboard_open_one">Enregistrer cette partie PGN et l’ouvrir sur l’échiquier ?</string>
+    <string name="clipboard_open_many">Enregistrer %1$s et ouvrir la première partie sur l’échiquier ? Toutes les parties seront conservées dans la copie locale.</string>
+    <string name="clipboard_open">Ouvrir</string>
+    <string name="clipboard_database_name">Presse-papiers</string>
     <string name="opening_file">Ouverture du fichier…</string>
     <string name="file_failed">Impossible d’ouvrir le fichier</string>
     <string name="file_no_games">Ce fichier ne contient aucune partie d’échecs.</string>

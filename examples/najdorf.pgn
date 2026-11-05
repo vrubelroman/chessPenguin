@@ -1,0 +1,29 @@
+[Event "Najdorf: English Attack"]
+[Site "ChessPenguin opening training"]
+[Date "2026.11.02"]
+[Round "1"]
+[White "6.Be3"]
+[Black "6...e6"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Be3 e6 7. f3 Be7 *
+
+[Event "Najdorf: Classical Variation"]
+[Site "ChessPenguin opening training"]
+[Date "2026.11.02"]
+[Round "2"]
+[White "6.Bg5"]
+[Black "6...e6"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Bg5 e6 7. f4 Be7 *
+
+[Event "Najdorf: Scheveningen Setup"]
+[Site "ChessPenguin opening training"]
+[Date "2026.11.02"]
+[Round "3"]
+[White "6.Be2"]
+[Black "6...e5"]
+[Result "*"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Be2 e5 7. Nb3 Be7 *

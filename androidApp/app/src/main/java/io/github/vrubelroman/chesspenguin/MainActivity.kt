@@ -1,5 +1,6 @@
 package io.github.vrubelroman.chesspenguin
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.app.UiModeManager
 import android.content.Intent
@@ -117,7 +118,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        (application as ChessPenguinApp).updates.onResume()
+        val app = application as ChessPenguinApp
+        app.updates.onResume()
+        app.clipboardPgn.check(clipboardText(this))
     }
 
     override fun onStop() {
@@ -127,3 +130,10 @@ class MainActivity : ComponentActivity() {
         if (!isChangingConfigurations) (application as ChessPenguinApp).leftApp()
     }
 }
+
+fun clipboardText(context: Context): String? = context.getSystemService(ClipboardManager::class.java)
+    ?.primaryClip
+    ?.takeIf { it.itemCount > 0 }
+    ?.getItemAt(0)
+    ?.text
+    ?.toString()

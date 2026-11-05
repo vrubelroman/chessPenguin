@@ -85,7 +85,11 @@ impl Probe {
 
     pub fn poll(&mut self) {
         if let Some(rx) = &self.job
-            && let Ok(a) = rx.try_recv()
+            && let Some(a) = match rx.try_recv() {
+                Ok(a) => Some(a),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some([false; 2]),
+            }
         {
             // A platform that answered once stays offered for the session (a later
             // failure shows as an error in the window).
@@ -109,7 +113,68 @@ impl Probe {
         self.available.iter().any(|a| *a)
     }
 
+    pub fn pending(&self) -> bool {
+        self.job.is_some()
+    }
+
+    /// An explicit retry from the online-games dialog, without duplicate jobs.
+    pub fn retry(&mut self) {
+        if !self.pending() {
+            self.spawn();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_for_test(
+        ctx: &egui::Context,
+    ) -> (Self, std::sync::mpsc::Sender<[bool; 2]>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (
+            Self {
+                job: Some(rx),
+                available: [false; 2],
+                last: None,
+                ctx: ctx.clone(),
+            },
+            tx,
+        )
+    }
+
     pub fn has(&self, p: Platform) -> bool {
         self.available[p.index()]
+    }
+}
+
+#[cfg(all(test, not(web)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_distinguishes_pending_unavailable_ready_and_disconnected() {
+        let ctx = egui::Context::default();
+        let (mut probe, tx) = Probe::pending_for_test(&ctx);
+        assert!(probe.pending());
+        assert!(!probe.any());
+        probe.retry(); // An in-flight request is kept, never duplicated.
+        tx.send([false, false]).unwrap();
+        probe.poll();
+        assert!(!probe.pending());
+        assert!(!probe.any());
+
+        let (mut probe, tx) = Probe::pending_for_test(&ctx);
+        tx.send([true, false]).unwrap();
+        probe.poll();
+        assert!(!probe.pending());
+        assert!(probe.has(Platform::Lichess));
+        assert!(!probe.has(Platform::ChessCom));
+
+        let (mut probe, tx) = Probe::pending_for_test(&ctx);
+        drop(tx);
+        probe.poll();
+        assert!(
+            !probe.pending(),
+            "a failed worker must not leave a perpetual check"
+        );
+        assert!(!probe.any());
     }
 }

@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.2.0" date="2026-11-06">
+      <description>
+        <p>Opening repertoire training (alpha) with spaced repetition, resumable sessions and learning statistics. Clearer training controls, smoother moves and a stable startup toolbar. Opponent preparation excludes mistakes after the opponent went wrong first. Android can open PGN from the clipboard with confirmation.</p>
+      </description>
+    </release>
     <release version="2.1.5" date="2026-11-02">
       <description>
         <p>Opponent preparations save automatically, the engine starts searching for opening mistakes by itself, and the preparation layout is clearer. The book comparison has been removed.</p>

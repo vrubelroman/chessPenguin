@@ -968,7 +968,9 @@ impl PrepList {
                     )
                     .format("%d.%m.%Y")
                     .to_string();
-                    let errors = if item.evaluated {
+                    let errors = if item.evaluated && !item.errors_current() {
+                        String::new()
+                    } else if item.evaluated {
                         let e = &item.errors;
                         trf(
                             "errors: ?? {b} · ? {m} · ?! {i}",
@@ -983,8 +985,12 @@ impl PrepList {
                     };
                     let path = item.path.display().to_string();
                     if found {
-                        let line =
-                            format!("{errors} · {}", trf("saved {date}", &[("date", &when)]));
+                        let saved = trf("saved {date}", &[("date", &when)]);
+                        let line = if errors.is_empty() {
+                            saved
+                        } else {
+                            format!("{errors} · {saved}")
+                        };
                         ui.add(egui::Label::new(RichText::new(line).small().weak()).truncate());
                     } else {
                         ui.add(
@@ -1735,7 +1741,9 @@ impl PrepScreen {
         // A saved report missing on disk (a crash between the writes) is restored
         // from the cache the same way.
         let restore = saved.is_some() && !had_saved_report && screen.report.is_some();
-        if screen.saved && (saved.is_none() || restore) {
+        let rejudged =
+            saved.as_ref().is_some_and(|s| !s.errors_current()) && screen.report.is_some();
+        if screen.saved && (saved.is_none() || restore || rejudged) {
             let result = if screen.report.is_some() {
                 screen.keep()
             } else {
@@ -2417,6 +2425,7 @@ impl PrepScreen {
             games,
             errors,
             evaluated,
+            error_selection_version: crate::prep_saved::ERROR_SELECTION_VERSION,
         }
     }
 

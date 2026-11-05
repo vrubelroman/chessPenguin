@@ -214,6 +214,14 @@
     <string name="add_paste_hint">Boshqa ilovada nusxalangan partiyalar</string>
     <string name="paste_none">Almashish buferida PGN partiyalar yoʻq</string>
     <string name="paste_db">Qoʻyildi: %1$s</string>
+    <plurals name="clipboard_open_title">
+        <item quantity="one">Almashish buferida partiya</item>
+        <item quantity="other">Almashish buferida partiyalar</item>
+    </plurals>
+    <string name="clipboard_open_one">Bu PGN partiyani saqlab, doskada ochish?</string>
+    <string name="clipboard_open_many">%1$s saqlab, birinchi partiyani doskada ochish? Barcha partiyalar mahalliy nusxada saqlanadi.</string>
+    <string name="clipboard_open">Ochish</string>
+    <string name="clipboard_database_name">Almashish buferi</string>
     <string name="opening_file">Fayl ochilmoqda…</string>
     <string name="file_failed">Faylni ochib boʻlmadi</string>
     <string name="file_no_games">Bu faylda shaxmat partiyalari yoʻq.</string>

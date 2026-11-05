@@ -213,6 +213,14 @@
     <string name="add_paste_hint">In einer anderen App kopierte Partien</string>
     <string name="paste_none">Keine PGN-Partien in der Zwischenablage</string>
     <string name="paste_db">Eingefügt am %1$s</string>
+    <plurals name="clipboard_open_title">
+        <item quantity="one">Partie in der Zwischenablage</item>
+        <item quantity="other">Partien in der Zwischenablage</item>
+    </plurals>
+    <string name="clipboard_open_one">Diese PGN-Partie speichern und auf dem Brett öffnen?</string>
+    <string name="clipboard_open_many">%1$s speichern und die erste Partie auf dem Brett öffnen? Alle Partien bleiben in der lokalen Kopie.</string>
+    <string name="clipboard_open">Öffnen</string>
+    <string name="clipboard_database_name">Zwischenablage</string>
     <string name="opening_file">Datei wird geöffnet…</string>
     <string name="file_failed">Die Datei ließ sich nicht öffnen</string>
     <string name="file_no_games">Diese Datei enthält keine Schachpartien.</string>

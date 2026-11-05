@@ -216,6 +216,14 @@
     <string name="add_paste_hint">Games copied in another app</string>
     <string name="paste_none">No PGN games in the clipboard</string>
     <string name="paste_db">Pasted %1$s</string>
+    <plurals name="clipboard_open_title">
+        <item quantity="one">Game in clipboard</item>
+        <item quantity="other">Games in clipboard</item>
+    </plurals>
+    <string name="clipboard_open_one">Save this PGN game and open it on the board?</string>
+    <string name="clipboard_open_many">Save %1$s and open the first game on the board? All games will be kept in the local copy.</string>
+    <string name="clipboard_open">Open</string>
+    <string name="clipboard_database_name">Clipboard</string>
     <string name="opening_file">Opening the file…</string>
     <string name="file_failed">Couldn’t open the file</string>
     <string name="file_no_games">There are no chess games in this file.</string>

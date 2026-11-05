@@ -7,6 +7,9 @@ import androidx.compose.runtime.setValue
 import android.net.Uri
 import android.provider.OpenableColumns
 import io.github.vrubelroman.chesspenguin.data.AppUpdates
+import io.github.vrubelroman.chesspenguin.data.CLIPBOARD_PREFERENCES
+import io.github.vrubelroman.chesspenguin.data.ClipboardOffer
+import io.github.vrubelroman.chesspenguin.data.ClipboardPgn
 import io.github.vrubelroman.chesspenguin.data.DbEntry
 import io.github.vrubelroman.chesspenguin.data.EngineFiles
 import io.github.vrubelroman.chesspenguin.data.MaiaFiles
@@ -24,7 +27,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.atomic.AtomicInteger
 import java.io.FileNotFoundException
 import java.util.UUID
 
@@ -49,6 +51,18 @@ class ChessPenguinApp : Application() {
     val downloads by lazy { OnlineDownloads(library, scope) }
     /// The app's own updates (android-ui.md §25).
     val updates by lazy { AppUpdates(this, scope, engineFiles) }
+    val clipboardPgn by lazy {
+        ClipboardPgn(
+            library,
+            scope,
+            getSharedPreferences(CLIPBOARD_PREFERENCES, MODE_PRIVATE),
+            latestIncoming.lock,
+        ) {
+            if (latestIncoming.invalidateClipboard() && incoming.value == Incoming.Opening) {
+                incoming.value = null
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -79,13 +93,14 @@ class ChessPenguinApp : Application() {
 
     /// One copy at a time, in the order the files came; only the last one opened is shown.
     private val copying = Mutex()
-    private val waiting = AtomicInteger()
+    private val latestIncoming = LatestIncoming()
 
     /// Copies a file another app gave (it gives access only for a while) and puts it on
     /// the list; `incoming` tells the screens how it went.
     fun receive(uri: Uri) {
-        waiting.incrementAndGet()
-        incoming.value = Incoming.Opening
+        val request = latestIncoming.withLock {
+            latestIncoming.next(IncomingOrigin.Uri).also { incoming.value = Incoming.Opening }
+        }
         scope.launch {
             val result = copying.withLock {
                 try {
@@ -101,9 +116,47 @@ class ChessPenguinApp : Application() {
                     Incoming.Failed(e)
                 }
             }
-            val more = waiting.decrementAndGet() > 0
-            // A file opened while another one was still being copied comes after it.
-            if (!(more && result is Incoming.Opened)) incoming.value = result
+            latestIncoming.publish(request) { incoming.value = result }
+        }
+    }
+
+    fun openClipboard(offer: ClipboardOffer, name: String) {
+        val (accepted, request) = latestIncoming.withLock {
+            val accepted = clipboardPgn.accept(offer) ?: return
+            val request = latestIncoming.next(IncomingOrigin.Clipboard)
+            incoming.value = Incoming.Opening
+            accepted to request
+        }
+        scope.launch {
+            val result = copying.withLock {
+                try {
+                    Incoming.Pasted(library.addCopy("clipboard.pgn", accepted.bytes.inputStream()) { name })
+                } catch (e: Exception) {
+                    Incoming.Failed(e)
+                }
+            }
+            latestIncoming.withLock {
+                if (!latestIncoming.isLatest(request)) {
+                    clipboardPgn.finish(accepted, false)
+                    return@withLock
+                }
+                if (!clipboardPgn.canPublish(accepted)) {
+                    if (incoming.value == Incoming.Opening) incoming.value = null
+                    return@withLock
+                }
+                when (result) {
+                    is Incoming.Pasted -> {
+                        clipboardPgn.finish(accepted, true)
+                        incoming.value = result
+                    }
+                    is Incoming.Failed -> {
+                        clipboardPgn.finish(accepted, false)
+                        incoming.value = result
+                    }
+                    else -> incoming.value = null
+                }
+                latestIncoming.clear(request)
+            }
         }
     }
 
@@ -119,8 +172,47 @@ class ChessBasePart : Exception()
 
 private val CHESSBASE_PARTS = setOf("cbh", "cbg", "cba", "cbp", "cbs", "cbj", "cbt", "cbc", "cbe", "cbm")
 
+internal enum class IncomingOrigin {
+    Uri,
+    Clipboard,
+}
+
+internal class LatestIncoming {
+    internal val lock = Any()
+    private var generation = 0L
+    private var origin: IncomingOrigin? = null
+
+    fun next(origin: IncomingOrigin = IncomingOrigin.Uri): Long = synchronized(lock) {
+        this.origin = origin
+        ++generation
+    }
+
+    fun isLatest(request: Long): Boolean = synchronized(lock) { request == generation }
+
+    fun invalidateClipboard(): Boolean = synchronized(lock) {
+        if (origin != IncomingOrigin.Clipboard) return false
+        origin = null
+        generation += 1
+        true
+    }
+
+    fun clear(request: Long) = synchronized(lock) {
+        if (isLatest(request)) origin = null
+    }
+
+    fun publish(request: Long, action: () -> Unit): Boolean = synchronized(lock) {
+        if (!isLatest(request)) return false
+        action()
+        clear(request)
+        true
+    }
+
+    inline fun <T> withLock(action: () -> T): T = synchronized(lock, action)
+}
+
 sealed interface Incoming {
     data object Opening : Incoming
     data class Opened(val entry: DbEntry) : Incoming
+    data class Pasted(val entry: DbEntry) : Incoming
     data class Failed(val error: Throwable) : Incoming
 }

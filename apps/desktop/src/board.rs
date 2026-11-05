@@ -32,6 +32,9 @@ pub enum Drawn {
     Circle(chess_core::ShapeColor, Square),
 }
 
+#[cfg(test)]
+pub(crate) type TestAnimation<'a> = (f64, &'a [(Piece, Square, Square)], f32);
+
 #[derive(Default)]
 pub struct BoardState {
     selected: Option<Square>,
@@ -92,6 +95,12 @@ impl BoardState {
     /// A piece is selected or dragged, or a promotion is being chosen.
     pub fn is_busy(&self) -> bool {
         self.selected.is_some() || self.drag.is_some() || self.promotion.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn animation_at(&self, now: f64) -> Option<TestAnimation<'_>> {
+        let anim = self.anim.as_ref()?;
+        Some((anim.duration, &anim.slides, anim.rest(now)?))
     }
 }
 
@@ -281,9 +290,22 @@ impl BoardView<'_> {
             }
         }
 
+        // A released legal drag is already at its destination. Draw that result
+        // in this frame too, before the caller installs the move in its model.
+        // Click moves keep the ordinary animation on the following frame.
+        let dropped_position = result
+            .as_ref()
+            .filter(|_| state.dropped.is_some())
+            .map(|mv| {
+                let mut position = self.pos.clone();
+                position.play_unchecked(*mv);
+                position
+            });
+        let painted_position = dropped_position.as_ref().unwrap_or(self.pos);
+
         // --- animation ---------------------------------------------------------------------
         let now = ui.input(|i| i.time);
-        let board = self.pos.board();
+        let board = painted_position.board();
         if state.shown.as_ref() != Some(board) {
             state.anim = None;
             if let Some(prev) = &state.shown
@@ -340,8 +362,8 @@ impl BoardView<'_> {
             hl(&painter, from, red);
             hl(&painter, to, red);
         }
-        if self.pos.is_check()
-            && let Some(k) = self.pos.board().king_of(self.pos.turn())
+        if painted_position.is_check()
+            && let Some(k) = painted_position.board().king_of(painted_position.turn())
         {
             let r = geo.square_rect(k);
             painter.circle_filled(
@@ -364,7 +386,7 @@ impl BoardView<'_> {
                     .paint_tinted(ui, piece, r, Color32::WHITE.gamma_multiply(rest));
             }
         }
-        for (sq, piece) in self.pos.board().clone() {
+        for (sq, piece) in painted_position.board().clone() {
             if state.drag == Some(sq) && response.dragged() {
                 continue;
             }

@@ -89,6 +89,8 @@ pub enum LibraryAction {
     },
     /// «🗐 Preparations»: the saved preparations against opponents.
     Preparations,
+    #[cfg(not(web))]
+    OpeningTraining,
     /// «Prepare against…» for a player of this database (opponent-prep.md §2).
     PrepareAgainst {
         path: PathBuf,
@@ -117,6 +119,13 @@ fn button_w(ui: &Ui, text: &str) -> f32 {
     text_w(ui, text, egui::TextStyle::Button)
         + 2.0 * ui.spacing().button_padding.x
         + ui.spacing().item_spacing.x
+}
+
+// Toolbar contents change as background probes finish and the window narrows.
+// Keep action IDs independent of the preceding widgets: egui buttons resolve
+// their visual state from the previous frame's response before being allocated.
+fn shelf_button(ui: &mut Ui, id: &str, label: impl Into<egui::WidgetText>) -> egui::Response {
+    ui.push_id(id, |ui| ui.button(label)).inner
 }
 
 /// A PGN file whose beginning is in a legacy (single-byte) encoding: it takes games only
@@ -151,7 +160,8 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
     };
     let play = crate::platform::CAPS.play;
     let prep = crate::platform::CAPS.prep;
-    let groups = 1.0 + f32::from(u8::from(play)) + f32::from(u8::from(prep));
+    let training = crate::platform::CAPS.training;
+    let groups = 1.0 + f32::from(u8::from(play)) + f32::from(u8::from(prep || training));
     texts[..if play { 4 } else { 3 }]
         .iter()
         .map(|t| button_w(ui, t))
@@ -165,6 +175,11 @@ fn shelf_buttons_w(ui: &Ui, update: Option<&str>, icons: bool) -> f32 {
                     tr("🗐 Preparations")
                 },
             )
+        } else {
+            0.0
+        }
+        + if training {
+            button_w(ui, tr("Opening training (α version)"))
         } else {
             0.0
         }
@@ -238,7 +253,8 @@ pub struct Library {
     /// Database whose import notes are shown.
     notes_open: Option<PathBuf>,
     pub selected_db: Option<PathBuf>,
-    /// Lichess or Chess.com answered at start (the online games are offered).
+    /// Network probe availability for updating an existing online database.
+    /// The main toolbar is always available according to platform capabilities.
     pub online: bool,
     /// Online databases being downloaded or updated.
     pub online_busy: Vec<PathBuf>,
@@ -766,9 +782,12 @@ impl Library {
                 self.select_db(&p, ui.ctx());
             }
             self.groups(ui, true, icons, actions);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.app_buttons(ui, icons, actions);
-            });
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .id_salt("shelf_app_actions")
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| self.app_buttons(ui, icons, actions),
+            );
         });
         // The game put aside: a strip under the line.
         if let Some(card) = &self.aside {
@@ -781,12 +800,7 @@ impl Library {
     /// "⚙ Settings" and the newer version (right to left): the program's corner, the
     /// same as on the game screen. Icons only, with the names in the tooltips.
     fn app_buttons(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
-        let label = |full: &'static str, icon: &'static str| if icons { icon } else { full };
-        if ui
-            .button(label(tr("⚙ Settings"), "⚙"))
-            .on_hover_text(shelf_hint(icons, tr("⚙ Settings"), "Ctrl+,"))
-            .clicked()
-        {
+        if crate::widgets::settings_button(ui, icons).clicked() {
             actions.push(LibraryAction::OpenSettings);
         }
         #[cfg(not(web))]
@@ -814,8 +828,7 @@ impl Library {
             } else {
                 tr("🗐 Preparations")
             };
-            if ui
-                .button(label)
+            if shelf_button(ui, "preparations", label)
                 .on_hover_text(shelf_hint(
                     icons,
                     tr("🗐 Preparations"),
@@ -826,13 +839,21 @@ impl Library {
                 actions.push(LibraryAction::Preparations);
             }
         }
+        #[cfg(not(web))]
+        if crate::platform::CAPS.training {
+            if !crate::platform::CAPS.prep {
+                ui.separator();
+            }
+            if shelf_button(ui, "opening_training", tr("Opening training (α version)")).clicked() {
+                actions.push(LibraryAction::OpeningTraining);
+            }
+        }
     }
 
     /// "♞ Play": a game against Maia, a group of its own.
     fn play_button(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
         let label = if icons { "♞" } else { tr("♞ Play") };
-        if ui
-            .button(label)
+        if shelf_button(ui, "play", label)
             .on_hover_text(shelf_hint(
                 icons,
                 tr("♞ Play"),
@@ -848,8 +869,7 @@ impl Library {
     fn game_buttons(&self, ui: &mut Ui, icons: bool, actions: &mut Vec<LibraryAction>) {
         let label = |full: &'static str, icon: &'static str| if icons { icon } else { full };
         let hint = |full: &str, hint: &str| shelf_hint(icons, full, hint);
-        if ui
-            .button(label(tr("♟ New game"), "♟"))
+        if shelf_button(ui, "new_game", label(tr("♟ New game"), "♟"))
             .on_hover_text(hint(
                 tr("♟ New game"),
                 tr("Empty board in the starting position (Ctrl+N)"),
@@ -858,8 +878,7 @@ impl Library {
         {
             actions.push(LibraryAction::NewGame);
         }
-        if ui
-            .button(label(tr("📋 Paste PGN"), "📋"))
+        if shelf_button(ui, "paste_pgn", label(tr("📋 Paste PGN"), "📋"))
             .on_hover_text(hint(
                 tr("📋 Paste PGN"),
                 tr("Open a game from the clipboard"),
@@ -905,9 +924,12 @@ impl Library {
                 ui.add_space(16.0 - ui.spacing().item_spacing.x);
             }
             self.groups(ui, folded, icons, actions);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.app_buttons(ui, icons, actions);
-            });
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .id_salt("shelf_app_actions")
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| self.app_buttons(ui, icons, actions),
+            );
         });
         let card = self.aside.take();
         let card_w = card.as_ref().map_or(0.0, |c| c.width(ui));
@@ -946,12 +968,9 @@ impl Library {
 
     /// The width of `shelf_actions`.
     fn shelf_actions_w(&self, ui: &Ui, folded: bool) -> f32 {
-        let online = self.online_running.map_or(0.0, |n| {
-            14.0 + ui.spacing().item_spacing.x + button_w(ui, &crate::large_db::grouped(n))
-        });
-        let buttons = if folded {
+        if folded {
             button_w(ui, "+ ▾")
-                + if self.online {
+                + if crate::platform::CAPS.online_games {
                     button_w(ui, "🌐")
                 } else {
                     0.0
@@ -959,17 +978,17 @@ impl Library {
         } else {
             button_w(ui, tr("+ Add database"))
                 + button_w(ui, tr("✚ New database"))
-                + if self.online {
+                + if crate::platform::CAPS.online_games {
                     button_w(ui, &format!("🌐 {}", tr("Online games")))
                 } else {
                     0.0
                 }
-        };
-        buttons + if self.online { online } else { 0.0 }
+        }
     }
 
     /// «+ Add database · ✚ New database · 🌐 Online games», or folded: «+ ▾» (a menu of
-    /// the first two) and «🌐»; a download under way shows its count beside the globe.
+    /// the first two) and «🌐». Download progress belongs in the tooltip/dialog so
+    /// background work never moves the toolbar's other actions.
     fn shelf_actions(&self, ui: &mut Ui, folded: bool, actions: &mut Vec<LibraryAction>) {
         let add_hint = tr("Open PGN, ChessBase (.cbh, .cbv) or an archive (.zip, .7z) (Ctrl+O)");
         let new_hint = tr("An empty PGN file for your own games (Ctrl+Shift+N)");
@@ -977,43 +996,43 @@ impl Library {
             "Download any player's games by nickname into a database: yours, a pupil's, an opponent's",
         );
         if folded {
-            ui.menu_button("+ ▾", |ui| {
-                if ui
-                    .button(tr("Add database…"))
-                    .on_hover_text(add_hint)
-                    .clicked()
-                {
-                    actions.push(LibraryAction::AddDatabases);
-                    ui.close();
-                }
-                if crate::platform::CAPS.own_databases
-                    && ui
-                        .button(tr("New database…"))
-                        .on_hover_text(new_hint)
+            ui.push_id("database_menu", |ui| {
+                ui.menu_button("+ ▾", |ui| {
+                    if ui
+                        .button(tr("Add database…"))
+                        .on_hover_text(add_hint)
                         .clicked()
-                {
-                    actions.push(LibraryAction::NewDatabase);
-                    ui.close();
-                }
+                    {
+                        actions.push(LibraryAction::AddDatabases);
+                        ui.close();
+                    }
+                    if crate::platform::CAPS.own_databases
+                        && ui
+                            .button(tr("New database…"))
+                            .on_hover_text(new_hint)
+                            .clicked()
+                    {
+                        actions.push(LibraryAction::NewDatabase);
+                        ui.close();
+                    }
+                })
             });
         } else {
-            if ui
-                .button(tr("+ Add database"))
+            if shelf_button(ui, "add_database", tr("+ Add database"))
                 .on_hover_text(add_hint)
                 .clicked()
             {
                 actions.push(LibraryAction::AddDatabases);
             }
             if crate::platform::CAPS.own_databases
-                && ui
-                    .button(tr("✚ New database"))
+                && shelf_button(ui, "new_database", tr("✚ New database"))
                     .on_hover_text(new_hint)
                     .clicked()
             {
                 actions.push(LibraryAction::NewDatabase);
             }
         }
-        if self.online {
+        if crate::platform::CAPS.online_games {
             let label = if folded {
                 "🌐".to_owned()
             } else {
@@ -1023,13 +1042,12 @@ impl Library {
                 Some(n) => trf("downloading… {n}", &[("n", &crate::i18n::games(n))]),
                 None => online_hint.to_owned(),
             };
-            if ui.button(label).on_hover_text(hint).clicked() {
+            if shelf_button(ui, "online_games", label)
+                .on_hover_text(hint)
+                .clicked()
+            {
                 #[cfg(not(web))]
                 actions.push(LibraryAction::OnlineGames);
-            }
-            if let Some(n) = self.online_running {
-                ui.add(egui::Spinner::new().size(14.0));
-                ui.label(RichText::new(crate::large_db::grouped(n)).weak());
             }
         }
     }
@@ -1037,7 +1055,14 @@ impl Library {
     /// The empty shelf's invitation: the three actions as large cards, centred.
     fn action_cards(&self, ui: &mut Ui, actions: &mut Vec<LibraryAction>) {
         let (add_w, new_w, online_w) = side_card_widths(ui);
-        let total = add_w + new_w + if self.online { online_w + 8.0 } else { 0.0 } + 8.0;
+        let total = add_w
+            + new_w
+            + if crate::platform::CAPS.online_games {
+                online_w + 8.0
+            } else {
+                0.0
+            }
+            + 8.0;
         let card = |ui: &mut Ui, w: f32, title: &str, below: Option<&str>| {
             let (rect, resp) = ui.allocate_exact_size(vec2(w, 64.0), Sense::click());
             let visuals = ui.style().interact(&resp);
@@ -1089,7 +1114,7 @@ impl Library {
             {
                 actions.push(LibraryAction::NewDatabase);
             }
-            if self.online
+            if crate::platform::CAPS.online_games
                 && card(
                     ui,
                     online_w,
@@ -1518,5 +1543,225 @@ fn import_error(e: &ImportError) -> String {
         #[cfg(web)]
         ImportError::Io { source, .. } => source.to_string(),
         e => e.to_string(),
+    }
+}
+
+#[cfg(all(test, not(web)))]
+mod tests {
+    use super::*;
+
+    fn toolbar_frame(
+        library: &mut Library,
+        ctx: &egui::Context,
+        width: f32,
+        events: Vec<egui::Event>,
+    ) -> (Vec<(String, egui::Rect, egui::Color32)>, Vec<LibraryAction>) {
+        toolbar_frame_at_size(library, ctx, vec2(width, 900.0), events)
+    }
+
+    fn toolbar_frame_at_size(
+        library: &mut Library,
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+    ) -> (Vec<(String, egui::Rect, egui::Color32)>, Vec<LibraryAction>) {
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let databases = library.slots.keys().cloned().collect::<Vec<_>>();
+                actions = library.show(ui, &databases, &Settings::default());
+            },
+        );
+        output.textures_delta.clear();
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| {
+                if let egui::Shape::Text(shape) = &clipped.shape
+                    && shape.pos.y < 40.0
+                {
+                    Some((
+                        shape.galley.text().to_owned(),
+                        egui::Rect::from_min_size(shape.pos, shape.galley.size()),
+                        shape.fallback_color,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        output.drop_without_applying_deltas();
+        (text, actions)
+    }
+
+    #[test]
+    fn startup_download_progress_keeps_toolbar_geometry_and_style_stable() {
+        for height in [590.0, 900.0] {
+            for width in [640.0, 960.0, 1100.0, 1400.0, 1920.0] {
+                let ctx = egui::Context::default();
+                crate::assets::install(&ctx);
+                let mut library = Library::new(&ctx);
+                let (pending, _) =
+                    toolbar_frame_at_size(&mut library, &ctx, vec2(width, height), vec![]);
+                library.online = true;
+                library.online_running = Some(100_000);
+                let (ready, _) =
+                    toolbar_frame_at_size(&mut library, &ctx, vec2(width, height), vec![]);
+                assert_eq!(
+                    pending, ready,
+                    "toolbar changed when background progress arrived at width {width}"
+                );
+                assert!(
+                    ready.iter().any(|(label, _, _)| label == "🌐"
+                        || label == &format!("🌐 {}", tr("Online games")))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn resizing_and_update_badge_never_reuse_a_separator_as_button_style() {
+        let ctx = egui::Context::default();
+        crate::assets::install(&ctx);
+        let mut library = Library::new(&ctx);
+        for (width, update) in [
+            (1400.0, None),
+            (640.0, None),
+            (960.0, Some("⬆ Update 2.2.0")),
+            (1920.0, Some("⬆ Update 2.2.0")),
+            (1100.0, None),
+            (640.0, None),
+            (1400.0, None),
+        ] {
+            library.update = update.map(str::to_owned);
+            let (first, _) = toolbar_frame(&mut library, &ctx, width, vec![]);
+            let (settled, _) = toolbar_frame(&mut library, &ctx, width, vec![]);
+            assert_eq!(
+                first, settled,
+                "first resized frame had a stale response/style at {width}"
+            );
+            for (label, rect, color) in first {
+                assert!(
+                    rect.left() >= 0.0 && rect.right() <= width,
+                    "{label}: {rect:?}"
+                );
+                if label != tr("Databases") && !label.starts_with('⬆') {
+                    assert_eq!(
+                        color,
+                        ctx.style_of(egui::Theme::Dark)
+                            .visuals
+                            .widgets
+                            .inactive
+                            .fg_stroke
+                            .color,
+                        "false noninteractive style for {label}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn toolbar_actions_are_available_while_the_database_loads_and_afterwards() {
+        let ctx = egui::Context::default();
+        crate::assets::install(&ctx);
+        let mut library = Library::new(&ctx);
+        let path = PathBuf::from("/tmp/chesspenguin-toolbar-regression.pgn");
+        let (_tx, rx) = channel();
+        library.slots.insert(
+            path.clone(),
+            Slot::Loading {
+                progress: Arc::new(Mutex::new(ScanProgress {
+                    bytes_done: 0,
+                    bytes_total: 100,
+                    games: 0,
+                })),
+                cancel: Arc::new(AtomicBool::new(false)),
+                rx,
+            },
+        );
+        library.selected_db = Some(path.clone());
+        let (loading, _) = toolbar_frame(&mut library, &ctx, 1400.0, vec![]);
+        for ready in [false, true] {
+            if ready {
+                let opened = chess_import::open_bytes(
+                    "toolbar.pgn",
+                    b"1. e4 e5 *".to_vec(),
+                    &mut |_| {},
+                    &AtomicBool::new(false),
+                )
+                .unwrap();
+                library
+                    .large
+                    .insert(path.clone(), LargeView::for_database(&opened.db, false));
+                library
+                    .slots
+                    .insert(path.clone(), Slot::Ready(Arc::new(opened.db)));
+                library.online = true;
+                library.online_running = Some(1_000_000);
+            }
+            let (texts, _) = toolbar_frame(
+                &mut library,
+                &ctx,
+                1400.0,
+                vec![egui::Event::PointerMoved(egui::pos2(-100.0, -100.0))],
+            );
+            assert_eq!(loading, texts, "database completion changed the toolbar");
+            for (label, expected) in [
+                (tr("+ Add database").to_owned(), LibraryAction::AddDatabases),
+                (tr("✚ New database").to_owned(), LibraryAction::NewDatabase),
+                (
+                    format!("🌐 {}", tr("Online games")),
+                    LibraryAction::OnlineGames,
+                ),
+                (tr("♟ New game").to_owned(), LibraryAction::NewGame),
+                (tr("📋 Paste PGN").to_owned(), LibraryAction::PastePgn),
+                (tr("♞ Play").to_owned(), LibraryAction::Play),
+                (tr("🗐 Preparations").to_owned(), LibraryAction::Preparations),
+                (
+                    tr("Opening training (α version)").to_owned(),
+                    LibraryAction::OpeningTraining,
+                ),
+                (tr("⚙ Settings").to_owned(), LibraryAction::OpenSettings),
+            ] {
+                let pos = texts
+                    .iter()
+                    .find(|(text, _, _)| text == &label)
+                    .unwrap()
+                    .1
+                    .center();
+                let button = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                toolbar_frame(
+                    &mut library,
+                    &ctx,
+                    1400.0,
+                    vec![egui::Event::PointerMoved(pos), button(true)],
+                );
+                let (_, actions) = toolbar_frame(&mut library, &ctx, 1400.0, vec![button(false)]);
+                assert!(
+                    actions.iter().any(|action| std::mem::discriminant(action)
+                        == std::mem::discriminant(&expected)),
+                    "{label} did not activate, ready={ready}"
+                );
+            }
+            // egui reads the previous response for styling: let the final hover
+            // leave before comparing the next data state.
+            toolbar_frame(
+                &mut library,
+                &ctx,
+                1400.0,
+                vec![egui::Event::PointerMoved(egui::pos2(-100.0, -100.0))],
+            );
+        }
     }
 }

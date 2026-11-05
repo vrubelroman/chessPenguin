@@ -23,6 +23,12 @@ const SAMPLES: [(&str, &str); 2] = [
     ("Alekhine", include_str!("../../../examples/alekhine.pgn")),
 ];
 
+#[cfg(test)]
+const OPENING_SAMPLES: [(&str, &str); 2] = [
+    ("najdorf", include_str!("../../../examples/najdorf.pgn")),
+    ("spanish", include_str!("../../../examples/spanish.pgn")),
+];
+
 fn dir() -> Option<PathBuf> {
     crate::platform::examples_dir()
 }
@@ -114,6 +120,61 @@ mod tests {
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opening_samples_have_three_legal_records_and_the_requested_branches() {
+        for (name, text) in OPENING_SAMPLES {
+            let db = chess_core::PgnDatabase::from_bytes(
+                text.as_bytes().to_vec(),
+                None,
+                &mut |_| {},
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .unwrap();
+            assert_eq!(db.len(), 3, "{name}");
+            let mut branches = Vec::new();
+            for index in 0..db.len() {
+                let parsed = db.load_game(index).unwrap();
+                assert!(parsed.diagnostics.is_empty(), "{name} #{}", index + 1);
+                let game = parsed.game;
+                for tag in ["Event", "Site", "Date", "Round", "White", "Black", "Result"] {
+                    assert!(game.tag(tag).is_some(), "{name} #{index}: {tag}");
+                }
+                assert_eq!(game.result().as_str(), "*");
+                let san: Vec<String> = game
+                    .mainline()
+                    .iter()
+                    .filter_map(|id| game.game_move(*id).map(|mv| mv.san.clone()))
+                    .collect();
+                let common: &[&str] = if name == "najdorf" {
+                    &[
+                        "e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6",
+                    ]
+                } else {
+                    &["e4", "e5", "Nf3", "Nc6", "Bb5"]
+                };
+                assert!(san.len() >= common.len(), "{name} #{index}: {san:?}");
+                assert!(
+                    common
+                        .iter()
+                        .zip(&san)
+                        .all(|(expected, actual)| *expected == actual),
+                    "{name} #{index}: {san:?}"
+                );
+                branches.push(san);
+            }
+            if name == "najdorf" {
+                assert_eq!(branches[0][10], "Be3");
+                assert_eq!(branches[1][10], "Bg5");
+                assert_eq!(branches[2][10], "Be2");
+            } else {
+                assert_eq!(branches[0][5], "Nf6");
+                assert_eq!(branches[1][5], "a6");
+                assert_eq!(branches[2][5], "a6");
+                assert_eq!(branches[2][9], "Nxe4");
+            }
+        }
     }
 
     #[test]

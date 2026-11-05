@@ -295,6 +295,10 @@ pub struct App {
     prep_quit_ask: bool,
     prep_quit_ok: bool,
     allow_quit: bool,
+    #[cfg(not(web))]
+    repertoire: Option<crate::repertoire_ui::RepertoireUi>,
+    #[cfg(not(web))]
+    toast_repertoire: Option<(trainer::repertoire::RepertoireId, String)>,
     applied_dark: Option<bool>,
     debug: DebugStartup,
 }
@@ -428,6 +432,18 @@ impl DebugStartup {
 impl App {
     pub fn new(ctx: &egui::Context) -> Self {
         let mut settings = Settings::load();
+        let repertoire_migrated = settings.migrate_repertoire_flow();
+        #[cfg(not(web))]
+        {
+            if let Ok(language) = std::env::var("CP_LANG")
+                && let Some(language) = crate::i18n::Lang::from_locale(&language)
+            {
+                settings.language = language;
+            }
+            if let Ok(dark) = std::env::var("CP_DARK") {
+                settings.dark_mode = dark != "0";
+            }
+        }
         // Before the samples, which are named in this language.
         crate::i18n::set_lang(settings.language);
         crate::engine_download::clean_leftovers();
@@ -482,7 +498,7 @@ impl App {
         }
         let mut app = Self {
             settings,
-            settings_dirty: false,
+            settings_dirty: repertoire_migrated,
             sound: SoundPlayer::new(),
             library,
             game: None,
@@ -527,6 +543,10 @@ impl App {
             desktop,
             translation: Default::default(),
             allow_quit: false,
+            #[cfg(not(web))]
+            repertoire: None,
+            #[cfg(not(web))]
+            toast_repertoire: None,
             applied_dark: None,
             debug: DebugStartup::from_env(),
         }
@@ -718,7 +738,15 @@ impl App {
         };
         let now = ctx.input(|i| i.time);
         if !self.debug.screenshot_requested {
-            if ctx.cumulative_frame_nr() == 1 {
+            let size = std::env::var("CP_SCREENSHOT_SIZE").ok().and_then(|size| {
+                let (width, height) = size.split_once('x')?;
+                Some(egui::vec2(width.parse().ok()?, height.parse().ok()?))
+            });
+            if let Some(size) = size {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            } else if ctx.cumulative_frame_nr() == 1 {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
             }
             if now >= self.debug.screenshot_delay {
@@ -748,6 +776,84 @@ impl App {
     }
 
     fn debug_step(&mut self, ctx: &egui::Context) {
+        #[cfg(not(web))]
+        if let Ok(what) = std::env::var("CP_REPERTOIRE") {
+            static OPEN: std::sync::Once = std::sync::Once::new();
+            OPEN.call_once(|| {
+                self.repertoire = Some(crate::repertoire_ui::RepertoireUi::new());
+                if let Some(screen) = self.repertoire.as_mut() {
+                    screen.debug_open(&what, &mut self.settings);
+                }
+            });
+        }
+        #[cfg(not(web))]
+        if let Ok(path) = std::env::var("CP_REPERTOIRE_IMPORT_FILE") {
+            static IMPORT: std::sync::Once = std::sync::Once::new();
+            IMPORT.call_once(|| {
+                if let Some(screen) = self.repertoire.as_mut() {
+                    screen.debug_import(PathBuf::from(path));
+                }
+            });
+        }
+        #[cfg(not(web))]
+        if std::env::var_os("CP_REPERTOIRE_EXPORT").is_some() {
+            static EXPORT: std::sync::Once = std::sync::Once::new();
+            EXPORT.call_once(|| {
+                if let Some(screen) = self.repertoire.as_mut() {
+                    screen.debug_export();
+                }
+            });
+        }
+        #[cfg(not(web))]
+        if std::env::var_os("CP_REPERTOIRE_CONFIRM_IMPORT").is_some()
+            && let Some(screen) = self.repertoire.as_mut()
+        {
+            screen.debug_confirm_import(&self.settings);
+        }
+        #[cfg(not(web))]
+        if let Ok(name) = std::env::var("CP_REPERTOIRE_RENAME") {
+            static RENAME: std::sync::Once = std::sync::Once::new();
+            if !RENAME.is_completed() {
+                let mut done = false;
+                if let Some(screen) = self.repertoire.as_mut() {
+                    done = screen.debug_rename(name, &self.settings);
+                }
+                if done {
+                    RENAME.call_once(|| {});
+                }
+            }
+        }
+        #[cfg(not(web))]
+        if std::env::var_os("CP_REPERTOIRE_DELETE").is_some() {
+            static DELETE: std::sync::Once = std::sync::Once::new();
+            if !DELETE.is_completed() {
+                let mut done = false;
+                if let Some(screen) = self.repertoire.as_mut() {
+                    done = screen.debug_delete(&self.settings);
+                }
+                if done {
+                    DELETE.call_once(|| {});
+                }
+            }
+        }
+        #[cfg(not(web))]
+        if let Ok(moves) = std::env::var("CP_REPERTOIRE_MOVES") {
+            static MOVES: std::sync::Once = std::sync::Once::new();
+            MOVES.call_once(|| {
+                if let Some(screen) = self.repertoire.as_mut() {
+                    screen.debug_moves(&moves);
+                }
+            });
+        }
+        #[cfg(not(web))]
+        if std::env::var_os("CP_REPERTOIRE_HINT").is_some() {
+            static HINT: std::sync::Once = std::sync::Once::new();
+            HINT.call_once(|| {
+                if let Some(screen) = self.repertoire.as_mut() {
+                    screen.debug_hint();
+                }
+            });
+        }
         if self.debug.prep.is_some()
             && let Some(path) = self.settings.databases.first().cloned()
             && self.library.database(&path).is_some()
@@ -839,6 +945,26 @@ impl App {
             // CP_REVIEW=ask presses «Analyse», any other value starts the analysis.
             if let Ok(v) = std::env::var("CP_REVIEW") {
                 g.debug_review(ctx, &v);
+            }
+        }
+        #[cfg(not(web))]
+        {
+            static ADD_REPERTOIRE: std::sync::Once = std::sync::Once::new();
+            if let Ok(name) = std::env::var("CP_ADD_REPERTOIRE")
+                && !ADD_REPERTOIRE.is_completed()
+                && let Some((game, at)) =
+                    self.game.as_ref().and_then(|g| g.debug_repertoire_source())
+            {
+                ADD_REPERTOIRE.call_once(|| {});
+                let title = self.game.as_ref().map(GameView::title).unwrap_or_default();
+                if let Some(game_view) = self.game.as_mut() {
+                    game_view.suspend();
+                }
+                self.analysis.stop();
+                self.repertoire = Some(crate::repertoire_ui::RepertoireUi::new());
+                if let Some(screen) = self.repertoire.as_mut() {
+                    screen.debug_add_from_game(game, at, title, name);
+                }
             }
         }
         if let Some(start) = self.debug.play_from.take() {
@@ -1110,6 +1236,10 @@ impl App {
 
     /// A message said once and seldom (a database made for the player): longer in view.
     fn toast_for(&mut self, ctx: &egui::Context, msg: impl Into<String>, secs: f64) {
+        #[cfg(not(web))]
+        {
+            self.toast_repertoire = None;
+        }
         self.toast = Some(Toast {
             text: msg.into(),
             until: ctx.input(|i| i.time) + secs,
@@ -2133,6 +2263,87 @@ impl App {
         let mut view = GameView::new(g, None, Vec::new());
         view.previous = title;
         self.game = Some(view);
+    }
+
+    #[cfg(not(web))]
+    fn open_repertoire(&mut self, ctx: &egui::Context) {
+        if self.analysis.is_on() {
+            self.analysis.stop();
+            self.live_paused = true;
+        }
+        if let Some(game) = self.game.as_mut() {
+            game.suspend();
+        }
+        self.repertoire
+            .get_or_insert_with(crate::repertoire_ui::RepertoireUi::new)
+            .open_library();
+        ctx.request_repaint();
+    }
+
+    #[cfg(not(web))]
+    fn open_repertoire_add(&mut self, ctx: &egui::Context, source: Game, at: chess_core::NodeId) {
+        self.open_repertoire(ctx);
+        if let Some(screen) = self.repertoire.as_mut() {
+            let title = self.game.as_ref().map(GameView::title).unwrap_or_default();
+            screen.open_add_from_game(source, at, title);
+        }
+    }
+
+    #[cfg(not(web))]
+    fn close_repertoire(&mut self, ctx: &egui::Context) {
+        self.repertoire = None;
+        if self.game.is_some()
+            && std::mem::take(&mut self.live_paused)
+            && let Some(config) = self.settings.active_engine().cloned()
+        {
+            self.analysis.start(&config, ctx);
+        }
+    }
+
+    #[cfg(not(web))]
+    fn show_repertoire(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.library.poll();
+        let Some(mut screen) = self.repertoire.take() else {
+            return;
+        };
+        let actions = screen.show(ui, &mut self.settings);
+        self.repertoire = Some(screen);
+        for action in actions {
+            match action {
+                crate::repertoire_ui::RepertoireAction::Close => self.close_repertoire(ctx),
+                crate::repertoire_ui::RepertoireAction::OpenSettings => {
+                    self.settings_ui.open = true
+                }
+                crate::repertoire_ui::RepertoireAction::Sound(sound) => self.play(sound),
+                crate::repertoire_ui::RepertoireAction::Toast(message) => self.toast(ctx, message),
+                crate::repertoire_ui::RepertoireAction::SettingsChanged => {
+                    self.settings_dirty = true
+                }
+                crate::repertoire_ui::RepertoireAction::Added { id, name, report } => {
+                    let title = self.game.as_ref().map(GameView::title).unwrap_or_default();
+                    let text = if report.added_nodes == 0 && report.annotation_changes == 0 {
+                        tr("Already in the repertoire — no changes").to_owned()
+                    } else if report.added_nodes == 0 {
+                        trf(
+                            "The path was already in the repertoire; annotations added: {n}",
+                            &[("n", &report.annotation_changes)],
+                        )
+                    } else {
+                        trf(
+                            "Added to “{name}”: new moves: {added} · matched: {matched}",
+                            &[
+                                ("name", &name),
+                                ("added", &report.added_nodes),
+                                ("matched", &report.merged_nodes.saturating_sub(1)),
+                            ],
+                        )
+                    };
+                    self.toast_for(ctx, text, 8.0);
+                    self.toast_repertoire = Some((id, title));
+                    self.close_repertoire(ctx);
+                }
+            }
+        }
     }
 
     /// Learning the opening of the current game: the training opens over it.
@@ -3483,7 +3694,10 @@ impl App {
             );
         }
         self.desktop.was_focused = focused;
-        let events = self.desktop.online.show(ctx, &self.desktop.online_probe);
+        let events = self
+            .desktop
+            .online
+            .show(ctx, &mut self.desktop.online_probe);
         for e in events {
             match e {
                 crate::online_ui::OnlineEvent::Added(p) => {
@@ -3585,6 +3799,19 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.prep_quit_ask = true;
         }
+        #[cfg(not(web))]
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.allow_quit
+            && self
+                .repertoire
+                .as_ref()
+                .is_some_and(|screen| screen.has_unsaved())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if let Some(screen) = self.repertoire.as_mut() {
+                screen.resolve_unsaved();
+            }
+        }
         let quitting = !self.prep_quit_ask;
         // Quitting: a comment being written goes into the game first, so the question
         // about unsaved changes counts it.
@@ -3660,7 +3887,11 @@ impl eframe::App for App {
         self.analysis.poll();
 
         let ctrl = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
-        if ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::O))) {
+        #[cfg(not(web))]
+        let repertoire_visible = self.repertoire.is_some();
+        #[cfg(web)]
+        let repertoire_visible = false;
+        if !repertoire_visible && ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::O))) {
             self.pick_databases(&ctx);
         }
         if ctx.input_mut(|i| {
@@ -3669,6 +3900,7 @@ impl eframe::App for App {
                 Key::N,
             ))
         }) && self.game.is_none()
+            && !repertoire_visible
             && crate::platform::CAPS.own_databases
         {
             self.own.then_close = None;
@@ -3677,6 +3909,7 @@ impl eframe::App for App {
         // In the library a game from the start; on a game's screen the game plays on
         // from its position (the game view takes Ctrl+G there).
         if self.game.is_none()
+            && !repertoire_visible
             && crate::platform::CAPS.play
             && ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::G)))
         {
@@ -3685,10 +3918,12 @@ impl eframe::App for App {
         // A browser keeps Ctrl+N for its window: N in the library there (design §4).
         let new_game_key = cfg!(web)
             && self.game.is_none()
+            && !repertoire_visible
             && !ctx.egui_wants_keyboard_input()
             && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::N));
         if (new_game_key || ctx.input_mut(|i| i.consume_shortcut(&ctrl(Key::N))))
             && self.game.is_none()
+            && !repertoire_visible
         {
             self.new_game();
         }
@@ -3700,7 +3935,10 @@ impl eframe::App for App {
         // dropped before the game is drawn (its header names the target).
         let _ = self.current_target();
         let shelf = self.shelf_dbs();
-        if let Some(game) = &mut self.game {
+        if repertoire_visible {
+            #[cfg(not(web))]
+            self.show_repertoire(ui, &ctx);
+        } else if let Some(game) = &mut self.game {
             let input_enabled = self.confirm_close.is_none();
             // A database opened for the reference tab arrives here (the library is
             // not drawn while a game is shown).
@@ -3838,7 +4076,10 @@ impl eframe::App for App {
                         self.play_next = Some(PlayNext::Dialog(from));
                         self.request_close(&ctx, intent);
                     }
-                    GameAction::Train(start) => self.open_training(*start),
+                    #[cfg(not(web))]
+                    GameAction::AddToRepertoire(game, at) => {
+                        self.open_repertoire_add(&ctx, *game, at)
+                    }
                     GameAction::PlayFrom(from) => self.play_new(&ctx, PlayNext::Dialog(Some(from))),
                     GameAction::PutAside(intent) => {
                         let intent = intent.unwrap_or(
@@ -4032,6 +4273,8 @@ impl eframe::App for App {
                     LibraryAction::Preparations => {
                         self.prep_list = Some(crate::prep_ui::PrepList::new());
                     }
+                    #[cfg(not(web))]
+                    LibraryAction::OpeningTraining => self.open_repertoire(&ctx),
                 }
             }
         }
@@ -4159,13 +4402,25 @@ impl eframe::App for App {
         }
 
         let mut undo_clicked = false;
+        #[cfg(not(web))]
+        let mut open_repertoire = None;
         if let Some(t) = &self.toast {
             let now = ctx.input(|i| i.time);
             if now > t.until {
                 self.toast = None;
                 self.own.undo = None;
+                #[cfg(not(web))]
+                {
+                    self.toast_repertoire = None;
+                }
             } else {
                 let (msg, undo) = (t.text.clone(), t.undo && self.own.undo.is_some());
+                #[cfg(not(web))]
+                let repertoire_link = self.toast_repertoire.clone();
+                #[cfg(not(web))]
+                let has_action = undo || repertoire_link.is_some();
+                #[cfg(web)]
+                let has_action = undo;
                 let area = egui::Area::new(egui::Id::new(TOAST))
                     .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -24.0))
                     .order(egui::Order::Foreground)
@@ -4180,11 +4435,15 @@ impl eframe::App for App {
                                 if undo && ui.button(tr("Undo")).on_hover_text("Ctrl+Z").clicked() {
                                     undo_clicked = true;
                                 }
+                                #[cfg(not(web))]
+                                if repertoire_link.is_some() && ui.button(tr("Open")).clicked() {
+                                    open_repertoire = repertoire_link.clone();
+                                }
                             });
                         });
                     });
                 // Under the mouse the toast waits (the button is being reached for).
-                if undo
+                if has_action
                     && area.response.contains_pointer()
                     && let Some(t) = self.toast.as_mut()
                 {
@@ -4196,6 +4455,15 @@ impl eframe::App for App {
         if undo_clicked {
             self.toast = None;
             self.undo_delete(&ctx);
+        }
+        #[cfg(not(web))]
+        if let Some((id, title)) = open_repertoire {
+            self.toast = None;
+            self.toast_repertoire = None;
+            self.open_repertoire(&ctx);
+            if let Some(screen) = self.repertoire.as_mut() {
+                screen.open_from_toast(id, title, &self.settings);
+            }
         }
 
         if self.settings_dirty && !ctx.input(|i| i.pointer.any_down()) {
