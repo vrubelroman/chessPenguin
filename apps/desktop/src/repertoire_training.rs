@@ -37,10 +37,10 @@ struct NextPathJob {
 }
 
 #[derive(Default)]
-struct BoardAnnotations {
-    arrows: Vec<Arrow>,
-    circles: Vec<(Square, Color32)>,
-    badge: Option<Badge>,
+pub(crate) struct BoardAnnotations {
+    pub(crate) arrows: Vec<Arrow>,
+    pub(crate) circles: Vec<(Square, Color32)>,
+    pub(crate) badge: Option<Badge>,
 }
 
 pub struct TrainingUi {
@@ -1027,8 +1027,15 @@ fn move_squares(candidate: &Candidate) -> Option<(Square, Square)> {
 }
 
 fn pgn_annotations(session: &TrainingSession) -> BoardAnnotations {
+    pgn_annotations_at(session.game(), session.current_node())
+}
+
+pub(crate) fn pgn_annotations_at(
+    game: &chess_core::Game,
+    at: chess_core::NodeId,
+) -> BoardAnnotations {
     let mut out = BoardAnnotations::default();
-    let Some(node) = session.game().node(session.current_node()) else {
+    let Some(node) = game.node(at) else {
         return out;
     };
     let square = node.game_move().and_then(|game_move| match game_move.kind {
@@ -1136,6 +1143,47 @@ mod tests {
         assert_eq!(training.view_ply + 1, training.positions.len());
         assert_eq!(shown.fullmoves(), training.session.position().fullmoves());
         assert_eq!(shown.halfmoves(), training.session.position().halfmoves());
+    }
+
+    #[test]
+    fn pgn_node_badges_keep_the_existing_palette_and_special_move_destinations() {
+        for (nag, symbol) in [
+            (1, "!"),
+            (2, "?"),
+            (3, "!!"),
+            (4, "??"),
+            (5, "!?"),
+            (6, "?!"),
+        ] {
+            let game = chess_core::parse_str(&format!("1. e4 ${nag} *")).game;
+            let node = game.main_child(chess_core::NodeId::ROOT).unwrap();
+            let badge = pgn_annotations_at(&game, node).badge.unwrap();
+            assert_eq!(badge.text, symbol);
+            assert_eq!(badge.square, Square::E4);
+            assert_eq!(
+                badge.color,
+                crate::notation::assessment_color(chess_core::Nag(nag)).unwrap()
+            );
+        }
+        for (fen, san, expected) in [
+            ("4k3/8/8/8/8/8/8/4K2R w K - 0 1", "O-O!!", Square::G1),
+            ("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", "a8=Q+!", Square::A8),
+        ] {
+            let game =
+                chess_core::parse_str(&format!("[SetUp \"1\"]\n[FEN \"{fen}\"]\n\n1. {san} *"))
+                    .game;
+            let node = game.main_child(chess_core::NodeId::ROOT).unwrap();
+            assert_eq!(
+                pgn_annotations_at(&game, node).badge.unwrap().square,
+                expected
+            );
+        }
+        let game = chess_core::parse_str("1. e4 $14 *").game;
+        let node = game.main_child(chess_core::NodeId::ROOT).unwrap();
+        assert!(
+            pgn_annotations_at(&game, node).badge.is_none(),
+            "position assessments are not move badges"
+        );
     }
 
     #[test]

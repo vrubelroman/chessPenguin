@@ -323,13 +323,19 @@ impl RepertoireEditorUi {
                 .position_before(self.selected)
                 .and_then(|position| san_for_uci(position, &main_answer))
                 .unwrap_or_else(|| "—".to_owned());
-            ui.label(format!("{}: {label}", tr("Main answer")));
+            ui.label(format!("{}: {label}", tr("Preferred move")));
         }
         let has_override = self
             .draft
             .repertoire(&self.repertoire_id)
             .and_then(|repertoire| repertoire.main_answer_override(&position_fen4))
             .is_some();
+        ui.add(
+            egui::Label::new(tr(
+                "All enabled variations are trained. The preferred move only affects their order.",
+            ))
+            .wrap(),
+        );
         let disabled = self
             .draft
             .repertoire(&self.repertoire_id)
@@ -337,13 +343,13 @@ impl RepertoireEditorUi {
             .is_some_and(|(repertoire, path)| repertoire.is_prefix_disabled(path));
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(!is_main, egui::Button::new(tr("Make main answer")))
+                .add_enabled(!is_main, egui::Button::new(tr("Prefer this move")))
                 .clicked()
             {
                 commands.push(EditorCommand::SetMainAnswer);
             }
             if ui
-                .add_enabled(has_override, egui::Button::new(tr("Clear override")))
+                .add_enabled(has_override, egui::Button::new(tr("PGN order")))
                 .clicked()
             {
                 commands.push(EditorCommand::ClearMainAnswer);
@@ -385,11 +391,16 @@ impl RepertoireEditorUi {
                 .tree
                 .game()
                 .parent(row.node)
-                .and_then(|parent| self.effective_main_answer(parent))
+                .and_then(|parent| self.tree.position_key(parent))
+                .and_then(|position| {
+                    self.draft
+                        .repertoire(&self.repertoire_id)?
+                        .main_answer_override(position)
+                })
                 .zip(self.tree.game().game_move(row.node).and_then(|mv| mv.uci()))
                 .is_some_and(|(main, uci)| main == uci)
             {
-                label.push_str(&format!(" · {}", tr("main")));
+                label.push_str(&format!(" · {}", tr("preferred")));
             }
             if self
                 .draft
@@ -431,7 +442,7 @@ impl RepertoireEditorUi {
                 show_move_analytics(ui, &analytics, self.tree.game(), self.selected)
             }
             Ok(None) => {
-                ui.label(tr("Learning analytics is kept for the current main answer"));
+                ui.label(tr("No learning data for this move"));
             }
             Err(error) => {
                 ui.colored_label(ui.visuals().error_fg_color, error);

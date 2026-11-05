@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, Mutex},
+};
 
 use chess_core::shakmaty::fen::Fen;
 use chess_core::shakmaty::uci::UciMove;
@@ -82,6 +85,44 @@ pub struct LearningSessionSnapshot {
     /// Per-session optimistic revision, independent from the store revision.
     #[serde(default)]
     pub revision: u64,
+    #[serde(skip)]
+    runtime: SessionRuntime,
+}
+
+// Derived data only: clones share it, persistence and snapshot equality do not.
+#[derive(Clone, Default, Debug)]
+struct SessionRuntime(Arc<Mutex<RuntimeData>>);
+
+impl PartialEq for SessionRuntime {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+#[derive(Default, Debug)]
+struct RuntimeData {
+    source: Option<ReplaySource>,
+    #[cfg(test)]
+    parses: usize,
+    #[cfg(test)]
+    replays: usize,
+    #[cfg(test)]
+    plans: usize,
+}
+
+#[derive(Debug)]
+struct ReplaySource {
+    repertoire_id: RepertoireId,
+    pgn: String,
+    start: Chess,
+    target: Option<ReplayedTarget>,
+}
+
+#[derive(Debug)]
+struct ReplayedTarget {
+    target: LearningSessionTarget,
+    side: LearningSide,
+    positions: Arc<Vec<Chess>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,6 +169,11 @@ pub enum LearningSessionError {
     },
     TargetPositionMismatch,
     TargetSideMismatch,
+    /// A known repertoire answer that is not the pending question. This is neutral
+    /// input: callers must not record an attempt, play an error sound or reset SRS.
+    RepertoireAlternative {
+        already_completed: bool,
+    },
     Graph(LearningGraphError),
 }
 
@@ -168,6 +214,13 @@ impl std::fmt::Display for LearningSessionError {
             }
             Self::TargetSideMismatch => {
                 f.write_str("learning target position belongs to the other side")
+            }
+            Self::RepertoireAlternative { already_completed } => {
+                if *already_completed {
+                    f.write_str("this repertoire answer has already been reviewed in this pass")
+                } else {
+                    f.write_str("this repertoire answer is not the current scheduled question")
+                }
             }
             Self::Graph(error) => error.fmt(f),
         }
@@ -242,6 +295,7 @@ impl LearningSessionSnapshot {
             completed_keys: BTreeSet::new(),
             cycle: 0,
             revision: 0,
+            runtime: SessionRuntime::default(),
         };
         snapshot.reset_current_target_with_library(library)?;
         Ok(snapshot)
@@ -339,6 +393,32 @@ impl LearningSessionSnapshot {
             .count()
     }
 
+    /// Choices still due in this fixed pass; statistics stay separate for each UCI.
+    pub fn pending_answers_for_position(&self, position_fen4: &str) -> Vec<String> {
+        self.queue
+            .iter()
+            .skip(self.current_index)
+            .filter(|target| {
+                target.key.position_fen4 == position_fen4
+                    && !self.completed_keys.contains(&target.key)
+            })
+            .map(|target| target.key.expected_uci.clone())
+            .collect()
+    }
+
+    /// Only active answers in this session's scope qualify, never arbitrary legal
+    /// moves or a disabled/out-of-scope PGN branch.
+    pub fn is_active_repertoire_answer(
+        &self,
+        library: &Library,
+        position_fen4: &str,
+        uci: &str,
+    ) -> Result<bool, LearningSessionError> {
+        Ok(active_learning_memberships(library, &self.stats_scope)?
+            .iter()
+            .any(|item| item.key.position_fen4 == position_fen4 && item.key.expected_uci == uci))
+    }
+
     pub fn presentation(
         &self,
         library: &Library,
@@ -371,19 +451,20 @@ impl LearningSessionSnapshot {
                 revealed_move: None,
             });
         };
-        let positions = replay_target(library, target, self.stats_scope.side)?;
+        let positions = self.replay_target(library, target)?;
         if self.context_index >= positions.len() {
             return Err(LearningSessionError::InvalidSnapshot(
                 "context index is outside the target path",
             ));
         }
         let prefix_len = target.path.len().saturating_sub(1);
+        let plan = learning.map(|learning| self.context_plan(target, &positions, learning));
         let automatic_context = (self.context_index..prefix_len)
             .take_while(|index| {
                 if *index == self.context_index && self.is_context_challenge(target) {
                     false
                 } else {
-                    !self.context_needs_check(target, &positions, *index, learning)
+                    !self.context_needs_check(target, &positions, *index, plan.as_ref())
                 }
             })
             .map(|index| {
@@ -461,7 +542,7 @@ impl LearningSessionSnapshot {
                 .ok_or(LearningSessionError::InvalidSnapshot(
                     "context has no current target",
                 ))?;
-        let positions = replay_target(library, &target, self.stats_scope.side)?;
+        let positions = self.replay_target(library, &target)?;
         let prefix_len = target.path.len() - 1;
         if self.context_index >= prefix_len {
             return Err(LearningSessionError::InvalidSnapshot(
@@ -469,7 +550,8 @@ impl LearningSessionSnapshot {
             ));
         }
         let index = self.context_index;
-        if self.context_needs_check(&target, &positions, index, learning) {
+        let plan = learning.map(|learning| self.context_plan(&target, &positions, learning));
+        if self.context_needs_check(&target, &positions, index, plan.as_ref()) {
             return Err(LearningSessionError::InvalidSnapshot(
                 "automatic context requires an independent answer",
             ));
@@ -541,6 +623,7 @@ impl LearningSessionSnapshot {
             happened_at,
             response_time_ms,
             None,
+            None,
         )
     }
 
@@ -561,9 +644,36 @@ impl LearningSessionSnapshot {
             happened_at,
             response_time_ms,
             Some(learning),
+            None,
         )
     }
 
+    /// The UI prepares this scope's answers with the immutable library in its
+    /// startup worker, so a wrong move never rebuilds all repertoire graphs.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_uci_with_learning_answers(
+        &mut self,
+        library: &Library,
+        learning: &LearningData,
+        answers: &BTreeSet<LearningItemKey>,
+        uci: &str,
+        client_attempt_id: impl Into<String>,
+        happened_at: i64,
+        response_time_ms: Option<u64>,
+    ) -> Result<TrainingAttempt, LearningSessionError> {
+        self.sync_context_phase(library, Some(learning))?;
+        self.play_uci_impl(
+            library,
+            uci,
+            client_attempt_id,
+            happened_at,
+            response_time_ms,
+            Some(learning),
+            Some(answers),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn play_uci_impl(
         &mut self,
         library: &Library,
@@ -572,6 +682,7 @@ impl LearningSessionSnapshot {
         happened_at: i64,
         response_time_ms: Option<u64>,
         learning: Option<&LearningData>,
+        answers: Option<&BTreeSet<LearningItemKey>>,
     ) -> Result<TrainingAttempt, LearningSessionError> {
         let client_attempt_id = checked_attempt_id(client_attempt_id.into())?;
         self.validate_configuration()?;
@@ -593,7 +704,7 @@ impl LearningSessionSnapshot {
                 .ok_or(LearningSessionError::InvalidSnapshot(
                     "move input has no current target",
                 ))?;
-        let positions = replay_target(library, &target, self.stats_scope.side)?;
+        let positions = self.replay_target(library, &target)?;
         let context = self.is_context_challenge(&target);
         let challenge_index = if context {
             self.context_index
@@ -626,6 +737,55 @@ impl LearningSessionSnapshot {
         };
         let actual_uci = mv.to_uci(CastlingMode::Standard).to_string();
         let correct = actual_uci == challenge_key.expected_uci;
+        if !correct {
+            let actual_key = LearningItemKey::new(
+                challenge_key.user_id.clone(),
+                challenge_key.position_fen4.clone(),
+                actual_uci.clone(),
+            );
+            if matches!(
+                self.phase,
+                LearningSessionPhase::AwaitingIndependent
+                    | LearningSessionPhase::AwaitingContextIndependent
+            ) && let Some(index) = self
+                .queue
+                .iter()
+                .enumerate()
+                .skip(self.current_index)
+                .find_map(|(index, candidate)| {
+                    (candidate.key == actual_key && !self.completed_keys.contains(&actual_key))
+                        .then_some(index)
+                })
+            {
+                // Consume exactly the answer played. The original target remains
+                // pending, even when this question was part of its context. Never
+                // advance the old path after taking a different branch.
+                let attempt = self.attempt(
+                    &actual_key,
+                    TrainingEventType::CorrectIndependent,
+                    Some(actual_uci),
+                    response_time_ms,
+                    client_attempt_id,
+                    happened_at,
+                );
+                self.queue.swap(self.current_index, index);
+                self.complete_current(library)?;
+                return Ok(attempt);
+            }
+            let known = match answers {
+                Some(answers) => answers.contains(&actual_key),
+                None => self.is_active_repertoire_answer(
+                    library,
+                    &actual_key.position_fen4,
+                    &actual_uci,
+                )?,
+            };
+            if known {
+                return Err(LearningSessionError::RepertoireAlternative {
+                    already_completed: self.completed_keys.contains(&actual_key),
+                });
+            }
+        }
         let event_type = match self.phase {
             LearningSessionPhase::AwaitingIndependent
             | LearningSessionPhase::AwaitingContextIndependent => {
@@ -714,7 +874,7 @@ impl LearningSessionSnapshot {
                 "the current learning item is already completed in this pass",
             ));
         }
-        let positions = replay_target(library, target, self.stats_scope.side)?;
+        let positions = self.replay_target(library, target)?;
         let prefix_len = target.path.len() - 1;
         let own_context = self.context_index < prefix_len
             && LearningSide::from(positions[self.context_index].turn()) == self.stats_scope.side;
@@ -848,7 +1008,7 @@ impl LearningSessionSnapshot {
             self.phase = LearningSessionPhase::Finished;
             return Ok(());
         };
-        let positions = replay_target(library, &target, self.stats_scope.side)?;
+        let positions = self.replay_target(library, &target)?;
         let prefix_len = target.path.len() - 1;
         if self.context_index > prefix_len {
             return Err(LearningSessionError::InvalidSnapshot(
@@ -873,24 +1033,23 @@ impl LearningSessionSnapshot {
                 "opponent context cannot require an independent answer",
             ));
         }
-        if let Some(learning) = learning {
-            let plan = self.context_plan(&target, &positions, learning);
-            if self.phase == LearningSessionPhase::AdvancingContext
-                && self.context_index < plan.skip_prefix
-            {
-                self.context_index = plan.skip_prefix;
-                if self.context_index == prefix_len {
-                    self.phase = LearningSessionPhase::AwaitingIndependent;
-                    return Ok(());
-                }
+        let plan = learning.map(|learning| self.context_plan(&target, &positions, learning));
+        if let Some(plan) = &plan
+            && self.phase == LearningSessionPhase::AdvancingContext
+            && self.context_index < plan.skip_prefix
+        {
+            self.context_index = plan.skip_prefix;
+            if self.context_index == prefix_len {
+                self.phase = LearningSessionPhase::AwaitingIndependent;
+                return Ok(());
             }
         }
-        self.phase = if self.context_needs_check(&target, &positions, self.context_index, learning)
-        {
-            LearningSessionPhase::AwaitingContextIndependent
-        } else {
-            LearningSessionPhase::AdvancingContext
-        };
+        self.phase =
+            if self.context_needs_check(&target, &positions, self.context_index, plan.as_ref()) {
+                LearningSessionPhase::AwaitingContextIndependent
+            } else {
+                LearningSessionPhase::AdvancingContext
+            };
         Ok(())
     }
 
@@ -900,6 +1059,20 @@ impl LearningSessionSnapshot {
         positions: &[Chess],
         learning: &LearningData,
     ) -> LearningContextPlan {
+        #[cfg(test)]
+        {
+            self.runtime
+                .0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .plans += 1;
+        }
+        let queue_keys = (self.session.mode == QueueMode::LeastRecent).then(|| {
+            self.queue
+                .iter()
+                .map(|target| &target.key)
+                .collect::<BTreeSet<_>>()
+        });
         let moves = (0..target.path.len().saturating_sub(1))
             .map(|index| {
                 let key = LearningItemKey::new(
@@ -909,7 +1082,9 @@ impl LearningSessionSnapshot {
                 );
                 LearningContextMove {
                     own_move: LearningSide::from(positions[index].turn()) == self.stats_scope.side,
-                    least_recent_target: self.queue.iter().any(|target| target.key == key),
+                    least_recent_target: queue_keys
+                        .as_ref()
+                        .is_some_and(|keys| keys.contains(&key)),
                     key,
                 }
             })
@@ -929,16 +1104,15 @@ impl LearningSessionSnapshot {
         target: &LearningSessionTarget,
         positions: &[Chess],
         index: usize,
-        learning: Option<&LearningData>,
+        plan: Option<&LearningContextPlan>,
     ) -> bool {
         if index >= target.path.len().saturating_sub(1)
             || LearningSide::from(positions[index].turn()) != self.stats_scope.side
         {
             return false;
         }
-        if let Some(learning) = learning {
-            return self.context_plan(target, positions, learning).actions[index]
-                == LearningContextAction::Independent;
+        if let Some(plan) = plan {
+            return plan.actions[index] == LearningContextAction::Independent;
         }
         if self.session.mode != QueueMode::LeastRecent {
             return false;
@@ -1069,42 +1243,98 @@ fn membership_order(
     )
 }
 
-fn replay_target(
-    library: &Library,
-    target: &LearningSessionTarget,
-    side: LearningSide,
-) -> Result<Vec<Chess>, LearningSessionError> {
-    if target.path.is_empty() || target.path.last() != Some(&target.key.expected_uci) {
-        return Err(LearningSessionError::InvalidTargetPath {
-            repertoire_id: target.repertoire_id.clone(),
-            path: target.path.clone(),
-        });
-    }
-    let repertoire = library
-        .repertoire(&target.repertoire_id)
-        .ok_or_else(|| LearningSessionError::RepertoireNotFound(target.repertoire_id.clone()))?;
-    let mut position = repertoire.game().start().position().clone();
-    let mut positions = vec![position.clone()];
-    for uci in &target.path {
-        let mv = uci
-            .parse::<UciMove>()
-            .ok()
-            .and_then(|parsed| parsed.to_move(&position).ok())
-            .ok_or_else(|| LearningSessionError::InvalidTargetPath {
+impl LearningSessionSnapshot {
+    fn replay_target(
+        &self,
+        library: &Library,
+        target: &LearningSessionTarget,
+    ) -> Result<Arc<Vec<Chess>>, LearningSessionError> {
+        let side = self.stats_scope.side;
+        if target.path.is_empty() || target.path.last() != Some(&target.key.expected_uci) {
+            return Err(LearningSessionError::InvalidTargetPath {
                 repertoire_id: target.repertoire_id.clone(),
                 path: target.path.clone(),
-            })?;
-        position.play_unchecked(mv);
-        positions.push(position.clone());
+            });
+        }
+        let repertoire = library.repertoire(&target.repertoire_id).ok_or_else(|| {
+            LearningSessionError::RepertoireNotFound(target.repertoire_id.clone())
+        })?;
+        let mut runtime = self
+            .runtime
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if runtime.source.as_ref().is_none_or(|source| {
+            source.repertoire_id != target.repertoire_id || source.pgn != repertoire.pgn
+        }) {
+            runtime.source = Some(ReplaySource {
+                repertoire_id: target.repertoire_id.clone(),
+                pgn: repertoire.pgn.clone(),
+                start: repertoire.game().start().position().clone(),
+                target: None,
+            });
+            #[cfg(test)]
+            {
+                runtime.parses += 1;
+            }
+        }
+        // The source was installed above. Avoid an assumption on user data at this boundary.
+        let Some(source) = runtime.source.as_ref() else {
+            return Err(LearningSessionError::InvalidSnapshot(
+                "replay source unavailable",
+            ));
+        };
+        if let Some(cached) = &source.target
+            && cached.target == *target
+            && cached.side == side
+        {
+            return Ok(Arc::clone(&cached.positions));
+        }
+        let mut position = source.start.clone();
+        let mut positions = vec![position.clone()];
+        for uci in &target.path {
+            let mv = uci
+                .parse::<UciMove>()
+                .ok()
+                .and_then(|parsed| parsed.to_move(&position).ok())
+                .ok_or_else(|| LearningSessionError::InvalidTargetPath {
+                    repertoire_id: target.repertoire_id.clone(),
+                    path: target.path.clone(),
+                })?;
+            position.play_unchecked(mv);
+            positions.push(position.clone());
+        }
+        let parent = &positions[target.path.len() - 1];
+        if fen4(parent) != target.key.position_fen4 {
+            return Err(LearningSessionError::TargetPositionMismatch);
+        }
+        if LearningSide::from(parent.turn()) != side {
+            return Err(LearningSessionError::TargetSideMismatch);
+        }
+        let positions = Arc::new(positions);
+        if let Some(source) = runtime.source.as_mut() {
+            source.target = Some(ReplayedTarget {
+                target: target.clone(),
+                side,
+                positions: Arc::clone(&positions),
+            });
+        }
+        #[cfg(test)]
+        {
+            runtime.replays += 1;
+        }
+        Ok(positions)
     }
-    let parent = &positions[target.path.len() - 1];
-    if fen4(parent) != target.key.position_fen4 {
-        return Err(LearningSessionError::TargetPositionMismatch);
+
+    #[cfg(test)]
+    pub(super) fn runtime_work_counts(&self) -> (usize, usize, usize) {
+        let runtime = self
+            .runtime
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        (runtime.parses, runtime.replays, runtime.plans)
     }
-    if LearningSide::from(parent.turn()) != side {
-        return Err(LearningSessionError::TargetSideMismatch);
-    }
-    Ok(positions)
 }
 
 fn learning_position(position: &Chess) -> LearningPosition {
