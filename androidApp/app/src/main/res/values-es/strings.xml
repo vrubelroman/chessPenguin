@@ -217,6 +217,15 @@
     <string name="add_paste_hint">Partidas copiadas en otra aplicación</string>
     <string name="paste_none">No hay partidas PGN en el portapapeles</string>
     <string name="paste_db">Pegado el %1$s</string>
+    <plurals name="clipboard_open_title">
+        <item quantity="one">Partida en el portapapeles</item>
+        <item quantity="many">Partidas en el portapapeles</item>
+        <item quantity="other">Partidas en el portapapeles</item>
+    </plurals>
+    <string name="clipboard_open_one">Guardar esta partida PGN y abrirla en el tablero?</string>
+    <string name="clipboard_open_many">Guardar %1$s y abrir la primera partida en el tablero? Todas las partidas se conservarán en la copia local.</string>
+    <string name="clipboard_open">Abrir</string>
+    <string name="clipboard_database_name">Portapapeles</string>
     <string name="opening_file">Abriendo el archivo…</string>
     <string name="file_failed">No se pudo abrir el archivo</string>
     <string name="file_no_games">Este archivo no contiene partidas de ajedrez.</string>

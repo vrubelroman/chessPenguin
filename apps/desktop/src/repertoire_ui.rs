@@ -947,6 +947,10 @@ impl RepertoireUi {
     pub fn show(&mut self, ui: &mut Ui, settings: &mut Settings) -> Vec<RepertoireAction> {
         self.poll(settings);
         let mut actions = Vec::new();
+        let available = ui.available_rect_before_wrap();
+        let background = ui.visuals().window_fill();
+        ui.painter_at(available)
+            .rect_filled(available, 0.0, background);
         #[cfg(test)]
         {
             self.debug_layout.editor = None;

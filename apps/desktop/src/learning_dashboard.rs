@@ -11,8 +11,9 @@ use trainer::repertoire::{
     BranchLearningAnalytics, LearningAggregate, LearningItemKey, LearningSide, LearningSnapshot,
     LearningStore, LearningStoreData, Library, LocalDatePolicy, MoveLearningStatus,
     PersistedLearningSnapshot, RepertoireId, RepertoireTree, ScheduledBuckets, SequenceHistograms,
-    SrsSettings, StatsScope, aggregate_scope, branch_learning_analytics, scheduled_buckets,
-    scoped_move_learning_analytics, sequence_histograms,
+    SrsSettings, StatsScope, aggregate_scope, branch_learning_analytics,
+    log_global_total_invariant, scheduled_buckets, scoped_move_learning_analytics,
+    sequence_histograms,
 };
 
 use crate::i18n::{tr, trf};
@@ -66,6 +67,24 @@ struct DashboardData {
     views: Vec<DashboardView>,
     names: HashMap<RepertoireId, String>,
     labels: HashMap<(RepertoireId, Vec<String>), Vec<String>>,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static GLOBAL_TOTAL_INVARIANT_CALLS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+fn log_dashboard_global_total_invariant(global_total: usize, summary: &[SummaryRow]) {
+    log_global_total_invariant(
+        global_total,
+        summary
+            .iter()
+            .filter(|row| row.id.is_some())
+            .map(|row| row.summary.total),
+    );
+    #[cfg(test)]
+    GLOBAL_TOTAL_INVARIANT_CALLS.with(|calls| calls.set(calls.get() + 1));
 }
 
 struct MoveRow {
@@ -597,11 +616,13 @@ impl DashboardData {
             });
             views.push(view);
         }
+        let global_total = global_summary.total;
         summary.push(SummaryRow {
             id: None,
             name: String::new(),
             summary: global_summary,
         });
+        log_dashboard_global_total_invariant(global_total, &summary);
         Ok(Self {
             side,
             as_of,
@@ -784,9 +805,22 @@ fn error_body(ui: &mut Ui, error: &str) {
     );
 }
 
+const SUMMARY_HEADER_HEIGHT: f32 = 40.0;
+
+fn summary_number_width(ui: &Ui) -> f32 {
+    let available_width = ui.available_width();
+    if available_width < 700.0 {
+        60.0
+    } else {
+        (available_width / 9.0)
+            .min(108.0)
+            .min((available_width - 80.0 - 8.0 * ui.spacing().item_spacing.x) / 8.0)
+    }
+}
+
 fn show_summary(ui: &mut Ui, data: &DashboardData, view: &DashboardView) {
     let compact = ui.available_width() < 700.0;
-    let number_width = 60.0;
+    let number_width = summary_number_width(ui);
     let headers = [
         "Name",
         "Total",
@@ -808,7 +842,7 @@ fn show_summary(ui: &mut Ui, data: &DashboardData, view: &DashboardView) {
         table = table.column(Column::exact(number_width).clip(true));
     }
     table
-        .header(if compact { 40.0 } else { 30.0 }, |mut header| {
+        .header(SUMMARY_HEADER_HEIGHT, |mut header| {
             for (index, key) in headers.into_iter().enumerate() {
                 header.col(|ui| {
                     let response = if index == 0 {
@@ -1717,6 +1751,25 @@ mod tests {
     }
 
     #[test]
+    fn global_total_invariant_runs_on_empty_build_without_changing_data() {
+        GLOBAL_TOTAL_INVARIANT_CALLS.with(|calls| calls.set(0));
+
+        let dashboard = build(&Library::default(), &LearningStoreData::default()).unwrap();
+
+        assert_eq!(GLOBAL_TOTAL_INVARIANT_CALLS.with(|calls| calls.get()), 1);
+        assert_eq!(dashboard.side, LearningSide::White);
+        assert_eq!(dashboard.as_of, BASE);
+        assert_eq!(dashboard.timezone, LocalDatePolicy::UTC);
+        assert_eq!(dashboard.summary.len(), 1);
+        assert!(dashboard.summary[0].id.is_none());
+        assert_eq!(dashboard.summary[0].summary, LearningAggregate::default());
+        assert_eq!(dashboard.views.len(), 1);
+        assert_eq!(dashboard.views[0].summary, LearningAggregate::default());
+        assert!(dashboard.names.is_empty());
+        assert!(dashboard.labels.is_empty());
+    }
+
+    #[test]
     fn empty_scope_has_no_false_percentages_or_buckets() {
         let dashboard = build(&Library::default(), &LearningStoreData::default()).unwrap();
         assert_eq!(dashboard.summary.len(), 1);
@@ -1920,6 +1973,143 @@ mod tests {
     }
 
     #[test]
+    fn accepted_summary_headers_fit_full_russian_and_german_words() {
+        let cases = [
+            [
+                "Название",
+                "Итого",
+                "Новый",
+                "Изучается",
+                "Изучено",
+                "Не подтверждено",
+                "К повторению",
+                "Изучено %",
+                "Надёжно изучено",
+            ],
+            [
+                "Name",
+                "Gesamt",
+                "Neu",
+                "Lernen",
+                "Gelernt",
+                "Unsicher",
+                "Fällig",
+                "Gelernt %",
+                "Bestätigt %",
+            ],
+        ];
+        for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
+            for (width, height) in [(960.0, 600.0), (1400.0, 900.0)] {
+                for headers in &cases {
+                    let ctx = egui::Context::default();
+                    ctx.set_visuals(visuals.clone());
+                    let mut expected_number_width = 0.0;
+                    let output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, height),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            expected_number_width = summary_number_width(ui);
+                            let number_width = expected_number_width;
+                            let mut table = TableBuilder::new(ui)
+                                .id_salt("learning_dashboard_summary_header_test")
+                                .cell_layout(Layout::left_to_right(Align::Center))
+                                .column(Column::remainder().at_least(80.0).clip(true));
+                            for _ in 1..headers.len() {
+                                table = table.column(Column::exact(number_width).clip(true));
+                            }
+                            table.header(SUMMARY_HEADER_HEIGHT, |mut header| {
+                                for (index, key) in headers.iter().enumerate() {
+                                    header.col(|ui| {
+                                        if index == 0 {
+                                            header_cell(ui, tr(key), false)
+                                        } else {
+                                            summary_metric_header(ui, tr(key), false)
+                                        }
+                                        .on_hover_text(tr(key));
+                                    });
+                                }
+                            });
+                        },
+                    );
+                    let shapes = output.shapes.clone();
+                    output.drop_without_applying_deltas();
+                    for clipped in &shapes {
+                        let bounds = clipped.shape.visual_bounding_rect();
+                        if bounds.is_finite() && bounds.is_positive() {
+                            assert!(
+                                bounds.min.x >= -0.1
+                                    && bounds.min.y >= -0.1
+                                    && bounds.max.x <= width + 0.1
+                                    && bounds.max.y <= height + 0.1,
+                                "summary shape outside {width}x{height}: {bounds:?}"
+                            );
+                        }
+                    }
+                    for (index, &expected) in headers.iter().enumerate() {
+                        let (rect, clip, lines) = shapes
+                            .iter()
+                            .find_map(|clipped| match &clipped.shape {
+                                egui::Shape::Text(text)
+                                    if text.galley.text().replace('\n', " ") == expected =>
+                                {
+                                    Some((
+                                        egui::Rect::from_min_size(text.pos, text.galley.size()),
+                                        clipped.clip_rect,
+                                        text.galley.text().lines().count(),
+                                    ))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| {
+                                panic!("missing full summary header {expected} at {width}x{height}")
+                            });
+                        assert!(lines <= 2, "summary header wraps too much: {expected}");
+                        assert!(
+                            text_lines_have_complete_words(&shapes, expected),
+                            "summary header has a one-character fragment: {expected}"
+                        );
+                        assert!(
+                            rect.min.x >= clip.min.x - 0.1
+                                && rect.min.y >= clip.min.y - 0.1
+                                && rect.max.x <= clip.max.x + 0.1
+                                && rect.max.y <= clip.max.y + 0.1,
+                            "clipped summary header {expected}: {rect:?} {clip:?}"
+                        );
+                        assert!(clip.height() >= SUMMARY_HEADER_HEIGHT);
+                        if index == 0 {
+                            assert!(clip.width() >= 80.0);
+                        } else {
+                            assert!(
+                                (clip.width() - expected_number_width).abs() < 0.1,
+                                "numeric width at {width}: {clip:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn text_lines_have_complete_words(
+        shapes: &[egui::epaint::ClippedShape],
+        expected: &str,
+    ) -> bool {
+        shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text().replace('\n', " ") == expected => text
+                .galley
+                .text()
+                .lines()
+                .all(|line| line.chars().count() > 1),
+            _ => false,
+        })
+    }
+
+    #[test]
     fn every_tab_renders_at_both_window_sizes() {
         let dir = TestDir::new("layout");
         let mut library = Library::default();
@@ -1953,7 +2143,7 @@ mod tests {
             loaded_dashboard(library, dir.store(), ScopeSelection::Repertoire(id), data);
         let settings = Settings::default();
         let ctx = egui::Context::default();
-        for (width, height) in [(1400.0, 900.0), (640.0, 480.0)] {
+        for (width, height) in [(1400.0, 900.0), (960.0, 600.0), (640.0, 480.0)] {
             for tab in [
                 DashboardTab::Summary,
                 DashboardTab::Branches,

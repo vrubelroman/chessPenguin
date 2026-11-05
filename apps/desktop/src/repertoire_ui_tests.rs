@@ -349,6 +349,55 @@ fn dashboard_uses_the_full_workspace_at_both_window_sizes() {
 }
 
 #[test]
+fn early_paths_paint_opaque_window_background_without_allocating() {
+    for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
+        for (width, height) in [(1400.0, 900.0), (960.0, 600.0), (640.0, 480.0)] {
+            for editor in [false, true] {
+                let mut f = Fixture::new();
+                if editor {
+                    f.ui.open_editor();
+                } else {
+                    f.ui.open_dashboard();
+                }
+                let ctx = egui::Context::default();
+                ctx.set_visuals(visuals.clone());
+                let mut available = None;
+                let mut content = None;
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, height),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            available = Some(ui.available_rect_before_wrap());
+                            let actions = f.ui.show(ui, &mut f.settings);
+                            assert!(actions.is_empty());
+                            content = Some(ui.min_rect());
+                        });
+                    },
+                );
+                let shapes = output.shapes.clone();
+                output.drop_without_applying_deltas();
+                let available = available.unwrap();
+                assert_rect_inside(available, content.unwrap());
+                assert!(shapes.iter().any(|clipped| {
+                    matches!(&clipped.shape, egui::Shape::Rect(shape) if shape.rect == available && shape.fill == visuals.window_fill() && shape.fill.a() == 255)
+                }));
+                if editor {
+                    assert!(f.ui.debug_layout.editor.is_some());
+                } else {
+                    f.ui.dashboard.as_mut().unwrap().wait_until_idle_for_test();
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn creating_an_empty_repertoire_selects_it_in_the_workspace() {
     let mut f = Fixture::new();
     f.ui.open_library();

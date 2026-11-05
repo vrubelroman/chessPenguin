@@ -217,6 +217,15 @@
     <string name="add_paste_hint">Partidas copiadas em outro app</string>
     <string name="paste_none">Nenhuma partida PGN na área de transferência</string>
     <string name="paste_db">Colado %1$s</string>
+    <plurals name="clipboard_open_title">
+        <item quantity="one">%1$s partida na área de transferência</item>
+        <item quantity="many">%1$s partidas na área de transferência</item>
+        <item quantity="other">%1$s partidas na área de transferência</item>
+    </plurals>
+    <string name="clipboard_open_one">Salvar esta partida PGN e abri-la no tabuleiro?</string>
+    <string name="clipboard_open_many">Salvar %1$s e abrir a primeira partida no tabuleiro? Todas as partidas serão mantidas na cópia local.</string>
+    <string name="clipboard_open">Abrir</string>
+    <string name="clipboard_database_name">Área de transferência</string>
     <string name="opening_file">Abrindo o arquivo…</string>
     <string name="file_failed">Não foi possível abrir o arquivo</string>
     <string name="file_no_games">Não há partidas de xadrez neste arquivo.</string>

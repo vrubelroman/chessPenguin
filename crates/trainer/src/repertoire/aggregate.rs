@@ -211,6 +211,31 @@ pub fn learning_invariant_violations(summary: &LearningAggregate) -> Vec<&'stati
     violations
 }
 
+pub fn global_total_invariant_violation(
+    global_total: usize,
+    repertoire_totals: impl IntoIterator<Item = usize>,
+) -> Option<&'static str> {
+    let mut repertoire_total = 0usize;
+    for total in repertoire_totals {
+        let Some(next) = repertoire_total.checked_add(total) else {
+            return Some("repertoire_totals sum overflow");
+        };
+        repertoire_total = next;
+    }
+    (global_total > repertoire_total).then_some("global_total > sum(repertoire_totals)")
+}
+
+pub fn log_global_total_invariant(
+    global_total: usize,
+    repertoire_totals: impl IntoIterator<Item = usize>,
+) {
+    if let Some(violation) = global_total_invariant_violation(global_total, repertoire_totals) {
+        eprintln!(
+            "training: global total invariant violation: {violation}; global_total={global_total}"
+        );
+    }
+}
+
 fn is_valid_percentage(value: f64) -> bool {
     value.is_finite() && (0.0..=100.0).contains(&value)
 }
@@ -341,6 +366,36 @@ mod tests {
                 assert_has_violation(&summary, violation);
             }
         }
+    }
+
+    #[test]
+    fn global_total_invariant_allows_deduplicated_union() {
+        assert_eq!(global_total_invariant_violation(3, [2, 2]), None);
+    }
+
+    #[test]
+    fn global_total_invariant_detects_global_above_repertoire_sum() {
+        assert_eq!(
+            global_total_invariant_violation(5, [2, 2]),
+            Some("global_total > sum(repertoire_totals)")
+        );
+    }
+
+    #[test]
+    fn global_total_invariant_detects_repertoire_sum_overflow() {
+        assert_eq!(
+            global_total_invariant_violation(0, [usize::MAX, 1]),
+            Some("repertoire_totals sum overflow")
+        );
+    }
+
+    #[test]
+    fn global_total_invariant_handles_empty_repertoires() {
+        assert_eq!(global_total_invariant_violation(0, []), None);
+        assert_eq!(
+            global_total_invariant_violation(1, []),
+            Some("global_total > sum(repertoire_totals)")
+        );
     }
 
     #[test]

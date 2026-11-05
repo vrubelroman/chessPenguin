@@ -18,7 +18,10 @@ mod stats;
 mod store;
 mod tree;
 
-pub use aggregate::{LearningAggregate, RepertoireStatus, aggregate, is_uncertain};
+pub use aggregate::{
+    LearningAggregate, RepertoireStatus, aggregate, global_total_invariant_violation, is_uncertain,
+    log_global_total_invariant,
+};
 pub use branch_analytics::{BranchLearningAnalytics, branch_learning_analytics};
 pub use learning::{
     AttemptApplication, IndependentOutcome, IndependentResult, LOCAL_PROFILE_ID, LearningData,

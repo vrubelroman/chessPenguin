@@ -407,21 +407,21 @@ impl LearningTrainingUi {
                 }
             }
             self.ready_since = None;
-            if !self.board_shown {
-                self.board_position = match parse_position(&current) {
-                    Ok(position) => position,
-                    Err(error) => {
-                        self.error = Some(error);
-                        return;
-                    }
-                };
-                self.last_move = None;
-                self.playback = None;
-                self.pending_automatic = Some(steps);
+            let Some(first) = steps.front() else {
+                self.error = Some("automatic context has no visual step".to_owned());
                 return;
-            }
-            self.pending_automatic = None;
-            self.start_next_automatic(steps, now, 0);
+            };
+            self.board_position = match parse_position(&first.from) {
+                Ok(position) => position,
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            };
+            self.board_shown = false;
+            self.pending_automatic = Some(steps);
+            self.playback = None;
+            self.last_move = None;
             return;
         }
         self.pending_automatic = None;
@@ -923,6 +923,9 @@ impl LearningTrainingUi {
     }
 
     fn board_animation_seconds(&self, settings: &Settings) -> f32 {
+        if self.pending_automatic.is_some() {
+            return 0.0;
+        }
         match &self.playback {
             Some(Playback::Automatic { duration, .. }) => duration.as_secs_f32(),
             _ => settings.animation.seconds(),
@@ -1216,6 +1219,10 @@ impl LearningTrainingUi {
             .playback_deadline()
             .map_or(started, |deadline| deadline.max(started));
         self.tick_at(at, Duration::ZERO, now());
+        if self.pending_automatic.is_some() {
+            self.board_shown = true;
+            self.tick_at(at, Duration::ZERO, now());
+        }
         if matches!(self.playback, Some(Playback::Wrong { .. })) {
             let until = self.playback_deadline().unwrap_or(at);
             self.tick_at(until, Duration::ZERO, now());
@@ -1224,7 +1231,7 @@ impl LearningTrainingUi {
 
     pub fn debug_hint(&mut self) {
         if self.needs_prepare {
-            self.tick_at(Instant::now(), Duration::ZERO, now());
+            self.debug_settle();
         }
         let id = unique_id(self.session.id());
         self.request_hint_with_id_at(id, Instant::now(), now());
@@ -1232,7 +1239,7 @@ impl LearningTrainingUi {
 
     pub fn debug_moves(&mut self, moves: &str) {
         if self.needs_prepare {
-            self.tick_at(Instant::now(), Duration::ZERO, now());
+            self.debug_settle();
         }
         for text in moves.split_whitespace() {
             match text {
@@ -1516,7 +1523,7 @@ mod tests {
     fn answer_current(f: &mut Fixture, at: Instant, happened_at: i64, id: &str) {
         let expected = f.ui.session.current_expected_uci().unwrap().to_owned();
         assert!(f.ui.play_uci_with_id_at(&expected, id.to_owned(), at, happened_at,));
-        f.ui.tick_at(at, Duration::ZERO, happened_at);
+        tick_with_prime(&mut f.ui, at, Duration::ZERO, happened_at);
     }
 
     #[test]
@@ -1603,6 +1610,35 @@ mod tests {
         .drop_without_applying_deltas();
     }
 
+    fn tick_with_prime(
+        ui: &mut LearningTrainingUi,
+        at: Instant,
+        animation: Duration,
+        happened_at: i64,
+    ) {
+        ui.tick_at(at, animation, happened_at);
+        if ui.pending_automatic.is_none() {
+            return;
+        }
+        let ctx = egui::Context::default();
+        let settings = Settings::default();
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 800.0),
+                )),
+                time: Some(0.0),
+                ..Default::default()
+            },
+            |root| ui.board_ui(root, &settings),
+        )
+        .drop_without_applying_deltas();
+        assert!(ui.board_shown);
+        assert!(ui.board.animation_at(0.0).is_none());
+        ui.tick_at(at, animation, happened_at);
+    }
+
     fn automatic_duration(f: &Fixture) -> Duration {
         match &f.ui.playback {
             Some(Playback::Automatic { duration, .. }) => *duration,
@@ -1653,7 +1689,7 @@ mod tests {
         assert_current_slide(f, 0.01, first, Square::E2, Square::E4);
         assert!(f.ui.message.is_none());
 
-        f.ui.tick_at(start + first, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + first, normal(), NOW);
         let last = automatic_duration(f);
         assert_eq!(last.as_millis(), last_ms);
         assert_eq!(f.ui.session.context_index, 1);
@@ -1661,7 +1697,7 @@ mod tests {
         assert_current_slide(f, 0.02, last, Square::E7, Square::E5);
         assert!(f.ui.message.is_none());
 
-        f.ui.tick_at(start + first + last, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + first + last, normal(), NOW);
         assert_eq!(f.ui.session.context_index, 2);
         assert!(f.ui.can_input());
         board_frame(f, &ctx, 10.0, &settings);
@@ -1698,6 +1734,100 @@ mod tests {
     }
 
     #[test]
+    fn next_target_primes_a_new_automatic_sequence_without_reverse_slide() {
+        fn settle_to_input(f: &mut Fixture, at: Instant) {
+            let mut at = at;
+            for _ in 0..32 {
+                if f.ui.can_input() {
+                    return;
+                }
+                let next = f.ui.playback_deadline().unwrap_or(at);
+                tick_with_prime(&mut f.ui, next, normal(), NOW);
+                at = next;
+            }
+            panic!("training did not reach independent input");
+        }
+
+        let mut f = Fixture::new(
+            "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *",
+            LearningSide::Black,
+            &["e7e5", "b8c6", "a7a6"],
+            "next-target-prime",
+        );
+        f.ui.session.context_policy.use_fixed_piece_speed = false;
+        f.ui.session.context_policy.move_speed_adjustment = 0.0;
+        let start = Instant::now();
+        settle_to_input(&mut f, start);
+        assert_eq!(f.ui.session.current_expected_uci(), Some("e7e5"));
+        answer_current(
+            &mut f,
+            start + Duration::from_secs(1),
+            NOW,
+            "first-target-e5",
+        );
+
+        settle_to_input(&mut f, start + Duration::from_secs(1) + normal());
+        assert_eq!(f.ui.session.current_expected_uci(), Some("b8c6"));
+        answer_current(
+            &mut f,
+            start + Duration::from_secs(3),
+            NOW + 1,
+            "second-target-nc6",
+        );
+
+        let prime_at = start + Duration::from_secs(3) + normal();
+        f.ui.tick_at(prime_at, normal(), NOW);
+        assert!(f.ui.pending_automatic.is_some());
+        assert!(!f.ui.board_shown);
+        let ctx = egui::Context::default();
+        let settings = Settings::default();
+        board_frame(&mut f, &ctx, 10.0, &settings);
+        assert!(
+            f.ui.board.animation_at(10.0).is_none(),
+            "prime must not animate the previous target backwards"
+        );
+
+        f.ui.tick_at(prime_at, normal(), NOW);
+        let duration = automatic_duration(&f);
+        assert_eq!(duration, Duration::from_millis(1000));
+        board_frame(&mut f, &ctx, 10.01, &settings);
+        assert_current_slide(&f, 10.01, duration, Square::E2, Square::E4);
+        let (_, slides, _) = f.ui.board.animation_at(10.01).unwrap();
+        assert!(
+            slides
+                .iter()
+                .all(|(_, from, to)| !(*from == Square::F3 && *to == Square::G1)),
+            "next target started with a reverse slide: {slides:?}"
+        );
+        assert!(matches!(
+            f.ui.playback,
+            Some(Playback::Automatic { total: 5, .. })
+        ));
+    }
+
+    #[test]
+    fn debug_moves_settles_prime_between_targets() {
+        let mut f = Fixture::new(
+            "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *",
+            LearningSide::Black,
+            &["e7e5", "b8c6", "a7a6"],
+            "debug-prime-between-targets",
+        );
+        f.ui.debug_moves("e7e5 settle b8c6 settle");
+        assert!(f.ui.can_input());
+        assert_eq!(f.ui.session.current_expected_uci(), Some("a7a6"));
+        f.ui.debug_moves("a7a6 settle");
+        assert!(f.ui.is_finished());
+        assert_eq!(
+            f.attempts()
+                .iter()
+                .filter(|attempt| attempt.event_type.is_independent())
+                .count(),
+            3
+        );
+    }
+
+    #[test]
     fn reinforcement_does_not_count_as_completed_main_target() {
         let mut f = Fixture::new(
             "1. e4 e5 2. Nf3 Nc6 *",
@@ -1707,7 +1837,7 @@ mod tests {
         );
         f.ui.session.context_policy.consider_leadup_moves = true;
         let start = Instant::now();
-        f.ui.tick_at(start, Duration::ZERO, NOW);
+        tick_with_prime(&mut f.ui, start, Duration::ZERO, NOW);
         assert_eq!(
             f.ui.session.phase,
             LearningSessionPhase::AwaitingContextIndependent
@@ -1734,25 +1864,25 @@ mod tests {
             "context-normal",
         );
         let start = Instant::now();
-        f.ui.tick_at(start, normal(), NOW);
+        tick_with_prime(&mut f.ui, start, normal(), NOW);
         assert_eq!(f.ui.visual_log, ["e2e4"]);
         assert_eq!(f.ui.session.context_index, 0);
         assert!(!f.ui.can_input());
 
-        f.ui.tick_at(start + Duration::from_millis(249), normal(), NOW);
+        tick_with_prime(&mut f.ui, start + Duration::from_millis(249), normal(), NOW);
         assert_eq!(f.ui.session.context_index, 0);
         assert!(f.attempts().is_empty());
 
-        f.ui.tick_at(start + normal(), normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal(), normal(), NOW);
         assert_eq!(f.ui.session.context_index, 1);
         assert_eq!(f.ui.visual_log, ["e2e4", "e7e5"]);
-        f.ui.tick_at(start + normal(), normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal(), normal(), NOW);
         assert_eq!(f.ui.session.context_index, 1);
 
-        f.ui.tick_at(start + normal() * 2, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal() * 2, normal(), NOW);
         assert_eq!(f.ui.session.context_index, 2);
         assert_eq!(f.ui.visual_log, ["e2e4", "e7e5", "g1f3"]);
-        f.ui.tick_at(start + normal() * 3, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal() * 3, normal(), NOW);
         assert_eq!(f.ui.session.context_index, 3);
         assert_eq!(
             f.ui.session.phase,
@@ -1775,8 +1905,8 @@ mod tests {
             "pause-after-second",
         );
         let start = Instant::now();
-        f.ui.tick_at(start, normal(), NOW);
-        f.ui.tick_at(start + normal(), normal(), NOW);
+        tick_with_prime(&mut f.ui, start, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal(), normal(), NOW);
         assert_eq!(f.ui.session.context_index, 1);
         assert_eq!(f.ui.visual_log, ["e2e4", "e7e5"]);
 
@@ -1784,24 +1914,24 @@ mod tests {
         assert!(f.ui.pause_requested);
         assert!(matches!(f.ui.playback, Some(Playback::Automatic { .. })));
         assert_eq!(f.attempts().len(), 1);
-        f.ui.tick_at(start + normal() * 2, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal() * 2, normal(), NOW);
         assert!(f.ui.autoplay_paused());
         assert_eq!(f.ui.session.context_index, 2);
         assert_eq!(f.ui.visual_log, ["e2e4", "e7e5"]);
         assert_eq!(f.attempts().len(), 2);
         assert!(!f.ui.can_input());
 
-        f.ui.tick_at(start + normal() * 10, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal() * 10, normal(), NOW);
         assert_eq!(f.ui.session.context_index, 2);
         assert_eq!(f.attempts().len(), 2);
         assert!(f.ui.continue_autoplay(start + normal() * 20));
         assert_eq!(f.ui.visual_log, ["e2e4", "e7e5", "g1f3"]);
         assert_eq!(f.ui.session.context_index, 2);
         assert_eq!(f.attempts().len(), 2);
-        f.ui.tick_at(start + normal() * 20, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal() * 20, normal(), NOW);
         assert_eq!(f.attempts().len(), 2);
 
-        f.ui.tick_at(start + normal() * 21, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal() * 21, normal(), NOW);
         assert_eq!(f.ui.session.context_index, 3);
         assert_eq!(f.attempts().len(), 3);
         assert!(f.ui.can_input());
@@ -1817,7 +1947,7 @@ mod tests {
             "autoplay-keyboard-stop",
         );
         let start = Instant::now();
-        f.ui.tick_at(start, normal(), NOW);
+        tick_with_prime(&mut f.ui, start, normal(), NOW);
         let ctx = egui::Context::default();
         let press = |key: Key,
                      training: &mut LearningTrainingUi,
@@ -1843,7 +1973,7 @@ mod tests {
         assert!(f.ui.pause_requested);
         assert!(actions.is_empty());
 
-        f.ui.tick_at(start + normal(), normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal(), normal(), NOW);
         assert!(f.ui.autoplay_paused());
         assert_eq!(f.attempts().len(), 1);
         press(Key::Space, &mut f.ui, &mut actions);
@@ -1857,7 +1987,7 @@ mod tests {
         assert!(f.ui.playback.is_none());
         assert!(!f.ui.can_input());
         assert_eq!(f.ui.visual_log, ["e2e4", "e7e5"]);
-        f.ui.tick_at(start + normal() * 20, normal(), NOW);
+        tick_with_prime(&mut f.ui, start + normal() * 20, normal(), NOW);
         assert_eq!(f.attempts().len(), 1);
         let data = f.store.load().unwrap();
         assert_eq!(data.learning.attempts.len(), 1);
@@ -1877,7 +2007,7 @@ mod tests {
             &["b8c6"],
             "context-off",
         );
-        f.ui.tick_at(Instant::now(), Duration::ZERO, NOW);
+        tick_with_prime(&mut f.ui, Instant::now(), Duration::ZERO, NOW);
         assert_eq!(f.ui.visual_log, ["e2e4", "e7e5", "g1f3"]);
         assert_eq!(f.ui.session.context_index, 3);
         assert!(f.ui.can_input());
@@ -1905,7 +2035,7 @@ mod tests {
             "autoplay-input",
         );
         let start = Instant::now();
-        f.ui.tick_at(start, normal(), NOW);
+        tick_with_prime(&mut f.ui, start, normal(), NOW);
         assert!(!f.ui.play_uci_with_id_at(
             "e7e5",
             "blocked-input".to_owned(),
@@ -1921,7 +2051,7 @@ mod tests {
     fn wrong_answer_replays_without_a_second_independent_error() {
         let mut f = Fixture::new("1. e4 *", LearningSide::White, &["e2e4"], "wrong-replay");
         let start = Instant::now();
-        f.ui.tick_at(start, normal(), NOW);
+        tick_with_prime(&mut f.ui, start, normal(), NOW);
         assert!(f.ui.play_uci_with_id_at(
             "d2d4",
             "wrong-d4".to_owned(),
@@ -1929,7 +2059,8 @@ mod tests {
             NOW,
         ));
         assert!(matches!(f.ui.playback, Some(Playback::Wrong { .. })));
-        f.ui.tick_at(
+        tick_with_prime(
+            &mut f.ui,
             start + Duration::from_millis(1500) + WRONG_SHOWN,
             normal(),
             NOW,
@@ -1950,14 +2081,24 @@ mod tests {
             NOW,
         ));
         assert_eq!(f.attempts().len(), 1);
-        f.ui.tick_at(start + Duration::from_secs(3) + WRONG_SHOWN, normal(), NOW);
+        tick_with_prime(
+            &mut f.ui,
+            start + Duration::from_secs(3) + WRONG_SHOWN,
+            normal(),
+            NOW,
+        );
         assert!(f.ui.play_uci_with_id_at(
             "e2e4",
             "replay-e4".to_owned(),
             start + Duration::from_secs(4),
             NOW,
         ));
-        f.ui.tick_at(start + Duration::from_secs(4) + normal(), normal(), NOW);
+        tick_with_prime(
+            &mut f.ui,
+            start + Duration::from_secs(4) + normal(),
+            normal(),
+            NOW,
+        );
         assert!(f.ui.is_finished());
         let attempts = f.attempts();
         assert_eq!(attempts.len(), 2);
@@ -1984,7 +2125,7 @@ mod tests {
     fn preview_is_idempotent_and_shown_move_is_not_success() {
         let mut f = Fixture::new("1. e4 *", LearningSide::White, &["e2e4"], "preview");
         let start = Instant::now();
-        f.ui.tick_at(start, normal(), NOW);
+        tick_with_prime(&mut f.ui, start, normal(), NOW);
         assert!(f.ui.request_hint_with_id_at(
             "preview-e4".to_owned(),
             start + Duration::from_millis(100),
@@ -2003,7 +2144,12 @@ mod tests {
             start + Duration::from_secs(1),
             NOW,
         ));
-        f.ui.tick_at(start + Duration::from_secs(1) + normal(), normal(), NOW);
+        tick_with_prime(
+            &mut f.ui,
+            start + Duration::from_secs(1) + normal(),
+            normal(),
+            NOW,
+        );
         assert!(f.ui.is_finished());
         assert!(
             f.ui.message
@@ -2038,7 +2184,7 @@ mod tests {
             "duplicate",
         );
         let start = Instant::now();
-        f.ui.tick_at(start, normal(), NOW);
+        tick_with_prime(&mut f.ui, start, normal(), NOW);
         assert!(f.ui.advance_context_with_id_at(
             "duplicate-context".to_owned(),
             start + normal(),
@@ -2062,7 +2208,7 @@ mod tests {
     fn store_error_is_visible_blocking_and_retryable() {
         let mut f = Fixture::new("1. e4 *", LearningSide::White, &["e2e4"], "store-error");
         let start = Instant::now();
-        f.ui.tick_at(start, normal(), NOW);
+        tick_with_prime(&mut f.ui, start, normal(), NOW);
         let valid_store = f.ui.store.clone();
         f.ui.store = LearningStore::with_legacy(valid_store.path(), valid_store.path());
         assert!(f.ui.play_uci_with_id_at(
@@ -2087,7 +2233,12 @@ mod tests {
         f.ui.retry_pending(start + Duration::from_millis(300));
         assert!(!f.ui.has_unsaved());
         assert!(matches!(f.ui.playback, Some(Playback::Accepted { .. })));
-        f.ui.tick_at(start + Duration::from_millis(300) + normal(), normal(), NOW);
+        tick_with_prime(
+            &mut f.ui,
+            start + Duration::from_millis(300) + normal(),
+            normal(),
+            NOW,
+        );
         assert!(f.ui.is_finished());
         assert_eq!(f.attempts().len(), 1);
     }
@@ -2096,7 +2247,7 @@ mod tests {
     fn reload_resumes_preview_and_partially_presented_context() {
         let mut preview = Fixture::new("1. e4 *", LearningSide::White, &["e2e4"], "resume-preview");
         let start = Instant::now();
-        preview.ui.tick_at(start, normal(), NOW);
+        tick_with_prime(&mut preview.ui, start, normal(), NOW);
         preview
             .ui
             .request_hint_with_id_at("resume-preview-event".to_owned(), start, NOW);
@@ -2120,8 +2271,8 @@ mod tests {
             &["b8c6"],
             "resume-context",
         );
-        context.ui.tick_at(start, normal(), NOW);
-        context.ui.tick_at(start + normal(), normal(), NOW);
+        tick_with_prime(&mut context.ui, start, normal(), NOW);
+        tick_with_prime(&mut context.ui, start + normal(), normal(), NOW);
         assert_eq!(context.ui.session.context_index, 1);
         let id = context.ui.session_id().to_owned();
         drop(context.ui);
@@ -2136,8 +2287,7 @@ mod tests {
         .unwrap();
         assert_eq!(resumed.session_id(), id);
         assert_eq!(resumed.session.context_index, 1);
-        resumed.board_shown = true;
-        resumed.tick_at(start + normal() * 2, Duration::ZERO, NOW);
+        tick_with_prime(&mut resumed, start + normal() * 2, Duration::ZERO, NOW);
         assert_eq!(resumed.session.context_index, 3);
         assert_eq!(context.store.load().unwrap().learning.attempts.len(), 3);
     }
@@ -2171,7 +2321,7 @@ mod tests {
             true,
         );
         let start = Instant::now();
-        f.ui.tick_at(start, Duration::ZERO, NOW);
+        tick_with_prime(&mut f.ui, start, Duration::ZERO, NOW);
         assert!(f.ui.request_hint_with_id_at(
             "preview-before-new-introduction".to_owned(),
             start,
@@ -2217,7 +2367,7 @@ mod tests {
             LearningPriority::DepthFirst,
         );
         let start = Instant::now();
-        f.ui.tick_at(start, Duration::ZERO, NOW);
+        tick_with_prime(&mut f.ui, start, Duration::ZERO, NOW);
         answer_current(
             &mut f,
             start + Duration::from_millis(10),
@@ -2281,7 +2431,7 @@ mod tests {
             "g1f3"
         );
         let start = Instant::now();
-        f.ui.tick_at(start, Duration::ZERO, NOW);
+        tick_with_prime(&mut f.ui, start, Duration::ZERO, NOW);
         assert!(f.ui.can_input());
         assert!(f.ui.playback.is_none());
         assert!(f.ui.visual_log.is_empty());
@@ -2379,7 +2529,7 @@ mod tests {
             LearningPriority::MainLinesFirst,
         );
         let start = Instant::now();
-        f.ui.tick_at(start, Duration::ZERO, NOW);
+        tick_with_prime(&mut f.ui, start, Duration::ZERO, NOW);
         answer_current(&mut f, start, NOW, "priority-review-first");
         let review_id = f.ui.session_id().to_owned();
         assert_eq!(f.ui.session.current_index, 1);

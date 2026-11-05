@@ -10,6 +10,7 @@ const WIDE_WIDTH: f32 = 900.0;
 const HEADER_HEIGHT: f32 = 40.0;
 const ROW_HEIGHT: f32 = 24.0;
 const BODY_TEXT_SIZE: f32 = 14.0;
+const WIDE_NUMERIC_WIDTHS: [f32; 9] = [56.0, 60.0, 80.0, 64.0, 108.0, 96.0, 88.0, 64.0, 136.0];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchSelection {
@@ -161,7 +162,7 @@ fn show_wide(
         .max_scroll_height(360.0)
         .cell_layout(Layout::left_to_right(Align::Center))
         .column(Column::remainder().at_least(120.0).clip(true));
-    for width in [30.0, 66.0, 70.0, 52.0, 72.0, 46.0, 68.0, 64.0, 136.0] {
+    for width in WIDE_NUMERIC_WIDTHS {
         table = table.column(Column::exact(width).clip(true));
     }
     table
@@ -280,42 +281,39 @@ fn show_details(
         ("Accuracy", format_percent(row.summary.accuracy_percent)),
         ("Last trained", format_time(row.last_independent_at)),
     ];
-    egui::Grid::new("learning_branches_details")
-        .num_columns(2)
-        .spacing([12.0, 5.0])
-        .show(ui, |ui| {
-            for (label, value) in details {
-                ui.add(
-                    egui::Label::new(RichText::new(tr(label)).weak().size(BODY_TEXT_SIZE)).wrap(),
-                );
-                ui.add(egui::Label::new(RichText::new(value).size(BODY_TEXT_SIZE)).wrap());
-                ui.end_row();
-            }
+    show_details_rows(ui, &details);
+}
+
+fn show_details_rows(ui: &mut Ui, details: &[(&'static str, String)]) {
+    let label_width = (ui.available_width() * 0.36).clamp(110.0, 160.0);
+    TableBuilder::new(ui)
+        .id_salt("learning_branches_details")
+        .vscroll(false)
+        .cell_layout(Layout::left_to_right(Align::Min))
+        .column(Column::exact(label_width).clip(true))
+        .column(Column::remainder().at_least(80.0).clip(true))
+        .body(|body| {
+            body.rows(ROW_HEIGHT * 1.5, details.len(), |mut row| {
+                let (label, value) = &details[row.index()];
+                row.col(|ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(tr(label)).weak().size(BODY_TEXT_SIZE))
+                            .wrap(),
+                    );
+                });
+                row.col(|ui| {
+                    ui.add(egui::Label::new(RichText::new(value).size(BODY_TEXT_SIZE)).wrap());
+                });
+            });
         });
 }
 
-fn header_cell(ui: &mut Ui, text: &str, numeric: bool) -> egui::Response {
-    let text = RichText::new(text).strong().size(BODY_TEXT_SIZE);
-    if numeric {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add(egui::Label::new(text).wrap())
-        })
-        .inner
-    } else {
-        ui.add(egui::Label::new(text).wrap())
-    }
+fn header_cell(ui: &mut Ui, text: &str, _numeric: bool) -> egui::Response {
+    ui.add(egui::Label::new(RichText::new(text).strong().size(BODY_TEXT_SIZE)).wrap())
 }
 
-fn text_cell(ui: &mut Ui, text: &str, numeric: bool) -> egui::Response {
-    let text = RichText::new(text).size(BODY_TEXT_SIZE);
-    if numeric {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add(egui::Label::new(text).truncate())
-        })
-        .inner
-    } else {
-        ui.add(egui::Label::new(text).truncate())
-    }
+fn text_cell(ui: &mut Ui, text: &str, _numeric: bool) -> egui::Response {
+    ui.add(egui::Label::new(RichText::new(text).size(BODY_TEXT_SIZE)).truncate())
 }
 
 fn format_percent(value: Option<f64>) -> String {
@@ -535,7 +533,7 @@ mod tests {
     fn wide_and_narrow_layouts_stay_in_bounds_in_light_and_dark() {
         let fixture = fixture();
         for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
-            for (width, height) in [(1200.0, 800.0), (640.0, 480.0)] {
+            for (width, height) in [(1400.0, 900.0), (960.0, 600.0), (640.0, 480.0)] {
                 let ctx = egui::Context::default();
                 ctx.set_visuals(visuals.clone());
                 let mut selected = None;
@@ -593,6 +591,99 @@ mod tests {
     }
 
     #[test]
+    fn wide_headers_fit_accepted_matrix_in_russian_and_german() {
+        let cases = [
+            [
+                "Ветка",
+                "Итого",
+                "Новый",
+                "Изучается",
+                "Изучено",
+                "Не подтверждено",
+                "К повторению",
+                "Точность",
+                "Изучено %",
+                "Последняя тренировка",
+            ],
+            [
+                "Variante",
+                "Gesamt",
+                "Neu",
+                "Lernen",
+                "Gelernt",
+                "Unsicher",
+                "Fällig",
+                "Genauigkeit",
+                "Gelernt %",
+                "Letztes Training",
+            ],
+        ];
+        for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
+            for (width, height) in [(960.0, 600.0), (1400.0, 900.0)] {
+                for headers in &cases {
+                    let ctx = egui::Context::default();
+                    ctx.set_visuals(visuals.clone());
+                    let output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, height),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let mut table = TableBuilder::new(ui)
+                                .id_salt("learning_branches_wide_header_test")
+                                .cell_layout(Layout::left_to_right(Align::Center))
+                                .column(Column::remainder().at_least(120.0).clip(true));
+                            for width in WIDE_NUMERIC_WIDTHS {
+                                table = table.column(Column::exact(width).clip(true));
+                            }
+                            table.header(HEADER_HEIGHT, |mut header| {
+                                for (index, key) in headers.iter().enumerate() {
+                                    header.col(|ui| {
+                                        header_cell(ui, tr(key), index > 0);
+                                    });
+                                }
+                            });
+                        },
+                    );
+                    let shapes = output.shapes.clone();
+                    output.drop_without_applying_deltas();
+                    assert_bounds(&shapes, width, height);
+                    for expected in headers {
+                        let (rect, clip, lines) = shapes
+                            .iter()
+                            .find_map(|clipped| match &clipped.shape {
+                                egui::Shape::Text(text)
+                                    if text.galley.text().replace('\n', " ") == *expected =>
+                                {
+                                    Some((
+                                        egui::Rect::from_min_size(text.pos, text.galley.size()),
+                                        clipped.clip_rect,
+                                        text.galley.text().lines().count(),
+                                    ))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| {
+                                panic!("missing full header {expected} at {width}x{height}")
+                            });
+                        assert!(lines <= 2, "header wraps too much: {expected}");
+                        assert!(
+                            rect.min.x >= clip.min.x - 0.1
+                                && rect.min.y >= clip.min.y - 0.1
+                                && rect.max.x <= clip.max.x + 0.1
+                                && rect.max.y <= clip.max.y + 0.1,
+                            "clipped header {expected} at {width}x{height}: {rect:?} {clip:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn narrow_details_are_visible_and_click_selects_the_branch() {
         let fixture = fixture();
         let ctx = egui::Context::default();
@@ -634,6 +725,78 @@ mod tests {
             "Last trained",
         ] {
             assert!(has_translated_text(&shapes, key), "missing detail {key}");
+        }
+    }
+
+    #[test]
+    fn narrow_details_keep_long_labels_readable_at_all_widths() {
+        let cases: Vec<Vec<(&str, String)>> = vec![
+            vec![
+                ("Новый", "2".to_owned()),
+                ("Изучается", "1".to_owned()),
+                ("Изучено", "4".to_owned()),
+                ("Не подтверждено", "1".to_owned()),
+                ("К повторению", "3".to_owned()),
+                ("Точность", "75 %".to_owned()),
+                ("Последняя тренировка", "2026-11-04 08:26".to_owned()),
+            ],
+            vec![
+                ("Neu", "2".to_owned()),
+                ("Wird gelernt", "1".to_owned()),
+                ("Gelernt", "4".to_owned()),
+                ("Nicht bestätigt", "1".to_owned()),
+                ("Fällig", "3".to_owned()),
+                ("Genauigkeit", "75 %".to_owned()),
+                ("Zuletzt trainiert", "2026-11-04 08:26".to_owned()),
+            ],
+        ];
+        for visuals in [egui::Visuals::light(), egui::Visuals::dark()] {
+            for width in [320.0, 360.0, 420.0, 640.0] {
+                for details in &cases {
+                    let ctx = egui::Context::default();
+                    ctx.set_visuals(visuals.clone());
+                    let mut expected_label_width = 0.0;
+                    let output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 700.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            egui::CentralPanel::default().show(ui, |ui| {
+                                expected_label_width =
+                                    (ui.available_width() * 0.36).clamp(110.0, 160.0);
+                                show_details_rows(ui, details);
+                            });
+                        },
+                    );
+                    let shapes = output.shapes.clone();
+                    output.drop_without_applying_deltas();
+                    assert_bounds(&shapes, width, 700.0);
+                    for (label, _) in details {
+                        let (clip, lines) = shapes
+                            .iter()
+                            .find_map(|clipped| match &clipped.shape {
+                                egui::Shape::Text(text)
+                                    if text.galley.text().replace('\n', " ") == *label =>
+                                {
+                                    Some((clipped.clip_rect, text.galley.text().lines().count()))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| panic!("missing full label {label} at {width}"));
+                        assert!(
+                            (clip.width() - expected_label_width).abs() < 0.1,
+                            "label column at {width}: {clip:?}, expected {expected_label_width}: {label}"
+                        );
+                        assert!(lines <= 2, "label wraps too much at {width}: {label}");
+                    }
+                    assert!(has_text(&shapes, "2026-11-04 08:26"));
+                    assert!(has_text(&shapes, "75 %"));
+                }
+            }
         }
     }
 
