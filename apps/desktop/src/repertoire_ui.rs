@@ -1583,16 +1583,33 @@ impl RepertoireUi {
                         let gap = ui.spacing().item_spacing.x;
                         let pad = 2.0 * ui.spacing().button_padding.x + 2.0;
                         let room = ui.available_width();
-                        let main_w = MAIN_W.min((room - LINES_W - gap).max(0.0));
-                        // Buttons are never cut: in a narrow panel the third one (always
-                        // in the `⋯` menu too) stays out.
+                        // The row is the same in every state with moves: «Review all» is
+                        // there unless the main button already is it. A narrow panel makes
+                        // the buttons narrower, down to their words.
+                        let third = !matches!(
+                            state,
+                            CardState::Empty
+                                | CardState::Failed(_)
+                                | CardState::Counting
+                                | CardState::OtherColor
+                        ) && !matches!(item, Some(MenuItem::ReviewAll));
+                        let main_need = text_width(ui, &label, 14.0) + pad;
+                        let lines_need = text_width(ui, tr("Lines…"), 14.0) + pad;
                         let third_need = text_width(ui, tr("Review all"), 14.0) + pad;
-                        let lines_w = LINES_W.min(text_width(ui, tr("Lines…"), 14.0) + pad + 12.0);
-                        let third_w = room - main_w - lines_w - 2.0 * gap;
-                        let third =
-                            matches!(state, CardState::OnlyNew { .. }) && third_w >= third_need;
-                        let lines_w = if third { lines_w } else { LINES_W };
-                        let third_w = third_w.min(THIRD_W.max(third_need));
+                        let (main_w, lines_w, third_w) = if third {
+                            let spare = room - main_need - lines_need - third_need - 2.0 * gap;
+                            let grow = |need: f32, most: f32, spare: &mut f32| {
+                                let add = (most - need).max(0.0).min(spare.max(0.0));
+                                *spare -= add;
+                                need + add
+                            };
+                            let mut spare = spare;
+                            let main_w = grow(main_need, MAIN_W, &mut spare);
+                            let lines_w = grow(lines_need, LINES_W, &mut spare);
+                            (main_w, lines_w, grow(third_need, THIRD_W, &mut spare))
+                        } else {
+                            (MAIN_W.min((room - LINES_W - gap).max(0.0)), LINES_W, 0.0)
+                        };
                         let response = ui
                             .add_enabled_ui(enabled, |ui| {
                                 crate::widgets::primary_wide(ui, &label, main_w)
