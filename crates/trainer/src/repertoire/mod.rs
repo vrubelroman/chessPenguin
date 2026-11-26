@@ -82,6 +82,8 @@ mod analytics_tests;
 #[cfg(test)]
 mod branch_tests;
 #[cfg(test)]
+mod daily_tests;
+#[cfg(test)]
 mod graph_tests;
 #[cfg(test)]
 mod line_tests;

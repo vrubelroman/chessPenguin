@@ -85,8 +85,22 @@ pub struct LearningSessionSnapshot {
     /// Per-session optimistic revision, independent from the store revision.
     #[serde(default)]
     pub revision: u64,
+    /// A move answered after a mistake or a hint goes to the end of this session's
+    /// queue instead of being completed (daily sessions).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub return_mistakes: bool,
+    /// Review in order ends after one pass instead of starting the next cycle.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub single_pass: bool,
+    /// The pending preview is the first showing of a new move, not a hint.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub showing_new: bool,
     #[serde(skip)]
     runtime: SessionRuntime,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 // Derived data only: clones share it, persistence and snapshot equality do not.
@@ -295,10 +309,112 @@ impl LearningSessionSnapshot {
             completed_keys: BTreeSet::new(),
             cycle: 0,
             revision: 0,
+            return_mistakes: false,
+            single_pass: false,
+            showing_new: false,
             runtime: SessionRuntime::default(),
         };
         snapshot.reset_current_target_with_library(library)?;
         Ok(snapshot)
+    }
+
+    /// A daily session: every move due at `stats_scope.as_of` and at most `max_new`
+    /// moves never shown before, in the scope's priority order. A move answered after a
+    /// mistake or a hint comes back later in the same session.
+    pub fn new_daily(
+        id: impl Into<String>,
+        library: &Library,
+        learning: &LearningData,
+        stats_scope: StatsScope,
+        settings: SrsSettings,
+        max_new: usize,
+    ) -> Result<Self, LearningSessionError> {
+        let mut snapshot = Self::new_with_mode(
+            id,
+            library,
+            learning,
+            stats_scope,
+            settings,
+            QueueMode::SpacedRepetition,
+        )?;
+        snapshot.queue = daily_targets(library, learning, &snapshot.stats_scope, true, max_new)?;
+        snapshot.return_mistakes = true;
+        snapshot.reset_current_target_with_library(library)?;
+        Ok(snapshot)
+    }
+
+    /// One pass over every active move in the scope's order, then `Finished`.
+    pub fn new_single_pass_review(
+        id: impl Into<String>,
+        library: &Library,
+        learning: &LearningData,
+        stats_scope: StatsScope,
+        settings: SrsSettings,
+    ) -> Result<Self, LearningSessionError> {
+        let mut snapshot = Self::new_with_mode(
+            id,
+            library,
+            learning,
+            stats_scope,
+            settings,
+            QueueMode::ReviewInOrder,
+        )?;
+        snapshot.single_pass = true;
+        Ok(snapshot)
+    }
+
+    /// One pass over the lines through the move at `through` (a PGN path; empty: every
+    /// line). The move itself is asked when it is the trained side's.
+    pub fn new_branch_review(
+        id: impl Into<String>,
+        library: &Library,
+        learning: &LearningData,
+        stats_scope: StatsScope,
+        settings: SrsSettings,
+        through: &[String],
+    ) -> Result<Self, LearningSessionError> {
+        let stats_scope = match through.split_last() {
+            Some((_, root)) => stats_scope.with_branch_root(root.to_vec()),
+            None => stats_scope,
+        };
+        let mut snapshot =
+            Self::new_single_pass_review(id, library, learning, stats_scope, settings)?;
+        snapshot
+            .queue
+            .retain(|target| target.path.starts_with(through));
+        snapshot.reset_current_target_with_library(library)?;
+        Ok(snapshot)
+    }
+
+    /// After a finished daily session: the next `max_new` unseen moves only.
+    pub fn introduce_more(
+        &mut self,
+        library: &Library,
+        learning: &LearningData,
+        max_new: usize,
+    ) -> Result<usize, LearningSessionError> {
+        self.validate_configuration()?;
+        if self.session.mode != QueueMode::SpacedRepetition {
+            return Err(LearningSessionError::UnsupportedMode(self.session.mode));
+        }
+        if self.phase != LearningSessionPhase::Finished {
+            return Err(LearningSessionError::IntroductionRequiresFinished);
+        }
+        self.queue = daily_targets(library, learning, &self.stats_scope, false, max_new)?;
+        self.current_index = 0;
+        self.completed_keys.clear();
+        self.reset_current_target_with_library(library)?;
+        Ok(self.queue.len())
+    }
+
+    /// The current move has never been shown: true when it has no learning state or was
+    /// never introduced.
+    pub fn current_is_new(&self, learning: &LearningData) -> bool {
+        self.current_target().is_some_and(|target| {
+            learning
+                .item(&target.key)
+                .is_none_or(|item| !item.introduced)
+        })
     }
 
     /// Explicitly replaces a finished queue with the currently unseen items. No item is
@@ -578,6 +694,25 @@ impl LearningSessionSnapshot {
         client_attempt_id: impl Into<String>,
         happened_at: i64,
     ) -> Result<Option<TrainingAttempt>, LearningSessionError> {
+        self.preview_impl(client_attempt_id, happened_at, false)
+    }
+
+    /// Shows a new move before asking it. The move is recorded as `PREVIEWED`, but in a
+    /// daily session it does not come back as a mistake would.
+    pub fn preview_new(
+        &mut self,
+        client_attempt_id: impl Into<String>,
+        happened_at: i64,
+    ) -> Result<Option<TrainingAttempt>, LearningSessionError> {
+        self.preview_impl(client_attempt_id, happened_at, true)
+    }
+
+    fn preview_impl(
+        &mut self,
+        client_attempt_id: impl Into<String>,
+        happened_at: i64,
+        new: bool,
+    ) -> Result<Option<TrainingAttempt>, LearningSessionError> {
         let client_attempt_id = checked_attempt_id(client_attempt_id.into())?;
         self.validate_configuration()?;
         match self.phase {
@@ -598,6 +733,7 @@ impl LearningSessionSnapshot {
                     "preview has no current target",
                 ))?;
         self.phase = LearningSessionPhase::PreviewedReplay;
+        self.showing_new = new;
         Ok(Some(self.attempt(
             &target.key,
             TrainingEventType::Previewed,
@@ -834,6 +970,8 @@ impl LearningSessionSnapshot {
             {
                 if context {
                     self.complete_context(challenge_key, library, learning)?;
+                } else if self.return_mistakes && !self.showing_new {
+                    self.return_current(library)?;
                 } else {
                     self.complete_current(library)?;
                 }
@@ -968,12 +1106,29 @@ impl LearningSessionSnapshot {
             self.current_index += 1;
         }
         if self.session.mode == QueueMode::ReviewInOrder
+            && !self.single_pass
             && self.current_index >= self.queue.len()
             && !self.queue.is_empty()
         {
             self.current_index = 0;
             self.completed_keys.clear();
             self.cycle = self.cycle.saturating_add(1);
+        }
+        self.reset_current_target_with_library(library)
+    }
+
+    /// Moves the current target behind the rest of the queue: it is asked again later
+    /// in this session, from the start of its line.
+    fn return_current(&mut self, library: &Library) -> Result<(), LearningSessionError> {
+        if self.current_index < self.queue.len() {
+            let target = self.queue.remove(self.current_index);
+            self.queue.push(target);
+        }
+        while self
+            .current_target()
+            .is_some_and(|target| self.completed_keys.contains(&target.key))
+        {
+            self.current_index += 1;
         }
         self.reset_current_target_with_library(library)
     }
@@ -1137,6 +1292,7 @@ impl LearningSessionSnapshot {
 
     fn reset_current_target(&mut self) {
         self.context_index = 0;
+        self.showing_new = false;
         self.phase = match self.current_target() {
             None => LearningSessionPhase::Finished,
             Some(target) if target.path.len() > 1 => LearningSessionPhase::AdvancingContext,
@@ -1188,6 +1344,38 @@ fn select_queue(
         }
         QueueMode::Practice => Err(LearningSessionError::UnsupportedMode(mode)),
     }
+}
+
+fn daily_targets(
+    library: &Library,
+    learning: &LearningData,
+    scope: &StatsScope,
+    include_due: bool,
+    max_new: usize,
+) -> Result<Vec<LearningSessionTarget>, LearningSessionError> {
+    let mut new = 0usize;
+    Ok(select_memberships(
+        library,
+        learning,
+        scope,
+        |item| {
+            item.is_none_or(|item| !item.introduced)
+                || item.is_some_and(|item| item.is_due(scope.as_of))
+        },
+        scope.learning_priority,
+    )?
+    .into_iter()
+    .filter(|membership| {
+        let item = learning.item(&membership.key);
+        if item.is_none_or(|item| !item.introduced) {
+            new += 1;
+            new <= max_new
+        } else {
+            include_due
+        }
+    })
+    .map(LearningSessionTarget::from)
+    .collect())
 }
 
 fn select_targets(
