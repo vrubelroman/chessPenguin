@@ -43,8 +43,13 @@ pub fn section_header_sub(ui: &mut Ui, back: &str, title: &str, subtitle: &str) 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             clicked.1 = settings_button(ui, compact).clicked();
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.add(egui::Label::new(egui::RichText::new(title).strong().size(16.0)).truncate())
+                // The rows of the game screen's header (game_view.rs): the same height.
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(title).strong().size(16.0)).truncate(),
+                    )
                     .on_hover_text(title);
+                });
                 let sub = ui.add(
                     egui::Label::new(
                         egui::RichText::new(if subtitle.is_empty() { " " } else { subtitle })
@@ -58,6 +63,7 @@ pub fn section_header_sub(ui: &mut Ui, back: &str, title: &str, subtitle: &str) 
             });
         });
     });
+    ui.add_space(4.0);
     clicked
 }
 
