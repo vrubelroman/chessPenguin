@@ -520,8 +520,8 @@ fn a_session_needs_no_question_to_go_back_and_counts_refresh_after_it() {
     frame(&mut ui, &ctx, &mut settings, size, vec![key(Key::Enter)]);
     settle(&mut ui, &ctx, &mut settings, size);
     assert!(matches!(ui.screen, Screen::Repertoires));
-    // e4 was shown and played, Nf3 shown when the session stopped: both are due
-    // again today (a shown move comes back a minute later), d4 is still new.
+    // e4 was shown and played: it is due again today. Nf3 was on the board, unplayed,
+    // when the session stopped: like d4 it is still new.
     let stats = ui.stats.get(&id).unwrap().as_ref().unwrap();
-    assert_eq!((stats.unseen, stats.due), (1, 2));
+    assert_eq!((stats.unseen, stats.due), (2, 1));
 }

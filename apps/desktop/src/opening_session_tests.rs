@@ -1275,10 +1275,9 @@ fn a_new_move_is_shown_before_it_is_asked_and_counts_once_played() {
     );
     assert_eq!(f.ui.session.remaining(), 1);
     tick_with_prime(&mut f.ui, Instant::now(), Duration::ZERO, NOW);
-    // Shown at once: PREVIEWED recorded, the arrow and the comment visible, no hint.
-    let attempts = f.attempts();
-    assert_eq!(attempts.len(), 1);
-    assert_eq!(attempts[0].event_type, TrainingEventType::Previewed);
+    // Shown at once: the arrow and the comment visible, no hint; nothing recorded
+    // until it is played.
+    assert!(f.attempts().is_empty());
     assert!(f.ui.session.showing_new);
     assert_eq!(f.ui.state(), Some(State::New));
     assert_eq!(f.ui.revealed_uci().as_deref(), Some("e2e4"));
@@ -1304,7 +1303,48 @@ fn a_new_move_is_shown_before_it_is_asked_and_counts_once_played() {
     );
     let attempts = f.attempts();
     assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].event_type, TrainingEventType::Previewed);
     assert_eq!(attempts[1].event_type, TrainingEventType::AutoContext);
+}
+
+#[test]
+fn a_new_move_left_unplayed_stays_new() {
+    let mut f = Fixture::with(
+        "1. e4 e5 2. Nf3 *",
+        LearningSide::White,
+        &[],
+        &["e2e4", "g1f3"],
+        "new-move-unplayed",
+        SessionKind::Daily,
+    );
+    let at = Instant::now();
+    tick_with_prime(&mut f.ui, at, Duration::ZERO, NOW);
+    assert!(f.ui.play_uci_with_id_at("e2e4", "play-e4".into(), at, NOW));
+    let later = at + Duration::from_secs(5);
+    for _ in 0..4 {
+        tick_with_prime(&mut f.ui, later, Duration::ZERO, NOW);
+    }
+    assert_eq!(f.ui.state(), Some(State::New));
+    assert_eq!(f.ui.session.current_expected_uci(), Some("g1f3"));
+    // A wrong move on a shown new move records nothing either.
+    assert!(f.ui.play_uci_with_id_at("d2d4", "wrong-nf3".into(), later, NOW));
+    tick_with_prime(&mut f.ui, later + WRONG_SHOWN, Duration::ZERO, NOW);
+    assert_eq!(f.ui.state(), Some(State::New));
+    let mut actions = Vec::new();
+    f.ui.request_exit(&mut actions);
+    assert!(f.ui.summary_visible());
+    let attempts = f.attempts();
+    let nf3 = attempts
+        .iter()
+        .filter(|attempt| attempt.expected_uci == "g1f3")
+        .count();
+    assert_eq!(
+        nf3,
+        0,
+        "{:?}",
+        attempts.iter().map(|a| a.event_type).collect::<Vec<_>>()
+    );
+    assert_eq!(f.ui.tally.new_moves, 1);
 }
 
 #[test]

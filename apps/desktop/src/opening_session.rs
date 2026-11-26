@@ -110,11 +110,8 @@ enum CommitKind {
         outcome: PlayOutcome,
         shown_prefix: ShownPrefix,
     },
-    /// `new`: the first showing of a new move; otherwise a hint (or the move revealed
-    /// after another repertoire move).
-    Preview {
-        new: bool,
-    },
+    /// A hint, or the move revealed after another repertoire move.
+    Preview,
 }
 
 #[derive(Clone)]
@@ -215,6 +212,9 @@ pub struct OpeningSessionUi {
     presentation: Option<LearningPresentation>,
     completed_attempt_ids: BTreeSet<String>,
     pending_commit: Option<PendingCommit>,
+    /// The showing of the new move on the board, recorded together with the move once
+    /// it is played: a new move left unplayed stays new.
+    unplayed_preview: Option<TrainingAttempt>,
     commit_in_flight: Option<mpsc::Receiver<Result<PersistedSessionAttempt, String>>>,
     #[cfg(test)]
     synchronous_commits: bool,
@@ -384,6 +384,7 @@ impl OpeningSessionUi {
             presentation: None,
             completed_attempt_ids,
             pending_commit: None,
+            unplayed_preview: None,
             commit_in_flight: None,
             #[cfg(test)]
             synchronous_commits: false,
@@ -635,10 +636,11 @@ impl OpeningSessionUi {
             LearningSessionPhase::AwaitingIndependent
                 if self.session.current_is_new(&self.learning) =>
             {
-                // A new move is shown before it is asked (decision 2026-11-26).
+                // A new move is shown before it is asked; the showing is recorded
+                // only with the played move.
                 self.ready_since = None;
                 let id = unique_id(self.session.id());
-                self.preview_with_id_at(id, true, now, layout::now());
+                self.show_new_with_id_at(id, layout::now());
             }
             LearningSessionPhase::AwaitingIndependent
             | LearningSessionPhase::AwaitingContextIndependent => {
@@ -1039,7 +1041,7 @@ impl OpeningSessionUi {
         if alternative && self.session.phase == LearningSessionPhase::AwaitingIndependent {
             self.alternative_revealed = true;
             let id = unique_id(self.session.id());
-            self.preview_with_id_at(id, false, now, happened_at);
+            self.preview_with_id_at(id, now, happened_at);
         } else if alternative {
             self.alternative_revealed = true;
         }
@@ -1068,13 +1070,37 @@ impl OpeningSessionUi {
         if !self.can_hint() || self.completed_attempt_ids.contains(&client_attempt_id) {
             return false;
         }
-        self.preview_with_id_at(client_attempt_id, false, now, happened_at)
+        self.preview_with_id_at(client_attempt_id, now, happened_at)
+    }
+
+    /// S2: the new move goes on the board with its arrow. Nothing is written yet.
+    fn show_new_with_id_at(&mut self, client_attempt_id: String, happened_at: i64) {
+        if self.has_unsaved() || self.completed_attempt_ids.contains(&client_attempt_id) {
+            return;
+        }
+        match self.session.preview_new(client_attempt_id, happened_at) {
+            Ok(attempt) => {
+                self.unplayed_preview = attempt;
+                self.board.clear();
+            }
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
+        }
+        // The arrow comes from the presentation of the shown move.
+        match self
+            .session
+            .presentation_with_learning(&self.library, &self.learning)
+        {
+            Ok(presentation) => self.presentation = Some(presentation),
+            Err(error) => self.error = Some(error.to_string()),
+        }
     }
 
     fn preview_with_id_at(
         &mut self,
         client_attempt_id: String,
-        new: bool,
         now: Instant,
         happened_at: i64,
     ) -> bool {
@@ -1082,12 +1108,7 @@ impl OpeningSessionUi {
             return false;
         }
         let target = self.session.current_target().cloned();
-        let result = if new {
-            self.session.preview_new(client_attempt_id, happened_at)
-        } else {
-            self.session.preview(client_attempt_id, happened_at)
-        };
-        let attempt = match result {
+        let attempt = match self.session.preview(client_attempt_id, happened_at) {
             Ok(Some(attempt)) => attempt,
             Ok(None) => return false,
             Err(error) => {
@@ -1096,7 +1117,7 @@ impl OpeningSessionUi {
             }
         };
         self.board.clear();
-        self.begin_commit_for(attempt, CommitKind::Preview { new }, target, now);
+        self.begin_commit_for(attempt, CommitKind::Preview, target, now);
         true
     }
 
@@ -1116,8 +1137,10 @@ impl OpeningSessionUi {
                 Some("another learning event is still waiting to be saved".to_owned());
             return;
         }
+        let mut attempts: Vec<_> = self.unplayed_preview.take().into_iter().collect();
+        attempts.push(attempt);
         self.pending_commit = Some(PendingCommit {
-            attempts: vec![attempt],
+            attempts,
             kind,
             target,
         });
@@ -1214,7 +1237,7 @@ impl OpeningSessionUi {
                         .then_some(shown_prefix);
                         self.start_playback(*visual, outcome, now);
                     }
-                    CommitKind::Preview { .. } => {
+                    CommitKind::Preview => {
                         self.needs_prepare = true;
                         self.prepare_presentation(now);
                     }
@@ -1250,12 +1273,11 @@ impl OpeningSessionUi {
                 | PlayOutcome::ReplayAfterError
                 | PlayOutcome::PreviewedReplay => {}
             },
-            CommitKind::Preview { new: false } => {
+            CommitKind::Preview => {
                 self.tally.hints += 1;
                 self.tally.miss(target);
             }
-            CommitKind::Preview { new: true } | CommitKind::Context | CommitKind::ReusedContext => {
-            }
+            CommitKind::Context | CommitKind::ReusedContext => {}
         }
     }
 
@@ -1298,6 +1320,7 @@ impl OpeningSessionUi {
 
     fn stop(&mut self) {
         self.stopped = true;
+        self.unplayed_preview = None;
         self.pending_automatic = None;
         if let Some(Playback::Automatic { .. }) = self.playback {
             self.playback = None;
@@ -1486,12 +1509,9 @@ impl OpeningSessionUi {
         if self.pending_automatic.is_some() {
             return Some(self.watch());
         }
-        if let Some(pending) = &self.pending_commit {
-            return match pending.kind {
-                CommitKind::Preview { new: true } => Some(State::New),
-                // Between moves: the card keeps what it said.
-                _ => None,
-            };
+        if self.pending_commit.is_some() {
+            // Between moves: the card keeps what it said.
+            return None;
         }
         if self.needs_prepare {
             return None;
