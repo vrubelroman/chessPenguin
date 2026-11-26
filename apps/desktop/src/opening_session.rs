@@ -1766,12 +1766,11 @@ impl OpeningSessionUi {
     fn counter(&self, state: &State) -> (String, &'static str) {
         match &self.kind {
             SessionKind::Daily => {
-                let left = if matches!(state, State::Summary) && !self.stopped {
-                    0
-                } else {
-                    self.session.remaining()
-                };
-                (left.to_string(), tr("left"))
+                // A finished session has nothing left: no «0 left» on its summary.
+                if matches!(state, State::Summary) && !self.stopped {
+                    return (String::new(), "");
+                }
+                (self.session.remaining().to_string(), tr("left"))
             }
             SessionKind::ReviewAll | SessionKind::Branch { .. } => {
                 let k = if self.is_finished() {

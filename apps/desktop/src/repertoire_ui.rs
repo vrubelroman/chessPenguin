@@ -66,6 +66,8 @@ static NEXT_JOB: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone)]
 struct RowIndex {
     start: Chess,
+    /// The position a session starts from (S0 shows it, not the library's preview).
+    initial: Chess,
     last_move: Option<(Square, Square)>,
     has_moves: bool,
 }
@@ -452,6 +454,7 @@ impl RepertoireUi {
                         r.id.clone(),
                         RowIndex {
                             start: layout::position_of(&game, start),
+                            initial: layout::position_of(&game, NodeId::ROOT),
                             last_move: layout::last_move(&game, start),
                             has_moves: !game.children(NodeId::ROOT).is_empty(),
                         },
@@ -1103,7 +1106,7 @@ impl RepertoireUi {
         {
             let side = layout::side_of(settings, &preparing.id);
             let index = self.index.get(&preparing.id);
-            let start = index.map(|row| row.start.clone()).unwrap_or_default();
+            let start = index.map(|row| row.initial.clone()).unwrap_or_default();
             let subtitle = preparing.kind.subtitle(side);
             let view = PreparingView {
                 name: &preparing.name,
@@ -1115,7 +1118,7 @@ impl RepertoireUi {
                 },
                 position: &start,
                 orientation: layout::orientation(side),
-                last_move: index.and_then(|row| row.last_move),
+                last_move: None,
                 lines: preparing.kind != SessionKind::Daily,
             };
             for action in show_preparing(ui, settings, &mut self.board, &view) {
@@ -2433,8 +2436,8 @@ fn main_button(state: &CardState, side: LearningSide) -> (String, bool, Option<M
         CardState::Empty => (tr("Add PGN…").to_owned(), true, Some(MenuItem::AddPgn)),
         CardState::OtherColor => (
             match side {
-                LearningSide::White => tr("Play as Black"),
-                LearningSide::Black => tr("Play as White"),
+                LearningSide::White => tr("Switch colour to Black"),
+                LearningSide::Black => tr("Switch colour to White"),
             }
             .to_owned(),
             true,
@@ -2474,15 +2477,12 @@ fn progress(ui: &mut Ui, stats: Option<&RowStats>) {
             (stats.learnt, stats.total, stats.learning)
         });
         if stats.is_some() {
-            layout::line(
-                ui,
-                trf("Learned {x} of {y} moves", &[("x", &learnt), ("y", &total)]),
-            );
-        }
-        if learning > 0 {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(trf("{k} in progress", &[("k", &learning)])).weak());
-            });
+            let mut text = trf("Learned {x} of {y} moves", &[("x", &learnt), ("y", &total)]);
+            // The bar's second segment, named where the bar is read.
+            if learning > 0 {
+                text = format!("{text} · {}", trf("learning {k}", &[("k", &learning)]));
+            }
+            layout::line(ui, text);
         }
     });
 }
@@ -2509,8 +2509,8 @@ fn menu_items(
         ui,
         true,
         match side {
-            LearningSide::White => tr("Play as Black"),
-            LearningSide::Black => tr("Play as White"),
+            LearningSide::White => tr("Switch colour to Black"),
+            LearningSide::Black => tr("Switch colour to White"),
         },
         MenuItem::SwitchColor,
     );

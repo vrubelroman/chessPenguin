@@ -172,7 +172,7 @@ fn the_card_says_what_to_do_in_every_state() {
     assert!(!main_button(&CardState::Counting, LearningSide::White).1);
     assert_eq!(
         main_button(&CardState::OtherColor, LearningSide::White).0,
-        tr("Play as Black")
+        tr("Switch colour to Black")
     );
     assert_eq!(
         card_texts(&CardState::Review { due: 3, new: 10 }, LearningSide::White),

@@ -1423,11 +1423,11 @@ fn a_daily_session_brings_mistakes_and_hints_back_and_its_numbers_agree() {
     // e4 wrong, e4 right, Nf3 right, Bb5 right.
     assert_eq!(independent, 4);
     f.ui.compute_summary();
-    f.ui.compute_summary();
     let summary = f.ui.summary.as_ref().unwrap();
     assert_eq!(summary.more_new, 0);
     assert!(!summary.next_review.is_empty());
-    assert_eq!(f.ui.counter(&State::Summary).0, "0");
+    // A finished session shows no «0 left».
+    assert_eq!(f.ui.counter(&State::Summary).0, "");
 }
 
 #[test]
