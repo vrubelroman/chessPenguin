@@ -2231,7 +2231,16 @@ impl RepertoireUi {
                     .split_whitespace()
                     .map(str::to_owned)
                     .collect();
-                let label = through.join(" ");
+                // The label in the notation of the application, as «Lines» gives it.
+                let label = self
+                    .selected
+                    .as_ref()
+                    .and_then(|id| self.library.repertoire(id))
+                    .map(|r| r.game())
+                    .and_then(|game| {
+                        layout::node_at(&game, &through).map(|at| layout::path_text(&game, at))
+                    })
+                    .unwrap_or_else(|| through.join(" "));
                 self.start(SessionKind::Branch { through, label }, settings);
             }
             "menu" => self.debug_menu = true,

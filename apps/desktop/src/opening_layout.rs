@@ -203,6 +203,25 @@ pub(crate) fn move_text(game: &Game, node: NodeId) -> Option<String> {
     })
 }
 
+/// "1. e4 e5 2. Nf3": the moves from the start to `node` with move numbers.
+pub(crate) fn path_text(game: &Game, node: NodeId) -> String {
+    let mut words = Vec::new();
+    for id in game.path(node).into_iter().skip(1) {
+        let Some(mv) = game.game_move(id) else {
+            continue;
+        };
+        let san = crate::san::show(&mv.san).into_owned();
+        match game.move_number(id) {
+            Some((number, Color::White)) => words.push(format!("{number}. {san}")),
+            Some((number, Color::Black)) if words.is_empty() => {
+                words.push(format!("{number}… {san}"))
+            }
+            _ => words.push(san),
+        }
+    }
+    words.join(" ")
+}
+
 /// The symbol of a move's assessment (`!`, `?!` …) and its colour for text.
 pub(crate) fn assessment(game: &Game, node: NodeId, dark: bool) -> Option<(&'static str, Color32)> {
     let nag = game

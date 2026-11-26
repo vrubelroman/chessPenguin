@@ -252,21 +252,7 @@ impl OpeningLinesUi {
 
     /// "… 4. Ba4 Nf6": the moves to a node in the notation of the application.
     fn path_label(&self, node: NodeId) -> String {
-        let mut words = Vec::new();
-        for id in self.game.path(node).into_iter().skip(1) {
-            let Some(mv) = self.game.game_move(id) else {
-                continue;
-            };
-            let san = crate::san::show(&mv.san).into_owned();
-            match self.game.move_number(id) {
-                Some((number, Color::White)) => words.push(format!("{number}. {san}")),
-                Some((number, Color::Black)) if words.is_empty() => {
-                    words.push(format!("{number}… {san}"))
-                }
-                _ => words.push(san),
-            }
-        }
-        words.join(" ")
+        layout::path_text(&self.game, node)
     }
 
     fn below(&self, path: &[String]) -> Option<(usize, usize, usize)> {
