@@ -2167,3 +2167,42 @@ fn async_failed_commit_preserves_event_for_retry_without_double_counting() {
     assert_eq!(f.attempts().len(), 1);
     assert_eq!(f.attempts()[0].client_attempt_id, "async-retry");
 }
+
+#[test]
+fn a_mistake_on_the_first_move_returns_it_once_and_keeps_the_count() {
+    // The next daily session after learning new moves: the learned e4 is due again
+    // today, Nf3 and Bb5 are still new. The count is due + new, and a mistake on the
+    // first move does not grow it.
+    let pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 *";
+    let mut f = Fixture::with(
+        pgn,
+        LearningSide::White,
+        &["e2e4"],
+        &["g1f3", "f1b5"],
+        "first-move-wrong",
+        SessionKind::Daily,
+    );
+    let at = Instant::now();
+    assert_eq!(f.ui.session.remaining(), 3);
+    tick_with_prime(&mut f.ui, at, Duration::ZERO, NOW);
+    assert_eq!(f.ui.session.current_expected_uci(), Some("e2e4"));
+    assert!(f.ui.play_uci_with_id_at("d2d4", "e4-wrong".into(), at, NOW));
+    tick_with_prime(&mut f.ui, at + WRONG_SHOWN, Duration::ZERO, NOW);
+    assert_eq!(f.ui.state(), Some(State::Wrong));
+    assert_eq!(f.ui.session.remaining(), 3);
+    answer_current(&mut f, at + WRONG_SHOWN, NOW, "e4-replay");
+    assert_eq!(f.ui.session.remaining(), 3);
+    let mut asked = Vec::new();
+    for _ in 0..4 {
+        f.ui.debug_settle();
+        let Some(uci) = f.ui.session.current_expected_uci().map(str::to_owned) else {
+            break;
+        };
+        answer_current(&mut f, at, NOW, &format!("again-{uci}-{}", asked.len()));
+        asked.push(uci);
+    }
+    f.ui.debug_settle();
+    assert!(f.ui.is_finished());
+    assert_eq!(asked, ["g1f3", "f1b5", "e2e4"]);
+    assert_eq!(f.ui.session.remaining(), 0);
+}
