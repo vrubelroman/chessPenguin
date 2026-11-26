@@ -1423,6 +1423,7 @@ fn a_daily_session_brings_mistakes_and_hints_back_and_its_numbers_agree() {
     // e4 wrong, e4 right, Nf3 right, Bb5 right.
     assert_eq!(independent, 4);
     f.ui.compute_summary();
+    f.ui.compute_summary();
     let summary = f.ui.summary.as_ref().unwrap();
     assert_eq!(summary.more_new, 0);
     assert!(!summary.next_review.is_empty());
@@ -2205,6 +2206,7 @@ fn a_mistake_on_the_first_move_returns_it_once_and_keeps_the_count() {
     assert!(f.ui.is_finished());
     assert_eq!(asked, ["g1f3", "f1b5", "e2e4"]);
     assert_eq!(f.ui.session.remaining(), 0);
+    f.ui.compute_summary();
     let summary = f.ui.summary.as_ref().unwrap();
     assert_eq!((summary.unseen, summary.more_new), (0, 0));
     assert!(!summary.next_review.is_empty());
