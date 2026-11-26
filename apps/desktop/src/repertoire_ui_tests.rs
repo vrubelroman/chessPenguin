@@ -69,7 +69,8 @@ fn settle(ui: &mut RepertoireUi, ctx: &egui::Context, settings: &mut Settings, s
             && ui.stats_key.as_ref().is_some_and(|key| {
                 key.library_revision == ui.library.revision
                     && key.learning_revision == ui.learning.revision
-            });
+            })
+            && ui.stats_shown == ui.stats_key;
         if ready || Instant::now() > deadline {
             frame(ui, ctx, settings, size, Vec::new());
             return;
@@ -519,7 +520,8 @@ fn a_session_needs_no_question_to_go_back_and_counts_refresh_after_it() {
     frame(&mut ui, &ctx, &mut settings, size, vec![key(Key::Enter)]);
     settle(&mut ui, &ctx, &mut settings, size);
     assert!(matches!(ui.screen, Screen::Repertoires));
-    // One new move was shown and played: it is due again today, two are left new.
+    // e4 was shown and played, Nf3 shown when the session stopped: both are due
+    // again today (a shown move comes back a minute later), d4 is still new.
     let stats = ui.stats.get(&id).unwrap().as_ref().unwrap();
-    assert_eq!((stats.unseen, stats.due), (2, 1));
+    assert_eq!((stats.unseen, stats.due), (1, 2));
 }

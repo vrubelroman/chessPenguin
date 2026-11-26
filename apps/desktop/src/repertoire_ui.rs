@@ -270,6 +270,8 @@ pub struct RepertoireUi {
     index_job: u64,
     stats: HashMap<RepertoireId, Result<RowStats, String>>,
     stats_key: Option<StatsKey>,
+    /// The key of the counts shown (older than `stats_key` while counting).
+    stats_shown: Option<StatsKey>,
     screen: Screen,
     /// The «Lines» screen a branch session was started from.
     lines_return: Option<Box<OpeningLinesUi>>,
@@ -320,6 +322,7 @@ impl RepertoireUi {
             index_job: 0,
             stats: HashMap::new(),
             stats_key: None,
+            stats_shown: None,
             screen: Screen::Repertoires,
             lines_return: None,
             preparing: None,
@@ -905,6 +908,7 @@ impl RepertoireUi {
                 Event::Stats(key, stats) => {
                     if self.stats_key.as_ref() == Some(&key) {
                         self.stats = stats;
+                        self.stats_shown = Some(key);
                     }
                 }
                 Event::Imported(job, result) => {
