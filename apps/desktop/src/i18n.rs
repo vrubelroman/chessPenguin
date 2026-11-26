@@ -316,6 +316,17 @@ const ROWS: &[[&str; 9]] = &[
         "Жүрістер саналуда…",
     ],
     [
+        "Review all",
+        "Повторить всё",
+        "Tout réviser",
+        "Alles wiederholen",
+        "Repasar todo",
+        "Ripassa tutto",
+        "Revisar tudo",
+        "Hammasini takrorlash",
+        "Барлығын қайталау",
+    ],
+    [
         "Review all lines",
         "Повторить всё подряд",
         "Réviser toutes les lignes",

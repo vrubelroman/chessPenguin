@@ -292,7 +292,7 @@ impl OpeningLinesUi {
         let path = self.cursor_path();
         let disabled = self.disabled_by(&path);
         layout::fixed_block(ui, SELECTED_H, |ui| {
-            let inner = vec2(ui.available_width() - 20.0, SELECTED_H - 12.0);
+            let inner = layout::card_inner(ui, SELECTED_H);
             layout::card(ui, false, false).show(ui, |ui| {
                 ui.set_min_size(inner);
                 ui.set_max_size(inner);
@@ -300,12 +300,7 @@ impl OpeningLinesUi {
                 if self.cursor == NodeId::ROOT {
                     layout::line(ui, RichText::new(tr("Start position")).strong());
                 } else {
-                    let label = self.path_label(self.cursor);
-                    // Cut on the left: the last moves matter.
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.set_max_height(20.0);
-                        layout::line(ui, RichText::new(label).strong());
-                    });
+                    layout::line_left(ui, &self.path_label(self.cursor), true);
                 }
                 if disabled.is_some() {
                     layout::line(

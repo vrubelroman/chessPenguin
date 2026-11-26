@@ -36,6 +36,8 @@ const DEFAULT_ANIMATION: Duration = Duration::from_millis(250);
 /// Mistakes listed under «Moves to remember».
 const REMEMBER_ROWS: usize = 8;
 const CARD_H: f32 = 64.0;
+/// The words of a branch's path in the header ("4. Ba4 Nf6" is three).
+const BRANCH_WORDS: usize = 12;
 const LINE_H: f32 = 20.0;
 const ROW_H: f32 = 30.0;
 const TOOL_H: f32 = 28.0;
@@ -74,7 +76,15 @@ impl SessionKind {
                 LearningSide::White => tr("Review all lines · you play White").to_owned(),
                 LearningSide::Black => tr("Review all lines · you play Black").to_owned(),
             },
-            Self::Branch { label, .. } => trf("Branch: {path}", &[("path", label)]),
+            Self::Branch { label, .. } => {
+                // Cut on the left: the last moves name the branch.
+                let words: Vec<&str> = label.split_whitespace().collect();
+                let path = match words.len().checked_sub(BRANCH_WORDS) {
+                    Some(skip) if skip > 0 => format!("… {}", words[skip..].join(" ")),
+                    _ => label.clone(),
+                };
+                trf("Branch: {path}", &[("path", &path)])
+            }
         }
     }
 }
@@ -1464,7 +1474,7 @@ impl OpeningSessionUi {
 
     /// The move shown by an arrow: revealed by the core, or a new move about to be shown.
     fn revealed_uci(&self) -> Option<String> {
-        if self.playback.is_some() || self.pending_automatic.is_some() {
+        if self.playback.is_some() || self.pending_automatic.is_some() || self.stopped {
             return None;
         }
         if let Some(uci) = self
@@ -1570,7 +1580,8 @@ impl OpeningSessionUi {
     }
 
     fn more_new_count(&self) -> usize {
-        if self.kind != SessionKind::Daily {
+        // A stopped session still has questions: the card starts the next one.
+        if self.kind != SessionKind::Daily || self.stopped {
             return 0;
         }
         self.summary.as_ref().map_or(0, |summary| summary.more_new)
@@ -2262,7 +2273,7 @@ struct CardView {
 fn show_card(ui: &mut Ui, view: &CardView) {
     layout::fixed_block(ui, CARD_H, |ui| {
         let frame = layout::card(ui, view.active, view.alert);
-        let inner = vec2(ui.available_width() - 20.0, CARD_H - 12.0);
+        let inner = layout::card_inner(ui, CARD_H);
         frame.show(ui, |ui| {
             ui.set_min_size(inner);
             ui.set_max_size(inner);

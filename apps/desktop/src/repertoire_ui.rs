@@ -1524,11 +1524,11 @@ impl RepertoireUi {
         let name = self.selected_name();
         let mut chosen = None;
         layout::fixed_block(ui, CARD_H, |ui| {
-            let inner = vec2(ui.available_width() - 20.0, CARD_H - 12.0);
+            let inner = layout::card_inner(ui, CARD_H);
             layout::card(ui, false, false).show(ui, |ui| {
                 ui.set_min_size(inner);
                 ui.set_max_size(inner);
-                ui.spacing_mut().item_spacing.y = 7.0;
+                ui.spacing_mut().item_spacing.y = 6.0;
                 let width = ui.available_width();
                 // 1. The name and the colour.
                 layout::fixed_block(ui, 26.0, |ui| {
@@ -1564,16 +1564,19 @@ impl RepertoireUi {
                 layout::fixed_block(ui, 30.0, |ui| {
                     ui.horizontal(|ui| {
                         let (label, enabled, item) = main_button(&state, side);
-                        let third = matches!(state, CardState::OnlyNew { .. });
                         let gap = ui.spacing().item_spacing.x;
+                        let pad = 2.0 * ui.spacing().button_padding.x + 2.0;
                         let room = ui.available_width();
-                        let (main_w, lines_w, third_w) =
-                            if MAIN_W + LINES_W + THIRD_W + 2.0 * gap <= room || !third {
-                                (MAIN_W, LINES_W, THIRD_W)
-                            } else {
-                                let rest = ((room - MAIN_W - 2.0 * gap) / 2.0).max(60.0);
-                                (MAIN_W.min(room / 2.0), rest, rest)
-                            };
+                        let main_w = MAIN_W.min((room - LINES_W - gap).max(0.0));
+                        // Buttons are never cut: in a narrow panel the third one (always
+                        // in the `⋯` menu too) stays out.
+                        let third_need = text_width(ui, tr("Review all"), 14.0) + pad;
+                        let lines_w = LINES_W.min(text_width(ui, tr("Lines…"), 14.0) + pad + 12.0);
+                        let third_w = room - main_w - lines_w - 2.0 * gap;
+                        let third =
+                            matches!(state, CardState::OnlyNew { .. }) && third_w >= third_need;
+                        let lines_w = if third { lines_w } else { LINES_W };
+                        let third_w = third_w.min(THIRD_W.max(third_need));
                         let response = ui
                             .add_enabled_ui(enabled, |ui| {
                                 crate::widgets::primary_wide(ui, &label, main_w)
@@ -1601,10 +1604,11 @@ impl RepertoireUi {
                         if third
                             && ui
                                 .add(
-                                    egui::Button::new(tr("Review all lines"))
+                                    egui::Button::new(tr("Review all"))
                                         .truncate()
                                         .min_size(vec2(third_w, 30.0)),
                                 )
+                                .on_hover_text(tr("Review all lines"))
                                 .clicked()
                         {
                             chosen = Some(MenuItem::ReviewAll);

@@ -83,6 +83,12 @@ pub(crate) fn card(ui: &Ui, active: bool, alert: bool) -> egui::Frame {
     frame
 }
 
+/// The content size of a [`card`] filling a block of `height`: the frame's margins and
+/// its stroke stay inside the block.
+pub(crate) fn card_inner(ui: &Ui, height: f32) -> egui::Vec2 {
+    vec2(ui.available_width() - 22.0, height - 14.0).max(egui::Vec2::ZERO)
+}
+
 /// A block of a fixed height: whatever it holds, what follows never moves.
 pub(crate) fn fixed_block<R>(ui: &mut Ui, height: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
     let width = ui.available_width().max(1.0);
@@ -105,6 +111,47 @@ pub(crate) fn line(ui: &mut Ui, text: impl Into<RichText>) -> egui::Response {
         response
     } else {
         response.on_hover_text(hover)
+    }
+}
+
+/// `text` cut on the left by whole words ("… 4. Ba4 Nf6") to fit `width` in `font`:
+/// the last moves of a path matter most.
+pub(crate) fn cut_left(ui: &Ui, text: &str, font: &egui::FontId, width: f32) -> String {
+    let fits = |text: &str| {
+        ui.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+                .size()
+                .x
+        }) <= width
+    };
+    if fits(text) {
+        return text.to_owned();
+    }
+    let mut rest = text;
+    while let Some((_, tail)) = rest.split_once(' ') {
+        rest = tail;
+        let cut = format!("… {rest}");
+        if fits(&cut) {
+            return cut;
+        }
+    }
+    format!("… {rest}")
+}
+
+/// One line cut on the left ([`cut_left`]), the whole text on hover.
+pub(crate) fn line_left(ui: &mut Ui, text: &str, strong: bool) -> egui::Response {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let shown = cut_left(ui, text, &font, ui.available_width());
+    let mut rich = RichText::new(shown);
+    if strong {
+        rich = rich.strong();
+    }
+    let response = ui.add(egui::Label::new(rich).truncate());
+    if text.is_empty() {
+        response
+    } else {
+        response.on_hover_text(text)
     }
 }
 
