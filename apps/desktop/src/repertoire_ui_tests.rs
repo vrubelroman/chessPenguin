@@ -525,3 +525,43 @@ fn a_session_needs_no_question_to_go_back_and_counts_refresh_after_it() {
     let stats = ui.stats.get(&id).unwrap().as_ref().unwrap();
     assert_eq!((stats.unseen, stats.due), (2, 1));
 }
+
+#[test]
+fn starter_repertoires_are_created_once_with_their_colours() {
+    let dir = TestDir::new("starter");
+    let (store, _) = dir.stores();
+    let sides = seed_starter(&store).unwrap();
+    let library = store.load().unwrap();
+    assert_eq!(library.repertoires.len(), 2);
+    assert_eq!(
+        sides.iter().map(|(_, side)| *side).collect::<Vec<_>>(),
+        [LearningSide::White, LearningSide::Black]
+    );
+    for ((id, _), lines) in sides.iter().zip([3, 3]) {
+        let repertoire = library.repertoire(id).unwrap();
+        assert_eq!(layout::lines(&repertoire.game(), |_| false).len(), lines);
+    }
+    assert_eq!(library.repertoires[0].name, "Spanish Opening");
+    assert_eq!(library.repertoires[1].name, "Sicilian Defence: Najdorf");
+
+    let mut settings = Settings::default();
+    let mut ui = dir.ui();
+    ui.starter_sides = sides;
+    egui::__run_test_ui(|egui_ui| {
+        ui.show(egui_ui, &mut settings);
+    });
+    let black = &library.repertoires[1].id;
+    assert_eq!(layout::side_of(&settings, black), LearningSide::Black);
+
+    assert!(seed_starter(&store).unwrap().is_empty());
+    assert_eq!(store.load().unwrap().repertoires.len(), 2);
+}
+
+#[test]
+fn starter_repertoires_do_not_return_to_an_existing_library() {
+    let dir = TestDir::new("starter-existing");
+    let (store, _) = dir.stores();
+    store.save(&mut Library::default()).unwrap();
+    assert!(seed_starter(&store).unwrap().is_empty());
+    assert!(store.load().unwrap().repertoires.is_empty());
+}

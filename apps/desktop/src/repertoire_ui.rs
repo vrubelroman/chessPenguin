@@ -292,12 +292,21 @@ pub struct RepertoireUi {
     debug_start: Option<String>,
     debug_pending_moves: Option<String>,
     debug_menu: bool,
+    /// Colours of the starter repertoires created on the first opening, written to the
+    /// settings by the next `show`.
+    starter_sides: Vec<(RepertoireId, LearningSide)>,
 }
 
 impl RepertoireUi {
     pub fn new() -> Self {
         let (library_store, learning_store) = stores();
-        Self::with_stores(library_store, learning_store)
+        let starter = seed_starter(&library_store);
+        let mut this = Self::with_stores(library_store, learning_store);
+        match starter {
+            Ok(sides) => this.starter_sides = sides,
+            Err(error) => this.show_message(error, true),
+        }
+        this
     }
 
     fn with_stores(library_store: LibraryStore, learning_store: LearningStore) -> Self {
@@ -341,6 +350,7 @@ impl RepertoireUi {
             debug_start: None,
             debug_pending_moves: None,
             debug_menu: false,
+            starter_sides: Vec::new(),
         };
         this.selected = this.sorted_ids().first().cloned();
         this.reindex();
@@ -1075,6 +1085,12 @@ impl RepertoireUi {
     pub fn show(&mut self, ui: &mut Ui, settings: &mut Settings) -> Vec<RepertoireAction> {
         self.poll(settings);
         let mut actions = Vec::new();
+        if !self.starter_sides.is_empty() {
+            for (id, side) in self.starter_sides.drain(..) {
+                layout::set_side(settings, &id, side);
+            }
+            actions.push(RepertoireAction::SettingsChanged);
+        }
         let available = ui.available_rect_before_wrap();
         let background = ui.visuals().window_fill();
         ui.painter_at(available)
@@ -2796,6 +2812,57 @@ fn read_import(
         warnings,
         report,
     })
+}
+
+const STARTER_REPERTOIRES: [(&str, &str, LearningSide); 2] = [
+    (
+        "Spanish Opening",
+        include_str!("../assets/repertoires/spanish-white.pgn"),
+        LearningSide::White,
+    ),
+    (
+        "Sicilian Defence: Najdorf",
+        include_str!("../assets/repertoires/sicilian-black.pgn"),
+        LearningSide::Black,
+    ),
+];
+
+/// The first opening of the section, before any repertoire library file exists, gets
+/// two example repertoires. An existing file, even an empty one, is never touched, so
+/// examples deleted by the user do not come back.
+fn seed_starter(store: &LibraryStore) -> Result<Vec<(RepertoireId, LearningSide)>, String> {
+    if store.path().exists() {
+        return Ok(Vec::new());
+    }
+    let mut library = Library::default();
+    let mut sides = Vec::new();
+    let cancel = AtomicBool::new(false);
+    for (name, pgn, side) in STARTER_REPERTOIRES {
+        let db = PgnDatabase::from_bytes(pgn.as_bytes().to_vec(), None, &mut |_| {}, &cancel)
+            .map_err(|e| e.to_string())?;
+        let mut id = None;
+        for index in 0..db.len() {
+            let Some(parsed) = db.load_game(index) else {
+                continue;
+            };
+            let current = match &id {
+                Some(id) => id,
+                None => id.insert(
+                    library
+                        .create(tr(name), &Game::from_start(parsed.game.start().clone()))
+                        .map_err(|e| e.to_string())?,
+                ),
+            };
+            library
+                .add_game(current, &parsed.game)
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(id) = id {
+            sides.push((id, side));
+        }
+    }
+    store.save(&mut library).map_err(|e| e.to_string())?;
+    Ok(sides)
 }
 
 fn load_library(store: &LibraryStore) -> Result<Library, String> {
