@@ -210,6 +210,8 @@ enum State {
 /// Computed once when the result is shown.
 struct Summary {
     next_review: String,
+    /// Moves never shown yet, all of them (the «more new» button takes up to 10).
+    unseen: usize,
     more_new: usize,
 }
 
@@ -1597,30 +1599,26 @@ impl OpeningSessionUi {
             .iter()
             .map(|item| (&item.key, item))
             .collect();
-        let today = layout::end_of_today();
         let now = layout::now();
-        let mut due_today = 0usize;
         let mut next: Option<i64> = None;
         let mut unseen = 0usize;
         for key in &self.repertoire_keys {
             match items.get(key) {
                 Some(item) if item.introduced => {
-                    if item.is_due(today) {
-                        due_today += 1;
-                    } else if let Some(at) = item.next_review_at {
+                    if let Some(at) = item.next_review_at {
                         next = Some(next.map_or(at, |old| old.min(at)));
                     }
                 }
                 _ => unseen += 1,
             }
         }
-        let next_review = if due_today > 0 {
-            trf("today, {n} more", &[("n", &due_today)])
-        } else {
-            next.map(|at| layout::when(at, now)).unwrap_or_default()
+        let next_review = match next {
+            Some(at) => layout::when(at.max(now), now),
+            None => tr("nothing scheduled").to_owned(),
         };
         self.summary = Some(Summary {
             next_review,
+            unseen,
             more_new: unseen.min(layout::NEW_PER_SESSION),
         });
     }
@@ -1903,9 +1901,10 @@ impl OpeningSessionUi {
                 ui.add_space(4.0);
                 ui.separator();
                 ui.add_space(4.0);
-                if let Some(summary) = &self.summary
-                    && !summary.next_review.is_empty()
-                {
+                if let Some(summary) = &self.summary {
+                    if self.kind == SessionKind::Daily && summary.unseen > 0 {
+                        row(ui, tr("New moves left"), summary.unseen.to_string());
+                    }
                     row(ui, tr("Next review"), summary.next_review.clone());
                 }
                 if self.tally.missed.is_empty() {
@@ -2007,6 +2006,8 @@ impl OpeningSessionUi {
             left,
             right,
             *state == State::Summary || matches!(state, State::SaveError(_)),
+            // The summary has its own way out; «× Finish» there would be a second one.
+            *state != State::Summary,
         );
         match clicked {
             Some(Clicked::Left) => match state {
@@ -2222,6 +2223,7 @@ pub fn show_preparing(
                 Some((tr("Hint (H)").to_owned(), false)),
                 None,
                 false,
+                true,
             );
             if clicked == Some(Clicked::Finish) {
                 actions.push(SessionAction::Back);
@@ -2321,6 +2323,7 @@ fn side_panel(
     left: Option<(String, bool)>,
     right: Option<(String, bool)>,
     right_primary: bool,
+    finish: bool,
 ) -> Option<Clicked> {
     let mut clicked = None;
     let rect = ui.available_rect_before_wrap();
@@ -2391,13 +2394,14 @@ fn side_panel(
                 clicked = Some(Clicked::Flip);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new(tr("× Finish")).size(14.0))
-                            .min_size(vec2(0.0, TOOL_H)),
-                    )
-                    .on_hover_text(tr("Finish the session (Esc)"))
-                    .clicked()
+                if finish
+                    && ui
+                        .add(
+                            egui::Button::new(RichText::new(tr("× Finish")).size(14.0))
+                                .min_size(vec2(0.0, TOOL_H)),
+                        )
+                        .on_hover_text(tr("Finish the session (Esc)"))
+                        .clicked()
                 {
                     clicked = Some(Clicked::Finish);
                 }
