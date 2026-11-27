@@ -12,7 +12,7 @@ use chess_import::chessbase::base::Filter;
 use egui::{Key, RichText};
 use game_review::{GameAnalysis, Judgement};
 
-use crate::brilliant::{Found, Index, Sides, Skip, Totals};
+use crate::brilliant::{Found, Index, SelectedGames, Sides, Skip, Totals};
 use crate::i18n::{tr, trf};
 
 /// What a list holds before a pass: the records already analysed, those to analyse with
@@ -90,6 +90,7 @@ pub struct StartDialog {
     pub records: Vec<u32>,
     pub filter: Filter,
     pub about: String,
+    pub selected: Option<SelectedGames>,
     rx: Receiver<Counted>,
     cancel: Arc<AtomicBool>,
     pub counted: Option<Counted>,
@@ -102,6 +103,19 @@ pub enum StartOutcome {
     Cancel,
 }
 
+/// One of the three fixed-height source rows: empty rows keep their place.
+fn source_line(ui: &mut egui::Ui, text: &str, weak: bool, hover: Option<&str>) {
+    if text.is_empty() {
+        return;
+    }
+    let text = RichText::new(text).size(12.0);
+    let text = if weak { text.weak() } else { text };
+    let response = ui.add(egui::Label::new(text).truncate());
+    if let Some(hover) = hover {
+        response.on_hover_text(hover);
+    }
+}
+
 impl StartDialog {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -111,6 +125,7 @@ impl StartDialog {
         records: Vec<u32>,
         filter: Filter,
         about: String,
+        selected: Option<SelectedGames>,
         cache: PathBuf,
         index: Arc<std::sync::Mutex<Index>>,
     ) -> StartDialog {
@@ -128,6 +143,7 @@ impl StartDialog {
             records,
             filter,
             about,
+            selected,
             rx,
             cancel,
             counted: None,
@@ -155,13 +171,59 @@ impl StartDialog {
             .default_width(520.0)
             .show(ctx, |ui| {
                 ui.set_width(520.0);
-                let about = format!(
-                    "{name} · {} · {}",
-                    crate::i18n::games(self.records.len()),
-                    self.about
-                );
-                ui.add(egui::Label::new(RichText::new(&about).weak().size(12.0)).truncate())
-                    .on_hover_text(&about);
+                let (source, hidden) = match self.selected {
+                    Some(selected) => (
+                        trf(
+                            "Selected: {games}",
+                            &[("games", &crate::i18n::games(selected.games))],
+                        ),
+                        (selected.hidden > 0).then(|| {
+                            trf(
+                                "{k} hidden by the current filter",
+                                &[("k", &crate::large_db::grouped(selected.hidden))],
+                            )
+                        }),
+                    ),
+                    None => (
+                        format!(
+                            "{} · {}",
+                            crate::i18n::games(self.records.len()),
+                            self.about
+                        ),
+                        None,
+                    ),
+                };
+                let player = (self.selected.is_some() && self.filter.player.is_set()).then(|| {
+                    let name = self.filter.player.text.trim();
+                    match self.filter.side {
+                        chess_import::chessbase::base::Side::White => trf(
+                            "Only the moves of «{name}» as White count.",
+                            &[("name", &name)],
+                        ),
+                        chess_import::chessbase::base::Side::Black => trf(
+                            "Only the moves of «{name}» as Black count.",
+                            &[("name", &name)],
+                        ),
+                        _ => trf("Only the moves of «{name}» count.", &[("name", &name)]),
+                    }
+                });
+                for (text, weak, hover) in [
+                    (format!("{name} · {source}"), true, None),
+                    (hidden.unwrap_or_default(), true, None),
+                    (
+                        player.unwrap_or_default(),
+                        false,
+                        self.filter.player.is_set().then(|| {
+                            tr(
+                                "The player condition limits the moves counted, but does not exclude selected games from review.",
+                            )
+                        }),
+                    ),
+                ] {
+                    ui.allocate_ui(egui::vec2(520.0, 18.0), |ui| {
+                        source_line(ui, &text, weak, hover);
+                    });
+                }
                 ui.add_space(8.0);
                 // Two lines kept for the counts: the window does not jump when they come.
                 ui.allocate_ui(egui::vec2(520.0, 60.0), |ui| match &self.counted {
@@ -263,6 +325,7 @@ pub struct BrilliantRow {
 pub struct Summary {
     pub source: PathBuf,
     pub about: String,
+    pub selected_games: Option<SelectedGames>,
     pub totals: Totals,
     /// The filter's player and the games counted for each colour.
     pub player: Option<(String, usize, usize)>,
@@ -305,6 +368,7 @@ impl Summary {
         sides: &Sides,
         filter: &Filter,
         about: String,
+        selected: Option<SelectedGames>,
         stopped: Option<(usize, usize)>,
         skipped: Vec<(u32, Skip)>,
     ) -> Summary {
@@ -347,6 +411,7 @@ impl Summary {
         Summary {
             source: source.to_path_buf(),
             about,
+            selected_games: selected,
             totals,
             player,
             stopped,
@@ -414,12 +479,27 @@ impl Summary {
             .show(ctx, |ui| {
                 ui.set_width(width);
                 let weak = |ui: &mut egui::Ui, text: String| {
-                    ui.add(egui::Label::new(RichText::new(text).weak().size(12.0)).truncate());
+                    ui.add(egui::Label::new(RichText::new(text).weak().size(12.0)).truncate())
                 };
-                weak(
+                let about = match self.selected_games {
+                    Some(selected) => trf(
+                        "Selected: {games}",
+                        &[("games", &crate::i18n::games(selected.games))],
+                    ),
+                    None => self.about.clone(),
+                };
+                let subtitle = weak(
                     ui,
-                    format!("{} · {}", crate::own_db::base_name(&self.source), self.about),
+                    format!("{} · {about}", crate::own_db::base_name(&self.source)),
                 );
+                if let Some(selected) = self.selected_games
+                    && selected.hidden > 0
+                {
+                    subtitle.on_hover_text(trf(
+                        "Hidden by the filter at start: {k}",
+                        &[("k", &crate::large_db::grouped(selected.hidden))],
+                    ));
+                }
                 if let Some((name, w, b)) = &self.player {
                     weak(
                         ui,

@@ -107,8 +107,10 @@ pub enum LibraryAction {
         path: PathBuf,
         records: Vec<u32>,
         filter: chess_import::chessbase::base::Filter,
-        /// The conditions in words, for the question and the summary.
+        /// The conditions in words, for a filtered question and summary.
         about: String,
+        /// The manual source and its hidden count, fixed with `records`.
+        selected: Option<crate::brilliant::SelectedGames>,
     },
     EditGameData {
         path: PathBuf,
@@ -367,6 +369,7 @@ impl Library {
             (
                 job.source.clone(),
                 crate::own_db::base_name(&job.source),
+                job.selected,
                 job.done(),
                 job.records.len(),
                 job.current(),
@@ -376,20 +379,20 @@ impl Library {
         });
         let mut stop = false;
         for (path, view) in self.large.iter_mut() {
-            view.pass =
-                status
-                    .as_ref()
-                    .map(|(source, name, done, total, current, left, stopping)| {
-                        large_db::PassStatus {
-                            here: source == path,
-                            name: name.clone(),
-                            done: *done,
-                            total: *total,
-                            current: *current,
-                            left_secs: *left,
-                            stopping: *stopping,
-                        }
-                    });
+            view.pass = status.as_ref().map(
+                |(source, name, selected, done, total, current, left, stopping)| {
+                    large_db::PassStatus {
+                        here: source == path,
+                        name: name.clone(),
+                        selected: *selected,
+                        done: *done,
+                        total: *total,
+                        current: *current,
+                        left_secs: *left,
+                        stopping: *stopping,
+                    }
+                },
+            );
             stop |= std::mem::take(&mut view.stop_pass);
         }
         if stop && let Some(job) = self.pass.as_mut() {

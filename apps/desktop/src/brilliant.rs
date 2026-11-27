@@ -1,5 +1,5 @@
 //! The search for brilliant and great moves (!!, !) in the games of a filtered list
-//! (task 27, docs/design/task-27-brilliant-search-2026-11-27.md): a background pass of
+//! or a manual selection (tasks 27 and 42): a background pass of
 //! the game analysis's engine over at most [`LIMIT`] games, the index of what each
 //! analysed record holds (kept beside the analysis cache, one file per database), and
 //! the totals of a pass by category. Games already analysed come from the analysis
@@ -33,6 +33,14 @@ pub fn can_start(n: usize) -> Result<(), Blocked> {
         n if n > LIMIT => Err(Blocked::TooMany),
         _ => Ok(()),
     }
+}
+
+/// The manual source of a pass: its size before cached or unsupported games are taken
+/// out, and how many of those records the current filter hid when the request was made.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SelectedGames {
+    pub games: usize,
+    pub hidden: usize,
 }
 
 /// Engine judgements of one side of a game.
@@ -667,8 +675,9 @@ pub fn totals(index: &Index, db: &Database, records: &[u32], sides: &Sides) -> T
     t
 }
 
-/// The records of `view` (a pass's list) where the filter's player has White and Black:
-/// the same filter with the side fixed, for `Sides`.
+/// The records where the filter's player has White and Black: the player condition
+/// with the side fixed, without the other conditions. A selected game hidden by those
+/// other conditions still keeps its player's side; a game of another player has neither.
 pub fn player_sides(
     db: &Database,
     filter: &chess_import::chessbase::base::Filter,
@@ -678,10 +687,15 @@ pub fn player_sides(
     if !filter.player.is_set() {
         return Sides::default();
     }
+    let player = chess_import::chessbase::base::Filter {
+        player: filter.player.clone(),
+        side: filter.side,
+        ..Default::default()
+    };
     let side = |s: Side| {
         let f = chess_import::chessbase::base::Filter {
             side: s,
-            ..filter.clone()
+            ..player.clone()
         };
         let mut v = db
             .query(&f, SortKey::Number, true, &AtomicUsize::new(0), cancel)
@@ -700,10 +714,11 @@ pub fn player_sides(
 }
 
 /// What the app keeps of a pass for its summary: the filter, the words for its
-/// conditions, and the games that could not be analysed.
+/// conditions (or the manual source), and the games that could not be analysed.
 pub type PassMeta = (
     chess_import::chessbase::base::Filter,
     String,
+    Option<SelectedGames>,
     Vec<(u32, Skip)>,
 );
 
@@ -712,6 +727,7 @@ pub type PassMeta = (
 pub struct PassJob {
     pub source: PathBuf,
     pub records: Vec<u32>,
+    pub selected: Option<SelectedGames>,
     progress: std::sync::Arc<Progress>,
     cancel: std::sync::Arc<AtomicBool>,
     rx: std::sync::mpsc::Receiver<(PassEnd, Sides)>,
@@ -729,6 +745,7 @@ impl PassJob {
         db: std::sync::Arc<Database>,
         records: Vec<u32>,
         filter: chess_import::chessbase::base::Filter,
+        selected: Option<SelectedGames>,
         index: std::sync::Arc<Mutex<Index>>,
         cache: PathBuf,
         engine: Engine,
@@ -754,6 +771,7 @@ impl PassJob {
         Ok(PassJob {
             source,
             records,
+            selected,
             progress,
             cancel,
             rx,
