@@ -4,6 +4,8 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-11-27
+
 - Desktop play and opening training support multiple temporary right-button arrows and circles
   until the position changes. They are never written to PGN; shapes drawn in ordinary game
   analysis remain PGN annotations and are saved only with the game.
