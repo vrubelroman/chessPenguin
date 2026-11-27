@@ -1066,17 +1066,18 @@ impl GameView {
                 .on_hover_text(tr(
                     "Report: show or hide the evaluation graph and the report (Shift+A)",
                 ));
-        } else if ui
-            .add_enabled(!self.engine_busy, egui::Button::new(big("📈")))
-            .on_hover_text(format!(
-                "{}\n{}",
-                tr("Analyse game: accuracy, inaccuracies, mistakes, blunders (Shift+A)"),
-                self.review.estimate()
-            ))
-            .on_disabled_hover_text(tr(
-                "Opening errors are being searched — wait or stop it in the report",
-            ))
-            .clicked()
+        } else if review_colored(ui, !self.engine_busy, |ui| {
+            ui.add_enabled(!self.engine_busy, egui::Button::new(big("📈")))
+        })
+        .on_hover_text(format!(
+            "{}\n{}",
+            tr("Analyse game: accuracy, inaccuracies, mistakes, blunders (Shift+A)"),
+            self.review.estimate()
+        ))
+        .on_disabled_hover_text(tr(
+            "Opening errors are being searched — wait or stop it in the report",
+        ))
+        .clicked()
         {
             self.review_asked = true;
         }
@@ -5547,6 +5548,54 @@ fn paste_line_full(line: &[(u32, Color, String)]) -> String {
         .map(|(i, (n, side, san))| move_label(*n, *side, san, i == 0))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// «📈 Analyse game» in the colour of «!!» (task 26): the report it makes marks its finds
+/// with it. Hover and press stay visible (egui's own states, shaded); a disabled button
+/// keeps the usual look.
+fn review_colored(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    add: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    if !enabled {
+        return add(ui);
+    }
+    let dark = ui.visuals().dark_mode;
+    let Some(fill) = crate::notation::assessment_text_color(Nag(3), dark) else {
+        return add(ui);
+    };
+    // The icon dark on the dark theme's teal, white on the light one's (contrast ≥ 4.5:1).
+    let icon = if dark {
+        egui::Color32::from_rgb(0x1b, 0x1b, 0x1b)
+    } else {
+        egui::Color32::WHITE
+    };
+    let (hover, press) = if dark {
+        (
+            fill.lerp_to_gamma(egui::Color32::WHITE, 0.18),
+            fill.lerp_to_gamma(egui::Color32::BLACK, 0.15),
+        )
+    } else {
+        (
+            fill.lerp_to_gamma(egui::Color32::BLACK, 0.15),
+            fill.lerp_to_gamma(egui::Color32::BLACK, 0.3),
+        )
+    };
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        for (state, color) in [
+            (&mut w.inactive, fill),
+            (&mut w.hovered, hover),
+            (&mut w.active, press),
+        ] {
+            state.weak_bg_fill = color;
+            state.bg_fill = color;
+            state.fg_stroke.color = icon;
+        }
+        add(ui)
+    })
+    .inner
 }
 
 #[cfg(test)]
