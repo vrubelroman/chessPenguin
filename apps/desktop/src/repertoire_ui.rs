@@ -1708,7 +1708,8 @@ impl RepertoireUi {
                     };
                     let side = layout::side_of(settings, id);
                     let stats = self.stats.get(id);
-                    row.set_selected(self.selected.as_ref() == Some(id));
+                    let selected = self.selected.as_ref() == Some(id);
+                    row.set_selected(selected);
                     row.col(|ui| {
                         layout::line(ui, repertoire.name.as_str());
                     });
@@ -1757,7 +1758,7 @@ impl RepertoireUi {
                                             vec2(room.min(MINI_BAR_W), 6.0),
                                             egui::Sense::hover(),
                                         );
-                                        progress_bar(ui, bar, Some(stats));
+                                        progress_bar(ui, bar, Some(stats), selected);
                                         response.on_hover_text(hint);
                                     }
                                 }
@@ -2486,14 +2487,26 @@ fn learned_hint(stats: &RowStats) -> String {
 }
 
 /// The two segments: learned, then learning (paler).
-fn progress_bar(ui: &Ui, bar: egui::Rect, stats: Option<&RowStats>) {
+/// On a selected table row the selection colour is the row's own: the segments take
+/// the colour of the text on the selection instead.
+fn progress_bar(ui: &Ui, bar: egui::Rect, stats: Option<&RowStats>, selected: bool) {
     let painter = ui.painter();
-    painter.rect_filled(bar, 2.0, ui.visuals().extreme_bg_color);
+    // In the light theme the extreme colour is the rows' white: the track is a button's grey.
+    let track = if ui.visuals().dark_mode {
+        ui.visuals().extreme_bg_color
+    } else {
+        ui.visuals().widgets.inactive.bg_fill
+    };
+    painter.rect_filled(bar, 2.0, track);
     if let Some(stats) = stats.filter(|stats| stats.total > 0) {
         let total = stats.total as f32;
         let learnt = bar.width() * stats.learnt as f32 / total;
         let learning = bar.width() * stats.learning as f32 / total;
-        let fill = ui.visuals().selection.bg_fill;
+        let fill = if selected {
+            ui.visuals().selection.stroke.color
+        } else {
+            ui.visuals().selection.bg_fill
+        };
         painter.rect_filled(
             egui::Rect::from_min_size(bar.min, vec2(learnt, bar.height())),
             2.0,
@@ -2510,7 +2523,7 @@ fn progress_bar(ui: &Ui, bar: egui::Rect, stats: Option<&RowStats>) {
 fn progress(ui: &mut Ui, stats: Option<&RowStats>) {
     let width = ui.available_width();
     let (bar, _) = ui.allocate_exact_size(vec2(width, 8.0), egui::Sense::hover());
-    progress_bar(ui, bar, stats);
+    progress_bar(ui, bar, stats, false);
     ui.add_space(-2.0);
     ui.horizontal(|ui| {
         ui.set_height(20.0);
