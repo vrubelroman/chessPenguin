@@ -362,6 +362,9 @@ impl Library {
         }) else {
             return false;
         };
+        if let Some(view) = self.large.get_mut(source) {
+            view.batch_error = None;
+        }
         self.batch = Some(BatchJob {
             source: source.to_path_buf(),
             target,
@@ -370,6 +373,13 @@ impl Library {
             cancelling: false,
         });
         true
+    }
+
+    /// Why the copy from `path` wrote nothing, said where its progress was.
+    pub fn set_batch_error(&mut self, path: &Path, text: String) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.batch_error = Some(text);
+        }
     }
 
     /// The chosen records of `path` let go (their numbers no longer mean the same games).
@@ -399,6 +409,18 @@ impl Library {
     /// The end of the copy being written, once it came (called every frame, whatever is
     /// on the screen); while it runs the source's conditions line shows it.
     pub fn poll_batch(&mut self, ctx: &egui::Context) -> Option<BatchEnd> {
+        let job = self.batch.as_ref()?;
+        // `CP_BATCH_CANCEL_AFTER=<ms>`: «Cancel» pressed that long after the start (checks,
+        // screenshots of the cancelling).
+        let cancel_after = std::env::var("CP_BATCH_CANCEL_AFTER")
+            .ok()
+            .and_then(|ms| ms.parse::<f64>().ok());
+        if let Some(ms) = cancel_after
+            && !job.cancelling
+            && ctx.input(|i| i.time) - job.work.started >= ms / 1000.0
+        {
+            self.cancel_batch();
+        }
         let job = self.batch.as_ref()?;
         let Some(result) = job.work.poll() else {
             let status = large_db::BatchStatus {

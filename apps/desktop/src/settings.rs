@@ -324,6 +324,16 @@ impl Settings {
 
     /// Puts the database first on the shelf; a database there already by another path
     /// to the same file (a link) keeps its path. Returns the path on the shelf.
+    /// Puts `path` at the end of the shelf, unless it is there: a database made in the
+    /// background appears without moving the cards (task 42).
+    pub fn add_database_last(&mut self, path: &Path) {
+        let real = |p: &Path| std::fs::canonicalize(p).ok();
+        let same = |p: &PathBuf| p == path || real(p).is_some_and(|r| Some(r) == real(path));
+        if !self.databases.iter().any(same) {
+            self.databases.push(path.to_path_buf());
+        }
+    }
+
     pub fn touch_database(&mut self, path: &Path) -> PathBuf {
         let real = |p: &Path| std::fs::canonicalize(p).ok();
         let same = |p: &PathBuf| p == path || real(p).is_some_and(|r| Some(r) == real(path));
@@ -358,6 +368,25 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A database made in the background goes to the end; opening it brings it first.
+    #[test]
+    fn a_copied_database_goes_to_the_end_of_the_shelf() {
+        let mut s = Settings::default();
+        s.databases = vec![PathBuf::from("/a.pgn"), PathBuf::from("/b.pgn")];
+        s.add_database_last(Path::new("/new.pgn"));
+        s.add_database_last(Path::new("/a.pgn"));
+        assert_eq!(
+            s.databases,
+            [
+                PathBuf::from("/a.pgn"),
+                PathBuf::from("/b.pgn"),
+                PathBuf::from("/new.pgn")
+            ]
+        );
+        s.touch_database(Path::new("/new.pgn"));
+        assert_eq!(s.databases[0], PathBuf::from("/new.pgn"));
+    }
 
     /// A database put on the shelf again by a link to its file stays itself, once.
     #[cfg(unix)]

@@ -1948,7 +1948,9 @@ impl App {
         match end {
             BatchEnd::Done { target, report } => {
                 let name = own_db::base_name(&target);
-                self.settings.touch_database(&target);
+                // At the end of the shelf: the cards stay where they are; «Open» brings it
+                // to the front.
+                self.settings.add_database_last(&target);
                 self.settings_dirty = true;
                 self.toast_for(ctx, crate::batch_copy::summary(&name, &report), 8.0);
                 self.toast_open_db = Some(target);
@@ -1984,6 +1986,7 @@ impl App {
                         ],
                     ),
                 };
+                self.library.set_batch_error(&source, text.clone());
                 self.toast_for(ctx, text, 8.0);
             }
         }
@@ -4599,6 +4602,8 @@ impl eframe::App for App {
         if let Some(path) = open_copy {
             self.toast = None;
             self.toast_open_db = None;
+            self.settings.touch_database(&path);
+            self.settings_dirty = true;
             self.library.select_db(&path, &ctx);
         }
         #[cfg(not(web))]

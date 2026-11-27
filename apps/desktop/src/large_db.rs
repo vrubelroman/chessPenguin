@@ -330,6 +330,8 @@ pub struct LargeView {
     pub batch: Option<BatchStatus>,
     /// «Cancel» of that copy was clicked.
     pub cancel_batch: bool,
+    /// Why the last copy wrote nothing: said in red where its progress was, until `×`.
+    pub batch_error: Option<String>,
     scroll_to_selected: bool,
     scroll_to_top: bool,
     focus_player: bool,
@@ -454,6 +456,7 @@ impl LargeView {
             hidden: None,
             batch: None,
             cancel_batch: false,
+            batch_error: None,
             scroll_to_selected: false,
             scroll_to_top: false,
             focus_player: false,
@@ -1345,6 +1348,8 @@ impl LargeView {
         let chosen = self.marked.len();
         let hidden = if chosen >= 2 { self.hidden_marked() } else { 0 };
         let batch = self.batch.clone();
+        let batch_error = self.batch_error.clone();
+        let mut close_error = false;
         let mut clear_marked = false;
         let mut cancel_batch = false;
         ui.horizontal(|ui| {
@@ -1383,10 +1388,23 @@ impl LargeView {
                 }
             }
             // The choice, or the copy being written, in the same place (§42.3).
-            if batch.is_some() || chosen >= 2 {
+            if batch.is_some() || batch_error.is_some() || chosen >= 2 {
                 ui.add_space(SLOT_GAP);
             }
-            if let Some(b) = &batch {
+            if let (None, Some(e)) = (&batch, &batch_error) {
+                if crate::widgets::small_close_button(ui).clicked() {
+                    close_error = true;
+                }
+                let width = (ui.available_width() - 140.0).max(80.0);
+                ui.scope(|ui| {
+                    ui.set_max_width(width);
+                    ui.add(
+                        egui::Label::new(RichText::new(e).color(ui.visuals().error_fg_color))
+                            .truncate(),
+                    )
+                    .on_hover_text(e);
+                });
+            } else if let Some(b) = &batch {
                 if b.cancelling {
                     ui.spinner();
                     ui.label(RichText::new(tr("Cancelling…")).weak());
@@ -1478,6 +1496,9 @@ impl LargeView {
         }
         if clear_marked {
             self.mark_cursor_only();
+        }
+        if close_error {
+            self.batch_error = None;
         }
         if cancel_batch {
             self.cancel_batch = true;
@@ -2390,6 +2411,7 @@ impl LargeView {
         );
         let frame_color = ui.visuals().selection.stroke.color;
         let table_clip = ui.clip_rect().intersect(ui.max_rect());
+        let spacing = ui.spacing().item_spacing;
         let mut table = TableBuilder::new(ui)
             .id_salt(("game table", layout))
             .striped(true)
@@ -2457,6 +2479,8 @@ impl LargeView {
                     let r = db.row(index);
                     let is_marked = marked.contains(index);
                     row.set_selected(is_marked);
+                    // Where the row's cells are: the cursor's frame follows the row's fill.
+                    let mut cells = egui::Rect::NOTHING;
                     let key = viewed::key(db.identity(index));
                     let seen = viewed.contains(key);
                     let elo = |e: u16| if e > 0 { e.to_string() } else { String::new() };
@@ -2469,6 +2493,7 @@ impl LargeView {
                     };
                     for (label, key_, _) in &columns {
                         row.col(|ui| {
+                            cells = cells.union(ui.max_rect());
                             let cell = match (*label, *key_) {
                                 (l, None) if l == tr("Move") => {
                                     let Some(m) = found else { return };
@@ -2550,7 +2575,7 @@ impl LargeView {
                     // The cursor among several chosen rows, or on a row not chosen: a frame
                     // (a shape, not a colour; §42.4).
                     if selected == Some(index) && (many || !is_marked) {
-                        ui_painter_frame(&resp, frame_color, table_clip);
+                        ui_painter_frame(&resp, cells.expand2(spacing / 2.0), frame_color, table_clip);
                     }
                     let resp = if about.is_empty() { resp } else { resp.on_hover_text(about.join(" · ")) };
                     if resp.secondary_clicked() {
@@ -2871,17 +2896,12 @@ fn batch_items(ui: &mut Ui, n: usize, writing: Option<&str>) -> Option<BatchItem
 }
 
 /// The keyboard cursor's frame: 1 px inside the row.
-fn ui_painter_frame(row: &egui::Response, color: Color32, clip: egui::Rect) {
+fn ui_painter_frame(row: &egui::Response, rect: egui::Rect, color: Color32, clip: egui::Rect) {
     let stroke = Stroke::new(1.0, color);
     row.ctx
         .layer_painter(row.layer_id)
         .with_clip_rect(clip)
-        .rect_stroke(
-            row.rect.intersect(clip),
-            0.0,
-            stroke,
-            egui::StrokeKind::Inside,
-        );
+        .rect_stroke(rect.intersect(clip), 0.0, stroke, egui::StrokeKind::Inside);
 }
 
 /// A condition of the list, shown as a chip.
