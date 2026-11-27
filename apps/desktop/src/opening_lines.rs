@@ -391,6 +391,7 @@ impl OpeningLinesUi {
                             read_only: true,
                             dim_until: None,
                             mistakes: None,
+                            shapes: None,
                         }
                         .show(ui)
                     })

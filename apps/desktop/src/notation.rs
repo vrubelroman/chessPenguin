@@ -29,6 +29,84 @@ pub struct Notation<'a> {
     pub dim_until: Option<u32>,
     /// Mistakes on main-line moves (learning an opening): how many, the move was shown.
     pub mistakes: Option<&'a HashMap<NodeId, (u32, bool)>>,
+    /// Arrows and circles of the moves' comments (`[%cal]`, `[%csl]`): a quiet sign by
+    /// the move ([`shape_counts`]).
+    pub shapes: Option<&'a HashMap<NodeId, ShapeCount>>,
+}
+
+/// How many arrows and circles a move's comment draws on the board.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShapeCount {
+    pub arrows: usize,
+    pub circles: usize,
+}
+
+impl ShapeCount {
+    /// «Arrows: 2 · circles: 1 — shown on the board at this move»; a count of none is left out.
+    pub fn hint(self) -> String {
+        let (a, c) = (self.arrows, self.circles);
+        match (a, c) {
+            (_, 0) => crate::i18n::trf(
+                "Arrows: {a} — shown on the board at this move",
+                &[("a", &a)],
+            ),
+            (0, _) => crate::i18n::trf(
+                "Circles: {c} — shown on the board at this move",
+                &[("c", &c)],
+            ),
+            _ => crate::i18n::trf(
+                "Arrows: {a} · circles: {c} — shown on the board at this move",
+                &[("a", &a), ("c", &c)],
+            ),
+        }
+    }
+}
+
+/// The nodes of the game whose comment after them draws arrows or circles.
+pub fn shape_counts(game: &Game) -> HashMap<NodeId, ShapeCount> {
+    game.all_nodes()
+        .filter_map(|id| {
+            let (arrows, circles) = chess_core::shapes(game.node(id)?.comments_after());
+            let count = ShapeCount {
+                arrows: arrows.len(),
+                circles: circles.len(),
+            };
+            (count != ShapeCount::default()).then_some((id, count))
+        })
+        .collect()
+}
+
+/// The sign's box; it is drawn this far after the move.
+const SIGN: f32 = 10.0;
+const SIGN_GAP: f32 = 4.0;
+
+/// The sign of a move whose comment draws on the board: an arrow if it has one, a ring
+/// otherwise. Painted (no font has both at the height of a move's text), so it is sharp
+/// at any scale; it does not repeat the shapes' colours, which would argue with NAGs.
+fn paint_shapes_sign(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    count: ShapeCount,
+    color: Color32,
+) {
+    let stroke = Stroke::new(1.5, color);
+    if count.arrows > 0 {
+        let h = SIGN / 2.0 - 0.5;
+        let (from, tip) = (center + vec2(-h, h), center + vec2(h, -h));
+        let dir = (tip - from).normalized();
+        let head = 4.5;
+        let base = tip - dir * head;
+        let side = vec2(-dir.y, dir.x) * (head * 0.55);
+        painter.line_segment([from, base + dir * 0.5], stroke);
+        painter.add(egui::Shape::convex_polygon(
+            vec![tip, base + side, base - side],
+            color,
+            Stroke::NONE,
+        ));
+    } else {
+        // The ring's outer edge within the sign's box, as the arrow's.
+        painter.circle_stroke(center, SIGN / 2.0 - 1.0, stroke);
+    }
 }
 
 /// Result of a frame of the notation panel.
@@ -325,6 +403,7 @@ impl Row {
                         resp.hovered(),
                         dim,
                     );
+                    let mut right = text_right;
                     if let Some(&(count, shown)) = n.mistakes.and_then(|m| m.get(&id)) {
                         let color = if shown {
                             ui.visuals().warn_fg_color
@@ -347,12 +426,29 @@ impl Row {
                         ui.painter().rect_filled(pill, 7.0, color);
                         ui.painter()
                             .galley(pill.min + vec2(4.0, 1.0), galley, Color32::WHITE);
+                        right = pill.right();
                         let tip = if shown {
                             crate::i18n::trf("Mistakes: {n}; the move was shown", &[("n", &count)])
                         } else {
                             crate::i18n::trf("Mistakes on this move: {n}", &[("n", &count)])
                         };
                         resp.clone().on_hover_text(tip);
+                    }
+                    if let Some(&count) = n.shapes.and_then(|s| s.get(&id)) {
+                        let color = if id == n.cursor {
+                            ui.visuals().selection.stroke.color
+                        } else {
+                            ui.visuals().weak_text_color()
+                        };
+                        let x =
+                            (right + SIGN_GAP + SIGN / 2.0).min(cell.right() - SIGN / 2.0 - 2.0);
+                        paint_shapes_sign(
+                            ui.painter(),
+                            egui::pos2(x, cell.center().y),
+                            count,
+                            color,
+                        );
+                        resp.clone().on_hover_text(count.hint());
                     }
                     handle_move_response(ui, &resp, n, id, out);
                 }
@@ -662,7 +758,7 @@ fn mark_block(ui: &mut Ui, n: &Notation, id: NodeId, mark: &Mark, out: &mut Nota
                     };
                     let label = crate::san::show(&label).into_owned();
                     let current = shown == Some(i + 1);
-                    let resp = move_chip(ui, &label, None, current)
+                    let resp = move_chip(ui, &label, None, current, None)
                         .on_hover_text(tr("Show this line on the board"));
                     if current && n.scroll_to_cursor {
                         resp.scroll_to_me(Some(egui::Align::Center));
@@ -838,11 +934,16 @@ const MARK_ROOM: f32 = 18.0;
 
 fn comment_block(ui: &mut Ui, n: &Notation, text: &str, slot: Slot, out: &mut NotationResponse) {
     let (shown, mark) = translated(n, text);
+    // The start of the game draws on the board: the sign at the block's right edge.
+    let shapes = (slot == Slot::After(NodeId::ROOT))
+        .then(|| n.shapes.and_then(|s| s.get(&NodeId::ROOT)).copied())
+        .flatten();
+    let room = MARK_ROOM * (u8::from(mark.is_some()) + u8::from(shapes.is_some())) as f32;
     let mut frame = block_frame(ui);
-    if mark.is_some() {
+    if room > 0.0 {
         frame = frame.inner_margin(egui::Margin {
             left: 10,
-            right: 10 + MARK_ROOM as i8,
+            right: 10 + room as i8,
             top: 6,
             bottom: 6,
         });
@@ -866,6 +967,18 @@ fn comment_block(ui: &mut Ui, n: &Notation, text: &str, slot: Slot, out: &mut No
     if let Some(m) = mark {
         let at = r.response.rect.right_top() + vec2(-8.0, 7.0);
         translation_mark(ui, at, m, text);
+    }
+    if let Some(count) = shapes {
+        let shift = if mark.is_some() { MARK_ROOM } else { 0.0 };
+        let center = r.response.rect.right_top() + vec2(-8.0 - shift - SIGN / 2.0, 6.0 + 9.0);
+        paint_shapes_sign(ui.painter(), center, count, ui.visuals().weak_text_color());
+        let id = ui.id().with("root_shapes");
+        ui.interact(
+            egui::Rect::from_center_size(center, vec2(SIGN, SIGN) + vec2(4.0, 4.0)),
+            id,
+            Sense::hover(),
+        )
+        .on_hover_text(count.hint());
     }
 }
 
@@ -1154,6 +1267,7 @@ enum Token {
         /// The label with the move number, for the move that starts a piece of the flow.
         numbered: String,
         color: Option<Color32>,
+        shapes: Option<ShapeCount>,
     },
     Comment {
         slot: Slot,
@@ -1209,7 +1323,13 @@ fn variation_block(
 /// A move in flowing text: the current one highlighted as in the main-line table,
 /// the others lit under the mouse. Painted by hand, so its size never changes with the
 /// mouse (a button's frame does).
-fn move_chip(ui: &mut Ui, label: &str, color: Option<Color32>, current: bool) -> egui::Response {
+fn move_chip(
+    ui: &mut Ui,
+    label: &str,
+    color: Option<Color32>,
+    current: bool,
+    shapes: Option<ShapeCount>,
+) -> egui::Response {
     let sel = ui.visuals().selection;
     let font = FontId::proportional(15.0);
     let text_color = if current {
@@ -1221,7 +1341,14 @@ fn move_chip(ui: &mut Ui, label: &str, color: Option<Color32>, current: bool) ->
         .painter()
         .layout_no_wrap(label.to_owned(), font, text_color);
     let pad = vec2(4.0, 2.0);
-    let (rect, resp) = ui.allocate_exact_size(galley.size() + 2.0 * pad, Sense::click());
+    // The sign and the chip's own right padding after it.
+    let sign = if shapes.is_some() {
+        SIGN_GAP + SIGN + 2.0
+    } else {
+        0.0
+    };
+    let (rect, resp) =
+        ui.allocate_exact_size(galley.size() + 2.0 * pad + vec2(sign, 0.0), Sense::click());
     if current {
         ui.painter().rect(
             rect,
@@ -1234,7 +1361,18 @@ fn move_chip(ui: &mut Ui, label: &str, color: Option<Color32>, current: bool) ->
         ui.painter()
             .rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
+    let text_right = rect.min.x + pad.x + galley.size().x;
     ui.painter().galley(rect.min + pad, galley, text_color);
+    if let Some(count) = shapes {
+        let color = if current {
+            sel.stroke.color
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        let center = egui::pos2(text_right + SIGN_GAP + SIGN / 2.0, rect.center().y);
+        paint_shapes_sign(ui.painter(), center, count, color);
+        return resp.on_hover_text(count.hint());
+    }
     resp
 }
 
@@ -1258,6 +1396,7 @@ fn flow(
                     label,
                     numbered,
                     color,
+                    shapes,
                 } => {
                     let current = *id == n.cursor;
                     // After the editor the flow starts anew: with the move number.
@@ -1266,7 +1405,7 @@ fn flow(
                     } else {
                         label
                     };
-                    let resp = move_chip(ui, label, *color, current);
+                    let resp = move_chip(ui, label, *color, current, *shapes);
                     handle_move_response(ui, &resp, n, *id, out);
                 }
                 Token::Comment { slot, text } => {
@@ -1332,6 +1471,7 @@ fn line_tokens(n: &Notation, first: NodeId, dark: bool, tokens: &mut Vec<Token>)
             label,
             numbered,
             color: sym_color,
+            shapes: n.shapes.and_then(|s| s.get(&node)).copied(),
         });
         let after = comment_text(nd.comments_after());
         if !after.is_empty() {
@@ -1360,5 +1500,56 @@ fn line_tokens(n: &Notation, first: NodeId, dark: bool, tokens: &mut Vec<Token>)
             Some(next) => node = next,
             None => return,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shape_counts_find_arrows_and_circles_of_comments_only() {
+        let game = chess_core::parse_str(
+            "{[%csl Re4]} 1. e4 {[%cal Gg1f3,Gf1c4] [%csl Ga8] [%clk 0:01:00]} e5 {plain} \
+             (1... c5 {[%csl Yd5]}) 2. Nf3 {[%eval 0.3]} *",
+        )
+        .game;
+        let counts = shape_counts(&game);
+        let e4 = game.main_child(NodeId::ROOT).unwrap();
+        let c5 = game.variations(e4)[0];
+        assert_eq!(counts.len(), 3, "{counts:?}");
+        assert_eq!(
+            counts[&NodeId::ROOT],
+            ShapeCount {
+                arrows: 0,
+                circles: 1
+            }
+        );
+        assert_eq!(
+            counts[&e4],
+            ShapeCount {
+                arrows: 2,
+                circles: 1
+            }
+        );
+        assert_eq!(
+            counts[&c5],
+            ShapeCount {
+                arrows: 0,
+                circles: 1
+            }
+        );
+    }
+
+    #[test]
+    fn the_sign_hint_leaves_out_a_count_of_none() {
+        crate::i18n::set_lang(crate::i18n::Lang::En);
+        let hint = |arrows, circles| ShapeCount { arrows, circles }.hint();
+        assert_eq!(
+            hint(2, 1),
+            "Arrows: 2 · circles: 1 — shown on the board at this move"
+        );
+        assert_eq!(hint(2, 0), "Arrows: 2 — shown on the board at this move");
+        assert_eq!(hint(0, 1), "Circles: 1 — shown on the board at this move");
     }
 }

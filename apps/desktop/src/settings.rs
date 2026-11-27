@@ -177,6 +177,46 @@ pub struct Settings {
     #[serde(default)]
     pub repertoire_context_policies:
         std::collections::HashMap<String, trainer::repertoire::LearningContextPolicy>,
+    /// Hints shown until the user reacts (docs/design/tasks-42-43-2026-11-27.md §43.3).
+    pub hints: Hints,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Hints {
+    /// «Arrows and circles: the right mouse button on the board» above the notation.
+    pub board_shapes: Hint,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Hint {
+    /// Closed, or what it tells was done: never shown again.
+    pub done: bool,
+    /// Games it was shown in without a reaction.
+    pub shown: u32,
+}
+
+impl Hint {
+    /// Shown in this many games without a reaction, the hint goes by itself.
+    pub const SHOWS: u32 = 3;
+
+    /// A game opens where the hint can stand: whether it is shown there. A show counts
+    /// once per game (`fresh`: the game was not shown the hint before in this session);
+    /// such a game keeps it, the last counted one too.
+    pub fn offer(&mut self, fresh: bool) -> bool {
+        if self.done {
+            return false;
+        }
+        if !fresh {
+            return true;
+        }
+        if self.shown >= Self::SHOWS {
+            return false;
+        }
+        self.shown += 1;
+        true
+    }
 }
 
 /// Options of the opponent preparation; its engine search is the game analysis's.
@@ -249,6 +289,7 @@ impl Default for Settings {
             repertoire_priorities: Default::default(),
             repertoire_context_policies: Default::default(),
             repertoire_flow_version: 0,
+            hints: Hints::default(),
         }
     }
 }
@@ -388,6 +429,45 @@ mod tests {
         );
         s.touch_database(Path::new("/new.pgn"));
         assert_eq!(s.databases[0], PathBuf::from("/new.pgn"));
+    }
+
+    #[test]
+    fn a_hint_goes_after_three_games_without_a_reaction() {
+        let mut hint = Hint::default();
+        assert!(hint.offer(true));
+        // The same game opened again in the session: shown, not counted.
+        assert!(hint.offer(false));
+        assert!(hint.offer(true));
+        assert!(hint.offer(true));
+        assert_eq!(hint.shown, 3);
+        // A fourth game: gone; a game already shown in the session keeps it.
+        assert!(!hint.offer(true));
+        assert!(hint.offer(false));
+        assert_eq!(hint.shown, 3);
+    }
+
+    #[test]
+    fn a_hint_done_is_never_shown() {
+        let mut hint = Hint {
+            done: true,
+            shown: 0,
+        };
+        assert!(!hint.offer(true));
+        assert_eq!(hint.shown, 0);
+    }
+
+    #[test]
+    fn hints_survive_saving_and_old_settings_have_none() {
+        let mut s = Settings::default();
+        s.hints.board_shapes = Hint {
+            done: false,
+            shown: 2,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.hints, s.hints);
+        let old: Settings = serde_json::from_str(r#"{"show_coords": false}"#).unwrap();
+        assert_eq!(old.hints, Hints::default());
     }
 
     /// A database put on the shelf again by a link to its file stays itself, once.
