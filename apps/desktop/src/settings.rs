@@ -202,14 +202,19 @@ impl Hint {
     pub const SHOWS: u32 = 3;
 
     /// A game opens where the hint can stand: whether it is shown there. A show counts
-    /// once per game (`fresh`: the game was not opened before in this session).
+    /// once per game (`fresh`: the game was not shown the hint before in this session);
+    /// such a game keeps it, the last counted one too.
     pub fn offer(&mut self, fresh: bool) -> bool {
-        if self.done || self.shown >= Self::SHOWS {
+        if self.done {
             return false;
         }
-        if fresh {
-            self.shown += 1;
+        if !fresh {
+            return true;
         }
+        if self.shown >= Self::SHOWS {
+            return false;
+        }
+        self.shown += 1;
         true
     }
 }
@@ -404,8 +409,9 @@ mod tests {
         assert!(hint.offer(true));
         assert!(hint.offer(true));
         assert_eq!(hint.shown, 3);
+        // A fourth game: gone; a game already shown in the session keeps it.
         assert!(!hint.offer(true));
-        assert!(!hint.offer(false));
+        assert!(hint.offer(false));
         assert_eq!(hint.shown, 3);
     }
 

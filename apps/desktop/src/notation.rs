@@ -104,7 +104,8 @@ fn paint_shapes_sign(
             Stroke::NONE,
         ));
     } else {
-        painter.circle_stroke(center, SIGN / 2.0 - 0.5, stroke);
+        // The ring's outer edge within the sign's box, as the arrow's.
+        painter.circle_stroke(center, SIGN / 2.0 - 1.0, stroke);
     }
 }
 
@@ -1340,8 +1341,9 @@ fn move_chip(
         .painter()
         .layout_no_wrap(label.to_owned(), font, text_color);
     let pad = vec2(4.0, 2.0);
+    // The sign and the chip's own right padding after it.
     let sign = if shapes.is_some() {
-        SIGN_GAP + SIGN
+        SIGN_GAP + SIGN + 2.0
     } else {
         0.0
     };

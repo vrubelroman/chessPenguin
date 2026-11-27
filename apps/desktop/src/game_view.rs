@@ -735,9 +735,15 @@ impl GameView {
         show && fresh
     }
 
-    /// The hint's strip: the translation strip's look, closed for good by its ×.
+    /// The hint's strip: the translation strip's look, closed for good by its ×; dimmed
+    /// (its height kept) while the board shows an engine line and takes no drawing.
     /// Returns whether the hint's settings changed.
-    fn shapes_hint_strip(&mut self, ui: &mut Ui, hint: &mut crate::settings::Hint) -> bool {
+    fn shapes_hint_strip(
+        &mut self,
+        ui: &mut Ui,
+        hint: &mut crate::settings::Hint,
+        dim: bool,
+    ) -> bool {
         let mut closed = false;
         egui::Frame::new()
             .fill(ui.visuals().faint_bg_color)
@@ -752,15 +758,17 @@ impl GameView {
                         egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
                         |ui| {
                             ui.set_min_height(row_h);
-                            ui.add(
-                                egui::Label::new(RichText::new(tr(
-                                    "Arrows and circles: drag or click with the right mouse button on the board. They are saved in the game.",
-                                )).weak())
-                                .wrap(),
-                            )
-                            .on_hover_text(tr(
-                                "No key — green, Shift — red, Alt — blue, Shift+Alt — yellow. Draw the same one again to remove it. Ctrl+Z undoes.",
-                            ));
+                            ui.add_enabled_ui(!dim, |ui| {
+                                ui.add(
+                                    egui::Label::new(tr(
+                                        "Arrows and circles: drag or click with the right mouse button on the board. They are saved in the game.",
+                                    ))
+                                    .wrap(),
+                                )
+                                .on_hover_text(tr(
+                                    "No key — green, Shift — red, Alt — blue, Shift+Alt — yellow. Draw the same one again to remove it. Ctrl+Z undoes.",
+                                ));
+                            });
                         },
                     );
                     ui.allocate_ui_with_layout(
@@ -1693,8 +1701,9 @@ impl GameView {
             let mut hints_changed =
                 self.decide_shapes_hint(&mut settings.hints.board_shapes, &mut seen, translating);
             ui.data_mut(|d| d.insert_temp(seen_id, seen));
-            if self.shapes_hint == Some(true) && !translating && self.preview.is_none() {
-                hints_changed |= self.shapes_hint_strip(ui, &mut settings.hints.board_shapes);
+            if self.shapes_hint == Some(true) && !translating {
+                let dim = self.preview.is_some();
+                hints_changed |= self.shapes_hint_strip(ui, &mut settings.hints.board_shapes, dim);
             }
             if hints_changed {
                 actions.push(GameAction::HintsChanged);
@@ -5693,6 +5702,10 @@ mod tests {
         let mut b = open(1);
         b.decide_shapes_hint(&mut hint, &mut seen, false);
         assert_eq!(hint.shown, 3);
+        // The third counted game opened again keeps the hint, uncounted.
+        let mut b_again = open(1);
+        assert!(!b_again.decide_shapes_hint(&mut hint, &mut seen, false));
+        assert_eq!((b_again.shapes_hint, hint.shown), (Some(true), 3));
         // The fourth game: gone by itself.
         let mut c = open(2);
         assert!(!c.decide_shapes_hint(&mut hint, &mut seen, false));
