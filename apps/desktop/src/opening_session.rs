@@ -210,9 +210,10 @@ enum State {
 /// Computed once when the result is shown.
 struct Summary {
     next_review: String,
-    /// How many more moves are learned, and learning, than when the session began.
-    learnt_gain: usize,
-    learning_gain: usize,
+    /// How many more moves are passed (met at least once) and consolidated than when
+    /// the session began.
+    passed_gain: usize,
+    consolidated_gain: usize,
     /// Moves never shown yet, all of them (the «more new» button takes up to 10).
     unseen: usize,
     more_new: usize,
@@ -1640,8 +1641,9 @@ impl OpeningSessionUi {
         let (learnt, learning) = progress_counts(&self.library, &self.learning, &self.whole_scope);
         self.summary = Some(Summary {
             next_review,
-            learnt_gain: learnt.saturating_sub(self.start_progress.0),
-            learning_gain: learning.saturating_sub(self.start_progress.1),
+            passed_gain: (learnt + learning)
+                .saturating_sub(self.start_progress.0 + self.start_progress.1),
+            consolidated_gain: learnt.saturating_sub(self.start_progress.0),
             unseen,
             more_new: unseen.min(layout::NEW_PER_SESSION),
         });
@@ -1926,11 +1928,16 @@ impl OpeningSessionUi {
                 ui.separator();
                 ui.add_space(4.0);
                 if let Some(summary) = &self.summary {
-                    // Learned takes days: what the session did shows as «learning».
-                    if summary.learnt_gain > 0 {
-                        row(ui, tr("Learned"), format!("+{}", summary.learnt_gain));
-                    } else if summary.learning_gain > 0 {
-                        row(ui, tr("Learning"), format!("+{}", summary.learning_gain));
+                    // Consolidating takes days: what the session did shows as «passed».
+                    if summary.passed_gain > 0 {
+                        row(ui, tr("Passed"), format!("+{}", summary.passed_gain));
+                    }
+                    if summary.consolidated_gain > 0 {
+                        row(
+                            ui,
+                            tr("Consolidated"),
+                            format!("+{}", summary.consolidated_gain),
+                        );
                     }
                     if self.kind == SessionKind::Daily && summary.unseen > 0 {
                         row(ui, tr("New moves left"), summary.unseen.to_string());

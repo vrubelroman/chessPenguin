@@ -2229,7 +2229,7 @@ fn the_summary_shows_learning_growth_when_nothing_is_learned_yet() {
     assert!(f.ui.is_finished());
     f.ui.compute_summary();
     let summary = f.ui.summary.as_ref().unwrap();
-    assert_eq!((summary.learnt_gain, summary.learning_gain), (0, 2));
+    assert_eq!((summary.passed_gain, summary.consolidated_gain), (2, 0));
 }
 
 #[test]

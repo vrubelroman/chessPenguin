@@ -52,9 +52,10 @@ const BOTTOM_W: f32 = 150.0;
 const MAIN_W: f32 = 170.0;
 const LINES_W: f32 = 110.0;
 const THIRD_W: f32 = 150.0;
-/// The «Learned» column: a small bar and «X/Y».
-const LEARNED_W: f32 = 104.0;
+/// The table's fixed columns: «Today» phrase, the bar, «A/Y» (room for «999/999»).
+const TODAY_W: f32 = 90.0;
 const MINI_BAR_W: f32 = 44.0;
+const PASSED_W: f32 = 64.0;
 const DIALOG_W: f32 = 460.0;
 /// A session appears at once when it is ready this fast; otherwise «Preparing…».
 const PREPARING_SHOWN_AFTER: Duration = Duration::from_millis(300);
@@ -88,12 +89,13 @@ struct RowStats {
 }
 
 impl RowStats {
-    fn new_today(&self) -> usize {
-        self.unseen.min(NEW_PER_SESSION)
+    /// Moves met in training at least once: learning and learned.
+    fn passed(&self) -> usize {
+        self.learning + self.learnt
     }
 
-    fn today(&self) -> usize {
-        self.due + self.new_today()
+    fn new_today(&self) -> usize {
+        self.unseen.min(NEW_PER_SESSION)
     }
 }
 
@@ -1679,8 +1681,9 @@ impl RepertoireUi {
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(egui_extras::Column::remainder().at_least(80.0).clip(true))
             .column(egui_extras::Column::exact(22.0))
-            .column(egui_extras::Column::exact(58.0))
-            .column(egui_extras::Column::exact(LEARNED_W))
+            .column(egui_extras::Column::exact(TODAY_W))
+            .column(egui_extras::Column::exact(MINI_BAR_W))
+            .column(egui_extras::Column::exact(PASSED_W))
             .column(egui_extras::Column::exact(26.0));
         if let Some(index) = scroll_row {
             table = table.scroll_to_row(index, None);
@@ -1691,13 +1694,18 @@ impl RepertoireUi {
                     ui.add(egui::Label::new(RichText::new(tr("Name")).strong()).truncate());
                 });
                 header.col(|_| {});
-                for key in ["Today", "Progress"] {
-                    header.col(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add(egui::Label::new(RichText::new(tr(key)).strong()).truncate());
-                        });
+                header.col(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(RichText::new(tr("Today")).strong()).truncate());
                     });
-                }
+                });
+                // «Passed» heads the bar and the number together.
+                header.col(|_| {});
+                header.col(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(RichText::new(tr("Passed")).strong()).truncate());
+                    });
+                });
                 header.col(|_| {});
             })
             .body(|body| {
@@ -1721,26 +1729,25 @@ impl RepertoireUi {
                     row.col(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             match stats {
-                                // An empty repertoire: «no moves» under «Learned» says it.
                                 Some(Ok(_)) if !has_moves => {}
-                                Some(Ok(stats)) if stats.today() > 0 => {
-                                    ui.label(stats.today().to_string()).on_hover_text(trf(
-                                        "{n} to review, {m} new",
+                                Some(Ok(stats)) => {
+                                    // A call to action in the normal colour; the rest quiet.
+                                    let text = if stats.due > 0 {
+                                        RichText::new(trf("review {n}", &[("n", &stats.due)]))
+                                    } else if stats.new_today() > 0 {
+                                        RichText::new(trf("new: {n}", &[("n", &stats.new_today())]))
+                                            .weak()
+                                    } else if let Some((at, _)) = stats.next {
+                                        RichText::new(layout::when(at, layout::now())).weak()
+                                    } else {
+                                        RichText::new("—").weak()
+                                    };
+                                    ui.add(egui::Label::new(text).truncate()).on_hover_text(trf(
+                                        "To review {n}, new in the session {m}",
                                         &[("n", &stats.due), ("m", &stats.new_today())],
                                     ));
                                 }
-                                // Nothing today: when the next review is.
-                                Some(Ok(RowStats {
-                                    next: Some((at, _)),
-                                    ..
-                                })) => {
-                                    let when = layout::when(*at, layout::now());
-                                    ui.add(
-                                        egui::Label::new(RichText::new(&when).weak()).truncate(),
-                                    )
-                                    .on_hover_text(format!("{}: {when}", tr("Next review")));
-                                }
-                                Some(_) => {
+                                Some(Err(_)) => {
                                     ui.label(RichText::new("—").weak());
                                 }
                                 None => {
@@ -1748,6 +1755,21 @@ impl RepertoireUi {
                                 }
                             }
                         });
+                    });
+                    let passed = matches!(stats, Some(Ok(stats)) if has_moves && stats.total > 0);
+                    row.col(|ui| {
+                        if let Some(Ok(stats)) = stats
+                            && passed
+                        {
+                            let room = ui.available_rect_before_wrap();
+                            let bar = egui::Rect::from_min_size(
+                                egui::pos2(room.left(), room.center().y - 3.0),
+                                vec2(MINI_BAR_W, 6.0),
+                            );
+                            progress_bar(ui, bar, Some(stats), selected);
+                            ui.allocate_rect(room, egui::Sense::hover())
+                                .on_hover_text(passed_hint(stats));
+                        }
                     });
                     row.col(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1759,28 +1781,9 @@ impl RepertoireUi {
                                     )
                                     .on_hover_text(tr("The repertoire has no moves yet: import a PGN or add a line from a game"));
                                 }
-                                Some(Ok(stats)) if stats.total > 0 => {
-                                    let hint = learned_hint(stats);
-                                    // «0/17» reads as «nothing done»: name what is under way.
-                                    let text = if stats.learnt == 0 && stats.learning > 0 {
-                                        RichText::new(trf(
-                                            "learning {k}",
-                                            &[("k", &stats.learning)],
-                                        ))
-                                        .weak()
-                                    } else {
-                                        RichText::new(format!("{}/{}", stats.learnt, stats.total))
-                                    };
-                                    ui.label(text).on_hover_text(&hint);
-                                    let room = ui.available_width() - ui.spacing().item_spacing.x;
-                                    if room >= 16.0 {
-                                        let (bar, response) = ui.allocate_exact_size(
-                                            vec2(room.min(MINI_BAR_W), 6.0),
-                                            egui::Sense::hover(),
-                                        );
-                                        progress_bar(ui, bar, Some(stats), selected);
-                                        response.on_hover_text(hint);
-                                    }
+                                Some(Ok(stats)) if passed => {
+                                    ui.label(format!("{}/{}", stats.passed(), stats.total))
+                                        .on_hover_text(passed_hint(stats));
                                 }
                                 Some(_) => {
                                     ui.label(RichText::new("—").weak());
@@ -2495,18 +2498,18 @@ fn main_button(state: &CardState, side: LearningSide) -> (String, bool, Option<M
 
 /// Row 3 of the card: learnt, in progress, the rest.
 /// «Learned 3, learning 10, 75 moves in all» and what «learned» takes.
-fn learned_hint(stats: &RowStats) -> String {
+fn passed_hint(stats: &RowStats) -> String {
     trf(
-        "Learned {x}, learning {z}, {y} moves in all. A move counts as learned after three correct answers in a row without a hint — usually over several days of reviews.",
+        "Passed {a} of {y} moves, {l} of them consolidated. A move is consolidated after three correct answers in a row without a hint — usually over several days of reviews.",
         &[
-            ("x", &stats.learnt),
-            ("z", &stats.learning),
+            ("a", &stats.passed()),
             ("y", &stats.total),
+            ("l", &stats.learnt),
         ],
     )
 }
 
-/// The two segments: learned, then learning (paler).
+/// Blue — passed, green inside it — consolidated.
 /// Learned — the green of a correct move; learning — the accent blue; the track stands
 /// out from the row. On a selected dark row: white, half-white and a dark track.
 fn progress_bar(ui: &Ui, bar: egui::Rect, stats: Option<&RowStats>, selected: bool) {
@@ -2557,19 +2560,17 @@ fn progress(ui: &mut Ui, stats: Option<&RowStats>) {
     ui.add_space(-2.0);
     ui.horizontal(|ui| {
         ui.set_height(20.0);
-        let (learnt, total, learning) = stats.map_or((0, 0, 0), |stats| {
-            (stats.learnt, stats.total, stats.learning)
-        });
-        if stats.is_some() {
-            let mut text = trf("Learned {x} of {y} moves", &[("x", &learnt), ("y", &total)]);
-            // The bar's second segment, named where the bar is read.
-            if learning > 0 {
-                text = format!("{text} · {}", trf("learning {k}", &[("k", &learning)]));
-            }
-            if let Some(stats) = stats {
-                ui.add(egui::Label::new(text).truncate())
-                    .on_hover_text(learned_hint(stats));
-            }
+        if let Some(stats) = stats {
+            let text = trf(
+                "Passed {a} of {y} moves · consolidated {l}",
+                &[
+                    ("a", &stats.passed()),
+                    ("y", &stats.total),
+                    ("l", &stats.learnt),
+                ],
+            );
+            ui.add(egui::Label::new(text).truncate())
+                .on_hover_text(passed_hint(stats));
         }
     });
 }

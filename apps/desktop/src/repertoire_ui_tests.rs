@@ -223,7 +223,7 @@ fn today_counts_until_the_end_of_the_day_and_at_most_ten_new() {
         (12, 2, 9, 3)
     );
     assert_eq!(stats.new_today(), 9);
-    assert_eq!(stats.today(), 11);
+    assert_eq!(stats.passed(), 3 + stats.learning);
     assert_eq!(
         card_state(Some(true), Some(&Ok(stats.clone()))),
         CardState::Review { due: 2, new: 9 }

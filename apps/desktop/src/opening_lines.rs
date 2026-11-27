@@ -296,7 +296,7 @@ impl OpeningLinesUi {
                 } else {
                     let text = match self.below(&path) {
                         Some((lines, mine, learnt)) => trf(
-                            "Below: {n} lines · {y} your moves · learned {x}",
+                            "Below: {n} lines · {y} your moves · consolidated {x}",
                             &[("n", &lines), ("y", &mine), ("x", &learnt)],
                         ),
                         None => tr("Counting moves…").to_owned(),
