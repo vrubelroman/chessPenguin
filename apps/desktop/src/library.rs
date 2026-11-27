@@ -83,6 +83,33 @@ pub enum LibraryAction {
         path: PathBuf,
         index: usize,
     },
+    /// «New database from selected…»: the chosen records (by number) of `path`, the
+    /// table's order, how many of them the filter hides (task 42).
+    CopySelection {
+        path: PathBuf,
+        records: Vec<u32>,
+        sort: chess_import::chessbase::base::SortKey,
+        ascending: bool,
+        hidden: usize,
+    },
+    /// A short message (a toast).
+    Notice(String),
+    /// Open a game at the position `at` with its report shown (a move the search for
+    /// great moves found).
+    OpenGameReport {
+        path: PathBuf,
+        index: usize,
+        at: Option<shakmaty::Chess>,
+    },
+    /// «!! Find great moves» over the list `records` of `path` (in the table's order),
+    /// found by `filter` (task 27).
+    FindGreatMoves {
+        path: PathBuf,
+        records: Vec<u32>,
+        filter: chess_import::chessbase::base::Filter,
+        /// The conditions in words, for the question and the summary.
+        about: String,
+    },
     EditGameData {
         path: PathBuf,
         index: usize,
@@ -266,6 +293,39 @@ pub struct Library {
     pub aside: Option<crate::adjourned::Card>,
     /// The games of the databases not opened, for their cards.
     counts: crate::db_counts::Counts,
+    /// Chosen records being copied into a new database (one copy at a time).
+    batch: Option<BatchJob>,
+    /// The marks of great moves of each database (task 27), read once per session.
+    marks: HashMap<PathBuf, Arc<Mutex<crate::brilliant::Index>>>,
+    /// The search for great moves under way (one engine job in the program).
+    pub pass: Option<crate::brilliant::PassJob>,
+}
+
+/// A copy of chosen records into a new database, written in the background.
+struct BatchJob {
+    source: PathBuf,
+    target: PathBuf,
+    total: usize,
+    work: crate::board_search::Background<
+        Result<crate::batch_copy::CopyReport, crate::batch_copy::CopyError>,
+    >,
+    cancelling: bool,
+}
+
+/// How a copy of chosen records ended.
+pub enum BatchEnd {
+    Done {
+        target: PathBuf,
+        report: crate::batch_copy::CopyReport,
+    },
+    Cancelled {
+        target: PathBuf,
+    },
+    Failed {
+        source: PathBuf,
+        target: PathBuf,
+        error: crate::batch_copy::CopyError,
+    },
 }
 
 impl Library {
@@ -286,7 +346,200 @@ impl Library {
             update: None,
             aside: None,
             counts: crate::db_counts::Counts::new(ctx),
+            batch: None,
+            marks: HashMap::new(),
+            pass: None,
         }
+    }
+
+    /// The marks of great moves of the database at `path`.
+    pub fn marks(&mut self, path: &Path) -> Arc<Mutex<crate::brilliant::Index>> {
+        self.marks
+            .entry(path.to_path_buf())
+            .or_insert_with(|| Arc::new(Mutex::new(crate::brilliant::Index::of(path))))
+            .clone()
+    }
+
+    /// The search under way, as each database's conditions line shows it; «Stop» of
+    /// any of them stops it. Called every frame.
+    pub fn show_pass(&mut self, estimate: impl Fn(&[u32]) -> f64) {
+        let status = self.pass.as_ref().map(|job| {
+            (
+                job.source.clone(),
+                crate::own_db::base_name(&job.source),
+                job.done(),
+                job.records.len(),
+                job.current(),
+                job.left_secs(&estimate),
+                job.stopping,
+            )
+        });
+        let mut stop = false;
+        for (path, view) in self.large.iter_mut() {
+            view.pass =
+                status
+                    .as_ref()
+                    .map(|(source, name, done, total, current, left, stopping)| {
+                        large_db::PassStatus {
+                            here: source == path,
+                            name: name.clone(),
+                            done: *done,
+                            total: *total,
+                            current: *current,
+                            left_secs: *left,
+                            stopping: *stopping,
+                        }
+                    });
+            stop |= std::mem::take(&mut view.stop_pass);
+        }
+        if stop && let Some(job) = self.pass.as_mut() {
+            job.stop();
+        }
+    }
+
+    /// Why the search may not start now (the engine is busy elsewhere), for every
+    /// database's button.
+    pub fn set_engine_busy(&mut self, why: Option<String>) {
+        for view in self.large.values_mut() {
+            view.engine_busy = why.clone();
+        }
+    }
+
+    /// Why the last search in `path` stopped with an error, where its progress was.
+    pub fn set_pass_error(&mut self, path: &Path, text: Option<String>) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.pass_error = text;
+        }
+    }
+
+    /// Starts copying `records` of `source` into the new file `target` (none while
+    /// another copy is written). `false`: the source is not read or the thread did not
+    /// start.
+    pub fn start_batch(
+        &mut self,
+        ctx: &egui::Context,
+        source: &Path,
+        records: Vec<u32>,
+        sort: chess_import::chessbase::base::SortKey,
+        ascending: bool,
+        target: PathBuf,
+    ) -> bool {
+        if self.batch.is_some() {
+            return false;
+        }
+        let Some(db) = self.database(source) else {
+            return false;
+        };
+        let total = records.len();
+        let req = crate::batch_copy::CopyRequest {
+            records,
+            sort,
+            ascending,
+            target: target.clone(),
+            slow: std::env::var_os("CP_BATCH_SLOW").is_some(),
+        };
+        let now = ctx.input(|i| i.time);
+        let Some(work) = crate::board_search::Background::spawn(ctx, now, move |p, c| {
+            crate::batch_copy::copy_into_new(&db, &req, p, c)
+        }) else {
+            return false;
+        };
+        if let Some(view) = self.large.get_mut(source) {
+            view.batch_error = None;
+        }
+        self.batch = Some(BatchJob {
+            source: source.to_path_buf(),
+            target,
+            total,
+            work,
+            cancelling: false,
+        });
+        true
+    }
+
+    /// Why the copy from `path` wrote nothing, said where its progress was.
+    pub fn set_batch_error(&mut self, path: &Path, text: String) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.batch_error = Some(text);
+        }
+    }
+
+    /// The chosen records of `path` let go (their numbers no longer mean the same games).
+    pub fn clear_selection(&mut self, path: &Path) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.clear_marks();
+        }
+    }
+
+    /// Asks the copy being written to stop.
+    pub fn cancel_batch(&mut self) {
+        if let Some(job) = &mut self.batch {
+            job.work.cancel();
+            job.cancelling = true;
+        }
+    }
+
+    /// Stops the copy being written and waits a little for it to clean up (closing the
+    /// program): its temporary file goes, no new database appears.
+    pub fn stop_batch(&mut self) {
+        if let Some(job) = self.batch.take() {
+            job.work.cancel();
+            job.work.wait(std::time::Duration::from_secs(3));
+        }
+    }
+
+    /// The end of the copy being written, once it came (called every frame, whatever is
+    /// on the screen); while it runs the source's conditions line shows it.
+    pub fn poll_batch(&mut self, ctx: &egui::Context) -> Option<BatchEnd> {
+        let job = self.batch.as_ref()?;
+        // `CP_BATCH_CANCEL_AFTER=<ms>`: «Cancel» pressed that long after the start (checks,
+        // screenshots of the cancelling).
+        let cancel_after = std::env::var("CP_BATCH_CANCEL_AFTER")
+            .ok()
+            .and_then(|ms| ms.parse::<f64>().ok());
+        if let Some(ms) = cancel_after
+            && !job.cancelling
+            && ctx.input(|i| i.time) - job.work.started >= ms / 1000.0
+        {
+            self.cancel_batch();
+        }
+        let job = self.batch.as_ref()?;
+        let Some(result) = job.work.poll() else {
+            let status = large_db::BatchStatus {
+                name: crate::own_db::base_name(&job.target),
+                done: job.work.progress(),
+                total: job.total,
+                cancelling: job.cancelling,
+            };
+            let source = job.source.clone();
+            let mut cancel = false;
+            if let Some(view) = self.large.get_mut(&source) {
+                cancel = std::mem::take(&mut view.cancel_batch);
+                view.batch = Some(status);
+            }
+            if cancel {
+                self.cancel_batch();
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            return None;
+        };
+        let job = self.batch.take()?;
+        if let Some(view) = self.large.get_mut(&job.source) {
+            view.batch = None;
+            view.cancel_batch = false;
+        }
+        Some(match result {
+            None => BatchEnd::Cancelled { target: job.target },
+            Some(Ok(report)) => BatchEnd::Done {
+                target: job.target,
+                report,
+            },
+            Some(Err(error)) => BatchEnd::Failed {
+                source: job.source,
+                target: job.target,
+                error,
+            },
+        })
     }
 
     /// Starts loading `path` in the background (no-op if already loaded/loading).
@@ -345,6 +598,21 @@ impl Library {
         }
     }
 
+    /// Chooses the row of `index` alone (any choice of several let go) and scrolls to it.
+    pub fn choose_only(&mut self, path: &Path, index: usize) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.clear_marks();
+            view.reveal(index);
+        }
+    }
+
+    /// Sorts the table of `path` by its «!!» column.
+    pub fn sort_by_marks(&mut self, path: &Path) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.sort_marks_on();
+        }
+    }
+
     /// Selects (and scrolls to) a game row, e.g. when returning from a game.
     pub fn reveal(&mut self, path: &Path, index: usize) {
         if let Some(view) = self.large.get_mut(path) {
@@ -357,7 +625,10 @@ impl Library {
         let selected = self.selected_db.as_deref() == Some(path);
         // The conditions, the position, the sort and the selection stay (§9.7): the view
         // finds its list anew once the file is read.
-        let view = self.large.remove(path);
+        let mut view = self.large.remove(path);
+        if let (Some(v), Some(db)) = (view.as_mut(), self.database(path)) {
+            v.before_reread(&db);
+        }
         self.forget(path);
         if let Some(v) = view {
             self.large.insert(path.to_path_buf(), v);
@@ -679,6 +950,11 @@ impl Library {
             && view.escape()
         {
             ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        }
+        for view in self.large.values_mut() {
+            if let Some(text) = view.notice.take() {
+                actions.push(LibraryAction::Notice(text));
+            }
         }
         if let Some(path) = self.selected_db.clone()
             && let Some(view) = self.large.get_mut(&path)
@@ -1446,6 +1722,15 @@ impl Library {
             .entry(path.clone())
             .or_insert_with(|| LargeView::for_database(&db, online));
         let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
+        view.set_marks_db(&db);
+        if view.marks.is_none() {
+            let marks = self
+                .marks
+                .entry(path.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(crate::brilliant::Index::of(&path))))
+                .clone();
+            view.marks = Some(marks);
+        }
         if view.table(
             ui,
             &path,

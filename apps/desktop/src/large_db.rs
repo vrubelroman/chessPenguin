@@ -278,6 +278,29 @@ struct Suggestions {
     highlighted: Option<usize>,
 }
 
+/// The search for great moves under way, as the conditions line shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PassStatus {
+    /// In this database (else in `name`).
+    pub here: bool,
+    pub name: String,
+    pub done: usize,
+    pub total: usize,
+    /// The record being analysed.
+    pub current: Option<u32>,
+    pub left_secs: f64,
+    pub stopping: bool,
+}
+
+/// A copy of chosen records being written, as the conditions line shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchStatus {
+    pub name: String,
+    pub done: usize,
+    pub total: usize,
+    pub cancelling: bool,
+}
+
 /// State of one large database in the library (kept for the session).
 pub struct LargeView {
     form: Form,
@@ -307,8 +330,53 @@ pub struct LargeView {
     suggestions: Option<Suggestions>,
     /// The pointer is on the open suggestion list.
     pointer_on_list: bool,
-    /// Record index of the selected row.
+    /// Record index of the row under the keyboard cursor: Enter, F2 and «Board» take it.
     pub selected: Option<usize>,
+    /// The records chosen (task 42): one or many, kept across filters and sorting.
+    marked: crate::batch_copy::Selection,
+    /// Where a Shift range starts.
+    anchor: Option<usize>,
+    /// Changes of `marked` and of `view`, and the chosen records the list hides then.
+    marked_gen: u64,
+    view_gen: u64,
+    hidden: Option<(u64, u64, usize)>,
+    /// The copy of chosen records being written (set by the library each frame).
+    pub batch: Option<BatchStatus>,
+    /// «Cancel» of that copy was clicked.
+    pub cancel_batch: bool,
+    /// Why the last copy wrote nothing: said in red where its progress was, until `×`.
+    pub batch_error: Option<String>,
+    /// The chosen records as the file had them before it was read again (a hash of
+    /// each one's bytes), to know they are still the same games; `None` for a choice too
+    /// large to check (it is let go when the file changes).
+    marked_before: Option<Vec<(u32, u64)>>,
+    /// Said once (a toast), taken by the library.
+    pub notice: Option<String>,
+    /// The marks of the records found by the search for great moves (task 27), set by
+    /// the library; what the table shows of them, checked against each record's main
+    /// line, by record, for the index's generation.
+    pub marks: Option<Arc<std::sync::Mutex<crate::brilliant::Index>>>,
+    shown_marks: std::cell::RefCell<(u64, HashMap<u32, Option<crate::brilliant::Entry>>)>,
+    /// The table sorted by the «!!» column.
+    marks_sort: bool,
+    /// The database the marks are checked against (set by `table`).
+    marks_db: Option<Arc<Database>>,
+    /// The texts of the conditions of the list (for the search's question).
+    last_conditions: Vec<String>,
+    /// Whose moves the «!!» column counts: the filter's player's (found in the background
+    /// for that filter), else both sides'.
+    marks_sides: (Option<Filter>, crate::brilliant::Sides),
+    sides_job: Option<(Filter, Receiver<crate::brilliant::Sides>)>,
+    /// The search under way (here or in another database), set by the library.
+    pub pass: Option<PassStatus>,
+    /// Why the search cannot start now (the engine is busy), set by the app.
+    pub engine_busy: Option<String>,
+    /// Why the last search stopped with an error, in red where its progress was.
+    pub pass_error: Option<String>,
+    /// «Stop» of the search was clicked.
+    pub stop_pass: bool,
+    /// «!! Find great moves» was clicked (taken by `table`, which has the path).
+    find_clicked: bool,
     scroll_to_selected: bool,
     scroll_to_top: bool,
     focus_player: bool,
@@ -386,6 +454,21 @@ impl LargeView {
         }
         let drawer = pane_env.as_deref() == Some("drawer");
         // `CP_SORT=date`: newest games first (screenshots).
+        // `CP_SELECT=3,7,15`: these records (their numbers in the table) chosen, the
+        // cursor on the last (screenshots of task 42).
+        let mut marked = crate::batch_copy::Selection::default();
+        let mut cursor = None;
+        if let Ok(list) = std::env::var("CP_SELECT") {
+            for n in list
+                .split(',')
+                .filter_map(|n| n.trim().parse::<usize>().ok())
+            {
+                if n > 0 {
+                    marked.insert(n - 1);
+                    cursor = Some(n - 1);
+                }
+            }
+        }
         let sort = if std::env::var("CP_SORT").as_deref() == Ok("date") {
             (SortKey::Date, false)
         } else {
@@ -410,7 +493,29 @@ impl LargeView {
             suggest_job: None,
             suggestions: None,
             pointer_on_list: false,
-            selected: None,
+            selected: cursor,
+            marked,
+            anchor: cursor,
+            marked_gen: 0,
+            view_gen: 0,
+            hidden: None,
+            batch: None,
+            cancel_batch: false,
+            batch_error: None,
+            marked_before: None,
+            notice: None,
+            marks: None,
+            shown_marks: std::cell::RefCell::new((u64::MAX, HashMap::new())),
+            marks_sort: false,
+            marks_db: None,
+            last_conditions: Vec::new(),
+            marks_sides: (None, Default::default()),
+            sides_job: None,
+            pass: None,
+            engine_busy: None,
+            pass_error: None,
+            stop_pass: false,
+            find_clicked: false,
             scroll_to_selected: false,
             scroll_to_top: false,
             focus_player: false,
@@ -454,12 +559,339 @@ impl LargeView {
         self.cache.clear();
         self.blocked = None;
         self.books = db.books();
+        self.shown_marks.borrow_mut().1.clear();
+        // Several chosen: kept only if each is still the same record (a game added at
+        // the end keeps them; one deleted or put back moves the numbers). Otherwise let
+        // go, and said: the choice never moves to other games unnoticed.
+        if self.marked.len() >= 2 {
+            let same = std::mem::take(&mut self.marked_before).is_some_and(|before| {
+                before.len() == self.marked.len()
+                    && before
+                        .iter()
+                        .all(|&(r, h)| (r as usize) < db.len() && record_hash(db, r as usize) == h)
+            });
+            if !same {
+                self.clear_marks();
+                self.notice = Some(tr("Selection cleared: the database changed").to_owned());
+            }
+        } else if self.marked.last().is_some_and(|r| r >= db.len()) {
+            self.mark(|m| m.clear());
+        }
+        self.selected = self.selected.filter(|&c| c < db.len());
     }
 
-    /// Selects a record and scrolls to it (returning from a game).
+    /// Before the file is read again: what the chosen records are now (up to
+    /// `CHECKED_CHOICE` of them).
+    pub fn before_reread(&mut self, db: &Database) {
+        self.marked_before =
+            (self.marked.len() >= 2 && self.marked.len() <= CHECKED_CHOICE).then(|| {
+                self.marked
+                    .records()
+                    .into_iter()
+                    .map(|r| (r, record_hash(db, r as usize)))
+                    .collect()
+            });
+    }
+
+    /// Selects a record and scrolls to it (returning from a game): a choice of several
+    /// records stays.
     pub fn reveal(&mut self, index: usize) {
         self.selected = Some(index);
+        if self.marked.len() <= 1 {
+            self.mark(|m| m.only(index));
+        }
         self.scroll_to_selected = true;
+    }
+
+    /// Changes the chosen records.
+    fn mark(&mut self, change: impl FnOnce(&mut crate::batch_copy::Selection)) {
+        change(&mut self.marked);
+        self.marked_gen += 1;
+    }
+
+    /// No record chosen any more.
+    pub fn clear_marks(&mut self) {
+        self.mark(|m| m.clear());
+        self.anchor = None;
+    }
+
+    /// The chosen records hidden by the list's filter, counted once per change.
+    fn hidden_marked(&mut self) -> usize {
+        let key = (self.marked_gen, self.view_gen);
+        match self.hidden {
+            Some((m, v, n)) if (m, v) == key => n,
+            _ => {
+                let n = self.marked.len() - self.marked.count_in(&self.view);
+                self.hidden = Some((key.0, key.1, n));
+                n
+            }
+        }
+    }
+
+    /// The choice comes down to the cursor's row (Esc, «Clear», a row deleted).
+    fn mark_cursor_only(&mut self) {
+        let cursor = self.selected;
+        self.mark(|m| match cursor {
+            Some(i) => m.only(i),
+            None => m.clear(),
+        });
+        self.anchor = cursor;
+    }
+
+    /// The records of the view from position `a` to position `b` (either order).
+    fn range(&self, a: usize, b: usize) -> &[u32] {
+        let (lo, hi) = (a.min(b), a.max(b));
+        &self.view[lo..=hi.min(self.view.len().saturating_sub(1))]
+    }
+
+    fn position_of(&self, record: usize) -> Option<usize> {
+        self.view.iter().position(|&i| i as usize == record)
+    }
+
+    /// A click on the row of `index` with `mods` (§42.5).
+    fn click(&mut self, index: usize, mods: egui::Modifiers) {
+        // An anchor hidden by the filter: the cursor, when it is seen, starts the range.
+        let anchor = self
+            .anchor
+            .filter(|a| self.position_of(*a).is_some())
+            .or(self.selected.filter(|c| self.position_of(*c).is_some()));
+        let at = self.position_of(index);
+        match (
+            mods.command,
+            mods.shift,
+            anchor.and_then(|a| self.position_of(a)),
+            at,
+        ) {
+            (add, true, Some(a), Some(b)) => {
+                let range = self.range(a, b).to_vec();
+                self.mark(|m| {
+                    if !add {
+                        m.clear();
+                    }
+                    m.extend(&range);
+                });
+            }
+            (true, false, _, _) => {
+                self.mark(|m| m.toggle(index));
+                self.anchor = Some(index);
+            }
+            _ => {
+                self.mark(|m| m.only(index));
+                self.anchor = Some(index);
+            }
+        }
+        self.selected = Some(index);
+    }
+
+    /// The filter's player's sides of each record, for the «!!» column: found again in
+    /// the background when the filter changes; both sides without a player.
+    fn update_marks_sides(&mut self, db: &Arc<Database>, ctx: &egui::Context) {
+        let filter = self.form.filter();
+        if let Some((f, rx)) = &self.sides_job
+            && let Ok(sides) = rx.try_recv()
+        {
+            self.marks_sides = (Some(f.clone()), sides);
+            self.sides_job = None;
+            self.shown_marks.borrow_mut().1.clear();
+            if self.marks_sort {
+                self.sort_by_marks();
+            }
+        }
+        let wanted = self.marks_sides.0.as_ref() == Some(&filter)
+            || self.sides_job.as_ref().is_some_and(|(f, _)| *f == filter);
+        if wanted {
+            return;
+        }
+        if !filter.player.is_set() {
+            self.marks_sides = (Some(filter), Default::default());
+            self.sides_job = None;
+            self.shown_marks.borrow_mut().1.clear();
+            return;
+        }
+        let (tx, rx) = channel();
+        let (db, f, ctx) = (db.clone(), filter.clone(), ctx.clone());
+        let spawned = std::thread::Builder::new()
+            .name("marks-sides".into())
+            .spawn(move || {
+                let sides = crate::brilliant::player_sides(
+                    &db,
+                    &f,
+                    &std::sync::atomic::AtomicBool::new(false),
+                );
+                let _ = tx.send(sides);
+                ctx.request_repaint();
+            });
+        if spawned.is_ok() {
+            self.sides_job = Some((filter, rx));
+        }
+    }
+
+    /// The database the marks are checked against.
+    pub fn set_marks_db(&mut self, db: &Arc<Database>) {
+        if !self.marks_db.as_ref().is_some_and(|d| Arc::ptr_eq(d, db)) {
+            self.marks_db = Some(db.clone());
+        }
+    }
+
+    /// The table sorted by its «!!» column (the summary's «Sort»).
+    pub fn sort_marks_on(&mut self) {
+        self.marks_sort = true;
+        self.sort_by_marks();
+    }
+
+    /// The list by its marks (!! first), each group in the order of its numbers.
+    fn sort_by_marks(&mut self) {
+        let Some(index) = self.marks.clone() else {
+            return;
+        };
+        let Ok(index) = index.lock() else {
+            return;
+        };
+        let sides = &self.marks_sides.1;
+        // Only the entries of the games the database has there now (a deleted game's
+        // marks are not its successor's).
+        let current: std::collections::HashSet<u32> = match &self.marks_db {
+            Some(db) => index
+                .records()
+                .filter(|&r| crate::brilliant::current_entry(&index, db, r).is_some())
+                .collect(),
+            None => std::collections::HashSet::new(),
+        };
+        self.view
+            .sort_by_key(|&r| (index.rank(r, sides, &|r| current.contains(&r)), r));
+        self.view_gen += 1;
+    }
+
+    /// The marks of record `index` to show: those of the index if the record still has
+    /// the main line they were found in (checked once per record and index change).
+    fn shown_mark(
+        marks: &Option<Arc<std::sync::Mutex<crate::brilliant::Index>>>,
+        shown: &std::cell::RefCell<(u64, HashMap<u32, Option<crate::brilliant::Entry>>)>,
+        sides: &crate::brilliant::Sides,
+        db: &Database,
+        record: u32,
+    ) -> Option<crate::brilliant::Entry> {
+        let index = marks.as_ref()?.lock().ok()?;
+        let mut shown = shown.borrow_mut();
+        if index.generation != shown.0 {
+            shown.1.clear();
+            shown.0 = index.generation;
+        }
+        let entry = index.get(record)?.clone();
+        drop(index);
+        shown
+            .1
+            .entry(record)
+            .or_insert_with(|| {
+                let game = db.load_game(record as usize)?.game;
+                let line = game_review::GameAnalysis::new(&game, None).cache_key();
+                (entry.line == line).then_some(entry)
+            })
+            .clone()
+            .map(|e| {
+                let (w, b) = sides.of(record);
+                e.for_sides(w, b)
+            })
+    }
+
+    /// «!! Find great moves» (the button, Shift+A): the library asks first.
+    fn ask_search(&mut self, path: &Path, actions: &mut Vec<LibraryAction>) {
+        let about = if self.last_conditions.is_empty() {
+            tr("all games").to_owned()
+        } else {
+            trf(
+                "matching: {list}",
+                &[("list", &self.last_conditions.join(" · "))],
+            )
+        };
+        actions.push(LibraryAction::FindGreatMoves {
+            path: path.to_path_buf(),
+            records: self.view.clone(),
+            filter: self.form.filter(),
+            about,
+        });
+    }
+
+    /// «!! Find great moves»: the button, or Shift+A outside a field (a disabled button
+    /// says why, also over an empty list).
+    fn handle_find(&mut self, ui: &mut Ui, path: &Path, actions: &mut Vec<LibraryAction>) {
+        if !crate::platform::CAPS.great_moves {
+            return;
+        }
+        let typing = ui.ctx().egui_wants_keyboard_input();
+        let shift_a = !typing
+            && !crate::app::overlay_open_besides(ui.ctx(), &[egui::Id::new("filters_drawer")])
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::A));
+        if std::mem::take(&mut self.find_clicked) || shift_a {
+            match (self.pass.is_some(), self.search_blocked()) {
+                (false, None) => self.ask_search(path, actions),
+                (false, Some(why)) => actions.push(LibraryAction::Notice(why)),
+                (true, _) => {}
+            }
+        }
+    }
+
+    /// Why the search cannot start on the list shown, if it cannot.
+    fn search_blocked(&self) -> Option<String> {
+        if let Some(why) = &self.engine_busy {
+            return Some(why.clone());
+        }
+        if let Some(p) = self.pass.as_ref().filter(|p| !p.here) {
+            return Some(trf(
+                "Searching in «{db}»: {i} of {n}; stop it there",
+                &[("db", &p.name), ("i", &p.done), ("n", &p.total)],
+            ));
+        }
+        if self.job.is_some() || self.shown.is_none() {
+            return Some(tr("Wait: the games are still being filtered").to_owned());
+        }
+        match crate::brilliant::can_start(self.view.len()) {
+            Ok(()) => None,
+            Err(crate::brilliant::Blocked::NoGames) => {
+                Some(tr("No games match these conditions").to_owned())
+            }
+            Err(crate::brilliant::Blocked::TooMany) => Some(format!(
+                "{}\n{}",
+                tr("Filter the games down to 100 or fewer"),
+                trf("Now: {n}", &[("n", &grouped(self.view.len()))])
+            )),
+        }
+    }
+
+    /// Every row of the list chosen (Ctrl+A): the list's records only.
+    fn select_all(&mut self) {
+        let view = std::mem::take(&mut self.view);
+        self.mark(|m| m.extend(&view));
+        self.view = view;
+        if self.selected.is_none() {
+            self.selected = self.view.first().map(|&i| i as usize);
+        }
+    }
+
+    /// «New database from selected…»: the library opens the dialog (none while another
+    /// copy is written).
+    fn ask_copy(&mut self, path: &Path, actions: &mut Vec<LibraryAction>) {
+        if self.batch.is_some() || !crate::platform::CAPS.batch_copy {
+            return;
+        }
+        let (records, sort, ascending) = self.copy_request();
+        actions.push(LibraryAction::CopySelection {
+            path: path.to_path_buf(),
+            records,
+            sort,
+            ascending,
+            hidden: self.hidden_marked(),
+        });
+    }
+
+    /// The chosen records for a copy, in the table's order once sorted by the copy.
+    fn copy_request(&self) -> (Vec<u32>, SortKey, bool) {
+        let (sort, ascending) = if self.blocked.is_some() {
+            self.sort
+        } else {
+            self.effective_sort()
+        };
+        (self.marked.records(), sort, ascending)
     }
 
     pub fn pane(&self) -> Pane {
@@ -524,6 +956,9 @@ impl LargeView {
             true
         } else if self.drawer().is_some() {
             self.drawer_open = false;
+            true
+        } else if self.marked.len() >= 2 {
+            self.mark_cursor_only();
             true
         } else if self.board_alone() {
             self.pane = Pane::Hidden;
@@ -623,17 +1058,26 @@ impl LargeView {
                     );
                 }
                 self.view = answer.view;
+                self.view_gen += 1;
+                if self.marks_sort {
+                    self.sort_by_marks();
+                }
                 self.outcome = answer.outcome;
                 self.in_order = answer.in_order;
                 self.blocked = answer.blocked;
                 self.shown = Some(job.request);
                 // A selected game that left the list is no longer selected, so Enter
                 // cannot open a game the user does not see.
+                // A choice of several records stays: it is built from several searches,
+                // and its hidden part is counted.
                 if let Some(sel) = self.selected
                     && new_filter
                     && !self.view.contains(&(sel as u32))
                 {
                     self.selected = None;
+                    if self.marked.len() <= 1 {
+                        self.mark(|m| m.clear());
+                    }
                 }
                 if new_filter {
                     // The user looks at the result of the new filter from its top.
@@ -1158,12 +1602,25 @@ impl LargeView {
     /// many games reached the position in the board's move order.
     fn chips(&mut self, ui: &mut Ui, settings: &Settings) {
         let conditions = self.conditions(settings);
+        self.last_conditions = conditions.iter().map(|c| c.text.clone()).collect();
         let mut clear = None;
         let mut goto = None;
         let mut toggle_order = false;
+        let chosen = self.marked.len();
+        let hidden = if chosen >= 2 { self.hidden_marked() } else { 0 };
+        let batch = self.batch.clone();
+        let batch_error = self.batch_error.clone();
+        let mut close_error = false;
+        let mut clear_marked = false;
+        let mut cancel_batch = false;
         ui.horizontal(|ui| {
             ui.set_min_height(22.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Right to left (docs/design/task-27-brilliant-search-2026-11-27.md §4.1):
+            // the slot of the far right, the move order, the choice or its copy, the
+            // conditions. The far right slot keeps one width whatever it shows, so what
+            // stands left of it does not move when it changes.
+            self.right_slot(ui);
             if let Some((same, all)) = self.in_order
                 && self.board.is_set()
                 && (same < all || self.only_order)
@@ -1189,6 +1646,79 @@ impl LargeView {
                         .weak()
                         .size(12.0),
                     );
+                }
+            }
+            // The choice, or the copy being written, in the same place (§42.3).
+            if batch.is_some() || batch_error.is_some() || chosen >= 2 {
+                ui.add_space(SLOT_GAP);
+            }
+            if let (None, Some(e)) = (&batch, &batch_error) {
+                if crate::widgets::small_close_button(ui).clicked() {
+                    close_error = true;
+                }
+                let width = (ui.available_width() - 140.0).max(80.0);
+                ui.scope(|ui| {
+                    ui.set_max_width(width);
+                    ui.add(
+                        egui::Label::new(RichText::new(e).color(ui.visuals().error_fg_color))
+                            .truncate(),
+                    )
+                    .on_hover_text(e);
+                });
+            } else if let Some(b) = &batch {
+                if b.cancelling {
+                    ui.spinner();
+                    ui.label(RichText::new(tr("Cancelling…")).weak());
+                } else {
+                    if ui.link(tr("Cancel")).clicked() {
+                        cancel_batch = true;
+                    }
+                    let fraction = b.done as f32 / b.total.max(1) as f32;
+                    ui.add(egui::ProgressBar::new(fraction).desired_width(80.0).desired_height(8.0));
+                    ui.label(
+                        RichText::new(trf(
+                            "Writing to «{name}»: {i} of {n}",
+                            &[("name", &b.name), ("i", &grouped(b.done)), ("n", &grouped(b.total))],
+                        ))
+                        .weak(),
+                    );
+                }
+            } else if chosen >= 2 {
+                if ui
+                    .link(tr("Deselect"))
+                    .on_hover_text(tr("Clear the selection (Esc)"))
+                    .clicked()
+                {
+                    clear_marked = true;
+                }
+                let full = if hidden > 0 {
+                    trf(
+                        "Selected: {n} ({k} hidden by the filter)",
+                        &[("n", &grouped(chosen)), ("k", &grouped(hidden))],
+                    )
+                } else {
+                    trf("Selected: {n}", &[("n", &grouped(chosen))])
+                };
+                // Short in a narrow line: the conditions keep their 140 px.
+                let short = ui.available_width()
+                    < 140.0 + ui.fonts_mut(|f| {
+                        f.layout_no_wrap(
+                            full.clone(),
+                            egui::TextStyle::Body.resolve(ui.style()),
+                            Color32::WHITE,
+                        )
+                        .size()
+                        .x
+                    }) + 16.0;
+                let text = if short { format!("{} ·", grouped(chosen)) } else { format!("{full} ·") };
+                let label = ui.label(text);
+                if hidden > 0 {
+                    label.on_hover_text(format!(
+                        "{full}\n{}",
+                        tr("Games hidden by the filter will be copied too. Esc clears the selection")
+                    ));
+                } else if short {
+                    label.on_hover_text(full);
                 }
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -1225,6 +1755,15 @@ impl LargeView {
         if toggle_order {
             self.only_order = !self.only_order;
         }
+        if clear_marked {
+            self.mark_cursor_only();
+        }
+        if close_error {
+            self.batch_error = None;
+        }
+        if cancel_batch {
+            self.cancel_batch = true;
+        }
         if let Some(c) = clear {
             self.clear(c);
         }
@@ -1232,6 +1771,169 @@ impl LargeView {
             Some(Pane::Filters) => self.open_filters(),
             Some(p) => self.pane = p,
             None => {}
+        }
+    }
+
+    /// The far right slot of the conditions line: «!! Find great moves», or the search
+    /// under way with «Stop», or why it stopped (task 27 §4.1–4.2). Its width is that of
+    /// its longest form for the line's width, whatever it shows: what stands left of it
+    /// never moves.
+    fn right_slot(&mut self, ui: &mut Ui) {
+        if !crate::platform::CAPS.great_moves {
+            return;
+        }
+        let line = ui.available_width();
+        let form = if line >= 1100.0 {
+            2
+        } else if line >= 800.0 {
+            1
+        } else {
+            0
+        };
+        let body = egui::TextStyle::Body.resolve(ui.style());
+        let width = |text: &str| {
+            ui.fonts_mut(|f| {
+                f.layout_no_wrap(text.to_owned(), body.clone(), Color32::WHITE)
+                    .size()
+                    .x
+            })
+        };
+        let progress_text = |i: usize, n: usize, left: &str| match form {
+            2 => format!(
+                "!! {}",
+                trf(
+                    "Analysed {i} of {n} · ≈ {time} left",
+                    &[("i", &i), ("n", &n), ("time", &left)]
+                )
+            ),
+            1 => format!(
+                "!! {} · ≈ {left}",
+                trf("{i} of {n}", &[("i", &i), ("n", &n)])
+            ),
+            _ => format!("!! {}", trf("{i} of {n}", &[("i", &i), ("n", &n)])),
+        };
+        let bar = if form == 2 { 90.0 } else { 60.0 };
+        let pad = 2.0 * ui.spacing().button_padding.x;
+        let gap = ui.spacing().item_spacing.x;
+        let button_text = if form == 0 {
+            tr("!! Find moves")
+        } else {
+            tr("!! Find great moves")
+        };
+        let longest = width(&progress_text(
+            100,
+            100,
+            &crate::review::format_duration(59.0 * 60.0),
+        )) + gap
+            + bar
+            + gap
+            + width(tr("Stop"))
+            + pad;
+        let slot = longest.max(width(button_text) + pad);
+        let pass = self.pass.clone();
+        let blocked = self.search_blocked();
+        let error = self.pass_error.clone();
+        let mut find = false;
+        let mut stop = false;
+        let mut close_error = false;
+        ui.allocate_ui_with_layout(
+            vec2(slot, 22.0),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(slot);
+                match (&pass, &error) {
+                    (Some(p), _) => {
+                        if p.stopping {
+                            ui.spinner();
+                            ui.label(RichText::new(tr("Stopping…")).weak());
+                        } else {
+                            if ui
+                                .small_button(tr("Stop"))
+                                .on_hover_text(tr("Stop the search; the reviewed games are kept"))
+                                .clicked()
+                            {
+                                stop = true;
+                            }
+                            ui.add(
+                                egui::ProgressBar::new(p.done as f32 / p.total.max(1) as f32)
+                                    .desired_width(bar)
+                                    .desired_height(8.0),
+                            );
+                            let left = crate::review::format_duration(p.left_secs);
+                            let text = if p.here {
+                                progress_text(p.done, p.total, &left)
+                            } else {
+                                format!(
+                                    "!! {}",
+                                    trf(
+                                        "In «{db}»: {i} of {n}",
+                                        &[("db", &p.name), ("i", &p.done), ("n", &p.total)]
+                                    )
+                                )
+                            };
+                            ui.add(egui::Label::new(RichText::new(text).weak()).truncate())
+                                .on_hover_text(trf(
+                                    "Analysed {i} of {n} · ≈ {time} left",
+                                    &[("i", &p.done), ("n", &p.total), ("time", &left)],
+                                ));
+                        }
+                    }
+                    (None, Some(e)) => {
+                        if crate::widgets::small_close_button(ui).clicked() {
+                            close_error = true;
+                        }
+                        ui.add(
+                            egui::Label::new(RichText::new(e).color(ui.visuals().error_fg_color))
+                                .truncate(),
+                        )
+                        .on_hover_text(e);
+                    }
+                    (None, None) => {
+                        let teal = crate::notation::assessment_text_color(
+                            chess_core::Nag(3),
+                            ui.visuals().dark_mode,
+                        )
+                        .unwrap_or(Color32::WHITE);
+                        let mut job = egui::text::LayoutJob::default();
+                        let rest = button_text.strip_prefix("!! ").unwrap_or(button_text);
+                        let bold = egui::FontId::new(13.0, egui::FontFamily::Name("bold".into()));
+                        let bold = if ui.fonts_mut(|f| f.families().contains(&bold.family)) {
+                            bold
+                        } else {
+                            body.clone()
+                        };
+                        job.append("!! ", 0.0, egui::TextFormat::simple(bold, teal));
+                        // The button's own text colour (it lightens under the pointer).
+                        job.append(
+                            rest,
+                            0.0,
+                            egui::TextFormat::simple(body.clone(), Color32::PLACEHOLDER),
+                        );
+                        let enabled = blocked.is_none();
+                        let r = ui.add_enabled(enabled, egui::Button::new(job).small());
+                        let r = match &blocked {
+                            Some(why) => r.on_disabled_hover_text(why),
+                            None => r.on_hover_text(trf(
+                                "Review {games} with the engine and mark the !! and ! moves found (Shift+A)",
+                                &[("games", &crate::i18n::games(self.view.len()))],
+                            )),
+                        };
+                        if r.clicked() {
+                            find = true;
+                        }
+                    }
+                }
+            },
+        );
+        ui.add_space(SLOT_GAP);
+        if find {
+            self.find_clicked = true;
+        }
+        if stop {
+            self.stop_pass = true;
+        }
+        if close_error {
+            self.pass_error = None;
         }
     }
 
@@ -2019,10 +2721,55 @@ impl LargeView {
                     }
                 }
             });
+            // Shift+A on an empty list still says why nothing can be searched.
+            self.handle_find(ui, path, actions);
             return open_notes;
         }
 
+        self.handle_find(ui, path, actions);
+        self.update_marks_sides(db, ui.ctx());
+        // `CP_MARKS_DEMO=1`: made-up marks for the first rows (screenshots of the column).
+        if std::env::var_os("CP_MARKS_DEMO").is_some()
+            && self.shown.is_some()
+            && self.job.is_none()
+            && let Some(marks) = self.marks.clone()
+        {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            ONCE.call_once(|| demo_marks(db, &self.view, &marks));
+        }
+        // `CP_BRILLIANT_RUN=1`: the search asked for once the list is there.
+        if std::env::var_os("CP_BRILLIANT_RUN").is_some()
+            && self.shown.is_some()
+            && self.job.is_none()
+            && self.search_blocked().is_none()
+        {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            let mut first = false;
+            ONCE.call_once(|| first = true);
+            if first {
+                self.ask_search(path, actions);
+            }
+        }
+        // Records the database does not have (`CP_SELECT` on a short one) are not chosen.
+        if self.marked.last().is_some_and(|r| r >= db.len()) {
+            let len = db.len();
+            self.mark(|m| m.retain_below(len));
+            self.selected = self.selected.filter(|&c| c < len);
+        }
         self.keyboard(ui, path, actions);
+        // `CP_BATCH=new:<name>`: the chosen records copied into a new database once the
+        // list is there (screenshots, checks).
+        if std::env::var("CP_BATCH").is_ok_and(|b| b.starts_with("new:"))
+            && !self.marked.is_empty()
+            && !self.view.is_empty()
+        {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            let mut first = false;
+            ONCE.call_once(|| first = true);
+            if first {
+                self.ask_copy(path, actions);
+            }
+        }
 
         let scroll_row = if std::mem::take(&mut self.scroll_to_selected) {
             self.selected
@@ -2062,6 +2809,8 @@ impl LargeView {
             (tr("Black"), Some(SortKey::Black), name),
             ("Elo", Some(SortKey::BlackElo), Column::exact(ELO_COL)),
             (tr("Res."), Some(SortKey::Result), Column::exact(RESULT_COL)),
+            // The marks of the search for great moves: in every layout (task 27 §4.3).
+            ("!!", None, Column::exact(MARKS_COL)),
         ]);
         if show_moves {
             columns.push((tr("Length"), Some(SortKey::Moves), Column::exact(56.0)));
@@ -2103,6 +2852,9 @@ impl LargeView {
             year_only,
             use_position,
         );
+        let frame_color = ui.visuals().selection.stroke.color;
+        let table_clip = ui.clip_rect().intersect(ui.max_rect());
+        let spacing = ui.spacing().item_spacing;
         let mut table = TableBuilder::new(ui)
             .id_salt(("game table", layout))
             .striped(true)
@@ -2120,8 +2872,22 @@ impl LargeView {
         let mut opened = None;
         let mut toggle_viewed = None;
         let mut hovered = None;
+        let marks_sorted = self.marks_sort;
+        let mut marks_click = false;
+        let pass_current = self
+            .pass
+            .as_ref()
+            .filter(|p| p.here)
+            .and_then(|p| p.current);
+        let (marks_ref, shown_ref, sides_ref) =
+            (&self.marks, &self.shown_marks, &self.marks_sides.1);
         let view = &self.view;
         let selected = self.selected;
+        let marked = &self.marked;
+        let many = marked.len() >= 2;
+        let batch_running = self.batch.as_ref().map(|b| b.name.clone());
+        let mut batch_menu = None;
+        let mut secondary = None;
         // A position not applied (no memory) does not sort: the arrow shows the view's own order.
         let sort = if self.blocked.is_some() {
             self.sort
@@ -2146,7 +2912,15 @@ impl LargeView {
             .header(26.0, |mut header| {
                 for (label, key, _) in &columns {
                     header.col(|ui| {
-                        let active = key.filter(|k| sort.0 == *k).map(|_| sort.1);
+                        if *label == "!!" {
+                            let r = crate::widgets::sort_header(ui, label, marks_sorted.then_some(true))
+                                .on_hover_text(tr("Brilliant and great moves found by the engine: sort by them"));
+                            if r.clicked() {
+                                marks_click = true;
+                            }
+                            return;
+                        }
+                        let active = key.filter(|k| sort.0 == *k && !marks_sorted).map(|_| sort.1);
                         let r = crate::widgets::sort_header(ui, label, active);
                         if let Some(k) = key
                             && r.clicked()
@@ -2163,7 +2937,10 @@ impl LargeView {
                     };
                     let index = index as usize;
                     let r = db.row(index);
-                    row.set_selected(selected == Some(index));
+                    let is_marked = marked.contains(index);
+                    row.set_selected(is_marked);
+                    // Where the row's cells are: the cursor's frame follows the row's fill.
+                    let mut cells = egui::Rect::NOTHING;
                     let key = viewed::key(db.identity(index));
                     let seen = viewed.contains(key);
                     let elo = |e: u16| if e > 0 { e.to_string() } else { String::new() };
@@ -2176,6 +2953,7 @@ impl LargeView {
                     };
                     for (label, key_, _) in &columns {
                         row.col(|ui| {
+                            cells = cells.union(ui.max_rect());
                             let cell = match (*label, *key_) {
                                 (l, None) if l == tr("Move") => {
                                     let Some(m) = found else { return };
@@ -2211,6 +2989,10 @@ impl LargeView {
                                 (_, Some(SortKey::Black)) => RichText::new(r.black.as_str()),
                                 (_, Some(SortKey::BlackElo)) => RichText::new(elo(r.black_elo)),
                                 (_, Some(SortKey::Result)) => RichText::new(result),
+                                ("!!", None) => {
+                                    marks_cell(ui, Self::shown_mark(marks_ref, shown_ref, sides_ref, db, index as u32), pass_current == Some(index as u32), is_marked);
+                                    return;
+                                }
                                 (_, Some(SortKey::Moves)) => RichText::new(match r.moves {
                                     0 => String::new(),
                                     255 => "255+".into(),
@@ -2254,10 +3036,48 @@ impl LargeView {
                         .filter(|t| !t.trim().is_empty() && *t != "?" && !t.contains("://"))
                         .collect();
                     let resp = row.response();
+                    // The cursor among several chosen rows, or on a row not chosen: a frame
+                    // (a shape, not a colour; §42.4).
+                    if selected == Some(index) && (many || !is_marked) {
+                        ui_painter_frame(&resp, cells.expand2(spacing / 2.0), frame_color, table_clip);
+                    }
                     let resp = if about.is_empty() { resp } else { resp.on_hover_text(about.join(" · ")) };
+                    if resp.secondary_clicked() {
+                        secondary = Some(index);
+                    }
+                    // Several chosen and this one among them: the menu of the choice.
+                    if many && is_marked {
+                        resp.context_menu(|ui| {
+                            if let Some(item) = batch_items(ui, marked.len(), batch_running.as_deref()) {
+                                batch_menu = Some(item);
+                                ui.close();
+                            }
+                        });
+                    } else {
                     resp.context_menu(|ui| {
                         if ui.button(tr("Open")).clicked() {
                             opened = Some(index);
+                            ui.close();
+                        }
+                        // The first !! (else !) the search found: the game at it.
+                        if let Some(f) = Self::shown_mark(marks_ref, shown_ref, sides_ref, db, index as u32)
+                            .and_then(|e| {
+                                let first = e.found.iter().find(|f| f.brilliant).or(e.found.first());
+                                first.cloned()
+                            })
+                            && ui
+                                .button(trf("Open at {move}", &[("move", &f.label())]))
+                                .clicked()
+                        {
+                            let at = db.load_game(index).and_then(|p| {
+                                let node = *p.game.mainline().get(f.ply as usize)?;
+                                Some(p.game.node(node)?.position().clone())
+                            });
+                            actions.push(LibraryAction::OpenGameReport {
+                                path: path.to_path_buf(),
+                                index,
+                                at,
+                            });
                             ui.close();
                         }
                         // The game's page, when its tags have one (read once per menu).
@@ -2300,6 +3120,10 @@ impl LargeView {
                             actions.push(LibraryAction::AddGameToDatabase { path: path.to_path_buf(), index });
                             ui.close();
                         }
+                        if ui.button(tr("Select all (Ctrl+A)")).clicked() {
+                            batch_menu = Some(BatchItem::SelectAll);
+                            ui.close();
+                        }
                         let label = if seen {
                             tr("Mark as not viewed")
                         } else {
@@ -2317,6 +3141,7 @@ impl LargeView {
                             }
                         }
                     });
+                    }
                     if resp.hovered() {
                         hovered = Some(index);
                     }
@@ -2337,7 +3162,17 @@ impl LargeView {
         if let Some((k, v)) = toggle_viewed {
             viewed.set(k, v);
         }
+        if marks_click {
+            self.marks_sort = !self.marks_sort;
+            if self.marks_sort {
+                self.sort_by_marks();
+            } else {
+                // The list comes again in the sort of its columns.
+                self.shown = None;
+            }
+        }
         if let Some(k) = sort_click {
+            self.marks_sort = false;
             let current = self.effective_sort();
             self.sort = if current.0 == k {
                 (k, !current.1)
@@ -2348,7 +3183,20 @@ impl LargeView {
             self.typed_at = f64::NEG_INFINITY;
         }
         if let Some(i) = clicked {
-            self.selected = Some(i);
+            let mods = ui.input(|i| i.modifiers);
+            self.click(i, mods);
+        }
+        // A right click on a row not chosen chooses it alone.
+        if let Some(i) = secondary
+            && !(self.marked.len() >= 2 && self.marked.contains(i))
+        {
+            self.click(i, egui::Modifiers::NONE);
+        }
+        match batch_menu {
+            Some(BatchItem::NewBase) => self.ask_copy(path, actions),
+            Some(BatchItem::SelectAll) => self.select_all(),
+            Some(BatchItem::Clear) => self.mark_cursor_only(),
+            None => {}
         }
         if let Some(index) = opened {
             self.selected = Some(index);
@@ -2361,7 +3209,10 @@ impl LargeView {
         open_notes
     }
 
-    /// Up/Down move the selection, Page Up/Down by a page, Enter opens.
+    /// Up/Down move the cursor, Page Up/Down by a page, Home/End to the ends, Enter
+    /// opens. Without a modifier the choice follows the cursor, Shift chooses the range
+    /// from the anchor, Ctrl moves the cursor alone; Ctrl+Space toggles its row, Ctrl+A
+    /// chooses the whole list (§42.6).
     fn keyboard(&mut self, ui: &mut Ui, path: &Path, actions: &mut Vec<LibraryAction>) {
         // In a filter field the arrows still move through the table (unless the
         // suggestions are open), but Enter belongs to the field.
@@ -2369,17 +3220,49 @@ impl LargeView {
         if typing && self.suggestions.is_some() {
             return;
         }
-        let (up, down, page_up, page_down, enter) = ui.input(|i| {
+        // A question or a menu over the table takes the keys (Enter there is its button,
+        // not «open the game»).
+        if crate::app::overlay_open_besides(ui.ctx(), &[egui::Id::new("filters_drawer")]) {
+            return;
+        }
+        let (up, down, page_up, page_down, enter, mods) = ui.input(|i| {
             (
                 i.key_pressed(egui::Key::ArrowUp),
                 i.key_pressed(egui::Key::ArrowDown),
                 i.key_pressed(egui::Key::PageUp),
                 i.key_pressed(egui::Key::PageDown),
                 i.key_pressed(egui::Key::Enter),
+                i.modifiers,
             )
         });
-        // The selected record: F2 opens it with its data, Ctrl+Shift+S adds a copy of it
-        // to another database, Delete removes it (a question first).
+        let (home, end) = if typing {
+            (false, false)
+        } else {
+            ui.input(|i| {
+                (
+                    i.key_pressed(egui::Key::Home),
+                    i.key_pressed(egui::Key::End),
+                )
+            })
+        };
+        if !typing {
+            let (all, toggle) = ui.input_mut(|i| {
+                (
+                    i.consume_key(egui::Modifiers::COMMAND, egui::Key::A),
+                    i.consume_key(egui::Modifiers::COMMAND, egui::Key::Space),
+                )
+            });
+            if all {
+                self.select_all();
+            }
+            if toggle && let Some(c) = self.selected {
+                self.mark(|m| m.toggle(c));
+                self.anchor = Some(c);
+            }
+        }
+        // The cursor's record: F2 opens it with its data, Ctrl+Shift+S adds a copy of it
+        // to another database (several chosen: a new database of them), Delete removes
+        // it (a question first; never while several are chosen).
         if !typing && let Some(index) = self.selected {
             let (data, add, delete) = ui.input_mut(|i| {
                 (
@@ -2391,6 +3274,7 @@ impl LargeView {
                     i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
                 )
             });
+            let many = self.marked.len() >= 2;
             let p = path.to_path_buf();
             if data {
                 actions.push(LibraryAction::EditGameData {
@@ -2398,32 +3282,57 @@ impl LargeView {
                     index,
                 });
             }
-            if add {
+            if add && many {
+                self.ask_copy(path, actions);
+            } else if add {
                 actions.push(LibraryAction::AddGameToDatabase {
                     path: p.clone(),
                     index,
                 });
             }
-            // Also for a database that takes no games: the app says why.
-            if delete {
+            if delete && many {
+                actions.push(LibraryAction::Notice(
+                    tr("Games are deleted one at a time: clear the selection (Esc)").to_owned(),
+                ));
+            } else if delete {
+                // Also for a database that takes no games: the app says why.
                 actions.push(LibraryAction::DeleteGame { path: p, index });
             }
         }
         // Enter belongs to a filter field, but in the quick search it opens the game.
         let enter = enter && (!typing || self.search_focused);
         let step = if page_up || page_down { 20 } else { 1 };
-        if up || down || page_up || page_down {
-            let pos = self
-                .selected
-                .and_then(|r| self.view.iter().position(|&i| i as usize == r));
+        if up || down || page_up || page_down || home || end {
+            let pos = self.selected.and_then(|r| self.position_of(r));
             let last = self.view.len().saturating_sub(1);
             let next = match (pos, down || page_down) {
+                _ if home => 0,
+                _ if end => last,
                 (None, _) => 0,
                 (Some(p), true) => (p + step).min(last),
                 (Some(p), false) => p.saturating_sub(step),
             };
             if let Some(&i) = self.view.get(next) {
-                self.selected = Some(i as usize);
+                let i = i as usize;
+                if mods.shift {
+                    let from = self
+                        .anchor
+                        .and_then(|a| self.position_of(a))
+                        .or(pos)
+                        .unwrap_or(next);
+                    if self.anchor.and_then(|a| self.position_of(a)).is_none() {
+                        self.anchor = self.view.get(from).map(|&r| r as usize);
+                    }
+                    let range = self.range(from, next).to_vec();
+                    self.mark(|m| {
+                        m.clear();
+                        m.extend(&range);
+                    });
+                } else if !mods.command {
+                    self.mark(|m| m.only(i));
+                    self.anchor = Some(i);
+                }
+                self.selected = Some(i);
                 self.scroll_to_selected = true;
             }
         }
@@ -2440,6 +3349,234 @@ impl LargeView {
             });
         }
     }
+}
+
+/// Up to this many chosen records are checked when their file is read again; a larger
+/// choice is let go if the file changed.
+const CHECKED_CHOICE: usize = 100_000;
+
+/// A hash of the bytes of record `index`.
+fn record_hash(db: &Database, index: usize) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    db.identity(index).hash(&mut h);
+    h.finish()
+}
+
+/// Space between the slots of the conditions line (`item_spacing.x` + 4).
+const SLOT_GAP: f32 = 4.0;
+/// The «!!» column.
+const MARKS_COL: f32 = 28.0;
+
+/// An item of the menus about the chosen records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BatchItem {
+    NewBase,
+    SelectAll,
+    Clear,
+}
+
+/// The menu of several chosen rows (§42.7): how many, the copy, select all, clear. The
+/// copy waits while another one is written.
+fn batch_items(ui: &mut Ui, n: usize, writing: Option<&str>) -> Option<BatchItem> {
+    let mut out = None;
+    ui.label(RichText::new(trf("Games selected: {n}", &[("n", &grouped(n))])).weak());
+    ui.separator();
+    let copy = ui.add_enabled(
+        writing.is_none() && crate::platform::CAPS.batch_copy,
+        egui::Button::new(tr("New database from selected…")),
+    );
+    let copy = match writing {
+        Some(name) => copy.on_disabled_hover_text(trf(
+            "Writing to «{name}» — wait until it finishes",
+            &[("name", &name)],
+        )),
+        None => copy,
+    };
+    if copy.clicked() {
+        out = Some(BatchItem::NewBase);
+    }
+    ui.separator();
+    if ui.button(tr("Select all (Ctrl+A)")).clicked() {
+        out = Some(BatchItem::SelectAll);
+    }
+    if ui.button(tr("Clear selection (Esc)")).clicked() {
+        out = Some(BatchItem::Clear);
+    }
+    out
+}
+
+/// Made-up marks for the first rows of `view` (`CP_MARKS_DEMO`): !!, !, none, not
+/// analysable, in turn; not saved.
+fn demo_marks(db: &Database, view: &[u32], marks: &std::sync::Mutex<crate::brilliant::Index>) {
+    use crate::brilliant::{Counts, Entry, Found, SideMarks, Skip};
+    let Ok(mut index) = marks.lock() else {
+        return;
+    };
+    for (n, &r) in view.iter().take(8).enumerate() {
+        let Some(game) = db.load_game(r as usize).map(|p| p.game) else {
+            continue;
+        };
+        let line = game_review::GameAnalysis::new(&game, None).cache_key();
+        let side = |brilliant, great| SideMarks {
+            counts: Counts {
+                brilliant,
+                great,
+                ..Counts::default()
+            },
+            acpl: Some(30),
+            accuracy: Some(85.0),
+        };
+        let found = |brilliant| Found {
+            ply: 20,
+            white: true,
+            number: 11,
+            san: "Rxf7".into(),
+            brilliant,
+        };
+        let entry = match n % 4 {
+            0 => Entry {
+                line,
+                white: side(1, 0),
+                black: side(0, 0),
+                found: vec![found(true)],
+                stale: false,
+                skip: None,
+            },
+            1 => Entry {
+                line,
+                white: side(0, 2),
+                black: side(0, 0),
+                found: vec![found(false)],
+                stale: true,
+                skip: None,
+            },
+            2 => Entry {
+                line,
+                white: side(0, 0),
+                black: side(0, 0),
+                found: Vec::new(),
+                stale: false,
+                skip: None,
+            },
+            _ => Entry {
+                line,
+                white: SideMarks::default(),
+                black: SideMarks::default(),
+                found: Vec::new(),
+                stale: false,
+                skip: Some(Skip::NullMove),
+            },
+        };
+        index.set(r, entry);
+    }
+}
+
+/// The «!!» cell of a record (task 27 §4.3): !!, !, «·» analysed without them, «—» not
+/// analysable, a spinner while analysed, nothing when not analysed. Signs, not colours
+/// alone; on a chosen row in the text colour of the selection.
+fn marks_cell(ui: &mut Ui, entry: Option<crate::brilliant::Entry>, running: bool, chosen: bool) {
+    ui.with_layout(
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        |ui| {
+            if running {
+                ui.add(egui::Spinner::new().size(12.0))
+                    .on_hover_text(tr("Being reviewed…"));
+                return;
+            }
+            let Some(e) = entry else {
+                return;
+            };
+            let dark = ui.visuals().dark_mode;
+            let tint = |nag: u8| {
+                if chosen {
+                    ui.visuals().selection.stroke.color
+                } else {
+                    crate::notation::assessment_text_color(chess_core::Nag(nag), dark)
+                        .unwrap_or(ui.visuals().text_color())
+                }
+            };
+            let moves = |brilliant: bool| {
+                let list: Vec<String> = e
+                    .found
+                    .iter()
+                    .filter(|f| f.brilliant == brilliant)
+                    .map(|f| f.label())
+                    .collect();
+                let shown = list.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+                if list.len() > 3 {
+                    format!(
+                        "{shown} {}",
+                        trf("and {n} more", &[("n", &(list.len() - 3))])
+                    )
+                } else {
+                    shown
+                }
+            };
+            let c = e.of_sides(true, true);
+            let (text, color, mut hint) = if let Some(skip) = e.skip {
+                (
+                    "—",
+                    ui.visuals().weak_text_color(),
+                    trf(
+                        "Cannot be reviewed: {reason}",
+                        &[("reason", &skip.reason())],
+                    ),
+                )
+            } else if c.brilliant > 0 || c.great > 0 {
+                let mut hint = Vec::new();
+                if c.brilliant > 0 {
+                    hint.push(trf(
+                        "Brilliant moves: {n}: {moves}",
+                        &[("n", &c.brilliant), ("moves", &moves(true))],
+                    ));
+                }
+                if c.great > 0 {
+                    hint.push(trf(
+                        "Great moves: {n}: {moves}",
+                        &[("n", &c.great), ("moves", &moves(false))],
+                    ));
+                }
+                if c.brilliant > 0 {
+                    ("!!", tint(3), hint.join("\n"))
+                } else {
+                    ("!", tint(1), hint.join("\n"))
+                }
+            } else {
+                (
+                    "•",
+                    ui.visuals().weak_text_color(),
+                    tr("Reviewed: no brilliant or great moves").to_owned(),
+                )
+            };
+            if e.stale {
+                hint.push('\n');
+                hint.push_str(tr("Reviewed with the previous engine settings"));
+            }
+            let color = if chosen {
+                ui.visuals().selection.stroke.color
+            } else {
+                color
+            };
+            // Ubuntu-B, as the other signs of moves.
+            let bold = egui::FontId::new(13.0, egui::FontFamily::Name("bold".into()));
+            let font = if ui.fonts_mut(|f| f.families().contains(&bold.family)) {
+                bold
+            } else {
+                egui::FontId::proportional(13.0)
+            };
+            ui.add(egui::Label::new(RichText::new(text).font(font).color(color)).selectable(false))
+                .on_hover_text(hint);
+        },
+    );
+}
+
+/// The keyboard cursor's frame: 1 px inside the row.
+fn ui_painter_frame(row: &egui::Response, rect: egui::Rect, color: Color32, clip: egui::Rect) {
+    let stroke = Stroke::new(1.0, color);
+    row.ctx
+        .layer_painter(row.layer_id)
+        .with_clip_rect(clip)
+        .rect_stroke(rect.intersect(clip), 0.0, stroke, egui::StrokeKind::Inside);
 }
 
 /// A condition of the list, shown as a chip.
@@ -2680,6 +3817,154 @@ fn new_game_hint(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctrl() -> egui::Modifiers {
+        egui::Modifiers::COMMAND
+    }
+
+    fn shift() -> egui::Modifiers {
+        egui::Modifiers::SHIFT
+    }
+
+    /// A view showing records 0..20 in the order 19, 18, … 0 (a sort).
+    fn table() -> LargeView {
+        let mut v = LargeView::new();
+        v.view = (0..20).rev().collect();
+        v
+    }
+
+    #[test]
+    fn clicks_choose_one_toggle_and_ranges_in_the_tables_order() {
+        let mut v = table();
+        v.click(3, egui::Modifiers::NONE);
+        assert_eq!((v.marked.records(), v.selected), (vec![3], Some(3)));
+        v.click(7, ctrl());
+        v.click(15, ctrl());
+        assert_eq!(v.marked.records(), vec![3, 7, 15]);
+        v.click(7, ctrl());
+        assert_eq!(v.marked.records(), vec![3, 15]);
+        // Shift: the range from the anchor (7, the last Ctrl click) in the table's order
+        // replaces the choice; Ctrl+Shift adds it.
+        v.click(10, shift());
+        assert_eq!(v.marked.records(), vec![7, 8, 9, 10]);
+        v.click(1, ctrl());
+        v.click(3, ctrl() | shift());
+        assert_eq!(v.marked.records(), vec![1, 2, 3, 7, 8, 9, 10]);
+        v.click(5, egui::Modifiers::NONE);
+        assert_eq!(v.marked.records(), vec![5]);
+    }
+
+    #[test]
+    fn an_anchor_hidden_by_the_filter_gives_way_to_the_cursor() {
+        let mut v = table();
+        v.click(30, egui::Modifiers::NONE);
+        v.click(4, ctrl());
+        v.anchor = Some(30);
+        v.click(6, shift());
+        assert_eq!(v.marked.records(), vec![4, 5, 6]);
+    }
+
+    #[test]
+    fn select_all_takes_the_list_and_escape_comes_back_to_the_cursor() {
+        let mut v = table();
+        v.marked.insert(40);
+        v.click(40, ctrl());
+        v.click(2, ctrl());
+        v.select_all();
+        assert_eq!(v.marked.len(), 20);
+        assert_eq!(v.hidden_marked(), 0);
+        v.marked.insert(40);
+        v.marked_gen += 1;
+        assert_eq!(v.hidden_marked(), 1);
+        assert!(v.escape());
+        assert_eq!(v.marked.records(), vec![2]);
+        // One chosen: Escape is the next one's (here nobody's).
+        assert!(!v.escape());
+    }
+
+    #[test]
+    fn returning_from_a_game_keeps_a_choice_of_several() {
+        let mut v = table();
+        v.click(1, egui::Modifiers::NONE);
+        v.reveal(9);
+        assert_eq!(v.marked.records(), vec![9]);
+        v.click(3, ctrl());
+        v.reveal(3);
+        assert_eq!(v.marked.records(), vec![3, 9]);
+    }
+
+    fn database(name: &str, games: &[&str]) -> Database {
+        let path =
+            std::env::temp_dir().join(format!("cp-reread-{}-{name}.pgn", std::process::id()));
+        let text: String = games
+            .iter()
+            .map(|w| format!("[White \"{w}\"]\n[Black \"x\"]\n[Result \"*\"]\n\n1. e4 *\n\n"))
+            .collect();
+        std::fs::write(&path, text).unwrap();
+        let db = chess_import::open(
+            &path,
+            &mut |_| {},
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap()
+        .db;
+        let _ = std::fs::remove_file(&path);
+        db
+    }
+
+    #[test]
+    fn a_choice_never_moves_to_other_games_when_the_file_is_read_again() {
+        let before = database("before", &["a", "b", "c", "d"]);
+        // A game added at the end: the chosen ones are the same records.
+        let mut v = table();
+        v.click(1, egui::Modifiers::NONE);
+        v.click(2, ctrl());
+        v.before_reread(&before);
+        v.reread(&database("added", &["a", "b", "c", "d", "e"]));
+        assert_eq!(v.marked.records(), vec![1, 2]);
+        assert!(v.notice.is_none());
+        // A game put back at the start (undo of a delete): the numbers moved; let go,
+        // and said.
+        v.before_reread(&before);
+        v.reread(&database("undo", &["z", "a", "b", "c", "d"]));
+        assert!(v.marked.is_empty());
+        assert!(v.notice.is_some());
+    }
+
+    #[test]
+    fn the_copy_asks_for_the_chosen_records_and_the_tables_sort() {
+        let mut v = table();
+        v.sort = (SortKey::White, false);
+        v.click(5, egui::Modifiers::NONE);
+        v.click(2, ctrl());
+        let mut actions = Vec::new();
+        v.ask_copy(Path::new("/x.pgn"), &mut actions);
+        match actions.as_slice() {
+            [
+                LibraryAction::CopySelection {
+                    records,
+                    sort,
+                    ascending,
+                    hidden,
+                    ..
+                },
+            ] => {
+                assert_eq!(records, &vec![2, 5]);
+                assert_eq!((*sort, *ascending, *hidden), (SortKey::White, false, 0));
+            }
+            _ => panic!("one copy"),
+        }
+        // None while another copy is written.
+        v.batch = Some(BatchStatus {
+            name: "x".into(),
+            done: 0,
+            total: 1,
+            cancelling: false,
+        });
+        actions.clear();
+        v.ask_copy(Path::new("/x.pgn"), &mut actions);
+        assert!(actions.is_empty());
+    }
 
     #[test]
     fn numbers_group_and_shorten() {

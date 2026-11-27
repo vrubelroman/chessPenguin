@@ -1170,6 +1170,73 @@ mod tests {
         assert!(state.temporary_shapes.is_empty());
     }
 
+    /// A right-button drag in the analysis of a game: one arrow, handed over once, in
+    /// the colour of the modifiers held as the button is let go.
+    #[test]
+    fn analysis_arrow_is_drawn_by_a_right_drag() {
+        let ctx = egui::Context::default();
+        let pos = Chess::default();
+        let mut state = BoardState::default();
+        let from = egui::pos2(225.0, 325.0);
+        let to = egui::pos2(225.0, 225.0);
+        let shift_alt = egui::Modifiers::SHIFT | egui::Modifiers::ALT;
+        board_frame(&ctx, &mut state, &pos, 0.0, Vec::new(), false);
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.1,
+            vec![
+                egui::Event::PointerMoved(from),
+                egui::Event::PointerButton {
+                    pos: from,
+                    button: egui::PointerButton::Secondary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            false,
+        );
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.2,
+            vec![egui::Event::PointerMoved(to)],
+            false,
+        );
+        assert!(
+            state.take_shape().is_none(),
+            "nothing before the button is let go"
+        );
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.3,
+            vec![
+                egui::Event::ModifiersChanged(shift_alt),
+                egui::Event::PointerButton {
+                    pos: to,
+                    button: egui::PointerButton::Secondary,
+                    pressed: false,
+                    modifiers: shift_alt,
+                },
+            ],
+            false,
+        );
+        assert!(state.temporary_shapes.is_empty());
+        assert_eq!(
+            state.take_shape(),
+            Some(Drawn::Arrow(
+                chess_core::ShapeColor::Yellow,
+                "e2".parse().unwrap(),
+                "e4".parse().unwrap()
+            ))
+        );
+        assert!(state.take_shape().is_none());
+    }
+
     #[test]
     fn analysis_shapes_remain_one_shot_events() {
         let ctx = egui::Context::default();

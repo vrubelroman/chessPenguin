@@ -37,6 +37,7 @@ trainer.workspace = true
 play.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 online-games.workspace = true
 web-time.workspace = true
 sha2 = "0.11"

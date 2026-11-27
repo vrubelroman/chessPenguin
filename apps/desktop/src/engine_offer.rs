@@ -18,6 +18,8 @@ pub const DOWNLOAD_INDICATOR: &str = "download_indicator";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pending {
     LiveAnalysis,
+    /// The search for great moves in a database's list (task 27), waiting in the app.
+    GreatMoves,
     /// The analysis of the game on the screen whose `serial` is `game` (no other game's);
     /// `full`: anew, over evaluations read from the PGN.
     GameAnalysis {
@@ -161,6 +163,9 @@ impl EngineOffer {
                             }
                             Some(Pending::OpeningErrors { .. }) => {
                                 tr("Stockfish installed — the search for opening errors started")
+                            }
+                            Some(Pending::GreatMoves) => {
+                                tr("Stockfish installed — the search for great moves started")
                             }
                             None => tr("Stockfish installed"),
                         }
@@ -393,6 +398,9 @@ impl EngineOffer {
             }
             Some(Pending::OpeningErrors { .. }) => {
                 tr("The search for opening errors will start by itself when the download finishes.")
+            }
+            Some(Pending::GreatMoves) => {
+                tr("The search for great moves will start by itself when the download finishes.")
             }
             _ => tr("Analysis will start by itself when the download finishes."),
         };

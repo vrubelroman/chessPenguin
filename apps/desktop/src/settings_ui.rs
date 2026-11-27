@@ -519,6 +519,13 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
     notation_section(ui, s, changed);
     ui.add_space(8.0);
     ui.label(RichText::new(tr("Board")).strong());
+    // The hint above the notation goes away; what it told stays here, in sight.
+    ui.label(
+        RichText::new(tr(
+            "Arrows and circles: right mouse button on the board; Shift — red, Alt — blue, Shift+Alt — yellow. Saved in the move's comment ([%cal], [%csl]).",
+        ))
+        .weak(),
+    );
     ui.horizontal_wrapped(|ui| {
         for id in BoardThemeId::ALL {
             let t = id.theme();

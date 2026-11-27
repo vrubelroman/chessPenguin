@@ -16,7 +16,7 @@ use egui::{Color32, Key, Modifiers, RichText, Ui, vec2};
 use trainer::repertoire::{
     LearningData, LearningItemKey, LearningSide, LearningStore, LearningStoreData, Library,
     LibraryStore, MergeReport, RepertoireId, ResetImpactProjection, SrsSettings, StatsScope,
-    active_learning_keys, aggregate_scope, fen4, reset_impact,
+    StoreError, active_learning_keys, aggregate_scope, fen4, reset_impact,
 };
 use web_time::Instant;
 
@@ -43,7 +43,8 @@ pub enum RepertoireAction {
     },
 }
 
-const CARD_H: f32 = 166.0;
+const CARD_H: f32 = 168.0;
+const BUTTON_ROW_H: f32 = 30.0;
 const ROW_H: f32 = 24.0;
 const HEADER_H: f32 = 26.0;
 const MESSAGE_H: f32 = 20.0;
@@ -52,10 +53,25 @@ const BOTTOM_W: f32 = 150.0;
 const MAIN_W: f32 = 170.0;
 const LINES_W: f32 = 110.0;
 const THIRD_W: f32 = 150.0;
-/// The table's fixed columns: «Today» phrase, the bar, «A/Y» (room for «999/999»).
-const TODAY_W: f32 = 90.0;
+/// The bar in the «Passed» column, left of «A/Y».
 const MINI_BAR_W: f32 = 44.0;
-const PASSED_W: f32 = 64.0;
+/// The bar of a narrow panel (under `NARROW_TABLE`) whose name would keep under
+/// `NAME_WANTED`.
+const MINI_BAR_NARROW: f32 = 28.0;
+const NARROW_TABLE: f32 = 420.0 - 16.0;
+const NAME_WANTED: f32 = 60.0;
+/// The room kept for the number of «Passed».
+const NUMBER_SAMPLE: &str = "00/000";
+const MINI_BAR_GAP: f32 = 6.0;
+/// The name keeps up to this much; only it is ever cut, down to `NAME_FLOOR`.
+const NAME_LEAST: f32 = 120.0;
+const NAME_FLOOR: f32 = 30.0;
+/// Space from «Today» to the «Passed» bar, the columns' own gap included: the bar
+/// never reads as part of «Today».
+const PASSED_GAP: f32 = 16.0;
+/// The fixed columns besides «Today» and «Passed»: the colour and `⋯`.
+const KING_W: f32 = 22.0;
+const MENU_W: f32 = 26.0;
 const DIALOG_W: f32 = 460.0;
 /// A session appears at once when it is ready this fast; otherwise «Preparing…».
 const PREPARING_SHOWN_AFTER: Duration = Duration::from_millis(300);
@@ -1534,8 +1550,14 @@ impl RepertoireUi {
     }
 
     fn card(&mut self, ui: &mut Ui, settings: &Settings) -> Option<MenuItem> {
+        let two_rows = card_buttons_two_rows(ui, ui.available_width() - 22.0);
+        let card_h = if two_rows {
+            CARD_H + BUTTON_ROW_H + 6.0
+        } else {
+            CARD_H
+        };
         let Some(id) = self.selected.clone() else {
-            layout::fixed_block(ui, CARD_H, |_| {});
+            layout::fixed_block(ui, card_h, |_| {});
             return None;
         };
         let state = self.selected_card();
@@ -1547,8 +1569,8 @@ impl RepertoireUi {
         let side = layout::side_of(settings, &id);
         let name = self.selected_name();
         let mut chosen = None;
-        layout::fixed_block(ui, CARD_H, |ui| {
-            let inner = layout::card_inner(ui, CARD_H);
+        layout::fixed_block(ui, card_h, |ui| {
+            let inner = layout::card_inner(ui, card_h);
             layout::card(ui, false, false).show(ui, |ui| {
                 ui.set_min_size(inner);
                 ui.set_max_size(inner);
@@ -1557,15 +1579,28 @@ impl RepertoireUi {
                 // 1. The name and the colour.
                 layout::fixed_block(ui, 26.0, |ui| {
                     ui.horizontal(|ui| {
-                        let you = format!("{} {}", layout::king(side), layout::you_play(side));
-                        let you_w = text_width(ui, &you, 14.0) + 8.0;
+                        // The colour gives way first: down to the king, the words on
+                        // hover; only then is the name cut.
+                        let gap = ui.spacing().item_spacing.x;
+                        let words = layout::you_play(side);
+                        let name_w = style_width(ui, &name, egui::TextStyle::Heading);
+                        let king_w = layout::KING + gap;
+                        let full_w = king_w + style_width(ui, words, egui::TextStyle::Body) + gap;
+                        let short = name_w + full_w > width;
+                        let you_w = if short { king_w } else { full_w };
                         ui.allocate_ui_with_layout(
-                            vec2((width - you_w).max(0.0), 26.0),
+                            vec2((width - you_w - gap).max(0.0), 26.0),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| layout::line(ui, RichText::new(&name).heading()),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(you).weak());
+                            if !short {
+                                ui.label(RichText::new(words).weak());
+                            }
+                            let king = ui.add(layout::king(side).sense(egui::Sense::hover()));
+                            if short {
+                                king.on_hover_text(words);
+                            }
                         });
                     });
                 });
@@ -1579,83 +1614,120 @@ impl RepertoireUi {
                     layout::line(ui, text);
                 });
                 // 3. Progress.
-                layout::fixed_block(ui, 28.0, |ui| progress(ui, stats.as_ref()));
+                layout::fixed_block(ui, 30.0, |ui| progress(ui, stats.as_ref()));
                 // 4. A quiet explanation.
                 layout::fixed_block(ui, 20.0, |ui| {
                     layout::line(ui, RichText::new(note).weak());
                 });
-                // 5. Buttons.
-                layout::fixed_block(ui, 30.0, |ui| {
-                    ui.horizontal(|ui| {
-                        let (label, enabled, item) = main_button(&state, side);
-                        let gap = ui.spacing().item_spacing.x;
-                        let pad = 2.0 * ui.spacing().button_padding.x + 2.0;
-                        let room = ui.available_width();
-                        // The row is the same in every state with moves: «Review all» is
-                        // there unless the main button already is it. A narrow panel makes
-                        // the buttons narrower, down to their words.
-                        let third = !matches!(
-                            state,
-                            CardState::Empty
-                                | CardState::Failed(_)
-                                | CardState::Counting
-                                | CardState::OtherColor
-                        ) && !matches!(item, Some(MenuItem::ReviewAll));
-                        let main_need = text_width(ui, &label, 14.0) + pad;
-                        let lines_need = text_width(ui, tr("Lines…"), 14.0) + pad;
-                        let third_need = text_width(ui, tr("Review all"), 14.0) + pad;
-                        let (main_w, lines_w, third_w) = if third {
-                            let spare = room - main_need - lines_need - third_need - 2.0 * gap;
-                            let grow = |need: f32, most: f32, spare: &mut f32| {
-                                let add = (most - need).max(0.0).min(spare.max(0.0));
-                                *spare -= add;
-                                need + add
-                            };
-                            let mut spare = spare;
-                            let main_w = grow(main_need, MAIN_W, &mut spare);
-                            let lines_w = grow(lines_need, LINES_W, &mut spare);
-                            (main_w, lines_w, grow(third_need, THIRD_W, &mut spare))
-                        } else {
-                            (MAIN_W.min((room - LINES_W - gap).max(0.0)), LINES_W, 0.0)
-                        };
-                        let response = ui
-                            .add_enabled_ui(enabled, |ui| {
-                                crate::widgets::primary_wide(ui, &label, main_w)
-                            })
-                            .inner;
-                        let response = if matches!(state, CardState::Counting) {
-                            response.on_disabled_hover_text(tr("Counting moves…"))
-                        } else {
-                            response
-                        };
-                        if response.clicked() {
-                            chosen = item;
-                        }
-                        if ui
-                            .add_enabled(
-                                !matches!(state, CardState::Empty | CardState::Failed(_)),
-                                egui::Button::new(tr("Lines…"))
+                // 5. Buttons: one row when the widest row fits, else the main button
+                // on a row of its own. Which one depends on the width alone, so the
+                // card keeps its height whatever is selected.
+                let (label, enabled, item) = main_button(&state, side);
+                // «Review all» is there in every state with moves unless the main button
+                // already is it.
+                let third = !matches!(
+                    state,
+                    CardState::Empty
+                        | CardState::Failed(_)
+                        | CardState::Counting
+                        | CardState::OtherColor
+                ) && !matches!(item, Some(MenuItem::ReviewAll));
+                let gap = ui.spacing().item_spacing.x;
+                let mut main = |ui: &mut Ui, width: f32| {
+                    let response = ui
+                        .add_enabled_ui(enabled, |ui| {
+                            crate::widgets::primary_wide(ui, &label, width)
+                        })
+                        .inner;
+                    let response = if matches!(state, CardState::Counting) {
+                        response.on_disabled_hover_text(tr("Counting moves…"))
+                    } else {
+                        response
+                    };
+                    if response.clicked() {
+                        chosen = item;
+                    }
+                };
+                let lines_enabled = !matches!(state, CardState::Empty | CardState::Failed(_));
+                let rest = |ui: &mut Ui, lines_w: f32, third_w: f32| -> Option<MenuItem> {
+                    let mut picked = None;
+                    if ui
+                        .add_enabled(
+                            lines_enabled,
+                            egui::Button::new(tr("Lines…"))
+                                .truncate()
+                                .min_size(vec2(lines_w, BUTTON_ROW_H)),
+                        )
+                        .clicked()
+                    {
+                        picked = Some(MenuItem::Lines);
+                    }
+                    if third
+                        && ui
+                            .add(
+                                egui::Button::new(tr("Review all"))
                                     .truncate()
-                                    .min_size(vec2(lines_w, 30.0)),
+                                    .min_size(vec2(third_w, BUTTON_ROW_H)),
                             )
+                            .on_hover_text(tr("Review all lines"))
                             .clicked()
-                        {
-                            chosen = Some(MenuItem::Lines);
-                        }
-                        if third
-                            && ui
-                                .add(
-                                    egui::Button::new(tr("Review all"))
-                                        .truncate()
-                                        .min_size(vec2(third_w, 30.0)),
-                                )
-                                .on_hover_text(tr("Review all lines"))
-                                .clicked()
-                        {
-                            chosen = Some(MenuItem::ReviewAll);
-                        }
+                    {
+                        picked = Some(MenuItem::ReviewAll);
+                    }
+                    picked
+                };
+                let mut picked = None;
+                if two_rows {
+                    // In a row, as in the one-row layout: the label is centred.
+                    layout::fixed_block(ui, BUTTON_ROW_H, |ui| {
+                        ui.horizontal(|ui| {
+                            let width = ui.available_width();
+                            main(ui, width);
+                        });
                     });
-                });
+                    layout::fixed_block(ui, BUTTON_ROW_H, |ui| {
+                        ui.horizontal(|ui| {
+                            let half = ((ui.available_width() - gap) / 2.0).max(0.0);
+                            picked = rest(ui, half, half);
+                        });
+                    });
+                } else {
+                    layout::fixed_block(ui, BUTTON_ROW_H, |ui| {
+                        ui.horizontal(|ui| {
+                            let pad = 2.0 * ui.spacing().button_padding.x + 2.0;
+                            let room = ui.available_width();
+                            let need =
+                                |text: &str| style_width(ui, text, egui::TextStyle::Button) + pad;
+                            let main_need = need(&label);
+                            let lines_need = need(tr("Lines…"));
+                            let third_need = need(tr("Review all"));
+                            let (main_w, lines_w, third_w) = if third {
+                                let mut spare =
+                                    room - main_need - lines_need - third_need - 2.0 * gap;
+                                let grow = |need: f32, most: f32, spare: &mut f32| {
+                                    let add = (most - need).max(0.0).min(spare.max(0.0));
+                                    *spare -= add;
+                                    need + add
+                                };
+                                let main_w = grow(main_need, MAIN_W, &mut spare);
+                                let lines_w = grow(lines_need, LINES_W, &mut spare);
+                                (main_w, lines_w, grow(third_need, THIRD_W, &mut spare))
+                            } else {
+                                let lines_w = lines_need.max(LINES_W.min(room / 3.0));
+                                (
+                                    (room - lines_w - gap).max(0.0).min(MAIN_W.max(main_need)),
+                                    lines_w,
+                                    0.0,
+                                )
+                            };
+                            main(ui, main_w);
+                            picked = rest(ui, lines_w, third_w);
+                        });
+                    });
+                }
+                if picked.is_some() {
+                    chosen = picked;
+                }
             });
         });
         chosen
@@ -1674,17 +1746,23 @@ impl RepertoireUi {
         let mut chosen = None;
         let open_menu = std::mem::take(&mut self.debug_menu);
         ui.style_mut().interaction.selectable_labels = false;
+        let columns = table_widths(ui, ui.available_width());
+        let (today_w, passed_w) = (columns.today, columns.passed);
+        let bar_w = columns.bar;
         let mut table = egui_extras::TableBuilder::new(ui)
             .id_salt("opening_repertoires")
             .striped(true)
             .sense(egui::Sense::click())
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(egui_extras::Column::remainder().at_least(80.0).clip(true))
-            .column(egui_extras::Column::exact(22.0))
-            .column(egui_extras::Column::exact(TODAY_W))
-            .column(egui_extras::Column::exact(MINI_BAR_W))
-            .column(egui_extras::Column::exact(PASSED_W))
-            .column(egui_extras::Column::exact(26.0));
+            .column(
+                egui_extras::Column::remainder()
+                    .at_least(columns.name_least)
+                    .clip(true),
+            )
+            .column(egui_extras::Column::exact(KING_W))
+            .column(egui_extras::Column::exact(today_w))
+            .column(egui_extras::Column::exact(passed_w))
+            .column(egui_extras::Column::exact(MENU_W));
         if let Some(index) = scroll_row {
             table = table.scroll_to_row(index, None);
         }
@@ -1700,11 +1778,10 @@ impl RepertoireUi {
                     });
                 });
                 // «Passed» heads the bar and the number together.
-                header.col(|_| {});
                 header.col(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add(egui::Label::new(RichText::new(tr("Passed")).strong()).truncate());
-                    });
+                    // From the left edge of the bars.
+                    ui.add_space(columns.start);
+                    ui.add(egui::Label::new(RichText::new(tr("Passed")).strong()).truncate());
                 });
                 header.col(|_| {});
             })
@@ -1722,7 +1799,7 @@ impl RepertoireUi {
                         layout::line(ui, repertoire.name.as_str());
                     });
                     row.col(|ui| {
-                        ui.label(layout::king(side))
+                        ui.add(layout::king(side).sense(egui::Sense::hover()))
                             .on_hover_text(layout::you_play(side));
                     });
                     let has_moves = self.index.get(id).is_none_or(|row| row.has_moves);
@@ -1738,14 +1815,21 @@ impl RepertoireUi {
                                         RichText::new(trf("new: {n}", &[("n", &stats.new_today())]))
                                             .weak()
                                     } else if let Some((at, _)) = stats.next {
-                                        RichText::new(layout::when(at, layout::now())).weak()
+                                        RichText::new(when_short(at, layout::now())).weak()
                                     } else {
                                         RichText::new("—").weak()
                                     };
-                                    ui.add(egui::Label::new(text).truncate()).on_hover_text(trf(
+                                    let mut hint = trf(
                                         "To review {n}, new in the session {m}",
                                         &[("n", &stats.due), ("m", &stats.new_today())],
-                                    ));
+                                    );
+                                    if let Some((at, _)) = stats.next
+                                        && stats.due == 0
+                                        && stats.new_today() == 0
+                                    {
+                                        hint = format!("{}\n{hint}", layout::when(at, layout::now()));
+                                    }
+                                    ui.add(egui::Label::new(text).truncate()).on_hover_text(hint);
                                 }
                                 Some(Err(_)) => {
                                     ui.label(RichText::new("—").weak());
@@ -1757,42 +1841,41 @@ impl RepertoireUi {
                         });
                     });
                     let passed = matches!(stats, Some(Ok(stats)) if has_moves && stats.total > 0);
+                    // [bar][6][number from the left]: neither moves with the counts.
                     row.col(|ui| {
-                        if let Some(Ok(stats)) = stats
-                            && passed
-                        {
-                            let room = ui.available_rect_before_wrap();
-                            let bar = egui::Rect::from_min_size(
-                                egui::pos2(room.left(), room.center().y - 3.0),
-                                vec2(MINI_BAR_W, 6.0),
-                            );
-                            progress_bar(ui, bar, Some(stats), selected);
-                            ui.allocate_rect(room, egui::Sense::hover())
+                        ui.add_space(columns.start);
+                        match stats {
+                            Some(Ok(stats)) if passed => {
+                                let room = ui.available_rect_before_wrap();
+                                let bar = egui::Rect::from_min_size(
+                                    egui::pos2(room.left(), room.center().y - 3.0),
+                                    vec2(bar_w, 6.0),
+                                );
+                                progress_bar(ui, bar, Some(stats), selected);
+                                ui.interact(
+                                    bar.expand2(vec2(0.0, 6.0)),
+                                    ui.id().with("bar"),
+                                    egui::Sense::hover(),
+                                )
                                 .on_hover_text(passed_hint(stats));
-                        }
-                    });
-                    row.col(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            match stats {
-                                Some(Ok(_)) if !has_moves => {
-                                    ui.add(
-                                        egui::Label::new(RichText::new(tr("no moves")).weak())
-                                            .truncate(),
-                                    )
-                                    .on_hover_text(tr("The repertoire has no moves yet: import a PGN or add a line from a game"));
-                                }
-                                Some(Ok(stats)) if passed => {
-                                    ui.label(format!("{}/{}", stats.passed(), stats.total))
-                                        .on_hover_text(passed_hint(stats));
-                                }
-                                Some(_) => {
-                                    ui.label(RichText::new("—").weak());
-                                }
-                                None => {
-                                    ui.label(RichText::new("…").weak());
-                                }
+                                ui.add_space(bar_w + MINI_BAR_GAP);
+                                ui.label(format!("{}/{}", stats.passed(), stats.total))
+                                    .on_hover_text(passed_hint(stats));
                             }
-                        });
+                            Some(Ok(_)) if !has_moves => {
+                                ui.add(
+                                    egui::Label::new(RichText::new(tr("no moves")).weak())
+                                        .truncate(),
+                                )
+                                .on_hover_text(tr("The repertoire has no moves yet: import a PGN or add a line from a game"));
+                            }
+                            Some(_) => {
+                                ui.label(RichText::new("—").weak());
+                            }
+                            None => {
+                                ui.label(RichText::new("…").weak());
+                            }
+                        }
                     });
                     let mut opened = false;
                     row.col(|ui| {
@@ -2557,9 +2640,9 @@ fn progress(ui: &mut Ui, stats: Option<&RowStats>) {
     let width = ui.available_width();
     let (bar, _) = ui.allocate_exact_size(vec2(width, 8.0), egui::Sense::hover());
     progress_bar(ui, bar, stats, false);
-    ui.add_space(-2.0);
+    ui.spacing_mut().item_spacing.y = 4.0;
     ui.horizontal(|ui| {
-        ui.set_height(20.0);
+        ui.set_height(18.0);
         if let Some(stats) = stats {
             let text = trf(
                 "Passed {a} of {y} moves · consolidated {l}",
@@ -2689,14 +2772,17 @@ fn side_choice(ui: &mut Ui, side: &mut LearningSide) {
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         for (value, label) in [
-            (LearningSide::White, tr("♔ White")),
-            (LearningSide::Black, tr("♚ Black")),
+            (LearningSide::White, tr("White")),
+            (LearningSide::Black, tr("Black")),
         ] {
             if ui
                 .add_sized(
                     [222.0, 34.0],
-                    egui::Button::selectable(*side == value, RichText::new(label).size(14.0))
-                        .frame_when_inactive(true),
+                    egui::Button::selectable(
+                        *side == value,
+                        (layout::king(value), RichText::new(label).size(14.0)),
+                    )
+                    .frame_when_inactive(true),
                 )
                 .clicked()
             {
@@ -2785,15 +2871,109 @@ fn import_dialog(
     result
 }
 
-fn text_width(ui: &Ui, text: &str, size: f32) -> f32 {
+/// Whether the card's buttons take two rows at this inner width of the card: the widest
+/// one-row set (a main button of the states with «Review all») does not fit.
+fn card_buttons_two_rows(ui: &Ui, width: f32) -> bool {
+    let pad = 2.0 * ui.spacing().button_padding.x + 2.0;
+    let need = |text: &str| style_width(ui, text, egui::TextStyle::Button) + pad;
+    let main = need(tr("Train")).max(need(&trf("Learn {m} new", &[("m", &NEW_PER_SESSION)])));
+    let gap = ui.spacing().item_spacing.x;
+    main + need(tr("Lines…")) + need(tr("Review all")) + 2.0 * gap > width
+}
+
+/// The width of `text` in the font of `style`, as a label or a button draws it.
+fn style_width(ui: &Ui, text: &str, style: egui::TextStyle) -> f32 {
     ui.painter()
         .layout_no_wrap(
             text.to_owned(),
-            egui::FontId::proportional(size),
+            style.resolve(ui.style()),
             egui::Color32::WHITE,
         )
         .size()
         .x
+}
+
+/// The widths of the table's columns.
+#[derive(Clone, Copy, Debug)]
+struct TableColumns {
+    /// What the name keeps at the least: `NAME_LEAST`, less in a narrow panel so that
+    /// the fixed columns always fit.
+    name_least: f32,
+    today: f32,
+    passed: f32,
+    /// The bar of «Passed».
+    bar: f32,
+    /// Where the bar and the header of «Passed» start in its column.
+    start: f32,
+}
+
+impl TableColumns {
+    /// All columns at their least, with the spaces between them.
+    fn least(&self, gap: f32) -> f32 {
+        self.name_least + KING_W + self.today + self.passed + MENU_W + 4.0 * gap
+    }
+}
+
+/// The table's columns for a table `width` wide, measured once a frame from the texts
+/// they may show, never from the rows on screen: counting or scrolling moves no column.
+fn table_widths(ui: &Ui, width: f32) -> TableColumns {
+    let body = |text: &str| style_width(ui, text, egui::TextStyle::Body);
+    let now = layout::now();
+    let today = [
+        trf("review {n}", &[("n", &99)]),
+        trf("new: {n}", &[("n", &10)]),
+        when_short(now, now),
+        when_short(now + 24 * 60 * 60, now),
+        when_short(now + 3 * 24 * 60 * 60, now),
+        when_short(now + 30 * 24 * 60 * 60, now),
+    ]
+    .iter()
+    .map(|t| body(t))
+    .fold(0.0, f32::max);
+    // A strong header is the body font in a brighter colour: as wide.
+    let today = (today.max(body(tr("Today"))) + 4.0).ceil();
+    // The lead keeps the bar off «Today»; the header and «no moves» may use it.
+    let gap = ui.spacing().item_spacing.x;
+    let lead = (PASSED_GAP - gap).max(0.0);
+    let columns = |bar: f32| {
+        // The group of the bar and the room of «00/000», or the header if wider; the
+        // lead before it unless the header needs that room.
+        let group = bar + MINI_BAR_GAP + body(NUMBER_SAMPLE);
+        let content = group.max(body(tr("Passed"))).max(body(tr("no moves")));
+        let passed = ((lead + group).max(content) + 4.0).ceil();
+        let start = (passed - 4.0 - content).max(0.0);
+        let fixed = KING_W + today + passed + MENU_W + 4.0 * gap;
+        TableColumns {
+            name_least: (width - fixed).clamp(NAME_FLOOR, NAME_LEAST),
+            today,
+            passed,
+            bar,
+            start,
+        }
+    };
+    let wide = columns(MINI_BAR_W);
+    if width < NARROW_TABLE && width - wide.least(gap) + wide.name_least < NAME_WANTED {
+        columns(MINI_BAR_NARROW)
+    } else {
+        wide
+    }
+}
+
+/// The date of the next review in a table cell: «12:30» today, «tomorrow», «in 3 days»,
+/// then «dd.mm». The card and the hint say it in full.
+fn when_short(at: i64, now: i64) -> String {
+    use chrono::{Local, TimeZone};
+    let (Some(at), Some(now)) = (
+        Local.timestamp_opt(at, 0).single(),
+        Local.timestamp_opt(now, 0).single(),
+    ) else {
+        return String::new();
+    };
+    match (at.date_naive() - now.date_naive()).num_days() {
+        ..=0 => at.format("%H:%M").to_string(),
+        1..=6 => layout::when(at.timestamp(), now.timestamp()),
+        _ => at.format("%d.%m").to_string(),
+    }
 }
 
 /// The colour whose moves a PGN repertoire gives: the side with fewer positions where
@@ -2928,54 +3108,201 @@ fn read_import(
     })
 }
 
-const STARTER_REPERTOIRES: [(&str, &str, LearningSide); 2] = [
-    (
-        "Spanish Opening",
-        include_str!("../assets/repertoires/spanish-white.pgn"),
-        LearningSide::White,
-    ),
-    (
-        "Sicilian Defence: Najdorf",
-        include_str!("../assets/repertoires/sicilian-black.pgn"),
-        LearningSide::Black,
-    ),
+/// Stable key, name, PGN and colour of each example repertoire.
+/// An example repertoire: a stable key, its name and its PGN with English comments and
+/// with Russian ones (the same moves).
+struct Starter {
+    key: &'static str,
+    name: &'static str,
+    pgn: &'static str,
+    pgn_ru: &'static str,
+    side: LearningSide,
+}
+
+impl Starter {
+    /// The PGN in the interface language at the moment it is given: Russian comments
+    /// for Russian, English for every other language.
+    fn pgn(&self) -> &'static str {
+        match crate::i18n::current() {
+            crate::i18n::Lang::Ru => self.pgn_ru,
+            _ => self.pgn,
+        }
+    }
+}
+
+const STARTER_REPERTOIRES: [Starter; 4] = [
+    Starter {
+        key: "spanish-white",
+        name: "Spanish Opening",
+        pgn: include_str!("../assets/repertoires/spanish-white.pgn"),
+        pgn_ru: include_str!("../assets/repertoires/spanish-white.ru.pgn"),
+        side: LearningSide::White,
+    },
+    Starter {
+        key: "sicilian-black",
+        name: "Sicilian Defence: Najdorf",
+        pgn: include_str!("../assets/repertoires/sicilian-black.pgn"),
+        pgn_ru: include_str!("../assets/repertoires/sicilian-black.ru.pgn"),
+        side: LearningSide::Black,
+    },
+    Starter {
+        key: "queens-gambit-white",
+        name: "Queen's Gambit",
+        pgn: include_str!("../assets/repertoires/queens-gambit-white.pgn"),
+        pgn_ru: include_str!("../assets/repertoires/queens-gambit-white.ru.pgn"),
+        side: LearningSide::White,
+    },
+    Starter {
+        key: "triangle-black",
+        name: "Semi-Slav: Triangle",
+        pgn: include_str!("../assets/repertoires/triangle-black.pgn"),
+        pgn_ru: include_str!("../assets/repertoires/triangle-black.ru.pgn"),
+        side: LearningSide::Black,
+    },
 ];
 
-/// The first opening of the section, before any repertoire library file exists, gets
-/// two example repertoires. An existing file, even an empty one, is never touched, so
-/// examples deleted by the user do not come back.
+const STARTER_MARKS_VERSION: u32 = 1;
+
+/// Keys of the example repertoires already given to the user, in a file of its own next
+/// to the library: the library format read by 2.4.0 stays as it is.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StarterMarks {
+    version: u32,
+    given: BTreeSet<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct StarterMarksVersion {
+    version: u32,
+}
+
+fn starter_marks_path(store: &LibraryStore) -> PathBuf {
+    store.path().with_file_name("repertoire-starters.json")
+}
+
+/// Marks read from the file. `None`: no file yet. A file of a newer version means every
+/// example was given: it is neither reissued nor overwritten.
+enum StarterMarksState {
+    Missing,
+    Given(BTreeSet<String>),
+    Newer,
+}
+
+fn read_starter_marks(path: &Path) -> Result<StarterMarksState, String> {
+    let damaged =
+        || tr("The record of example repertoires is damaged; examples were not added").to_owned();
+    let bytes = match crate::platform::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(StarterMarksState::Missing);
+        }
+        Err(e) => {
+            eprintln!("{}: {e}", path.display());
+            return Err(damaged());
+        }
+    };
+    let version = serde_json::from_slice::<StarterMarksVersion>(&bytes).map_err(|e| {
+        eprintln!("{}: {e}", path.display());
+        damaged()
+    })?;
+    if version.version != STARTER_MARKS_VERSION {
+        eprintln!(
+            "{}: unknown version {}, examples are not added",
+            path.display(),
+            version.version
+        );
+        return Ok(StarterMarksState::Newer);
+    }
+    let marks = serde_json::from_slice::<StarterMarks>(&bytes).map_err(|e| {
+        eprintln!("{}: {e}", path.display());
+        damaged()
+    })?;
+    Ok(StarterMarksState::Given(marks.given))
+}
+
+/// Each example repertoire is given once. An example also counts as given whenever a
+/// repertoire carries its name in any language: the examples of 2.4.0 had no marks, and a
+/// lost write of the marks must not double them. Examples deleted after that do not come
+/// back; the user's own repertoires are not touched. The library is read again right
+/// before the examples are added, and a save that lost a race with another copy of the
+/// program is retried on the fresh library.
 fn seed_starter(store: &LibraryStore) -> Result<Vec<(RepertoireId, LearningSide)>, String> {
-    if store.path().exists() {
-        return Ok(Vec::new());
-    }
-    let mut library = Library::default();
-    let mut sides = Vec::new();
-    let cancel = AtomicBool::new(false);
-    for (name, pgn, side) in STARTER_REPERTOIRES {
-        let db = PgnDatabase::from_bytes(pgn.as_bytes().to_vec(), None, &mut |_| {}, &cancel)
-            .map_err(|e| e.to_string())?;
-        let mut id = None;
-        for index in 0..db.len() {
-            let Some(parsed) = db.load_game(index) else {
-                continue;
-            };
-            let current = match &id {
-                Some(id) => id,
-                None => id.insert(
-                    library
-                        .create(tr(name), &Game::from_start(parsed.game.start().clone()))
-                        .map_err(|e| e.to_string())?,
-                ),
-            };
-            library
-                .add_game(current, &parsed.game)
+    let marks_path = starter_marks_path(store);
+    let (mut given, marked) = match read_starter_marks(&marks_path)? {
+        StarterMarksState::Newer => return Ok(Vec::new()),
+        StarterMarksState::Missing => (BTreeSet::new(), false),
+        StarterMarksState::Given(given) => (given, true),
+    };
+    let mut attempts = 0;
+    let sides = loop {
+        attempts += 1;
+        let mut library = store.load().map_err(|e| e.to_string())?;
+        for Starter { key, name, .. } in &STARTER_REPERTOIRES {
+            let names = crate::i18n::all_languages(name);
+            if library
+                .repertoires
+                .iter()
+                .any(|r| names.contains(&r.name.as_str()))
+            {
+                given.insert((*key).to_owned());
+            }
+        }
+        let missing: Vec<_> = STARTER_REPERTOIRES
+            .iter()
+            .filter(|starter| !given.contains(starter.key))
+            .collect();
+        if missing.is_empty() {
+            break Vec::new();
+        }
+        let mut sides = Vec::new();
+        let cancel = AtomicBool::new(false);
+        for starter in &missing {
+            let (name, pgn, side) = (starter.name, starter.pgn(), &starter.side);
+            let db = PgnDatabase::from_bytes(pgn.as_bytes().to_vec(), None, &mut |_| {}, &cancel)
                 .map_err(|e| e.to_string())?;
+            let mut id = None;
+            for index in 0..db.len() {
+                let Some(parsed) = db.load_game(index) else {
+                    continue;
+                };
+                let current = match &id {
+                    Some(id) => id,
+                    None => id.insert(
+                        library
+                            .create(tr(name), &Game::from_start(parsed.game.start().clone()))
+                            .map_err(|e| e.to_string())?,
+                    ),
+                };
+                library
+                    .add_game(current, &parsed.game)
+                    .map_err(|e| e.to_string())?;
+            }
+            if let Some(id) = id {
+                sides.push((id, *side));
+            }
         }
-        if let Some(id) = id {
-            sides.push((id, side));
+        match store.save(&mut library) {
+            Ok(()) => {
+                given.extend(missing.iter().map(|starter| starter.key.to_owned()));
+                break sides;
+            }
+            Err(StoreError::Conflict { .. }) if attempts < 3 => continue,
+            Err(e) => return Err(e.to_string()),
         }
+    };
+    if marked && sides.is_empty() {
+        return Ok(sides);
     }
-    store.save(&mut library).map_err(|e| e.to_string())?;
+    let marks = StarterMarks {
+        version: STARTER_MARKS_VERSION,
+        given,
+    };
+    let bytes = serde_json::to_vec_pretty(&marks).map_err(|e| e.to_string())?;
+    // The library is already saved; without the marks the names still keep the examples
+    // from being added again.
+    if let Err(e) = crate::settings::write_atomic(&marks_path, &bytes) {
+        eprintln!("{}: {e}", marks_path.display());
+    }
     Ok(sides)
 }
 

@@ -930,6 +930,11 @@ impl<T: Send + 'static> Background<T> {
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
+
+    /// Waits up to `timeout` for the result (the work cleans up after itself).
+    pub fn wait(&self, timeout: std::time::Duration) -> Option<Option<T>> {
+        self.rx.recv_timeout(timeout).ok()
+    }
 }
 
 impl<T> Drop for Background<T> {

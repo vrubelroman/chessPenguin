@@ -1241,7 +1241,11 @@ fn key(key: Key) -> egui::Event {
 
 #[test]
 fn the_panel_takes_the_game_screens_place_at_both_reference_sizes() {
-    for (size, left) in [(vec2(1400.0, 900.0), 940.0), (vec2(960.0, 600.0), 576.0)] {
+    for (size, left) in [
+        (vec2(1920.0, 1080.0), 1360.0),
+        (vec2(1400.0, 900.0), 896.0),
+        (vec2(960.0, 600.0), 580.0),
+    ] {
         let mut f = Fixture::new("1. e4 *", LearningSide::White, &["e2e4"], "geometry");
         let ctx = egui::Context::default();
         crate::assets::install(&ctx);

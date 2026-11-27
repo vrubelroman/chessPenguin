@@ -1301,6 +1301,9 @@ fn cache_dir() -> Option<PathBuf> {
 pub struct PrepScreen {
     /// This screen's own number (`engine_offer::next_serial`).
     pub serial: u64,
+    /// The engine is taken by another job (the search for great moves, task 27): the
+    /// search for opening errors does not start, and says why.
+    pub engine_blocked: Option<String>,
     pub path: PathBuf,
     db: Arc<Database>,
     db_name: String,
@@ -1676,6 +1679,7 @@ impl PrepScreen {
         });
         let mut screen = PrepScreen {
             serial: crate::engine_offer::next_serial(),
+            engine_blocked: None,
             db_name: base_name(&start.path),
             path: start.path,
             db,
@@ -2184,6 +2188,10 @@ impl PrepScreen {
     fn start_engine(&mut self, ctx: &egui::Context, actions: &mut Vec<PrepAction>) {
         // A running search is not restarted (e.g. «Find errors» in the options dialog).
         if self.job.is_some() {
+            return;
+        }
+        if let Some(why) = &self.engine_blocked {
+            self.error = Some(why.clone());
             return;
         }
         self.error = None;

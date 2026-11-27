@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.5.0" date="2026-11-27">
+      <description>
+        <p>Find great moves in up to 100 filtered games with a summary of brilliant, great and bad moves. Several games can be selected and copied into a new database. A hint shows that arrows and circles drawn with the right mouse button are saved in PGN. Opening training has four example repertoires, a wider panel and clearer side kings.</p>
+      </description>
+    </release>
     <release version="2.4.0" date="2026-11-27">
       <description>
         <p>Desktop opening training is rewritten to be simpler: one screen of repertoires with clear progress, a daily session of reviews plus up to ten new moves, new moves are shown before they are asked, mistakes show the right move and return in the same session. Two example repertoires are included. Temporary arrows and circles can be drawn in play and training.</p>

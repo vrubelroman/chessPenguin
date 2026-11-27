@@ -131,6 +131,11 @@ impl PieceSet {
         format!("bytes://pieces/{}/{}.svg", self.name(), Self::index(piece))
     }
 
+    /// The piece's picture, to put in a widget.
+    pub fn image(self, piece: Piece) -> egui::Image<'static> {
+        egui::Image::new(self.uri(piece))
+    }
+
     pub fn paint(self, ui: &egui::Ui, piece: Piece, rect: Rect) {
         egui::Image::new(self.uri(piece)).paint_at(ui, rect);
     }

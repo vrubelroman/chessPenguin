@@ -1,0 +1,12 @@
+[Event "ChessPenguin: Queen's Gambit for White"]
+[White "Repertoire"]
+[Black "?"]
+[Result "*"]
+[ECO "D37"]
+
+{Queen's Gambit for White: the Queen's Gambit Declined with 5.Bf4, plus answers to the Queen's Gambit Accepted and the Slav Defence.}
+1. d4 d5 2. c4 {White offers a pawn to deflect Black's d-pawn from the centre.}
+2... e6 (2... dxc4 {Queen's Gambit Accepted.} 3. Nf3 Nf6 4. e3 e6 5. Bxc4 c5 6. O-O a6 7. dxc5 Bxc5 8. Qxd8+ Kxd8 {White keeps a small, risk-free edge in the endgame.})
+(2... c6 {Slav Defence.} 3. Nf3 Nf6 4. Nc3 dxc4 5. a4 Bf5 6. e3 e6 7. Bxc4 Bb4 8. O-O {White has a central space advantage and easy development.})
+3. Nc3 Nf6 4. Nf3 Be7 5. Bf4 {The modern main line: the bishop is active and safe from ...h6 and ...Ne4.}
+5... O-O 6. e3 c5 7. dxc5 Bxc5 8. a3 Nc6 9. Qc2 Qa5 10. Rd1 Re8 11. Nd2 {White plays against the isolated pawn that may appear after ...dxc4 or cxd5.} *
