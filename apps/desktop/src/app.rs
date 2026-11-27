@@ -944,7 +944,18 @@ impl App {
                 g.debug_show_report();
             }
             if let Some(k) = std::env::var("CP_BEST").ok().and_then(|v| v.parse().ok()) {
-                g.debug_best_line(k);
+                // `CP_BEST_DELAY=<ms>`: the line opens that long after the notation is first
+                // drawn (`CP_BEST_EXIT_AFTER=<ms>`: and closes that long after it opened).
+                let ms = |name| {
+                    std::env::var(name)
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .map(|ms| ms as f64 / 1000.0)
+                };
+                match ms("CP_BEST_DELAY") {
+                    Some(delay) => g.debug_best_line_later(k, delay, ms("CP_BEST_EXIT_AFTER")),
+                    None => g.debug_best_line(k),
+                }
             }
             // CP_REVIEW=ask presses «Analyse», any other value starts the analysis.
             if let Ok(v) = std::env::var("CP_REVIEW") {

@@ -122,6 +122,19 @@ pub struct GameView {
     shapes_hint: Option<bool>,
     /// An arrow or a circle went into the game on this frame (the hint has done its job).
     shape_drawn: bool,
+    /// Dev hook `CP_BEST_DELAY`: the better line to open after the notation is drawn.
+    debug_best: Option<DebugBest>,
+}
+
+/// The better line opened on a timer (screenshots of the notation before, during and
+/// after the line); times in seconds.
+struct DebugBest {
+    shown: usize,
+    delay: f64,
+    exit: Option<f64>,
+    /// When the notation was first drawn.
+    start: Option<f64>,
+    opened: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -246,6 +259,7 @@ impl GameView {
             shape_counts: None,
             shapes_hint: None,
             shape_drawn: false,
+            debug_best: None,
         }
     }
 
@@ -1721,6 +1735,7 @@ impl GameView {
                 self.translation.translate(ui.ctx(), settings, hub);
             }
             self.shape_counts();
+            self.debug_best_tick(ui.ctx());
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| {
@@ -2299,6 +2314,50 @@ impl GameView {
         if self.review.has_data() {
             self.review.visible = true;
             self.side_tab = SideTab::Report;
+        }
+    }
+
+    /// `debug_best_line` `delay` s after the notation is first drawn; closed (as by a
+    /// click on the game's move) `exit` s after it opened.
+    pub fn debug_best_line_later(&mut self, shown: usize, delay: f64, exit: Option<f64>) {
+        self.debug_best = Some(DebugBest {
+            shown,
+            delay,
+            exit,
+            start: None,
+            opened: false,
+        });
+    }
+
+    fn debug_best_tick(&mut self, ctx: &egui::Context) {
+        let Some(mut d) = self.debug_best.take() else {
+            return;
+        };
+        let now = ctx.input(|i| i.time);
+        let start = *d.start.get_or_insert(now);
+        if !d.opened {
+            if now - start >= d.delay {
+                self.debug_best_line(d.shown);
+                d.opened = true;
+                d.start = Some(now);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(
+                    d.delay - (now - start),
+                ));
+            }
+            self.debug_best = Some(d);
+            return;
+        }
+        match d.exit {
+            Some(exit) if now - start >= exit => {
+                let base = self.cursor;
+                self.goto(base);
+            }
+            Some(exit) => {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(exit - (now - start)));
+                self.debug_best = Some(d);
+            }
+            None => {}
         }
     }
 
