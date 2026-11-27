@@ -3107,31 +3107,56 @@ fn read_import(
 }
 
 /// Stable key, name, PGN and colour of each example repertoire.
-const STARTER_REPERTOIRES: [(&str, &str, &str, LearningSide); 4] = [
-    (
-        "spanish-white",
-        "Spanish Opening",
-        include_str!("../assets/repertoires/spanish-white.pgn"),
-        LearningSide::White,
-    ),
-    (
-        "sicilian-black",
-        "Sicilian Defence: Najdorf",
-        include_str!("../assets/repertoires/sicilian-black.pgn"),
-        LearningSide::Black,
-    ),
-    (
-        "queens-gambit-white",
-        "Queen's Gambit",
-        include_str!("../assets/repertoires/queens-gambit-white.pgn"),
-        LearningSide::White,
-    ),
-    (
-        "triangle-black",
-        "Semi-Slav: Triangle",
-        include_str!("../assets/repertoires/triangle-black.pgn"),
-        LearningSide::Black,
-    ),
+/// An example repertoire: a stable key, its name and its PGN with English comments and
+/// with Russian ones (the same moves).
+struct Starter {
+    key: &'static str,
+    name: &'static str,
+    pgn: &'static str,
+    pgn_ru: &'static str,
+    side: LearningSide,
+}
+
+impl Starter {
+    /// The PGN in the interface language at the moment it is given: Russian comments
+    /// for Russian, English for every other language.
+    fn pgn(&self) -> &'static str {
+        match crate::i18n::current() {
+            crate::i18n::Lang::Ru => self.pgn_ru,
+            _ => self.pgn,
+        }
+    }
+}
+
+const STARTER_REPERTOIRES: [Starter; 4] = [
+    Starter {
+        key: "spanish-white",
+        name: "Spanish Opening",
+        pgn: include_str!("../assets/repertoires/spanish-white.pgn"),
+        pgn_ru: include_str!("../assets/repertoires/spanish-white.ru.pgn"),
+        side: LearningSide::White,
+    },
+    Starter {
+        key: "sicilian-black",
+        name: "Sicilian Defence: Najdorf",
+        pgn: include_str!("../assets/repertoires/sicilian-black.pgn"),
+        pgn_ru: include_str!("../assets/repertoires/sicilian-black.ru.pgn"),
+        side: LearningSide::Black,
+    },
+    Starter {
+        key: "queens-gambit-white",
+        name: "Queen's Gambit",
+        pgn: include_str!("../assets/repertoires/queens-gambit-white.pgn"),
+        pgn_ru: include_str!("../assets/repertoires/queens-gambit-white.ru.pgn"),
+        side: LearningSide::White,
+    },
+    Starter {
+        key: "triangle-black",
+        name: "Semi-Slav: Triangle",
+        pgn: include_str!("../assets/repertoires/triangle-black.pgn"),
+        pgn_ru: include_str!("../assets/repertoires/triangle-black.ru.pgn"),
+        side: LearningSide::Black,
+    },
 ];
 
 const STARTER_MARKS_VERSION: u32 = 1;
@@ -3210,7 +3235,7 @@ fn seed_starter(store: &LibraryStore) -> Result<Vec<(RepertoireId, LearningSide)
     let sides = loop {
         attempts += 1;
         let mut library = store.load().map_err(|e| e.to_string())?;
-        for (key, name, ..) in &STARTER_REPERTOIRES {
+        for Starter { key, name, .. } in &STARTER_REPERTOIRES {
             let names = crate::i18n::all_languages(name);
             if library
                 .repertoires
@@ -3222,14 +3247,15 @@ fn seed_starter(store: &LibraryStore) -> Result<Vec<(RepertoireId, LearningSide)
         }
         let missing: Vec<_> = STARTER_REPERTOIRES
             .iter()
-            .filter(|(key, ..)| !given.contains(*key))
+            .filter(|starter| !given.contains(starter.key))
             .collect();
         if missing.is_empty() {
             break Vec::new();
         }
         let mut sides = Vec::new();
         let cancel = AtomicBool::new(false);
-        for (_, name, pgn, side) in &missing {
+        for starter in &missing {
+            let (name, pgn, side) = (starter.name, starter.pgn(), &starter.side);
             let db = PgnDatabase::from_bytes(pgn.as_bytes().to_vec(), None, &mut |_| {}, &cancel)
                 .map_err(|e| e.to_string())?;
             let mut id = None;
@@ -3255,7 +3281,7 @@ fn seed_starter(store: &LibraryStore) -> Result<Vec<(RepertoireId, LearningSide)
         }
         match store.save(&mut library) {
             Ok(()) => {
-                given.extend(missing.iter().map(|(key, ..)| (*key).to_owned()));
+                given.extend(missing.iter().map(|starter| starter.key.to_owned()));
                 break sides;
             }
             Err(StoreError::Conflict { .. }) if attempts < 3 => continue,

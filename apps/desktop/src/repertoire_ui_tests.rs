@@ -813,3 +813,99 @@ fn a_review_date_is_short_in_the_table() {
     assert_eq!(when_short(now + 3 * 60 * 60 + 30 * 60, now), "12:30");
     assert_eq!(when_short(now + 40 * 24 * 60 * 60, now), "06.01");
 }
+
+/// The comments of a PGN text: what stands in braces.
+fn pgn_comments(pgn: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0;
+    for c in pgn.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            c if depth > 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn cyrillic(text: &str) -> bool {
+    text.chars()
+        .any(|c| ('а'..='я').contains(&c.to_lowercase().next().unwrap_or(c)))
+}
+
+#[test]
+fn starter_comments_follow_the_interface_language() {
+    for (lang, russian) in [
+        (crate::i18n::Lang::Ru, true),
+        (crate::i18n::Lang::En, false),
+        (crate::i18n::Lang::De, false),
+    ] {
+        crate::i18n::set_lang(lang);
+        let dir = TestDir::new(&format!("starter-lang-{lang:?}"));
+        let (store, _) = dir.stores();
+        assert_eq!(seed_starter(&store).unwrap().len(), 4);
+        for repertoire in store.load().unwrap().repertoires {
+            let comments = pgn_comments(&repertoire.pgn);
+            assert!(!comments.trim().is_empty(), "{lang:?} {}", repertoire.name);
+            assert_eq!(
+                cyrillic(&comments),
+                russian,
+                "{lang:?} {}: {comments}",
+                repertoire.name
+            );
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+}
+
+#[test]
+fn a_given_starter_keeps_its_comments_when_the_language_changes() {
+    let dir = TestDir::new("starter-lang-kept");
+    let (store, _) = dir.stores();
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    seed_starter(&store).unwrap();
+    let before = std::fs::read(store.path()).unwrap();
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    assert!(seed_starter(&store).unwrap().is_empty());
+    assert_eq!(std::fs::read(store.path()).unwrap(), before);
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+}
+
+/// Every line of moves of a PGN, as UCI paths from the start, comments aside.
+fn move_tree(pgn: &str) -> Vec<Vec<String>> {
+    let cancel = AtomicBool::new(false);
+    let db = PgnDatabase::from_bytes(pgn.as_bytes().to_vec(), None, &mut |_| {}, &cancel).unwrap();
+    let mut lines = Vec::new();
+    for index in 0..db.len() {
+        let game = db.load_game(index).unwrap().game;
+        let mut stack = vec![(NodeId::ROOT, Vec::new())];
+        while let Some((node, path)) = stack.pop() {
+            let children = game.children(node);
+            if children.is_empty() {
+                lines.push(path);
+                continue;
+            }
+            for child in children {
+                let mut next = path.clone();
+                next.push(game.move_label(*child).unwrap_or_default());
+                stack.push((*child, next));
+            }
+        }
+    }
+    lines.sort();
+    lines
+}
+
+#[test]
+fn russian_and_english_starters_have_the_same_moves() {
+    for starter in &STARTER_REPERTOIRES {
+        assert_eq!(
+            move_tree(starter.pgn),
+            move_tree(starter.pgn_ru),
+            "{}",
+            starter.key
+        );
+        assert!(!move_tree(starter.pgn).is_empty(), "{}", starter.key);
+    }
+}
