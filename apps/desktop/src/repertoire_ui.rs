@@ -52,6 +52,9 @@ const BOTTOM_W: f32 = 150.0;
 const MAIN_W: f32 = 170.0;
 const LINES_W: f32 = 110.0;
 const THIRD_W: f32 = 150.0;
+/// The «Learned» column: a small bar and «X/Y».
+const LEARNED_W: f32 = 104.0;
+const MINI_BAR_W: f32 = 44.0;
 const DIALOG_W: f32 = 460.0;
 /// A session appears at once when it is ready this fast; otherwise «Preparing…».
 const PREPARING_SHOWN_AFTER: Duration = Duration::from_millis(300);
@@ -1677,7 +1680,7 @@ impl RepertoireUi {
             .column(egui_extras::Column::remainder().at_least(80.0).clip(true))
             .column(egui_extras::Column::exact(22.0))
             .column(egui_extras::Column::exact(58.0))
-            .column(egui_extras::Column::exact(70.0))
+            .column(egui_extras::Column::exact(LEARNED_W))
             .column(egui_extras::Column::exact(26.0));
         if let Some(index) = scroll_row {
             table = table.scroll_to_row(index, None);
@@ -1713,9 +1716,12 @@ impl RepertoireUi {
                         ui.label(layout::king(side))
                             .on_hover_text(layout::you_play(side));
                     });
+                    let has_moves = self.index.get(id).is_none_or(|row| row.has_moves);
                     row.col(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             match stats {
+                                // An empty repertoire: «no moves» under «Learned» says it.
+                                Some(Ok(_)) if !has_moves => {}
                                 Some(Ok(stats)) if stats.today() > 0 => {
                                     ui.label(stats.today().to_string()).on_hover_text(trf(
                                         "{n} to review, {m} new",
@@ -1734,8 +1740,26 @@ impl RepertoireUi {
                     row.col(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             match stats {
+                                Some(Ok(_)) if !has_moves => {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(tr("no moves")).weak())
+                                            .truncate(),
+                                    )
+                                    .on_hover_text(tr("The repertoire has no moves yet: import a PGN or add a line from a game"));
+                                }
                                 Some(Ok(stats)) if stats.total > 0 => {
-                                    ui.label(format!("{}/{}", stats.learnt, stats.total));
+                                    let hint = learned_hint(stats);
+                                    ui.label(format!("{}/{}", stats.learnt, stats.total))
+                                        .on_hover_text(&hint);
+                                    let room = ui.available_width() - ui.spacing().item_spacing.x;
+                                    if room >= 16.0 {
+                                        let (bar, response) = ui.allocate_exact_size(
+                                            vec2(room.min(MINI_BAR_W), 6.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        progress_bar(ui, bar, Some(stats));
+                                        response.on_hover_text(hint);
+                                    }
                                 }
                                 Some(_) => {
                                     ui.label(RichText::new("—").weak());
@@ -2449,9 +2473,20 @@ fn main_button(state: &CardState, side: LearningSide) -> (String, bool, Option<M
 }
 
 /// Row 3 of the card: learnt, in progress, the rest.
-fn progress(ui: &mut Ui, stats: Option<&RowStats>) {
-    let width = ui.available_width();
-    let (bar, _) = ui.allocate_exact_size(vec2(width, 8.0), egui::Sense::hover());
+/// «Learned 3, learning 10, 75 moves in all» and what «learned» takes.
+fn learned_hint(stats: &RowStats) -> String {
+    trf(
+        "Learned {x}, learning {z}, {y} moves in all. A move counts as learned after three correct answers in a row without a hint — usually over several days of reviews.",
+        &[
+            ("x", &stats.learnt),
+            ("z", &stats.learning),
+            ("y", &stats.total),
+        ],
+    )
+}
+
+/// The two segments: learned, then learning (paler).
+fn progress_bar(ui: &Ui, bar: egui::Rect, stats: Option<&RowStats>) {
     let painter = ui.painter();
     painter.rect_filled(bar, 2.0, ui.visuals().extreme_bg_color);
     if let Some(stats) = stats.filter(|stats| stats.total > 0) {
@@ -2470,6 +2505,12 @@ fn progress(ui: &mut Ui, stats: Option<&RowStats>) {
             fill.gamma_multiply(0.45),
         );
     }
+}
+
+fn progress(ui: &mut Ui, stats: Option<&RowStats>) {
+    let width = ui.available_width();
+    let (bar, _) = ui.allocate_exact_size(vec2(width, 8.0), egui::Sense::hover());
+    progress_bar(ui, bar, stats);
     ui.add_space(-2.0);
     ui.horizontal(|ui| {
         ui.set_height(20.0);
@@ -2482,7 +2523,10 @@ fn progress(ui: &mut Ui, stats: Option<&RowStats>) {
             if learning > 0 {
                 text = format!("{text} · {}", trf("learning {k}", &[("k", &learning)]));
             }
-            layout::line(ui, text);
+            if let Some(stats) = stats {
+                ui.add(egui::Label::new(text).truncate())
+                    .on_hover_text(learned_hint(stats));
+            }
         }
     });
 }

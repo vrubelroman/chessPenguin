@@ -2211,3 +2211,23 @@ fn a_mistake_on_the_first_move_returns_it_once_and_keeps_the_count() {
     assert_eq!((summary.unseen, summary.more_new), (0, 0));
     assert!(!summary.next_review.is_empty());
 }
+
+#[test]
+fn the_summary_shows_learning_growth_when_nothing_is_learned_yet() {
+    let mut f = Fixture::with(
+        "1. e4 e5 2. Nf3 *",
+        LearningSide::White,
+        &[],
+        &["e2e4", "g1f3"],
+        "summary-learning",
+        SessionKind::Daily,
+    );
+    for _ in 0..2 {
+        f.ui.debug_moves("answer");
+        f.ui.debug_settle();
+    }
+    assert!(f.ui.is_finished());
+    f.ui.compute_summary();
+    let summary = f.ui.summary.as_ref().unwrap();
+    assert_eq!((summary.learnt_gain, summary.learning_gain), (0, 2));
+}

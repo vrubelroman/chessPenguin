@@ -19,7 +19,7 @@ use trainer::repertoire::{
     LearningPresentation, LearningSessionError, LearningSessionPhase, LearningSessionSnapshot,
     LearningSessionTarget, LearningSide, LearningStore, Library, PersistedSessionAttempt,
     RepertoireId, SrsSettings, StatsScope, TrainingAttempt, TrainingEventType,
-    active_learning_keys, fen4,
+    active_learning_keys, aggregate_scope, fen4,
 };
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -210,6 +210,9 @@ enum State {
 /// Computed once when the result is shown.
 struct Summary {
     next_review: String,
+    /// How many more moves are learned, and learning, than when the session began.
+    learnt_gain: usize,
+    learning_gain: usize,
     /// Moves never shown yet, all of them (the «more new» button takes up to 10).
     unseen: usize,
     more_new: usize,
@@ -240,6 +243,10 @@ pub struct OpeningSessionUi {
     repertoire_answers: BTreeSet<LearningItemKey>,
     /// Active answers of the whole repertoire, for the result.
     repertoire_keys: BTreeSet<LearningItemKey>,
+    /// The whole repertoire's scope (a branch session counts the whole repertoire too).
+    whole_scope: StatsScope,
+    /// (learned, learning) when the session began: the summary shows what it changed.
+    start_progress: (usize, usize),
     /// The lines of a review, to count «line k of n».
     lines: Vec<Vec<String>>,
     line: usize,
@@ -363,6 +370,7 @@ impl OpeningSessionUi {
         } else {
             active_learning_keys(&library, &whole).map_err(|error| error.to_string())?
         };
+        let start_progress = progress_counts(&library, &learning, &whole);
         let annotation_games: BTreeMap<_, _> = session
             .stats_scope
             .repertoire_ids
@@ -407,6 +415,8 @@ impl OpeningSessionUi {
             annotation_games,
             repertoire_answers,
             repertoire_keys,
+            start_progress,
+            whole_scope: whole,
             lines,
             line: 0,
             next_line_banner: false,
@@ -1616,8 +1626,11 @@ impl OpeningSessionUi {
             Some(at) => layout::when(at.max(now), now),
             None => tr("nothing scheduled").to_owned(),
         };
+        let (learnt, learning) = progress_counts(&self.library, &self.learning, &self.whole_scope);
         self.summary = Some(Summary {
             next_review,
+            learnt_gain: learnt.saturating_sub(self.start_progress.0),
+            learning_gain: learning.saturating_sub(self.start_progress.1),
             unseen,
             more_new: unseen.min(layout::NEW_PER_SESSION),
         });
@@ -1902,6 +1915,12 @@ impl OpeningSessionUi {
                 ui.separator();
                 ui.add_space(4.0);
                 if let Some(summary) = &self.summary {
+                    // Learned takes days: what the session did shows as «learning».
+                    if summary.learnt_gain > 0 {
+                        row(ui, tr("Learned"), format!("+{}", summary.learnt_gain));
+                    } else if summary.learning_gain > 0 {
+                        row(ui, tr("Learning"), format!("+{}", summary.learning_gain));
+                    }
                     if self.kind == SessionKind::Daily && summary.unseen > 0 {
                         row(ui, tr("New moves left"), summary.unseen.to_string());
                     }
@@ -2459,3 +2478,14 @@ fn unique_id(prefix: &str) -> String {
 #[cfg(test)]
 #[path = "opening_session_tests.rs"]
 mod tests;
+
+/// (learned, learning) in a scope, by the core's statuses; zeros if it cannot be counted.
+fn progress_counts(
+    library: &Library,
+    learning: &LearningData,
+    scope: &StatsScope,
+) -> (usize, usize) {
+    aggregate_scope(library, learning, scope, &SrsSettings::default()).map_or((0, 0), |scoped| {
+        (scoped.summary.learnt, scoped.summary.learning)
+    })
+}
