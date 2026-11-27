@@ -4,6 +4,28 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-11-27
+
+- Desktop: find great moves in the filtered games of a database (up to 100). The «!! Find great moves»
+  button on the right of the conditions line asks first with a time estimate, then Stockfish 19 goes
+  through the games with «Analysed N of M» and «Stop»; games already analysed are taken from the cache.
+  The summary adds up brilliant, great, inaccuracy, mistake and blunder moves, average centipawn loss and
+  accuracy, and lists the brilliant moves; with a player in the filter only that player's moves count.
+  A new «!!» column marks games with brilliant or great moves. Games against the engine wait for the search.
+- Desktop: select several games in a database (Ctrl/Shift-click, Shift+arrows, Ctrl+A) and make a new
+  database of them («New database from selected…», Ctrl+Shift+S). The copy runs in the background with
+  progress and cancel, never overwrites a file, keeps every game as «Add to database» does and skips only
+  exact duplicates; the source database is not changed.
+- Desktop: a hint above the notation tells that arrows and circles can be drawn with the right mouse
+  button and are saved in PGN; moves with arrows or circles get a small sign in the notation.
+- Desktop: the «Analyse game» button has the colour of a brilliant move.
+- Desktop opening training: four example repertoires — Spanish and Queen's Gambit for White, Najdorf and
+  the Semi-Slav triangle for Black — with Russian comments in the Russian interface. Users who updated get
+  the missing examples once; deleted examples do not come back. The repertoire panel is wider by default,
+  names and progress are no longer cut, and side kings are drawn so White and Black read correctly on dark
+  backgrounds.
+- Desktop: Enter in «Delete the game from the database?» no longer also opens the game.
+
 ## [2.4.0] — 2026-11-27
 
 - Desktop play and opening training support multiple temporary right-button arrows and circles
