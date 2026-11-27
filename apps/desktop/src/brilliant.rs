@@ -402,12 +402,42 @@ pub struct PassEnd {
 
 /// The engine of a pass: started for each game that needs it.
 pub struct Engine {
+    #[cfg(not(web))]
     pub config: uci::EngineConfig,
     pub settings: JobSettings,
     /// Whether the engine, by the name it gives, is still the one checked.
     pub fits: Box<dyn Fn(&str) -> bool + Send + Sync>,
     /// A pause before each game (`CP_BRILLIANT_SLOW`: the progress can be photographed).
     pub pause: std::time::Duration,
+}
+
+/// The engine job over `targets` (on a computer; a browser has no pass, `CAPS`).
+#[cfg(not(web))]
+fn engine_run(
+    engine: &Engine,
+    targets: Vec<game_review::Target>,
+    cancel: &AtomicBool,
+    on_event: &mut dyn FnMut(JobEvent),
+) -> Result<(), JobFailure> {
+    game_review::run(
+        engine.config.clone(),
+        &engine.settings,
+        targets,
+        cancel,
+        on_event,
+    )
+}
+
+#[cfg(web)]
+fn engine_run(
+    _engine: &Engine,
+    _targets: Vec<game_review::Target>,
+    _cancel: &AtomicBool,
+    _on_event: &mut dyn FnMut(JobEvent),
+) -> Result<(), JobFailure> {
+    Err(JobFailure::Start(
+        crate::i18n::tr("the engine did not start").to_owned(),
+    ))
 }
 
 /// Analyses `records` of `db` in this order: each from the analysis cache in `cache`
@@ -494,24 +524,18 @@ pub fn run_pass(
             end.from_cache += 1;
         } else {
             let mut changed = false;
-            let result = game_review::run(
-                engine.config.clone(),
-                &engine.settings,
-                targets,
-                cancel,
-                &mut |e| {
-                    if changed {
-                        return;
-                    }
-                    if let JobEvent::Engine(name) = &e
-                        && !(engine.fits)(name)
-                    {
-                        changed = true;
-                        return;
-                    }
-                    analysis.apply(e);
-                },
-            );
+            let result = engine_run(engine, targets, cancel, &mut |e| {
+                if changed {
+                    return;
+                }
+                if let JobEvent::Engine(name) = &e
+                    && !(engine.fits)(name)
+                {
+                    changed = true;
+                    return;
+                }
+                analysis.apply(e);
+            });
             if changed {
                 end.outcome = Outcome::EngineFailed(
                     crate::i18n::tr("the engine is no longer the Stockfish 19 that was checked")

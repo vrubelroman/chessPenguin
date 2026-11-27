@@ -815,6 +815,9 @@ impl LargeView {
     /// «!! Find great moves»: the button, or Shift+A outside a field (a disabled button
     /// says why, also over an empty list).
     fn handle_find(&mut self, ui: &mut Ui, path: &Path, actions: &mut Vec<LibraryAction>) {
+        if !crate::platform::CAPS.great_moves {
+            return;
+        }
         let typing = ui.ctx().egui_wants_keyboard_input();
         let shift_a = !typing
             && !crate::app::overlay_open_besides(ui.ctx(), &[egui::Id::new("filters_drawer")])
@@ -1776,6 +1779,9 @@ impl LargeView {
     /// its longest form for the line's width, whatever it shows: what stands left of it
     /// never moves.
     fn right_slot(&mut self, ui: &mut Ui) {
+        if !crate::platform::CAPS.great_moves {
+            return;
+        }
         let line = ui.available_width();
         let form = if line >= 1100.0 {
             2

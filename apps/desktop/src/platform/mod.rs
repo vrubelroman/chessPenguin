@@ -53,6 +53,8 @@ pub struct Caps {
     pub reference: bool,
     /// Several chosen games copied into a new database in the background (task 42).
     pub batch_copy: bool,
+    /// The search for great moves over a database's list (task 27).
+    pub great_moves: bool,
 }
 
 /// The features of this platform.
@@ -69,6 +71,7 @@ pub const CAPS: Caps = Caps {
     download_pgn: false,
     reference: true,
     batch_copy: true,
+    great_moves: true,
 };
 
 /// The features of this platform: the light web version (`docs/decisions.md`, «Веб-версия»).
@@ -85,6 +88,7 @@ pub const CAPS: Caps = Caps {
     download_pgn: true,
     reference: false,
     batch_copy: false,
+    great_moves: false,
 };
 
 /// The program's settings (`~/.config/chesspenguin`; in a browser, its storage).

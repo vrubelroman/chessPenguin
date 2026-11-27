@@ -2041,7 +2041,18 @@ impl App {
         self.brilliant_start = Some(dialog);
     }
 
+    /// Starts the pass of `dialog` over its games not analysed yet (a browser has none:
+    /// `CAPS.great_moves`).
+    #[cfg(web)]
+    fn start_great_moves(
+        &mut self,
+        _ctx: &egui::Context,
+        _dialog: crate::brilliant_ui::StartDialog,
+    ) {
+    }
+
     /// Starts the pass of `dialog` over its games not analysed yet.
+    #[cfg(not(web))]
     fn start_great_moves(&mut self, ctx: &egui::Context, dialog: crate::brilliant_ui::StartDialog) {
         let mut dialog = dialog;
         let Some(counted) = dialog.counted.take() else {
@@ -4260,7 +4271,9 @@ impl eframe::App for App {
             self.applied_dark = Some(self.settings.dark_mode);
         }
         // The opening panel's dragged width: given to the panel, saved when dragged anew.
+        #[cfg(not(web))]
         let side_width = egui::Id::new(crate::opening_layout::SIDE_WIDTH_ID);
+        #[cfg(not(web))]
         match ctx.data(|d| d.get_temp::<f32>(side_width)) {
             None => {
                 if let Some(width) = self.settings.opening_side_width {
