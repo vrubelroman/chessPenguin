@@ -65,7 +65,9 @@ wrapper="$run_dir/wrapper.sh"
 printf '#!/usr/bin/env bash\n%q; echo $? >%q\n' "$inner" "$run_dir/status" >"$wrapper"
 chmod +x "$wrapper"
 
-hyprctl eval "hl.exec_cmd(\"$wrapper\", { workspace = \"$ws silent\" })" >/dev/null
+# Floating at the monitor's origin with the full size: parallel runs overlap instead of
+# tiling, so every window is exactly 1920x1080.
+hyprctl eval "hl.exec_cmd(\"$wrapper\", { workspace = \"$ws silent\", float = true, size = \"1920 1080\", move = \"0 0\" })" >/dev/null
 
 waited=0
 while [[ ! -s "$run_dir/status" ]]; do
