@@ -360,6 +360,49 @@ fn the_players_sides_come_from_the_filter() {
             .player
             .is_none()
     );
+    let quick_search = chess_import::chessbase::base::Filter {
+        text: "carlsen".into(),
+        ..Default::default()
+    };
+    assert!(
+        player_sides(&db, &quick_search, &AtomicBool::new(false))
+            .player
+            .is_none()
+    );
+}
+
+#[test]
+fn a_selected_game_hidden_by_another_condition_keeps_its_players_side() {
+    let dir = Dir::new("hidden-sides");
+    let (_, db) = source(&dir);
+    let filter = chess_import::chessbase::base::Filter {
+        player: chess_import::chessbase::base::NameFilter {
+            text: "carlsen".into(),
+            exact: None,
+        },
+        // None of the sample games has a year, so the filtered table is empty. The
+        // manually selected Carlsen games nevertheless retain White and Black.
+        year_from: Some(2020),
+        ..Default::default()
+    };
+    let sides = player_sides(&db, &filter, &AtomicBool::new(false));
+    assert_eq!(sides.player, Some((vec![0], vec![1])));
+    assert_eq!(sides.of(0), (true, false));
+    assert_eq!(sides.of(1), (false, true));
+    assert_eq!(sides.of(2), (false, false));
+
+    let mut white = filter.clone();
+    white.side = chess_import::chessbase::base::Side::White;
+    assert_eq!(
+        player_sides(&db, &white, &AtomicBool::new(false)).player,
+        Some((vec![0], Vec::new()))
+    );
+    let mut black = filter;
+    black.side = chess_import::chessbase::base::Side::Black;
+    assert_eq!(
+        player_sides(&db, &black, &AtomicBool::new(false)).player,
+        Some((Vec::new(), vec![1]))
+    );
 }
 
 /// White found a !! and Black a !: the row of a filter on the Black player shows !.
@@ -411,7 +454,7 @@ fn the_column_counts_only_the_filters_players_moves() {
 }
 
 #[test]
-fn the_summary_keeps_the_player_for_continue() {
+fn the_summary_keeps_the_original_snapshot_and_player_for_continue() {
     let dir = Dir::new("summary");
     let (path, db) = source(&dir);
     let filter = chess_import::chessbase::base::Filter {
@@ -424,20 +467,31 @@ fn the_summary_keeps_the_player_for_continue() {
     let sides = player_sides(&db, &filter, &AtomicBool::new(false));
     let mut index = two_sided();
     fit(&mut index, &db);
+    let mut original = vec![0, 1, 2];
+    let selected = Some(SelectedGames {
+        games: 3,
+        hidden: 1,
+    });
     // Record 0: Carlsen has White (its !!); record 1: Carlsen has Black (a !).
     let summary = crate::brilliant_ui::Summary::new(
         &path,
         &db,
         &index,
-        &[0, 1, 2],
+        &original,
         &sides,
         &filter,
         String::new(),
+        selected,
         Some((2, 3)),
         Vec::new(),
     );
+    // A later live selection has new records: neither the new record nor the changed
+    // order can enter the continuation held by this summary.
+    original.clear();
+    original.push(3);
     assert_eq!(summary.filter, filter);
     assert_eq!(summary.rest, vec![2]);
+    assert_eq!(summary.selected_games, selected);
     assert_eq!(
         (summary.totals.counts.brilliant, summary.totals.counts.great),
         (1, 1)

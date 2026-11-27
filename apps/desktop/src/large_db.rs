@@ -284,6 +284,7 @@ pub struct PassStatus {
     /// In this database (else in `name`).
     pub here: bool,
     pub name: String,
+    pub selected: Option<crate::brilliant::SelectedGames>,
     pub done: usize,
     pub total: usize,
     /// The record being analysed.
@@ -648,6 +649,17 @@ impl LargeView {
         self.view.iter().position(|&i| i as usize == record)
     }
 
+    /// The cursor cannot stay on a record hidden by a new filter. Its mark can: marked
+    /// records are a separate selection, including a single hidden record.
+    fn clear_hidden_cursor(&mut self) {
+        if self
+            .selected
+            .is_some_and(|sel| !self.view.contains(&(sel as u32)))
+        {
+            self.selected = None;
+        }
+    }
+
     /// A click on the row of `index` with `mods` (§42.5).
     fn click(&mut self, index: usize, mods: egui::Modifiers) {
         // An anchor hidden by the filter: the cursor, when it is seen, starts the range.
@@ -794,27 +806,49 @@ impl LargeView {
             })
     }
 
-    /// «!! Find great moves» (the button, Shift+A): the library asks first.
-    fn ask_search(&mut self, path: &Path, actions: &mut Vec<LibraryAction>) {
-        let about = if self.last_conditions.is_empty() {
-            tr("all games").to_owned()
+    /// «!! Find great moves» (the button, Shift+A): a choice of records takes priority
+    /// over the filtered list. Both are owned snapshots: later changes in the table do
+    /// not change the request already sent to the library.
+    fn ask_search(&mut self, path: &Path, db: &Database, actions: &mut Vec<LibraryAction>) {
+        let selected = self.selected_games();
+        let (records, about) = if selected.is_none() {
+            let about = if self.last_conditions.is_empty() {
+                tr("all games").to_owned()
+            } else {
+                trf(
+                    "matching: {list}",
+                    &[("list", &self.last_conditions.join(" · "))],
+                )
+            };
+            (self.view.clone(), about)
         } else {
-            trf(
-                "matching: {list}",
-                &[("list", &self.last_conditions.join(" · "))],
-            )
+            let mut records = self.marked.records();
+            let (sort, ascending) = if self.blocked.is_some() {
+                self.sort
+            } else {
+                self.effective_sort()
+            };
+            db.sort_records(&mut records, sort, ascending);
+            (records, String::new())
         };
         actions.push(LibraryAction::FindGreatMoves {
             path: path.to_path_buf(),
-            records: self.view.clone(),
+            records,
             filter: self.form.filter(),
             about,
+            selected,
         });
     }
 
     /// «!! Find great moves»: the button, or Shift+A outside a field (a disabled button
     /// says why, also over an empty list).
-    fn handle_find(&mut self, ui: &mut Ui, path: &Path, actions: &mut Vec<LibraryAction>) {
+    fn handle_find(
+        &mut self,
+        ui: &mut Ui,
+        path: &Path,
+        db: &Database,
+        actions: &mut Vec<LibraryAction>,
+    ) {
         if !crate::platform::CAPS.great_moves {
             return;
         }
@@ -824,14 +858,34 @@ impl LargeView {
             && ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::A));
         if std::mem::take(&mut self.find_clicked) || shift_a {
             match (self.pass.is_some(), self.search_blocked()) {
-                (false, None) => self.ask_search(path, actions),
+                (false, None) => self.ask_search(path, db, actions),
                 (false, Some(why)) => actions.push(LibraryAction::Notice(why)),
                 (true, _) => {}
             }
         }
     }
 
-    /// Why the search cannot start on the list shown, if it cannot.
+    /// How many games a search asked for now would take: the whole choice when there
+    /// is one, otherwise the filtered list.
+    fn search_len(&self) -> usize {
+        if self.marked.is_empty() {
+            self.view.len()
+        } else {
+            self.marked.len()
+        }
+    }
+
+    /// The manual source and its hidden count, captured from the finished current view.
+    fn selected_games(&mut self) -> Option<crate::brilliant::SelectedGames> {
+        if self.marked.is_empty() {
+            return None;
+        }
+        let games = self.marked.len();
+        let hidden = self.hidden_marked();
+        Some(crate::brilliant::SelectedGames { games, hidden })
+    }
+
+    /// Why the search cannot start on the choice or the list shown, if it cannot.
     fn search_blocked(&self) -> Option<String> {
         if let Some(why) = &self.engine_busy {
             return Some(why.clone());
@@ -842,13 +896,28 @@ impl LargeView {
                 &[("db", &p.name), ("i", &p.done), ("n", &p.total)],
             ));
         }
-        if self.job.is_some() || self.shown.is_none() {
-            return Some(tr("Wait: the games are still being filtered").to_owned());
+        // Overflow is known without k and takes priority over a filter still running.
+        if self.marked.len() > crate::brilliant::LIMIT {
+            return Some(selected_limit_hint(self.marked.len()));
         }
-        match crate::brilliant::can_start(self.view.len()) {
+        // A valid choice also waits: its hidden count is not known before this view.
+        if self.job.is_some() || self.shown.is_none() {
+            return Some(
+                tr(if self.marked.is_empty() {
+                    "Wait: the games are still being filtered"
+                } else {
+                    "Wait: counting how many selected games are hidden by the current filter"
+                })
+                .to_owned(),
+            );
+        }
+        match crate::brilliant::can_start(self.search_len()) {
             Ok(()) => None,
             Err(crate::brilliant::Blocked::NoGames) => {
                 Some(tr("No games match these conditions").to_owned())
+            }
+            Err(crate::brilliant::Blocked::TooMany) if !self.marked.is_empty() => {
+                Some(selected_limit_hint(self.marked.len()))
             }
             Err(crate::brilliant::Blocked::TooMany) => Some(format!(
                 "{}\n{}",
@@ -1066,18 +1135,11 @@ impl LargeView {
                 self.in_order = answer.in_order;
                 self.blocked = answer.blocked;
                 self.shown = Some(job.request);
-                // A selected game that left the list is no longer selected, so Enter
-                // cannot open a game the user does not see.
-                // A choice of several records stays: it is built from several searches,
-                // and its hidden part is counted.
-                if let Some(sel) = self.selected
-                    && new_filter
-                    && !self.view.contains(&(sel as u32))
-                {
-                    self.selected = None;
-                    if self.marked.len() <= 1 {
-                        self.mark(|m| m.clear());
-                    }
+                // A cursor that left the list is cleared, so Enter cannot open a game
+                // the user does not see. The marked record itself stays, also when it
+                // is the only one: the search and copy include hidden chosen records.
+                if new_filter {
+                    self.clear_hidden_cursor();
                 }
                 if new_filter {
                     // The user looks at the result of the new filter from its top.
@@ -1831,6 +1893,11 @@ impl LargeView {
             + pad;
         let slot = longest.max(width(button_text) + pad);
         let pass = self.pass.clone();
+        let selected = if self.job.is_none() && self.shown.is_some() {
+            self.selected_games()
+        } else {
+            None
+        };
         let blocked = self.search_blocked();
         let error = self.pass_error.clone();
         let mut find = false;
@@ -1871,11 +1938,34 @@ impl LargeView {
                                     )
                                 )
                             };
-                            ui.add(egui::Label::new(RichText::new(text).weak()).truncate())
-                                .on_hover_text(trf(
-                                    "Analysed {i} of {n} · ≈ {time} left",
-                                    &[("i", &p.done), ("n", &p.total), ("time", &left)],
+                            let mut hint = String::new();
+                            if let Some(selected) = p.selected {
+                                if selected.hidden > 0 {
+                                    hint.push_str(&trf(
+                                        "Source: selected {games}; hidden by the filter at start: {k}.",
+                                        &[
+                                            ("games", &crate::i18n::games(selected.games)),
+                                            ("k", &grouped(selected.hidden)),
+                                        ],
+                                    ));
+                                } else {
+                                    hint.push_str(&trf(
+                                        "Source: selected {games}.",
+                                        &[("games", &crate::i18n::games(selected.games))],
+                                    ));
+                                }
+                                hint.push('\n');
+                                hint.push_str(tr(
+                                    "Selection and filter changes do not change this pass.",
                                 ));
+                                hint.push('\n');
+                            }
+                            hint.push_str(&trf(
+                                "Analysed {i} of {n} · ≈ {time} left",
+                                &[("i", &p.done), ("n", &p.total), ("time", &left)],
+                            ));
+                            ui.add(egui::Label::new(RichText::new(text).weak()).truncate())
+                                .on_hover_text(hint);
                         }
                     }
                     (None, Some(e)) => {
@@ -1913,10 +2003,13 @@ impl LargeView {
                         let r = ui.add_enabled(enabled, egui::Button::new(job).small());
                         let r = match &blocked {
                             Some(why) => r.on_disabled_hover_text(why),
-                            None => r.on_hover_text(trf(
-                                "Review {games} with the engine and mark the !! and ! moves found (Shift+A)",
-                                &[("games", &crate::i18n::games(self.view.len()))],
-                            )),
+                            None => r.on_hover_text(match selected {
+                                Some(selected) => selected_search_hint(selected),
+                                None => trf(
+                                    "Review {games} with the engine and mark the !! and ! moves found (Shift+A)",
+                                    &[("games", &crate::i18n::games(self.search_len()))],
+                                ),
+                            }),
                         };
                         if r.clicked() {
                             find = true;
@@ -2722,11 +2815,11 @@ impl LargeView {
                 }
             });
             // Shift+A on an empty list still says why nothing can be searched.
-            self.handle_find(ui, path, actions);
+            self.handle_find(ui, path, db, actions);
             return open_notes;
         }
 
-        self.handle_find(ui, path, actions);
+        self.handle_find(ui, path, db, actions);
         self.update_marks_sides(db, ui.ctx());
         // `CP_MARKS_DEMO=1`: made-up marks for the first rows (screenshots of the column).
         if std::env::var_os("CP_MARKS_DEMO").is_some()
@@ -2747,7 +2840,7 @@ impl LargeView {
             let mut first = false;
             ONCE.call_once(|| first = true);
             if first {
-                self.ask_search(path, actions);
+                self.ask_search(path, db, actions);
             }
         }
         // Records the database does not have (`CP_SELECT` on a short one) are not chosen.
@@ -3776,6 +3869,36 @@ fn check_mark(ui: &mut Ui) {
         .line_segment([c + vec2(-1.0, 3.5), c + vec2(5.0, -4.0)], stroke);
 }
 
+/// The active button's explanation of a manual source, including its hidden records.
+fn selected_search_hint(selected: crate::brilliant::SelectedGames) -> String {
+    let mut hint = trf(
+        "Selected: {games}. Review them with the engine and mark !! and ! (Shift+A)",
+        &[("games", &crate::i18n::games(selected.games))],
+    );
+    hint.push('\n');
+    if selected.hidden > 0 {
+        hint.push_str(&trf(
+            "{k} hidden by the current filter; these games are included too.",
+            &[("k", &grouped(selected.hidden))],
+        ));
+    } else {
+        hint.push_str(tr("The filter does not change this run's games."));
+    }
+    hint
+}
+
+/// More than 100 selected records: never fall back to a small enough filtered list.
+fn selected_limit_hint(games: usize) -> String {
+    format!(
+        "{}\n{}",
+        trf(
+            "Selected: {games} — more than 100.",
+            &[("games", &crate::i18n::games(games))]
+        ),
+        tr("Keep no more than 100 selected; the filter is not used.")
+    )
+}
+
 /// "11 741 260": thousands separated by a narrow space.
 pub fn grouped(n: usize) -> String {
     let digits = n.to_string();
@@ -3831,6 +3954,29 @@ mod tests {
         let mut v = LargeView::new();
         v.view = (0..20).rev().collect();
         v
+    }
+
+    /// A table whose filter has finished, so its search button can be evaluated.
+    fn ready_table() -> LargeView {
+        let mut v = table();
+        let shown = v.request();
+        v.shown = Some(shown);
+        v
+    }
+
+    /// The owned request that the search button sends to the existing analysis path.
+    fn find_request(
+        v: &mut LargeView,
+        db: &Database,
+    ) -> (Vec<u32>, Option<crate::brilliant::SelectedGames>) {
+        let mut actions = Vec::new();
+        v.ask_search(Path::new("/games.pgn"), db, &mut actions);
+        match actions.pop() {
+            Some(LibraryAction::FindGreatMoves {
+                records, selected, ..
+            }) => (records, selected),
+            _ => panic!("one great-moves request"),
+        }
     }
 
     #[test]
@@ -3964,6 +4110,188 @@ mod tests {
         actions.clear();
         v.ask_copy(Path::new("/x.pgn"), &mut actions);
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn the_search_limit_follows_the_choice_independently_of_the_filter() {
+        let mut v = ready_table();
+        v.view = (0..101).collect();
+        assert!(
+            v.search_blocked()
+                .is_some_and(|s| s.contains(tr("Filter the games down to 100 or fewer")))
+        );
+
+        // One and one hundred selected games may start even when the filter has 101.
+        v.marked.only(0);
+        assert_eq!(v.search_len(), 1);
+        assert_eq!(v.search_blocked(), None);
+        v.marked.clear();
+        for r in 0..100 {
+            v.marked.insert(r);
+        }
+        assert_eq!(v.search_len(), 100);
+        assert_eq!(v.search_blocked(), None);
+        v.marked.insert(100);
+        assert!(v.search_blocked().is_some_and(|s| s.contains(tr(
+            "Keep no more than 100 selected; the filter is not used."
+        ))));
+
+        // The inverse: a small filtered list does not enable 101 selected games, and
+        // clearing that choice brings back the old filter behaviour.
+        v.clear_marks();
+        v.view = vec![0];
+        assert_eq!(v.search_blocked(), None);
+        for r in 0..101 {
+            v.marked.insert(r);
+        }
+        assert!(v.search_blocked().is_some_and(|s| s.contains(tr(
+            "Keep no more than 100 selected; the filter is not used."
+        ))));
+        v.clear_marks();
+        assert_eq!(v.search_blocked(), None);
+
+        // A selected game hidden by an empty filtered result is still a valid source.
+        v.view.clear();
+        assert!(
+            v.search_blocked()
+                .is_some_and(|s| s.contains(tr("No games match these conditions")))
+        );
+        v.marked.only(0);
+        assert_eq!(v.search_blocked(), None);
+        v.marked.clear();
+        for r in 0..100 {
+            v.marked.insert(r);
+        }
+        assert_eq!(v.search_len(), 100);
+        assert_eq!(v.search_blocked(), None);
+
+        // Until the current view is ready, k is unknown for either source. Overflow is
+        // already known and takes priority over that wait.
+        v.shown = None;
+        v.marked.insert(100);
+        assert!(v.search_blocked().is_some_and(|s| s.contains(tr(
+            "Keep no more than 100 selected; the filter is not used."
+        ))));
+        v.marked.remove(100);
+        assert!(v.search_blocked().is_some_and(|s| s.contains(tr(
+            "Wait: counting how many selected games are hidden by the current filter"
+        ))));
+        v.clear_marks();
+        assert!(
+            v.search_blocked()
+                .is_some_and(|s| s.contains(tr("Wait: the games are still being filtered")))
+        );
+    }
+
+    #[test]
+    fn the_search_request_snapshots_exactly_the_selected_ids_including_hidden_ones() {
+        let db = database("search-source", &["a", "b", "c", "d"]);
+        let mut v = ready_table();
+        v.view = vec![0, 2];
+
+        // No choice: the previous source, the filtered table, is unchanged.
+        let (filtered, selected) = find_request(&mut v, &db);
+        assert_eq!(filtered, vec![0, 2]);
+        assert_eq!(selected, None);
+
+        // Inserting the same ID twice cannot duplicate it. Records 1 and 3 are hidden
+        // by the current table, but belong to the request just like visible record 0.
+        for r in [0, 1, 3, 1] {
+            v.marked.insert(r);
+        }
+        let (snapshot, selected) = find_request(&mut v, &db);
+        assert_eq!(snapshot, vec![0, 1, 3]);
+        assert_eq!(
+            selected,
+            Some(crate::brilliant::SelectedGames {
+                games: 3,
+                hidden: 2,
+            })
+        );
+
+        // Later selection, filter and sort changes do not mutate the sent Vec. A new
+        // request after clearing the selection uses the new filtered table again.
+        v.sort = (SortKey::Date, false);
+        v.marked.only(2);
+        v.view = vec![2];
+        assert_eq!(snapshot, vec![0, 1, 3]);
+        assert_eq!(
+            selected,
+            Some(crate::brilliant::SelectedGames {
+                games: 3,
+                hidden: 2,
+            })
+        );
+        v.clear_marks();
+        let (next, _) = find_request(&mut v, &db);
+        assert_eq!(next, vec![2]);
+    }
+
+    #[test]
+    fn a_single_hidden_mark_survives_the_cursor_reset() {
+        let mut v = ready_table();
+        v.marked.only(0);
+        v.selected = Some(0);
+        v.view.clear();
+        v.clear_hidden_cursor();
+        assert_eq!(v.selected, None);
+        assert_eq!(v.marked.records(), vec![0]);
+        assert_eq!(v.search_blocked(), None);
+    }
+
+    #[test]
+    fn escape_keeps_one_selected_game_as_the_search_source() {
+        let db = database("search-escape", &["a", "b", "c"]);
+        let mut v = ready_table();
+        v.view = vec![0, 1, 2];
+        v.click(0, egui::Modifiers::NONE);
+        v.click(1, ctrl());
+        v.click(2, ctrl());
+        assert!(v.escape());
+        assert_eq!(v.marked.len(), 1);
+        let (one, _) = find_request(&mut v, &db);
+        assert_eq!(one, vec![2]);
+
+        // The existing Ctrl+Space gesture can clear that last mark; only then does the
+        // command return to the filtered table.
+        v.marked.toggle(2);
+        assert!(v.marked.is_empty());
+        let (filtered, _) = find_request(&mut v, &db);
+        assert_eq!(filtered, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn selection_hints_explain_hidden_games_and_the_independent_limit() {
+        let selected = crate::brilliant::SelectedGames {
+            games: 3,
+            hidden: 2,
+        };
+        assert_eq!(
+            selected_search_hint(selected),
+            format!(
+                "{}\n{}",
+                trf(
+                    "Selected: {games}. Review them with the engine and mark !! and ! (Shift+A)",
+                    &[("games", &crate::i18n::games(3))]
+                ),
+                trf(
+                    "{k} hidden by the current filter; these games are included too.",
+                    &[("k", &grouped(2))]
+                )
+            )
+        );
+        assert!(
+            selected_search_hint(crate::brilliant::SelectedGames {
+                games: 1,
+                hidden: 0,
+            })
+            .contains(tr("The filter does not change this run's games."))
+        );
+        let limit = selected_limit_hint(101);
+        assert!(limit.contains(&crate::i18n::games(101)));
+        assert!(limit.contains(tr(
+            "Keep no more than 100 selected; the filter is not used."
+        )));
     }
 
     #[test]

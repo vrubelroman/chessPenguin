@@ -2002,6 +2002,7 @@ impl App {
         records: Vec<u32>,
         filter: chess_import::chessbase::base::Filter,
         about: String,
+        selected: Option<crate::brilliant::SelectedGames>,
     ) {
         if self.library.pass.is_some() {
             return;
@@ -2016,7 +2017,7 @@ impl App {
         };
         let index = self.library.marks(&path);
         let mut dialog = crate::brilliant_ui::StartDialog::new(
-            ctx, path, db, records, filter, about, cache, index,
+            ctx, path, db, records, filter, about, selected, cache, index,
         );
         // `CP_BRILLIANT_RUN=1`: no question.
         if std::env::var_os("CP_BRILLIANT_RUN").is_some() {
@@ -2112,6 +2113,7 @@ impl App {
             db,
             list,
             dialog.filter.clone(),
+            dialog.selected,
             index,
             cache,
             engine,
@@ -2119,8 +2121,12 @@ impl App {
             Ok(job) => {
                 self.library.set_pass_error(&dialog.source, None);
                 self.library.pass = Some(job);
-                self.brilliant_pass =
-                    Some((dialog.filter.clone(), dialog.about.clone(), counted.skipped));
+                self.brilliant_pass = Some((
+                    dialog.filter.clone(),
+                    dialog.about.clone(),
+                    dialog.selected,
+                    counted.skipped,
+                ));
             }
             Err(e) => self.toast(ctx, e.to_string()),
         }
@@ -2135,6 +2141,7 @@ impl App {
         sides: &crate::brilliant::Sides,
         filter: &chess_import::chessbase::base::Filter,
         about: String,
+        selected: Option<crate::brilliant::SelectedGames>,
         stopped: Option<(usize, usize)>,
         skipped: Vec<(u32, crate::brilliant::Skip)>,
     ) {
@@ -2146,7 +2153,7 @@ impl App {
             return;
         };
         self.brilliant_summary = Some(crate::brilliant_ui::Summary::new(
-            source, &db, &index, records, sides, filter, about, stopped, skipped,
+            source, &db, &index, records, sides, filter, about, selected, stopped, skipped,
         ));
     }
 
@@ -2181,7 +2188,8 @@ impl App {
             && let Some((end, sides)) = job.poll()
         {
             let job = self.library.pass.take().expect("pass");
-            let (filter, about, mut skipped) = self.brilliant_pass.take().unwrap_or_default();
+            let (filter, about, selected, mut skipped) =
+                self.brilliant_pass.take().unwrap_or_default();
             skipped.extend(end.skipped.iter().copied());
             skipped.sort_unstable_by_key(|(r, _)| *r);
             skipped.dedup();
@@ -2194,6 +2202,7 @@ impl App {
                     &sides,
                     &filter,
                     about,
+                    selected,
                     None,
                     skipped,
                 ),
@@ -2206,6 +2215,7 @@ impl App {
                     &sides,
                     &filter,
                     about,
+                    selected,
                     Some((reviewed, total)),
                     skipped,
                 ),
@@ -2245,6 +2255,7 @@ impl App {
                             &c.sides,
                             &dialog.filter,
                             dialog.about.clone(),
+                            dialog.selected,
                             None,
                             c.skipped.clone(),
                         );
@@ -2258,6 +2269,7 @@ impl App {
         {
             let source = summary.source.clone();
             let summary_about = summary.about.clone();
+            let summary_selected = summary.selected_games;
             use crate::brilliant_ui::SummaryAction;
             match action {
                 SummaryAction::Close => self.brilliant_summary = None,
@@ -2268,7 +2280,7 @@ impl App {
                 SummaryAction::Continue { records, filter } => {
                     self.brilliant_summary = None;
                     let about = summary_about.clone();
-                    self.ask_great_moves(ctx, source, records, *filter, about);
+                    self.ask_great_moves(ctx, source, records, *filter, about, summary_selected);
                 }
                 SummaryAction::Open { record, ply } => {
                     self.brilliant_summary = None;
@@ -4818,7 +4830,8 @@ impl eframe::App for App {
                         records,
                         filter,
                         about,
-                    } => self.ask_great_moves(&ctx, path, records, filter, about),
+                        selected,
+                    } => self.ask_great_moves(&ctx, path, records, filter, about, selected),
                     LibraryAction::EditGameData { path, index } => {
                         self.open_game(&ctx, path, index, None);
                         self.edit_game_data();
