@@ -4,7 +4,8 @@
 //! background into a temporary file beside the new one and published only when whole.
 //! The source database is only read.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -165,15 +166,16 @@ pub struct CopyRequest {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CopyReport {
     pub copied: usize,
-    /// The same game already copied (players, date, moves of the main line).
-    pub duplicates: usize,
+    /// Record numbers (from 0) skipped as a copy of a record already copied: the same
+    /// PGN text, white space aside.
+    pub duplicates: Vec<usize>,
     /// Record numbers (from 0) that could not be read.
     pub unreadable: Vec<usize>,
 }
 
 impl CopyReport {
     pub fn skipped(&self) -> usize {
-        self.duplicates + self.unreadable.len()
+        self.duplicates.len() + self.unreadable.len()
     }
 }
 
@@ -219,18 +221,84 @@ impl Drop for Partial {
     }
 }
 
+/// The temporary file of a copy into `target`: `.<name>.part-<pid>-<random>`, the
+/// process that writes it in its name (`clean_orphans` knows from it whether its writer
+/// is gone).
 fn partial_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    target.with_file_name(format!(".{name}.part-{}", std::process::id()))
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::time::SystemTime::now().hash(&mut h);
+    std::thread::current().id().hash(&mut h);
+    target.hash(&mut h);
+    target.with_file_name(format!(
+        ".{name}{PART}{}-{:016x}",
+        std::process::id(),
+        h.finish()
+    ))
+}
+
+const PART: &str = ".part-";
+
+/// Temporary files of copies whose process is gone (a crash, a power cut), in `dirs`:
+/// removed. Only names this program gives (`.<name>.pgn.part-<pid>-<hex>`) and only when
+/// no process `<pid>` runs; anything else is left alone.
+pub fn clean_orphans(dirs: &[PathBuf]) {
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(pid) = orphan_pid(&name)
+                && pid != std::process::id()
+                && !Path::new(&format!("/proc/{pid}")).exists()
+                && entry.file_type().is_ok_and(|t| t.is_file())
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+/// The writer's process of a temporary copy file named so, if the name is one.
+fn orphan_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix('.')?;
+    let (stem, tail) = rest.rsplit_once(PART)?;
+    if !stem.to_lowercase().ends_with(".pgn") {
+        return None;
+    }
+    let (pid, hex) = tail.split_once('-')?;
+    (hex.len() == 16 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| pid.parse().ok())
+        .flatten()
+}
+
+/// A record's PGN text with every run of white space as one space: what makes two
+/// records the same for a copy (the owner's rule: tags, moves, variations, comments and
+/// NAG all equal; line breaks and spaces aside).
+fn normalized(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// 128 bits of a normalized record text: millions of copied records are told apart
+/// without keeping their texts; equal keys are compared again in full.
+fn key_of(normalized: &str) -> u128 {
+    let half = |salt: u64| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        salt.hash(&mut h);
+        normalized.hash(&mut h);
+        h.finish()
+    };
+    (u128::from(half(0x9e37_79b9_7f4a_7c15)) << 64) | u128::from(half(0x6a09_e667_f3bc_c909))
 }
 
 /// Copies the records of `req` from `db` into the new file `req.target`, in the table's
 /// order (records of equal value by number). Each record has the bytes «Add to
-/// database» would append to it; a game already copied is skipped, a record that cannot
-/// be read too. Written into a temporary file beside the target and published by a hard
+/// database» would append to it; a record whose text was already copied is skipped, a
+/// record that cannot be read too. Written into a temporary file beside the target and published by a hard
 /// link, which fails rather than replace a file of that name. `None`: cancelled, nothing
 /// is left on disk.
 pub fn copy_into_new(
@@ -262,7 +330,10 @@ pub fn copy_into_new(
             .open(&partial.path)?;
         let mut out = std::io::BufWriter::new(file);
         let mut report = CopyReport::default();
-        let mut seen = HashSet::new();
+        // Copied records by the key of their text; equal keys of different texts (all
+        // but impossible) in `more`.
+        let mut seen: HashMap<u128, u32> = HashMap::new();
+        let mut more: Vec<u32> = Vec::new();
         for (n, &record) in order.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
                 return Ok(None);
@@ -276,12 +347,30 @@ pub fn copy_into_new(
                 .and_then(|parsed| Some((parsed, record_text(db, index)?)));
             match text {
                 None => report.unreadable.push(index),
-                Some((parsed, text)) => {
-                    if seen.insert(store::same_game(&parsed.game)) {
+                Some((_, text)) => {
+                    let flat = normalized(&text);
+                    let key = key_of(&flat);
+                    let same = |other: u32| {
+                        record_text(db, other as usize).is_some_and(|t| normalized(&t) == flat)
+                    };
+                    let duplicate = match seen.get(&key) {
+                        None => {
+                            seen.insert(key, record);
+                            false
+                        }
+                        Some(&first) => {
+                            let dup = same(first) || more.iter().any(|&o| same(o));
+                            if !dup {
+                                more.push(record);
+                            }
+                            dup
+                        }
+                    };
+                    if duplicate {
+                        report.duplicates.push(index);
+                    } else {
                         out.write_all(&store::record_for_new_file(&text))?;
                         report.copied += 1;
-                    } else {
-                        report.duplicates += 1;
                     }
                 }
             }
@@ -310,7 +399,23 @@ pub fn copy_into_new(
     }
 }
 
-/// «Name: copied 3, skipped 1 — duplicates 1, unreadable 0 (No. …)».
+/// « (No. 3, 4 and 2 more)» for up to `most` record numbers, nothing for none.
+fn numbers(records: &[usize], most: usize) -> String {
+    if records.is_empty() {
+        return String::new();
+    }
+    let mut list: Vec<String> = records
+        .iter()
+        .take(most)
+        .map(|i| (i + 1).to_string())
+        .collect();
+    if records.len() > most {
+        list.push(trf("and {n} more", &[("n", &(records.len() - most))]));
+    }
+    format!(" ({})", trf("No. {list}", &[("list", &list.join(", "))]))
+}
+
+/// «Name: copied 3, skipped 1 — duplicates 1 (No. 9), unreadable 0».
 pub fn summary(name: &str, report: &CopyReport) -> String {
     if report.skipped() == 0 {
         return trf(
@@ -318,35 +423,18 @@ pub fn summary(name: &str, report: &CopyReport) -> String {
             &[("name", &name), ("n", &report.copied), ("m", &0)],
         );
     }
-    let mut numbers: Vec<String> = report
-        .unreadable
-        .iter()
-        .take(5)
-        .map(|i| (i + 1).to_string())
-        .collect();
-    if report.unreadable.len() > 5 {
-        numbers.push(trf(
-            "and {n} more",
-            &[("n", &(report.unreadable.len() - 5))],
-        ));
-    }
-    let mut text = trf(
-        "{name}: copied {n}, skipped {m} — duplicates {d}, unreadable {u}",
+    trf(
+        "{name}: copied {n}, skipped {m} — duplicates {d}{dl}, unreadable {u}{ul}",
         &[
             ("name", &name),
             ("n", &report.copied),
             ("m", &report.skipped()),
-            ("d", &report.duplicates),
+            ("d", &report.duplicates.len()),
+            ("dl", &numbers(&report.duplicates, 10)),
             ("u", &report.unreadable.len()),
+            ("ul", &numbers(&report.unreadable, 5)),
         ],
-    );
-    if !numbers.is_empty() {
-        text.push_str(&format!(
-            " ({})",
-            trf("No. {list}", &[("list", &numbers.join(", "))])
-        ));
-    }
-    text
+    )
 }
 
 #[cfg(test)]

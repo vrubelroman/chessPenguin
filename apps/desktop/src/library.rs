@@ -528,7 +528,10 @@ impl Library {
         let selected = self.selected_db.as_deref() == Some(path);
         // The conditions, the position, the sort and the selection stay (§9.7): the view
         // finds its list anew once the file is read.
-        let view = self.large.remove(path);
+        let mut view = self.large.remove(path);
+        if let (Some(v), Some(db)) = (view.as_mut(), self.database(path)) {
+            v.before_reread(&db);
+        }
         self.forget(path);
         if let Some(v) = view {
             self.large.insert(path.to_path_buf(), v);
@@ -850,6 +853,11 @@ impl Library {
             && view.escape()
         {
             ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        }
+        for view in self.large.values_mut() {
+            if let Some(text) = view.notice.take() {
+                actions.push(LibraryAction::Notice(text));
+            }
         }
         if let Some(path) = self.selected_db.clone()
             && let Some(view) = self.large.get_mut(&path)

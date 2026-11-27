@@ -332,6 +332,12 @@ pub struct LargeView {
     pub cancel_batch: bool,
     /// Why the last copy wrote nothing: said in red where its progress was, until `×`.
     pub batch_error: Option<String>,
+    /// The chosen records as the file had them before it was read again (a hash of
+    /// each one's bytes), to know they are still the same games; `None` for a choice too
+    /// large to check (it is let go when the file changes).
+    marked_before: Option<Vec<(u32, u64)>>,
+    /// Said once (a toast), taken by the library.
+    pub notice: Option<String>,
     scroll_to_selected: bool,
     scroll_to_top: bool,
     focus_player: bool,
@@ -457,6 +463,8 @@ impl LargeView {
             batch: None,
             cancel_batch: false,
             batch_error: None,
+            marked_before: None,
+            notice: None,
             scroll_to_selected: false,
             scroll_to_top: false,
             focus_player: false,
@@ -500,15 +508,37 @@ impl LargeView {
         self.cache.clear();
         self.blocked = None;
         self.books = db.books();
-        // Fewer records now (one deleted, the file changed): the numbers no longer mean
-        // the same games.
-        if self.marked.last().is_some_and(|r| r >= db.len()) {
-            self.mark_cursor_only();
-            self.selected = self.selected.filter(|&c| c < db.len());
-            if self.selected.is_none() {
-                self.mark(|m| m.clear());
+        // Several chosen: kept only if each is still the same record (a game added at
+        // the end keeps them; one deleted or put back moves the numbers). Otherwise let
+        // go, and said: the choice never moves to other games unnoticed.
+        if self.marked.len() >= 2 {
+            let same = std::mem::take(&mut self.marked_before).is_some_and(|before| {
+                before.len() == self.marked.len()
+                    && before
+                        .iter()
+                        .all(|&(r, h)| (r as usize) < db.len() && record_hash(db, r as usize) == h)
+            });
+            if !same {
+                self.clear_marks();
+                self.notice = Some(tr("Selection cleared: the database changed").to_owned());
             }
+        } else if self.marked.last().is_some_and(|r| r >= db.len()) {
+            self.mark(|m| m.clear());
         }
+        self.selected = self.selected.filter(|&c| c < db.len());
+    }
+
+    /// Before the file is read again: what the chosen records are now (up to
+    /// `CHECKED_CHOICE` of them).
+    pub fn before_reread(&mut self, db: &Database) {
+        self.marked_before =
+            (self.marked.len() >= 2 && self.marked.len() <= CHECKED_CHOICE).then(|| {
+                self.marked
+                    .records()
+                    .into_iter()
+                    .map(|r| (r, record_hash(db, r as usize)))
+                    .collect()
+            });
     }
 
     /// Selects a record and scrolls to it (returning from a game): a choice of several
@@ -2725,6 +2755,11 @@ impl LargeView {
         if typing && self.suggestions.is_some() {
             return;
         }
+        // A question or a menu over the table takes the keys (Enter there is its button,
+        // not «open the game»).
+        if crate::app::overlay_open_besides(ui.ctx(), &[egui::Id::new("filters_drawer")]) {
+            return;
+        }
         let (up, down, page_up, page_down, enter, mods) = ui.input(|i| {
             (
                 i.key_pressed(egui::Key::ArrowUp),
@@ -2849,6 +2884,17 @@ impl LargeView {
             });
         }
     }
+}
+
+/// Up to this many chosen records are checked when their file is read again; a larger
+/// choice is let go if the file changed.
+const CHECKED_CHOICE: usize = 100_000;
+
+/// A hash of the bytes of record `index`.
+fn record_hash(db: &Database, index: usize) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    db.identity(index).hash(&mut h);
+    h.finish()
 }
 
 /// The width of the far right slot of the conditions line (task 27 sets it; until
@@ -3216,6 +3262,44 @@ mod tests {
         v.click(3, ctrl());
         v.reveal(3);
         assert_eq!(v.marked.records(), vec![3, 9]);
+    }
+
+    fn database(name: &str, games: &[&str]) -> Database {
+        let path =
+            std::env::temp_dir().join(format!("cp-reread-{}-{name}.pgn", std::process::id()));
+        let text: String = games
+            .iter()
+            .map(|w| format!("[White \"{w}\"]\n[Black \"x\"]\n[Result \"*\"]\n\n1. e4 *\n\n"))
+            .collect();
+        std::fs::write(&path, text).unwrap();
+        let db = chess_import::open(
+            &path,
+            &mut |_| {},
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap()
+        .db;
+        let _ = std::fs::remove_file(&path);
+        db
+    }
+
+    #[test]
+    fn a_choice_never_moves_to_other_games_when_the_file_is_read_again() {
+        let before = database("before", &["a", "b", "c", "d"]);
+        // A game added at the end: the chosen ones are the same records.
+        let mut v = table();
+        v.click(1, egui::Modifiers::NONE);
+        v.click(2, ctrl());
+        v.before_reread(&before);
+        v.reread(&database("added", &["a", "b", "c", "d", "e"]));
+        assert_eq!(v.marked.records(), vec![1, 2]);
+        assert!(v.notice.is_none());
+        // A game put back at the start (undo of a delete): the numbers moved; let go,
+        // and said.
+        v.before_reread(&before);
+        v.reread(&database("undo", &["z", "a", "b", "c", "d"]));
+        assert!(v.marked.is_empty());
+        assert!(v.notice.is_some());
     }
 
     #[test]

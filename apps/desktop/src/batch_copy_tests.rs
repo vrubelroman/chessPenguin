@@ -88,6 +88,18 @@ const SOURCE: &str = r#"[Event "Club"]
 [Result "1-0"]
 
 1. e4 e5 2. Nf3 Nc6 1-0
+
+[Event "Club"]
+[Site "?"]
+[Date "2020.01.02"]
+[Round "1"]
+[White "Alpha"]
+[Black "Beta"]
+[Result "1-0"]
+[MyTag "kept"]
+
+{A comment at the root} 1. e4 $1 {[%cal Ge2e4]}
+e5 (1... c5 2. Nf3 (2. c3 d5 (2... Nf6 3. e5)) d6)   2. Nf3 $14 Nc6 1-0
 "#;
 
 fn request(records: &[u32], target: &Path) -> CopyRequest {
@@ -108,11 +120,13 @@ fn copy(db: &Database, req: &CopyRequest) -> Option<Result<CopyReport, CopyError
 /// appended in turn, a game already there skipped.
 fn one_by_one(db: &Database, order: &[usize], target: &Path) {
     std::fs::write(target, b"").unwrap();
+    let mut written: Vec<String> = Vec::new();
     for &i in order {
         let into = PgnDatabase::open(target, &mut |_| {}, &AtomicBool::new(false)).unwrap();
-        let game = db.load_game(i).unwrap().game;
-        if store::find_same_game(&into, &game).is_none() {
-            store::append(&into, &record_text(db, i).unwrap()).unwrap();
+        let text = record_text(db, i).unwrap();
+        if !written.contains(&normalized(&text)) {
+            store::append(&into, &text).unwrap();
+            written.push(normalized(&text));
         }
     }
 }
@@ -149,22 +163,23 @@ fn a_copy_has_the_bytes_of_adding_the_games_one_by_one() {
     let source = dir.file("source.pgn", SOURCE.as_bytes());
     let before = std::fs::read(&source).unwrap();
     let db = open(&source);
-    assert_eq!(db.len(), 4);
+    assert_eq!(db.len(), 5);
     let target = dir.0.join("copy.pgn");
-    let report = copy(&db, &request(&[3, 0, 2, 1], &target))
+    let report = copy(&db, &request(&[3, 0, 4, 2, 1], &target))
         .unwrap()
         .unwrap();
-    // Game 4 is game 1 again (names without case, the same date and moves).
+    // Record 5 is record 1 again with other line breaks: skipped; record 4 is the same
+    // game with other tags: copied.
     assert_eq!(
         report,
         CopyReport {
-            copied: 3,
-            duplicates: 1,
+            copied: 4,
+            duplicates: vec![4],
             unreadable: Vec::new()
         }
     );
     let expected = dir.0.join("expected.pgn");
-    one_by_one(&db, &[0, 1, 2, 3], &expected);
+    one_by_one(&db, &[0, 1, 2, 3, 4], &expected);
     assert_eq!(
         std::fs::read(&target).unwrap(),
         std::fs::read(&expected).unwrap()
@@ -191,6 +206,75 @@ fn a_copy_has_the_bytes_of_adding_the_games_one_by_one() {
     ] {
         assert!(text.contains(kept), "{kept}");
     }
+}
+
+/// The owner's example: in Dvoretsky's endgame manual records 719 and 728 are one game
+/// with other comments; both are copied (the user's file, read only, when it is there).
+#[test]
+fn records_with_other_comments_are_both_copied() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../pgnFilesforExample/Дворецкий. Учебник жндшпиля.pgn");
+    if !path.exists() {
+        return;
+    }
+    let db = open(&path);
+    let dir = Dir::new("dvoretsky");
+    let target = dir.0.join("copy.pgn");
+    let report = copy(&db, &request(&[718, 727], &target)).unwrap().unwrap();
+    assert_eq!((report.copied, report.duplicates.len()), (2, 0));
+    // The same record twice in a source: the second is skipped.
+    let one = record_text(&db, 718).unwrap();
+    let source = dir.file("twice.pgn", format!("{one}\n\n{one}\n").as_bytes());
+    let twice = open(&source);
+    let target = dir.0.join("twice-copy.pgn");
+    let report = copy(&twice, &request(&[0, 1], &target)).unwrap().unwrap();
+    assert_eq!((report.copied, report.duplicates), (1, vec![1]));
+}
+
+#[test]
+fn the_summary_names_the_skipped_records() {
+    let report = CopyReport {
+        copied: 5,
+        duplicates: (0..12).collect(),
+        unreadable: vec![39],
+    };
+    assert_eq!(
+        summary("Pick", &report),
+        "Pick: copied 5, skipped 13 — duplicates 12 (No. 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, and 2 more), unreadable 1 (No. 40)"
+    );
+    let clean = CopyReport {
+        copied: 3,
+        ..CopyReport::default()
+    };
+    assert_eq!(summary("Pick", &clean), "Pick: copied 3, skipped 0");
+}
+
+#[test]
+fn only_orphans_of_this_program_are_removed() {
+    let dir = Dir::new("orphans");
+    let mine_live = format!(".a.pgn.part-{}-0123456789abcdef", std::process::id());
+    // No process has a number that high on Linux (pid_max is at most 4194304).
+    let dead = ".a.pgn.part-999999999-0123456789abcdef";
+    let others = [
+        ".a.pgn.part-999999999",
+        ".a.txt.part-999999999-0123456789abcdef",
+        "a.pgn.part-999999999-0123456789abcdef",
+        ".a.pgn.part-999999999-xyz",
+    ];
+    for name in [mine_live.as_str(), dead].iter().chain(others.iter()) {
+        dir.file(name, b"x");
+    }
+    clean_orphans(std::slice::from_ref(&dir.0));
+    assert!(!dir.0.join(dead).exists());
+    assert!(dir.0.join(&mine_live).exists());
+    for name in others {
+        assert!(dir.0.join(name).exists(), "{name}");
+    }
+    // Each copy has a name of its own.
+    let target = dir.0.join("t.pgn");
+    assert_ne!(partial_path(&target), partial_path(&target));
+    let name = partial_path(&target);
+    assert!(orphan_pid(&name.file_name().unwrap().to_string_lossy()).is_some());
 }
 
 #[test]
@@ -386,4 +470,85 @@ fn timing() {
     let t = std::time::Instant::now();
     let n = s.count_in(&view);
     println!("count chosen in 4 000 000: {:?} ({n})", t.elapsed());
+}
+
+fn rss_anon_kb() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("RssAnon:"))
+                .and_then(|l| l.split_whitespace().nth(1)?.parse().ok())
+        })
+        .unwrap_or(0)
+}
+
+/// The memory a copy takes beyond the open database: the peak of `RssAnon` while it runs
+/// less the value before. `CP_PROBE_DB=<file>` and `CP_PROBE_N=<records>` (release:
+/// `cargo test --release -- --ignored --nocapture copy_memory`); without them, synthetic
+/// PGN of 1 000 000 games in a temporary folder.
+#[test]
+#[ignore]
+fn copy_memory() {
+    let dir = Dir::new("memory");
+    let (db, n) = match std::env::var("CP_PROBE_DB") {
+        Ok(path) => {
+            let n = std::env::var("CP_PROBE_N")
+                .ok()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(200_000);
+            (open(Path::new(&path)), n)
+        }
+        Err(_) => {
+            let n: usize = std::env::var("CP_PROBE_N")
+                .ok()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(1_000_000);
+            let path = dir.0.join("big.pgn");
+            let mut out = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+            for i in 0..n {
+                write!(
+                    out,
+                    "[White \"W{i}\"]\n[Black \"B{}\"]\n[Result \"*\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O *\n\n",
+                    i % 977
+                )
+                .unwrap();
+            }
+            drop(out);
+            (open(&path), n)
+        }
+    };
+    let records: Vec<u32> = (0..n.min(db.len()) as u32).collect();
+    // The database's own index for sorting is built once, by the table: not the copy's.
+    db.sort_records(&mut records.clone(), SortKey::Number, true);
+    let before = rss_anon_kb();
+    let done = std::sync::Arc::new(AtomicBool::new(false));
+    let peak = {
+        let done = done.clone();
+        std::thread::spawn(move || {
+            let mut peak = 0;
+            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                peak = peak.max(rss_anon_kb());
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            peak
+        })
+    };
+    let target = dir.0.join("copy.pgn");
+    let t = std::time::Instant::now();
+    let report = copy(&db, &request(&records, &target)).unwrap().unwrap();
+    let took = t.elapsed();
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    let peak = peak.join().unwrap();
+    println!(
+        "records {}: copied {}, duplicates {}, {:?}; RssAnon before {} KB, peak {} KB, +{} KB ({:.0} B per record)",
+        records.len(),
+        report.copied,
+        report.duplicates.len(),
+        took,
+        before,
+        peak,
+        peak.saturating_sub(before),
+        peak.saturating_sub(before) as f64 * 1024.0 / records.len().max(1) as f64
+    );
 }

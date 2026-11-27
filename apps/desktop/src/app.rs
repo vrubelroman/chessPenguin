@@ -449,6 +449,24 @@ impl App {
         // Before the samples, which are named in this language.
         crate::i18n::set_lang(settings.language);
         crate::engine_download::clean_leftovers();
+        // Temporary files of copies of chosen games left by a crash: in the folders of the
+        // databases, away from the window's thread (a network drive may be slow).
+        #[cfg(not(web))]
+        {
+            let mut dirs: Vec<PathBuf> = settings
+                .databases
+                .iter()
+                .filter_map(|p| p.parent().map(|d| d.to_path_buf()))
+                .collect();
+            dirs.push(own_db::default_base_dir(
+                settings.new_database_dir.as_deref(),
+            ));
+            dirs.sort();
+            dirs.dedup();
+            let _ = std::thread::Builder::new()
+                .name("copy-leftovers".into())
+                .spawn(move || crate::batch_copy::clean_orphans(&dirs));
+        }
         let current = env!("CARGO_PKG_VERSION");
         #[cfg(not(web))]
         let updated_from = {
