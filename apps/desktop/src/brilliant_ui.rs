@@ -26,11 +26,15 @@ pub struct Counted {
 }
 
 /// Counts what of `records` is analysed (the analysis cache in `cache`), on this thread.
+/// The index follows: a game analysed whose entry is missing or belongs to another game
+/// (one deleted or changed) gets its entry anew from the cache, a game that cannot be
+/// analysed gets «—» with the reason.
 pub fn count(
     db: &Database,
     records: &[u32],
     filter: &Filter,
     cache: &Path,
+    index: &std::sync::Mutex<Index>,
     cancel: &AtomicBool,
 ) -> Counted {
     let store = crate::review::Cache(cache.to_path_buf());
@@ -45,18 +49,33 @@ pub fn count(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
+        let set = |entry: crate::brilliant::Entry| {
+            if let Ok(mut i) = index.lock()
+                && i.get(r) != Some(&entry)
+            {
+                i.set(r, entry);
+                let _ = i.save();
+            }
+        };
         let Some(parsed) = db.load_game(r as usize) else {
             c.skipped.push((r, Skip::Unreadable));
+            set(crate::brilliant::skipped_entry(
+                String::new(),
+                Skip::Unreadable,
+            ));
             continue;
         };
+        let mut a = GameAnalysis::with_store(&parsed.game, Some(&store));
         if let Some(skip) = crate::brilliant::skip_of(&parsed.game, db.row(r as usize).chess960) {
             c.skipped.push((r, skip));
+            set(crate::brilliant::skipped_entry(a.cache_key(), skip));
             continue;
         }
-        let a = GameAnalysis::with_store(&parsed.game, Some(&store));
         let by_engine = a.has_data() && a.meta.as_ref().is_some_and(|m| m.nodes > 0);
         if by_engine && (a.stale() || a.missing() == 0) {
             c.reviewed.push(r);
+            a.refresh(&parsed.game);
+            set(crate::brilliant::entry_of(&a, &parsed.game));
         } else {
             c.left.push(r);
             c.plies_left.push(parsed.game.mainline().len());
@@ -84,6 +103,7 @@ pub enum StartOutcome {
 }
 
 impl StartDialog {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         ctx: &egui::Context,
         source: PathBuf,
@@ -92,6 +112,7 @@ impl StartDialog {
         filter: Filter,
         about: String,
         cache: PathBuf,
+        index: Arc<std::sync::Mutex<Index>>,
     ) -> StartDialog {
         let (tx, rx) = channel();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -99,7 +120,7 @@ impl StartDialog {
         let _ = std::thread::Builder::new()
             .name("brilliant-count".into())
             .spawn(move || {
-                let _ = tx.send(count(&db, &list, &f, &cache, &c));
+                let _ = tx.send(count(&db, &list, &f, &cache, &index, &c));
                 ctx.request_repaint();
             });
         StartDialog {
@@ -134,15 +155,13 @@ impl StartDialog {
             .default_width(520.0)
             .show(ctx, |ui| {
                 ui.set_width(520.0);
-                ui.label(
-                    RichText::new(format!(
-                        "{name} · {} {}",
-                        crate::i18n::games(self.records.len()),
-                        self.about
-                    ))
-                    .weak()
-                    .size(12.0),
+                let about = format!(
+                    "{name} · {} {}",
+                    crate::i18n::games(self.records.len()),
+                    self.about
                 );
+                ui.add(egui::Label::new(RichText::new(&about).weak().size(12.0)).truncate())
+                    .on_hover_text(&about);
                 ui.add_space(8.0);
                 // Two lines kept for the counts: the window does not jump when they come.
                 ui.allocate_ui(egui::vec2(520.0, 40.0), |ui| match &self.counted {
@@ -158,17 +177,19 @@ impl StartDialog {
                             crate::review::processes(),
                         );
                         ui.label(trf(
-                            "The engine will review {games}: about {time}.",
+                            "The engine will review {games} — {time}.",
                             &[
-                                ("games", &crate::i18n::games(c.left.len())),
-                                ("time", &crate::review::format_duration(secs)),
+                                ("games", &crate::i18n::games_object(c.left.len())),
+                                ("time", &crate::brilliant::format_estimate(secs)),
                             ],
                         ));
                         if !c.reviewed.is_empty() {
-                            ui.label(trf(
-                                "{k} are already reviewed: their marks come from the saved review.",
-                                &[("k", &c.reviewed.len())],
-                            ));
+                            let key = if crate::i18n::is_one(c.reviewed.len()) {
+                                "{games} is already reviewed: its marks come from the saved review."
+                            } else {
+                                "{games} are already reviewed: their marks come from the saved review."
+                            };
+                            ui.label(trf(key, &[("games", &crate::i18n::games(c.reviewed.len()))]));
                         }
                     }
                 });
@@ -270,11 +291,11 @@ impl Summary {
         stopped: Option<(usize, usize)>,
         skipped: Vec<(u32, Skip)>,
     ) -> Summary {
-        let totals = crate::brilliant::totals(index, records, sides);
+        let totals = crate::brilliant::totals(index, db, records, sides);
         let rest = records
             .iter()
             .copied()
-            .filter(|r| index.get(*r).is_none())
+            .filter(|r| crate::brilliant::current_entry(index, db, *r).is_none())
             .collect();
         let player = sides.player.as_ref().map(|(w, b)| {
             let count = |v: &Vec<u32>| {
@@ -322,9 +343,37 @@ impl Summary {
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<SummaryAction> {
         let mut out = None;
+        // `CP_SUMMARY_CONTINUE=1`, `CP_SUMMARY_OPEN=<i>`: «Continue», or the i-th move of
+        // «Games with !!» opened, once (checks without a mouse).
+        static HOOK: std::sync::Once = std::sync::Once::new();
+        let mut hook = None;
+        HOOK.call_once(|| {
+            if std::env::var_os("CP_SUMMARY_CONTINUE").is_some() && !self.rest.is_empty() {
+                hook = Some(SummaryAction::Continue {
+                    records: self.rest.clone(),
+                    filter: Box::new(self.filter.clone()),
+                });
+            } else if let Some(row) = std::env::var("CP_SUMMARY_OPEN")
+                .ok()
+                .and_then(|i| i.parse::<usize>().ok())
+                .and_then(|i| self.rows.get(i))
+            {
+                hook = Some(SummaryAction::Open {
+                    record: row.record,
+                    ply: row.found.ply,
+                });
+            }
+        });
+        if hook.is_some() {
+            return hook;
+        }
         let mut open = true;
         let t = &self.totals;
         let title = match self.stopped {
+            Some((i, n)) if crate::i18n::is_one(i) => trf(
+                "Search stopped · reviewed: {i} of {n} game",
+                &[("i", &i), ("n", &n)],
+            ),
             Some((i, n)) => trf(
                 "Search stopped · reviewed: {i} of {n}",
                 &[("i", &i), ("n", &n)],

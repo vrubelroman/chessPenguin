@@ -174,6 +174,15 @@ impl Entry {
     }
 }
 
+/// The entry of `record` if it still belongs to the game the database has there now (its
+/// main line is the one analysed): a deleted or changed game never lends its marks to
+/// the record that took its number.
+pub fn current_entry(index: &Index, db: &Database, record: u32) -> Option<Entry> {
+    let entry = index.get(record)?;
+    let game = db.load_game(record as usize)?.game;
+    (GameAnalysis::new(&game, None).cache_key() == entry.line).then(|| entry.clone())
+}
+
 /// The record of an analysis of `game`: its marks per side and its moves of note.
 pub fn entry_of(analysis: &GameAnalysis, game: &Game) -> Entry {
     let report = &analysis.report;
@@ -211,6 +220,18 @@ pub fn entry_of(analysis: &GameAnalysis, game: &Game) -> Entry {
         found,
         stale: analysis.stale(),
         skip: None,
+    }
+}
+
+/// The entry of a game that is not analysed, and why («—» in the column).
+pub fn skipped_entry(line: String, skip: Skip) -> Entry {
+    Entry {
+        line,
+        white: SideMarks::default(),
+        black: SideMarks::default(),
+        found: Vec::new(),
+        stale: false,
+        skip: Some(skip),
     }
 }
 
@@ -295,6 +316,11 @@ impl Index {
         }
     }
 
+    /// The records with an entry.
+    pub fn records(&self) -> impl Iterator<Item = u32> + '_ {
+        self.records.keys().copied()
+    }
+
     pub fn get(&self, record: u32) -> Option<&Entry> {
         self.records.get(&record)
     }
@@ -306,8 +332,8 @@ impl Index {
 
     /// Where a record goes when the table is sorted by its marks: !! first, then !,
     /// analysed without them, not analysable, not analysed.
-    pub fn rank(&self, record: u32, sides: &Sides) -> u8 {
-        match self.records.get(&record) {
+    pub fn rank(&self, record: u32, sides: &Sides, current: &dyn Fn(u32) -> bool) -> u8 {
+        match self.records.get(&record).filter(|_| current(record)) {
             None => 4,
             Some(e) if e.skip.is_some() => 3,
             Some(e) => {
@@ -495,7 +521,14 @@ pub fn run_pass(
             }
             if let Err(e) = result {
                 end.outcome = Outcome::EngineFailed(match e {
-                    JobFailure::Start(e) | JobFailure::Engine(e) => e,
+                    JobFailure::Start(e) => {
+                        eprintln!("great moves: {e}");
+                        crate::i18n::tr("the engine did not start").to_owned()
+                    }
+                    JobFailure::Engine(e) => {
+                        eprintln!("great moves: {e}");
+                        crate::i18n::tr("the engine stopped answering").to_owned()
+                    }
                     JobFailure::Terminated(r) => crate::analysis::termination_message(&r),
                 });
                 break;
@@ -569,13 +602,14 @@ pub struct Totals {
 }
 
 /// Sums the index's entries of `records` over the sides that count (`sides`).
-pub fn totals(index: &Index, records: &[u32], sides: &Sides) -> Totals {
+pub fn totals(index: &Index, db: &Database, records: &[u32], sides: &Sides) -> Totals {
     let mut t = Totals::default();
     let (mut acpl, mut acc) = (Vec::new(), Vec::new());
     for &r in records {
-        let Some(e) = index.get(r).filter(|e| e.skip.is_none()) else {
+        let Some(e) = current_entry(index, db, r).filter(|e| e.skip.is_none()) else {
             continue;
         };
+        let e = &e;
         let (white, black) = sides.of(r);
         if !white && !black {
             t.player_missing.push(r);
@@ -751,11 +785,34 @@ impl Drop for PassJob {
     }
 }
 
-/// Seconds an engine takes for games of these many plies: one search per position and a
-/// second one for some, about 0.94 s per position in one process
-/// (docs/decisions.md, «Analysis with fixed parameters»), over `processes`.
+/// Seconds per position of one engine process, with the second search of !! and !:
+/// measured, 3 games of 170 plies in 44 s in 8 processes (i7-13700KF,
+/// docs/qa/task-27-functional-2026-11-27.md).
+const SECS_PER_POSITION: f64 = 2.0;
+
+/// Seconds an engine takes for games of these many plies over `processes`: the same in
+/// the question and in the progress until three games are done.
 pub fn estimate_secs(plies: impl Iterator<Item = usize>, processes: usize) -> f64 {
-    plies.map(|p| (p + 1) as f64 * 0.94).sum::<f64>() / processes.max(1) as f64
+    plies
+        .map(|p| (p + 1) as f64 * SECS_PER_POSITION)
+        .sum::<f64>()
+        / processes.max(1) as f64
+}
+
+/// «less than a minute», «about 14 min», «about 1 h 20 min».
+pub fn format_estimate(secs: f64) -> String {
+    if secs < 60.0 {
+        return crate::i18n::tr("less than a minute").to_owned();
+    }
+    let min = (secs / 60.0).round() as u64;
+    if min < 60 {
+        crate::i18n::trf("about {n} min", &[("n", &min)])
+    } else {
+        crate::i18n::trf(
+            "about {h} h {m} min",
+            &[("h", &(min / 60)), ("m", &(min % 60))],
+        )
+    }
 }
 
 #[cfg(test)]

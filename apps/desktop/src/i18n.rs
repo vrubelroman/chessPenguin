@@ -169,6 +169,29 @@ pub fn games(n: usize) -> String {
     }
 }
 
+/// [`games`] as the object of a verb: «разберёт 1 партию» in Russian; the same as
+/// [`games`] in the other languages.
+pub fn games_object(n: usize) -> String {
+    match current() {
+        Lang::Ru if n % 10 == 1 && n % 100 != 11 => {
+            format!("{} партию", crate::large_db::grouped(n))
+        }
+        _ => games(n),
+    }
+}
+
+/// Whether `n` takes the singular in the current language (a verb or an adjective
+/// after the number: «1 партия разобрана», «21 партия разобрана», «2 партии разобраны»).
+pub fn is_one(n: usize) -> bool {
+    match current() {
+        Lang::Ru => n % 10 == 1 && n % 100 != 11,
+        Lang::Fr => n <= 1,
+        // The noun after a number stays singular, and so does what goes with it.
+        Lang::Uz | Lang::Kk => true,
+        _ => n == 1,
+    }
+}
+
 /// "1 text", "21 texts" (guiding texts of a database), with Russian plural forms
 /// ("1 текст", "3 текста", "5 текстов").
 pub fn texts(n: usize) -> String {
@@ -20655,6 +20678,127 @@ const ROWS: &[[&str; 9]] = &[
         "A pesquisa de lances notáveis começa sozinha quando a transferência terminar.",
         "Yuklab olish tugagach, ajoyib yurishlarni qidirish o‘zi boshlanadi.",
         "Жүктеу аяқталғанда тамаша жүрістерді іздеу өзі басталады.",
+    ],
+    [
+        "A game against the engine waits until the search for great moves ends.",
+        "Игра с движком подождёт, пока идёт поиск замечательных ходов.",
+        "Une partie contre le moteur attend la fin de la recherche de très bons coups.",
+        "Eine Partie gegen die Engine wartet, bis die Suche nach starken Zügen endet.",
+        "Una partida contra el motor espera a que termine la búsqueda de jugadas notables.",
+        "Una partita contro il motore attende la fine della ricerca di mosse notevoli.",
+        "Uma partida contra o motor espera pelo fim da pesquisa de lances notáveis.",
+        "Ajoyib yurishlar qidiruvi tugaguncha dvigatel bilan o‘yin kutadi.",
+        "Тамаша жүрістерді іздеу аяқталғанша қозғалтқышпен ойын күтеді.",
+    ],
+    [
+        "matching: {list}",
+        "по условиям: {list}",
+        "selon : {list}",
+        "nach: {list}",
+        "según: {list}",
+        "secondo: {list}",
+        "segundo: {list}",
+        "shartlar: {list}",
+        "шарттар: {list}",
+    ],
+    [
+        "less than a minute",
+        "меньше минуты",
+        "moins d’une minute",
+        "weniger als eine Minute",
+        "menos de un minuto",
+        "meno di un minuto",
+        "menos de um minuto",
+        "bir daqiqadan kam",
+        "бір минуттан аз",
+    ],
+    [
+        "about {n} min",
+        "примерно {n} мин",
+        "environ {n} min",
+        "etwa {n} Min.",
+        "unos {n} min",
+        "circa {n} min",
+        "cerca de {n} min",
+        "taxminan {n} daq",
+        "шамамен {n} мин",
+    ],
+    [
+        "about {h} h {m} min",
+        "примерно {h} ч {m} мин",
+        "environ {h} h {m} min",
+        "etwa {h} Std. {m} Min.",
+        "unas {h} h {m} min",
+        "circa {h} h {m} min",
+        "cerca de {h} h {m} min",
+        "taxminan {h} soat {m} daq",
+        "шамамен {h} сағ {m} мин",
+    ],
+    [
+        "the engine did not start",
+        "движок не запустился",
+        "le moteur n’a pas démarré",
+        "die Engine ist nicht gestartet",
+        "el motor no arrancó",
+        "il motore non è partito",
+        "o motor não arrancou",
+        "dvigatel ishga tushmadi",
+        "қозғалтқыш іске қосылмады",
+    ],
+    [
+        "the engine stopped answering",
+        "движок перестал отвечать",
+        "le moteur ne répond plus",
+        "die Engine antwortet nicht mehr",
+        "el motor dejó de responder",
+        "il motore ha smesso di rispondere",
+        "o motor deixou de responder",
+        "dvigatel javob bermay qo‘ydi",
+        "қозғалтқыш жауап бермей қалды",
+    ],
+    [
+        "The engine will review {games} — {time}.",
+        "Движок разберёт {games} — {time}.",
+        "Le moteur analysera {games} : {time}.",
+        "Die Engine analysiert {games}: {time}.",
+        "El motor analizará {games}: {time}.",
+        "Il motore analizzerà {games}: {time}.",
+        "O motor vai analisar {games}: {time}.",
+        "Dvigatel {games}ni tahlil qiladi — {time}.",
+        "Қозғалтқыш {games} талдайды — {time}.",
+    ],
+    [
+        "{games} is already reviewed: its marks come from the saved review.",
+        "{games} уже разобрана: её отметки возьмутся из сохранённого разбора.",
+        "{games} est déjà analysée : ses marques viennent de l’analyse enregistrée.",
+        "{games} ist bereits analysiert: ihre Markierungen kommen aus der gespeicherten Analyse.",
+        "{games} ya está analizada: sus marcas salen del análisis guardado.",
+        "{games} è già analizzata: i suoi segni vengono dall’analisi salvata.",
+        "{games} já está analisada: as suas marcas vêm da análise guardada.",
+        "{games} allaqachon tahlil qilingan: belgilari saqlangan tahlildan olinadi.",
+        "{games} талданып қойған: белгілері сақталған талдаудан алынады.",
+    ],
+    [
+        "{games} are already reviewed: their marks come from the saved review.",
+        "{games} уже разобраны: их отметки возьмутся из сохранённого разбора.",
+        "{games} sont déjà analysées : leurs marques viennent de l’analyse enregistrée.",
+        "{games} sind bereits analysiert: ihre Markierungen kommen aus der gespeicherten Analyse.",
+        "{games} ya están analizadas: sus marcas salen del análisis guardado.",
+        "{games} sono già analizzate: i loro segni vengono dall’analisi salvata.",
+        "{games} já estão analisadas: as suas marcas vêm da análise guardada.",
+        "{games} allaqachon tahlil qilingan: belgilari saqlangan tahlildan olinadi.",
+        "{games} талданып қойған: белгілері сақталған талдаудан алынады.",
+    ],
+    [
+        "Search stopped · reviewed: {i} of {n} game",
+        "Поиск остановлен · разобрана: {i} из {n}",
+        "Recherche arrêtée · analysée : {i} sur {n}",
+        "Suche angehalten · analysiert: {i} von {n}",
+        "Búsqueda detenida · analizada: {i} de {n}",
+        "Ricerca fermata · analizzata: {i} di {n}",
+        "Pesquisa parada · analisada: {i} de {n}",
+        "Qidiruv to‘xtatildi · tahlil qilindi: {n} dan {i}",
+        "Іздеу тоқтатылды · талданды: {n} ішінен {i}",
     ],
 ];
 

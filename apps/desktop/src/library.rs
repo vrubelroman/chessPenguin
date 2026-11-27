@@ -107,6 +107,8 @@ pub enum LibraryAction {
         path: PathBuf,
         records: Vec<u32>,
         filter: chess_import::chessbase::base::Filter,
+        /// The conditions in words, for the question and the summary.
+        about: String,
     },
     EditGameData {
         path: PathBuf,
@@ -1720,6 +1722,7 @@ impl Library {
             .entry(path.clone())
             .or_insert_with(|| LargeView::for_database(&db, online));
         let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
+        view.set_marks_db(&db);
         if view.marks.is_none() {
             let marks = self
                 .marks

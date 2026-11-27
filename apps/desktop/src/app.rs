@@ -308,6 +308,8 @@ pub struct App {
     brilliant_summary: Option<crate::brilliant_ui::Summary>,
     /// A pass asked for while Stockfish 19 is fetched or checked: it starts after.
     brilliant_waiting: Option<crate::brilliant_ui::StartDialog>,
+    /// The plies of the games the pass under way analyses, for its time left.
+    brilliant_plies: std::collections::HashMap<u32, usize>,
     applied_dark: Option<bool>,
     debug: DebugStartup,
 }
@@ -583,6 +585,7 @@ impl App {
             brilliant_pass: None,
             brilliant_summary: None,
             brilliant_waiting: None,
+            brilliant_plies: std::collections::HashMap::new(),
             applied_dark: None,
             debug: DebugStartup::from_env(),
         }
@@ -1998,6 +2001,7 @@ impl App {
         path: PathBuf,
         records: Vec<u32>,
         filter: chess_import::chessbase::base::Filter,
+        about: String,
     ) {
         if self.library.pass.is_some() {
             return;
@@ -2010,13 +2014,10 @@ impl App {
         else {
             return;
         };
-        let about = if filter == chess_import::chessbase::base::Filter::default() {
-            tr("all games").to_owned()
-        } else {
-            tr("matching the conditions").to_owned()
-        };
-        let mut dialog =
-            crate::brilliant_ui::StartDialog::new(ctx, path, db, records, filter, about, cache);
+        let index = self.library.marks(&path);
+        let mut dialog = crate::brilliant_ui::StartDialog::new(
+            ctx, path, db, records, filter, about, cache, index,
+        );
         // `CP_BRILLIANT_RUN=1`: no question.
         if std::env::var_os("CP_BRILLIANT_RUN").is_some() {
             let cancel = std::sync::atomic::AtomicBool::new(false);
@@ -2024,11 +2025,13 @@ impl App {
                 self.library.database(&dialog.source),
                 crate::review::cache_dir(),
             ) {
+                let index = self.library.marks(&dialog.source);
                 dialog.counted = Some(crate::brilliant_ui::count(
                     &db,
                     &dialog.records,
                     &dialog.filter,
                     &cache,
+                    &index,
                     &cancel,
                 ));
             }
@@ -2079,6 +2082,12 @@ impl App {
         // The list in the table's order: the analysed ones are taken first (at once).
         let mut list = counted.reviewed.clone();
         list.extend(&counted.left);
+        self.brilliant_plies = counted
+            .left
+            .iter()
+            .copied()
+            .zip(counted.plies_left.iter().copied())
+            .collect();
         let order: std::collections::HashMap<u32, usize> = dialog
             .records
             .iter()
@@ -2139,8 +2148,24 @@ impl App {
         if let Some(p) = self.prep.as_mut() {
             p.engine_blocked = pass_busy;
         }
-        let estimate = |rest: &[u32]| rest.len() as f64 * 60.0 / crate::review::processes() as f64;
+        let plies = &self.brilliant_plies;
+        let estimate = |rest: &[u32]| {
+            crate::brilliant::estimate_secs(
+                rest.iter().filter_map(|r| plies.get(r).copied()),
+                crate::review::processes(),
+            )
+        };
         self.library.show_pass(estimate);
+        // `CP_BRILLIANT_STOP_AFTER=<ms>`: «Stop» pressed that long after the start.
+        if let Some(ms) = std::env::var("CP_BRILLIANT_STOP_AFTER")
+            .ok()
+            .and_then(|ms| ms.parse::<u64>().ok())
+            && let Some(job) = self.library.pass.as_mut()
+            && !job.stopping
+            && job.started.elapsed() >= std::time::Duration::from_millis(ms)
+        {
+            job.stop();
+        }
         if let Some(job) = self.library.pass.as_ref()
             && let Some((end, sides)) = job.poll()
         {
@@ -2221,6 +2246,7 @@ impl App {
             && let Some(action) = summary.show(ctx)
         {
             let source = summary.source.clone();
+            let summary_about = summary.about.clone();
             use crate::brilliant_ui::SummaryAction;
             match action {
                 SummaryAction::Close => self.brilliant_summary = None,
@@ -2230,7 +2256,8 @@ impl App {
                 SummaryAction::Sort => self.library.sort_by_marks(&source),
                 SummaryAction::Continue { records, filter } => {
                     self.brilliant_summary = None;
-                    self.ask_great_moves(ctx, source, records, *filter);
+                    let about = summary_about.clone();
+                    self.ask_great_moves(ctx, source, records, *filter, about);
                 }
                 SummaryAction::Open { record, ply } => {
                     self.brilliant_summary = None;
@@ -2452,6 +2479,10 @@ impl App {
     /// Goes on with the game put aside: its record on the screen, the opponent started
     /// again with its moves, the clocks where they stopped.
     fn resume_aside(&mut self, ctx: &egui::Context) {
+        if let Some(why) = engine_game_refused(self.pass_busy()) {
+            self.toast(ctx, why);
+            return;
+        }
         let Some(aside) = self.put_aside.as_ref() else {
             return;
         };
@@ -2779,7 +2810,7 @@ impl App {
     fn start_play(&mut self, ctx: &egui::Context, start: crate::play::Start) {
         // No game against the engine while the search for great moves runs (the owner's
         // decision, task 27).
-        if let Some(why) = self.pass_busy() {
+        if let Some(why) = engine_game_refused(self.pass_busy()) {
             self.toast(ctx, why);
             return;
         }
@@ -4773,7 +4804,8 @@ impl eframe::App for App {
                         path,
                         records,
                         filter,
-                    } => self.ask_great_moves(&ctx, path, records, filter),
+                        about,
+                    } => self.ask_great_moves(&ctx, path, records, filter, about),
                     LibraryAction::EditGameData { path, index } => {
                         self.open_game(&ctx, path, index, None);
                         self.edit_game_data();
@@ -5097,6 +5129,18 @@ fn sanitize(s: &str) -> String {
         .collect::<String>()
 }
 
+/// Why a game against the engine (Maia, a rematch, the game put aside) may not start:
+/// the search for great moves has the engine (`pass`: its message while it runs).
+fn engine_game_refused(pass: Option<String>) -> Option<String> {
+    pass.map(|why| {
+        format!(
+            "{} {}",
+            tr("A game against the engine waits until the search for great moves ends."),
+            why
+        )
+    })
+}
+
 #[cfg(test)]
 mod waiting_tests {
     use super::{names_text, still_waiting};
@@ -5117,6 +5161,22 @@ mod waiting_tests {
         assert!(still_waiting(&errors, Some(8), Some(3)));
         assert!(!still_waiting(&errors, Some(7), Some(4)));
         assert!(!still_waiting(&Pending::LiveAnalysis, Some(7), Some(3)));
+    }
+
+    /// Every way to a game against the engine asks the same guard: refused while the
+    /// search for great moves runs, allowed otherwise.
+    #[test]
+    fn a_game_against_the_engine_waits_for_the_search() {
+        assert!(super::engine_game_refused(None).is_none());
+        let why = super::engine_game_refused(Some("x".into())).unwrap();
+        assert!(why.ends_with('x'));
+        let src = include_str!("app.rs");
+        for f in ["fn resume_aside(", "fn start_play("] {
+            let body = &src[src.find(f).unwrap()..];
+            let guard = body.find("engine_game_refused(self.pass_busy())").unwrap();
+            let first_return = body.find("return").unwrap();
+            assert!(guard < first_return + 40, "{f} checks the search first");
+        }
     }
 
     #[test]

@@ -359,6 +359,10 @@ pub struct LargeView {
     shown_marks: std::cell::RefCell<(u64, HashMap<u32, Option<crate::brilliant::Entry>>)>,
     /// The table sorted by the «!!» column.
     marks_sort: bool,
+    /// The database the marks are checked against (set by `table`).
+    marks_db: Option<Arc<Database>>,
+    /// The texts of the conditions of the list (for the search's question).
+    last_conditions: Vec<String>,
     /// Whose moves the «!!» column counts: the filter's player's (found in the background
     /// for that filter), else both sides'.
     marks_sides: (Option<Filter>, crate::brilliant::Sides),
@@ -503,6 +507,8 @@ impl LargeView {
             marks: None,
             shown_marks: std::cell::RefCell::new((u64::MAX, HashMap::new())),
             marks_sort: false,
+            marks_db: None,
+            last_conditions: Vec::new(),
             marks_sides: (None, Default::default()),
             sides_job: None,
             pass: None,
@@ -720,6 +726,13 @@ impl LargeView {
         }
     }
 
+    /// The database the marks are checked against.
+    pub fn set_marks_db(&mut self, db: &Arc<Database>) {
+        if !self.marks_db.as_ref().is_some_and(|d| Arc::ptr_eq(d, db)) {
+            self.marks_db = Some(db.clone());
+        }
+    }
+
     /// The table sorted by its «!!» column (the summary's «Sort»).
     pub fn sort_marks_on(&mut self) {
         self.marks_sort = true;
@@ -735,7 +748,17 @@ impl LargeView {
             return;
         };
         let sides = &self.marks_sides.1;
-        self.view.sort_by_key(|&r| (index.rank(r, sides), r));
+        // Only the entries of the games the database has there now (a deleted game's
+        // marks are not its successor's).
+        let current: std::collections::HashSet<u32> = match &self.marks_db {
+            Some(db) => index
+                .records()
+                .filter(|&r| crate::brilliant::current_entry(&index, db, r).is_some())
+                .collect(),
+            None => std::collections::HashSet::new(),
+        };
+        self.view
+            .sort_by_key(|&r| (index.rank(r, sides, &|r| current.contains(&r)), r));
         self.view_gen += 1;
     }
 
@@ -773,11 +796,36 @@ impl LargeView {
 
     /// «!! Find great moves» (the button, Shift+A): the library asks first.
     fn ask_search(&mut self, path: &Path, actions: &mut Vec<LibraryAction>) {
+        let about = if self.last_conditions.is_empty() {
+            tr("all games").to_owned()
+        } else {
+            trf(
+                "matching: {list}",
+                &[("list", &self.last_conditions.join(" · "))],
+            )
+        };
         actions.push(LibraryAction::FindGreatMoves {
             path: path.to_path_buf(),
             records: self.view.clone(),
             filter: self.form.filter(),
+            about,
         });
+    }
+
+    /// «!! Find great moves»: the button, or Shift+A outside a field (a disabled button
+    /// says why, also over an empty list).
+    fn handle_find(&mut self, ui: &mut Ui, path: &Path, actions: &mut Vec<LibraryAction>) {
+        let typing = ui.ctx().egui_wants_keyboard_input();
+        let shift_a = !typing
+            && !crate::app::overlay_open_besides(ui.ctx(), &[egui::Id::new("filters_drawer")])
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::A));
+        if std::mem::take(&mut self.find_clicked) || shift_a {
+            match (self.pass.is_some(), self.search_blocked()) {
+                (false, None) => self.ask_search(path, actions),
+                (false, Some(why)) => actions.push(LibraryAction::Notice(why)),
+                (true, _) => {}
+            }
+        }
     }
 
     /// Why the search cannot start on the list shown, if it cannot.
@@ -1551,6 +1599,7 @@ impl LargeView {
     /// many games reached the position in the board's move order.
     fn chips(&mut self, ui: &mut Ui, settings: &Settings) {
         let conditions = self.conditions(settings);
+        self.last_conditions = conditions.iter().map(|c| c.text.clone()).collect();
         let mut clear = None;
         let mut goto = None;
         let mut toggle_order = false;
@@ -2668,19 +2717,7 @@ impl LargeView {
             return open_notes;
         }
 
-        // «!! Find great moves»: the button, or Shift+A outside a field (a disabled button
-        // says why).
-        let typing = ui.ctx().egui_wants_keyboard_input();
-        let shift_a = !typing
-            && !crate::app::overlay_open_besides(ui.ctx(), &[egui::Id::new("filters_drawer")])
-            && ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::A));
-        if std::mem::take(&mut self.find_clicked) || shift_a {
-            match (self.pass.is_some(), self.search_blocked()) {
-                (false, None) => self.ask_search(path, actions),
-                (false, Some(why)) => actions.push(LibraryAction::Notice(why)),
-                (true, _) => {}
-            }
-        }
+        self.handle_find(ui, path, actions);
         self.update_marks_sides(db, ui.ctx());
         // `CP_MARKS_DEMO=1`: made-up marks for the first rows (screenshots of the column).
         if std::env::var_os("CP_MARKS_DEMO").is_some()

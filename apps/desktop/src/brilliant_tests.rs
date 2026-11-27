@@ -222,6 +222,17 @@ fn a_broken_index_is_an_empty_one() {
     assert_eq!(Index::load(dir.0.join("none.json")).len(), 0);
 }
 
+/// The entries of `index` made the database's own: their main lines are those of its
+/// games (as a pass writes them).
+fn fit(index: &mut Index, db: &Database) {
+    let records: Vec<u32> = index.records().collect();
+    for r in records {
+        let mut e = index.get(r).unwrap().clone();
+        e.line = GameAnalysis::new(&db.load_game(r as usize).unwrap().game, None).cache_key();
+        index.set(r, e);
+    }
+}
+
 fn side(brilliant: u32, great: u32, blunders: u32, acpl: u32, accuracy: f64) -> SideMarks {
     SideMarks {
         counts: Counts {
@@ -282,7 +293,10 @@ fn totals_count_only_the_filters_players_moves() {
             ..entry(SideMarks::default(), SideMarks::default(), Vec::new())
         },
     );
-    let all = totals(&index, &[0, 1, 2], &Sides::default());
+    let dir = Dir::new("totals");
+    let (_, db) = source(&dir);
+    fit(&mut index, &db);
+    let all = totals(&index, &db, &[0, 1, 2], &Sides::default());
     assert_eq!(
         (all.games, all.sides, all.with_brilliant, all.with_great),
         (2, 4, 2, 2)
@@ -303,7 +317,7 @@ fn totals_count_only_the_filters_players_moves() {
     let player = Sides {
         player: Some((vec![0], vec![1])),
     };
-    let t = totals(&index, &[0, 1, 2], &player);
+    let t = totals(&index, &db, &[0, 1, 2], &player);
     assert_eq!(
         (t.games, t.sides, t.with_brilliant, t.with_great),
         (2, 2, 2, 1)
@@ -322,7 +336,10 @@ fn totals_count_only_the_filters_players_moves() {
     let nobody = Sides {
         player: Some((Vec::new(), Vec::new())),
     };
-    assert_eq!(totals(&index, &[0, 1], &nobody).player_missing, vec![0, 1]);
+    assert_eq!(
+        totals(&index, &db, &[0, 1], &nobody).player_missing,
+        vec![0, 1]
+    );
 }
 
 #[test]
@@ -375,14 +392,15 @@ fn two_sided() -> Index {
 #[test]
 fn the_column_counts_only_the_filters_players_moves() {
     let index = two_sided();
+    let any = |_| true;
     let both = Sides::default();
     let black = Sides {
         player: Some((Vec::new(), vec![0])),
     };
-    assert_eq!(index.rank(0, &both), 0);
-    assert_eq!(index.rank(0, &black), 1);
+    assert_eq!(index.rank(0, &both, &any), 0);
+    assert_eq!(index.rank(0, &black, &any), 1);
     // A game where the player is on neither side has nothing of his.
-    assert_eq!(index.rank(1, &black), 2);
+    assert_eq!(index.rank(1, &black, &any), 2);
     let e = index.get(0).unwrap().for_sides(false, true);
     assert_eq!(e.of_sides(true, true).brilliant, 0);
     assert_eq!(e.of_sides(true, true).great, 1);
@@ -404,7 +422,8 @@ fn the_summary_keeps_the_player_for_continue() {
         ..Default::default()
     };
     let sides = player_sides(&db, &filter, &AtomicBool::new(false));
-    let index = two_sided();
+    let mut index = two_sided();
+    fit(&mut index, &db);
     // Record 0: Carlsen has White (its !!); record 1: Carlsen has Black (a !).
     let summary = crate::brilliant_ui::Summary::new(
         &path,
@@ -426,4 +445,119 @@ fn the_summary_keeps_the_player_for_continue() {
     assert_eq!(summary.totals.counts.blunders, 2);
     assert_eq!(summary.player, Some(("carlsen".to_owned(), 1, 1)));
     assert_eq!(summary.rows.len(), 1);
+}
+
+const FIVE: &str = "[White \"A\"]\n[Black \"B\"]\n[Result \"*\"]\n\n1. e4 e5 *\n\n\
+[White \"C\"]\n[Black \"D\"]\n[Result \"*\"]\n\n1. d4 d5 *\n\n\
+[White \"E\"]\n[Black \"F\"]\n[Result \"*\"]\n\n1. c4 e5 *\n\n\
+[White \"G\"]\n[Black \"H\"]\n[Result \"*\"]\n\n1. Nf3 d5 *\n\n\
+[White \"I\"]\n[Black \"J\"]\n[Result \"*\"]\n\n1. g3 g6 *\n";
+
+/// A game deleted (the 2nd of 5): the records after it take other numbers, and none of
+/// them lends another game's marks — not in the summary, not in the sort; asked again,
+/// the entries are made anew from the cache.
+#[test]
+fn a_deleted_game_never_lends_its_marks() {
+    let dir = Dir::new("deleted");
+    let path = dir.0.join("five.pgn");
+    std::fs::write(&path, FIVE).unwrap();
+    let open = |p: &Path| {
+        chess_import::open(p, &mut |_| {}, &AtomicBool::new(false))
+            .unwrap()
+            .db
+    };
+    let db = open(&path);
+    let file = dir.0.join("marks.json");
+    let index = Mutex::new(Index::load(file.clone()));
+    pass(&db, &[0, 1, 2, 3, 4], &index, &dir, &engine_at(&fake()));
+    // Each game marked: a !! of its own, told apart by its number.
+    {
+        let mut i = index.lock().unwrap();
+        for r in 0..5u32 {
+            let mut e = i.get(r).unwrap().clone();
+            e.white.counts.brilliant = 1;
+            e.found = vec![found(0, true, r + 1, "x", true)];
+            i.set(r, e);
+        }
+        i.save().unwrap();
+    }
+    let without_second: String = FIVE
+        .split("\n\n[")
+        .enumerate()
+        .filter(|(i, _)| *i != 1)
+        .map(|(i, g)| {
+            if i == 0 {
+                g.to_owned()
+            } else {
+                format!("[{g}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    std::fs::write(&path, without_second).unwrap();
+    let db = open(&path);
+    assert_eq!(db.len(), 4);
+    let i = index.lock().unwrap();
+    let t = totals(&i, &db, &[0, 1, 2, 3], &Sides::default());
+    assert_eq!(t.games, 1);
+    assert_eq!(
+        t.brilliant
+            .iter()
+            .map(|(_, f)| f.number)
+            .collect::<Vec<_>>(),
+        [1]
+    );
+    assert!(current_entry(&i, &db, 1).is_none());
+    assert_eq!(
+        i.rank(1, &Sides::default(), &|r| current_entry(&i, &db, r)
+            .is_some()),
+        4
+    );
+    drop(i);
+    // «Find» again: counted from the cache, the entries are the games' own again.
+    let cache = dir.cache();
+    let c = crate::brilliant_ui::count(
+        &db,
+        &[0, 1, 2, 3],
+        &Default::default(),
+        &cache,
+        &index,
+        &AtomicBool::new(false),
+    );
+    assert_eq!(c.reviewed, vec![0, 1, 2, 3]);
+    let i = index.lock().unwrap();
+    assert_eq!(totals(&i, &db, &[0, 1, 2, 3], &Sides::default()).games, 4);
+}
+
+/// Games that cannot be analysed get «—» with the reason in the index.
+#[test]
+fn games_not_analysable_get_their_reason() {
+    let dir = Dir::new("skips");
+    let (_, db) = source(&dir);
+    let index = Mutex::new(Index::load(dir.0.join("marks.json")));
+    let c = crate::brilliant_ui::count(
+        &db,
+        &[2, 3],
+        &Default::default(),
+        &dir.cache(),
+        &index,
+        &AtomicBool::new(false),
+    );
+    assert_eq!(c.skipped, vec![(2, Skip::NullMove), (3, Skip::NoMoves)]);
+    let i = index.lock().unwrap();
+    assert_eq!(
+        current_entry(&i, &db, 2).unwrap().skip,
+        Some(Skip::NullMove)
+    );
+    assert_eq!(i.get(3).unwrap().skip, Some(Skip::NoMoves));
+}
+
+#[test]
+fn estimates_are_said_plainly() {
+    assert_eq!(format_estimate(30.0), "less than a minute");
+    assert_eq!(format_estimate(14.0 * 60.0), "about 14 min");
+    assert_eq!(format_estimate(80.0 * 60.0), "about 1 h 20 min");
+    // The tester's measure: 3 games of 170 plies in 8 processes, 44 s.
+    let secs = estimate_secs([56, 57, 57].into_iter(), 8);
+    assert!((40.0..48.0).contains(&secs), "{secs}");
 }
