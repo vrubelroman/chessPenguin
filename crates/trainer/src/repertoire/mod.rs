@@ -12,7 +12,6 @@ mod learning_session;
 mod line_analytics;
 mod model;
 mod scope;
-mod session;
 mod srs;
 mod stats;
 mod store;
@@ -51,10 +50,6 @@ pub use model::{
     Repertoire, RepertoireError, RepertoireId,
 };
 pub use scope::{TrainingScope, TrainingScopeKey};
-pub use session::{
-    FirstMoveChooser, MoveChooser, PlayedMove, PreparedNextPath, SessionAttempt, SessionError,
-    TrainingSession, TrainingVerdict,
-};
 pub use srs::{
     DEFAULT_GROWTH_FACTOR, FIRST_CORRECT_DELAY_SECONDS, MIN_PRACTICAL_INTERVAL_SECONDS,
     MISTAKE_DELAY_SECONDS, PREVIEW_DELAY_SECONDS, SRS_MAX_INTERVAL_SECONDS, SrsSettings,
@@ -62,16 +57,15 @@ pub use srs::{
     apply_independent_correct, apply_independent_wrong, apply_preview,
 };
 pub use stats::{
-    AttemptRecord, INITIAL_INTERVAL_SECONDS, INTRODUCTION_BATCH_SIZE, MAX_INTERVAL_SECONDS,
-    MISTAKE_INTERVAL_SECONDS, MoveKey, MoveStats, PathKey, PathStats, QueueMode, RunRecord,
-    RunStats, STATS_VERSION, SrsPolicy, StatsData, TrainingMode,
+    AttemptRecord, MoveKey, MoveStats, PathKey, PathStats, QueueMode, RunRecord, RunStats,
+    STATS_VERSION, StatsData, TrainingMode,
 };
 pub use store::{
     LEARNING_STORE_VERSION, LearningSession, LearningStore, LearningStoreData, LibraryStore,
     MigrationReport, PersistedAttempt, PersistedLearningReset, PersistedLearningSnapshot,
     PersistedSessionAttempt, StatsStore, StoreError,
 };
-pub use tree::{Candidate, RepertoireTree, TrainingPath, TrainingTarget, fen4};
+pub use tree::{Candidate, RepertoireTree, fen4};
 
 #[cfg(test)]
 mod acceptance_tests;
