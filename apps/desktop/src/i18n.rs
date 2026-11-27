@@ -20634,6 +20634,28 @@ const ROWS: &[[&str; 9]] = &[
         "Partiyani ochish",
         "Партияны ашу",
     ],
+    [
+        "Stockfish installed — the search for great moves started",
+        "Stockfish установлен — поиск замечательных ходов начат",
+        "Stockfish installé — la recherche de très bons coups a commencé",
+        "Stockfish installiert — die Suche nach starken Zügen läuft",
+        "Stockfish instalado: la búsqueda de jugadas notables ha empezado",
+        "Stockfish installato — la ricerca di mosse notevoli è iniziata",
+        "Stockfish instalado — a pesquisa de lances notáveis começou",
+        "Stockfish o‘rnatildi — ajoyib yurishlarni qidirish boshlandi",
+        "Stockfish орнатылды — тамаша жүрістерді іздеу басталды",
+    ],
+    [
+        "The search for great moves will start by itself when the download finishes.",
+        "Поиск замечательных ходов начнётся сам, когда загрузка закончится.",
+        "La recherche de très bons coups commencera d’elle-même à la fin du téléchargement.",
+        "Die Suche nach starken Zügen beginnt von selbst, wenn der Download fertig ist.",
+        "La búsqueda de jugadas notables empezará sola cuando termine la descarga.",
+        "La ricerca di mosse notevoli partirà da sola al termine del download.",
+        "A pesquisa de lances notáveis começa sozinha quando a transferência terminar.",
+        "Yuklab olish tugagach, ajoyib yurishlarni qidirish o‘zi boshlanadi.",
+        "Жүктеу аяқталғанда тамаша жүрістерді іздеу өзі басталады.",
+    ],
 ];
 
 #[cfg(test)]

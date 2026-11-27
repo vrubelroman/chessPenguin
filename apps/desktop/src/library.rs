@@ -94,6 +94,13 @@ pub enum LibraryAction {
     },
     /// A short message (a toast).
     Notice(String),
+    /// Open a game at the position `at` with its report shown (a move the search for
+    /// great moves found).
+    OpenGameReport {
+        path: PathBuf,
+        index: usize,
+        at: Option<shakmaty::Chess>,
+    },
     /// «!! Find great moves» over the list `records` of `path` (in the table's order),
     /// found by `filter` (task 27).
     FindGreatMoves {

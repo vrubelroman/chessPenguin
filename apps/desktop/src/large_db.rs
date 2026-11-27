@@ -359,6 +359,10 @@ pub struct LargeView {
     shown_marks: std::cell::RefCell<(u64, HashMap<u32, Option<crate::brilliant::Entry>>)>,
     /// The table sorted by the «!!» column.
     marks_sort: bool,
+    /// Whose moves the «!!» column counts: the filter's player's (found in the background
+    /// for that filter), else both sides'.
+    marks_sides: (Option<Filter>, crate::brilliant::Sides),
+    sides_job: Option<(Filter, Receiver<crate::brilliant::Sides>)>,
     /// The search under way (here or in another database), set by the library.
     pub pass: Option<PassStatus>,
     /// Why the search cannot start now (the engine is busy), set by the app.
@@ -499,6 +503,8 @@ impl LargeView {
             marks: None,
             shown_marks: std::cell::RefCell::new((u64::MAX, HashMap::new())),
             marks_sort: false,
+            marks_sides: (None, Default::default()),
+            sides_job: None,
             pass: None,
             engine_busy: None,
             pass_error: None,
@@ -671,6 +677,49 @@ impl LargeView {
         self.selected = Some(index);
     }
 
+    /// The filter's player's sides of each record, for the «!!» column: found again in
+    /// the background when the filter changes; both sides without a player.
+    fn update_marks_sides(&mut self, db: &Arc<Database>, ctx: &egui::Context) {
+        let filter = self.form.filter();
+        if let Some((f, rx)) = &self.sides_job
+            && let Ok(sides) = rx.try_recv()
+        {
+            self.marks_sides = (Some(f.clone()), sides);
+            self.sides_job = None;
+            self.shown_marks.borrow_mut().1.clear();
+            if self.marks_sort {
+                self.sort_by_marks();
+            }
+        }
+        let wanted = self.marks_sides.0.as_ref() == Some(&filter)
+            || self.sides_job.as_ref().is_some_and(|(f, _)| *f == filter);
+        if wanted {
+            return;
+        }
+        if !filter.player.is_set() {
+            self.marks_sides = (Some(filter), Default::default());
+            self.sides_job = None;
+            self.shown_marks.borrow_mut().1.clear();
+            return;
+        }
+        let (tx, rx) = channel();
+        let (db, f, ctx) = (db.clone(), filter.clone(), ctx.clone());
+        let spawned = std::thread::Builder::new()
+            .name("marks-sides".into())
+            .spawn(move || {
+                let sides = crate::brilliant::player_sides(
+                    &db,
+                    &f,
+                    &std::sync::atomic::AtomicBool::new(false),
+                );
+                let _ = tx.send(sides);
+                ctx.request_repaint();
+            });
+        if spawned.is_ok() {
+            self.sides_job = Some((filter, rx));
+        }
+    }
+
     /// The table sorted by its «!!» column (the summary's «Sort»).
     pub fn sort_marks_on(&mut self) {
         self.marks_sort = true;
@@ -685,7 +734,8 @@ impl LargeView {
         let Ok(index) = index.lock() else {
             return;
         };
-        self.view.sort_by_key(|&r| (index.rank(r), r));
+        let sides = &self.marks_sides.1;
+        self.view.sort_by_key(|&r| (index.rank(r, sides), r));
         self.view_gen += 1;
     }
 
@@ -694,6 +744,7 @@ impl LargeView {
     fn shown_mark(
         marks: &Option<Arc<std::sync::Mutex<crate::brilliant::Index>>>,
         shown: &std::cell::RefCell<(u64, HashMap<u32, Option<crate::brilliant::Entry>>)>,
+        sides: &crate::brilliant::Sides,
         db: &Database,
         record: u32,
     ) -> Option<crate::brilliant::Entry> {
@@ -714,6 +765,10 @@ impl LargeView {
                 (entry.line == line).then_some(entry)
             })
             .clone()
+            .map(|e| {
+                let (w, b) = sides.of(record);
+                e.for_sides(w, b)
+            })
     }
 
     /// «!! Find great moves» (the button, Shift+A): the library asks first.
@@ -2626,6 +2681,7 @@ impl LargeView {
                 (true, _) => {}
             }
         }
+        self.update_marks_sides(db, ui.ctx());
         // `CP_MARKS_DEMO=1`: made-up marks for the first rows (screenshots of the column).
         if std::env::var_os("CP_MARKS_DEMO").is_some()
             && self.shown.is_some()
@@ -2777,7 +2833,8 @@ impl LargeView {
             .as_ref()
             .filter(|p| p.here)
             .and_then(|p| p.current);
-        let (marks_ref, shown_ref) = (&self.marks, &self.shown_marks);
+        let (marks_ref, shown_ref, sides_ref) =
+            (&self.marks, &self.shown_marks, &self.marks_sides.1);
         let view = &self.view;
         let selected = self.selected;
         let marked = &self.marked;
@@ -2887,7 +2944,7 @@ impl LargeView {
                                 (_, Some(SortKey::BlackElo)) => RichText::new(elo(r.black_elo)),
                                 (_, Some(SortKey::Result)) => RichText::new(result),
                                 ("!!", None) => {
-                                    marks_cell(ui, Self::shown_mark(marks_ref, shown_ref, db, index as u32), pass_current == Some(index as u32), is_marked);
+                                    marks_cell(ui, Self::shown_mark(marks_ref, shown_ref, sides_ref, db, index as u32), pass_current == Some(index as u32), is_marked);
                                     return;
                                 }
                                 (_, Some(SortKey::Moves)) => RichText::new(match r.moves {
@@ -2957,7 +3014,7 @@ impl LargeView {
                             ui.close();
                         }
                         // The first !! (else !) the search found: the game at it.
-                        if let Some(f) = Self::shown_mark(marks_ref, shown_ref, db, index as u32)
+                        if let Some(f) = Self::shown_mark(marks_ref, shown_ref, sides_ref, db, index as u32)
                             .and_then(|e| {
                                 let first = e.found.iter().find(|f| f.brilliant).or(e.found.first());
                                 first.cloned()
@@ -2970,7 +3027,7 @@ impl LargeView {
                                 let node = *p.game.mainline().get(f.ply as usize)?;
                                 Some(p.game.node(node)?.position().clone())
                             });
-                            actions.push(LibraryAction::OpenGame {
+                            actions.push(LibraryAction::OpenGameReport {
                                 path: path.to_path_buf(),
                                 index,
                                 at,

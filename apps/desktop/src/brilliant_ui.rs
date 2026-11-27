@@ -235,6 +235,8 @@ pub struct Summary {
     pub skipped: Vec<(u32, Skip)>,
     pub rows: Vec<BrilliantRow>,
     pub selected: Option<usize>,
+    /// The pass's filter: «Continue» goes on with it (its player's moves only).
+    pub filter: Filter,
 }
 
 pub enum SummaryAction {
@@ -245,7 +247,10 @@ pub enum SummaryAction {
         record: u32,
         ply: u16,
     },
-    Continue(Vec<u32>),
+    Continue {
+        records: Vec<u32>,
+        filter: Box<Filter>,
+    },
     /// Sort the table by the «!!» column.
     Sort,
     Close,
@@ -311,6 +316,7 @@ impl Summary {
             skipped,
             rows,
             selected: None,
+            filter: filter.clone(),
         }
     }
 
@@ -603,7 +609,10 @@ impl Summary {
                         && !self.rest.is_empty()
                         && ui.button(tr("Continue")).clicked()
                     {
-                        out = Some(SummaryAction::Continue(self.rest.clone()));
+                        out = Some(SummaryAction::Continue {
+                            records: self.rest.clone(),
+                            filter: Box::new(self.filter.clone()),
+                        });
                     }
                 });
             });

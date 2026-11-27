@@ -5576,6 +5576,15 @@ fn paste_line_full(line: &[(u32, Color, String)]) -> String {
         .join(" ")
 }
 
+impl GameView {
+    /// The report tab and the graph shown (a game opened at a move the search for great
+    /// moves found).
+    pub fn show_report(&mut self) {
+        self.review.visible = true;
+        self.side_tab = SideTab::Report;
+    }
+}
+
 /// «📈 Analyse game» in the colour of «!!» (task 26): the report it makes marks its finds
 /// with it. Hover and press stay visible (egui's own states, shaded); a disabled button
 /// keeps the usual look.

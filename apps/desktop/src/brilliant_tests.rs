@@ -344,3 +344,86 @@ fn the_players_sides_come_from_the_filter() {
             .is_none()
     );
 }
+
+/// White found a !! and Black a !: the row of a filter on the Black player shows !.
+fn two_sided() -> Index {
+    let mut index = Index::default();
+    index.set(
+        0,
+        Entry {
+            line: String::new(),
+            white: side(1, 0, 0, 10, 95.0),
+            black: side(0, 1, 2, 40, 70.0),
+            found: vec![
+                found(20, true, 11, "Rxf7", true),
+                found(23, false, 12, "Nd5", false),
+            ],
+            stale: false,
+            skip: None,
+        },
+    );
+    index.set(
+        1,
+        Entry {
+            found: Vec::new(),
+            ..index.get(0).unwrap().clone()
+        },
+    );
+    index
+}
+
+#[test]
+fn the_column_counts_only_the_filters_players_moves() {
+    let index = two_sided();
+    let both = Sides::default();
+    let black = Sides {
+        player: Some((Vec::new(), vec![0])),
+    };
+    assert_eq!(index.rank(0, &both), 0);
+    assert_eq!(index.rank(0, &black), 1);
+    // A game where the player is on neither side has nothing of his.
+    assert_eq!(index.rank(1, &black), 2);
+    let e = index.get(0).unwrap().for_sides(false, true);
+    assert_eq!(e.of_sides(true, true).brilliant, 0);
+    assert_eq!(e.of_sides(true, true).great, 1);
+    assert_eq!(
+        e.found.iter().map(Found::label).collect::<Vec<_>>(),
+        ["12…Nd5!"]
+    );
+}
+
+#[test]
+fn the_summary_keeps_the_player_for_continue() {
+    let dir = Dir::new("summary");
+    let (path, db) = source(&dir);
+    let filter = chess_import::chessbase::base::Filter {
+        player: chess_import::chessbase::base::NameFilter {
+            text: "carlsen".into(),
+            exact: None,
+        },
+        ..Default::default()
+    };
+    let sides = player_sides(&db, &filter, &AtomicBool::new(false));
+    let index = two_sided();
+    // Record 0: Carlsen has White (its !!); record 1: Carlsen has Black (a !).
+    let summary = crate::brilliant_ui::Summary::new(
+        &path,
+        &db,
+        &index,
+        &[0, 1, 2],
+        &sides,
+        &filter,
+        String::new(),
+        Some((2, 3)),
+        Vec::new(),
+    );
+    assert_eq!(summary.filter, filter);
+    assert_eq!(summary.rest, vec![2]);
+    assert_eq!(
+        (summary.totals.counts.brilliant, summary.totals.counts.great),
+        (1, 1)
+    );
+    assert_eq!(summary.totals.counts.blunders, 2);
+    assert_eq!(summary.player, Some(("carlsen".to_owned(), 1, 1)));
+    assert_eq!(summary.rows.len(), 1);
+}

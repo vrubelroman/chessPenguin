@@ -306,6 +306,8 @@ pub struct App {
     brilliant_start: Option<crate::brilliant_ui::StartDialog>,
     brilliant_pass: Option<crate::brilliant::PassMeta>,
     brilliant_summary: Option<crate::brilliant_ui::Summary>,
+    /// A pass asked for while Stockfish 19 is fetched or checked: it starts after.
+    brilliant_waiting: Option<crate::brilliant_ui::StartDialog>,
     applied_dark: Option<bool>,
     debug: DebugStartup,
 }
@@ -580,6 +582,7 @@ impl App {
             brilliant_start: None,
             brilliant_pass: None,
             brilliant_summary: None,
+            brilliant_waiting: None,
             applied_dark: None,
             debug: DebugStartup::from_env(),
         }
@@ -2043,10 +2046,11 @@ impl App {
         };
         let Some(crate::engines::EngineLocation::Program(engine)) = crate::review_engine::engine()
         else {
-            self.toast(
-                ctx,
-                tr("The search needs Stockfish 19: start «Analyse game» once to get it"),
-            );
+            // The offer of «Analyse game»: download Stockfish 19 (or check the user's);
+            // the pass starts after it.
+            dialog.counted = Some(counted);
+            self.brilliant_waiting = Some(dialog);
+            self.need_review_engine(ctx, crate::engine_offer::Pending::GreatMoves);
             return;
         };
         let (Some(db), Some(cache)) = (
@@ -2224,13 +2228,9 @@ impl App {
                     self.library.choose_only(&source, record as usize);
                 }
                 SummaryAction::Sort => self.library.sort_by_marks(&source),
-                SummaryAction::Continue(rest) => {
-                    let filter = self
-                        .brilliant_summary
-                        .take()
-                        .map(|_| chess_import::chessbase::base::Filter::default())
-                        .unwrap_or_default();
-                    self.ask_great_moves(ctx, source, rest, filter);
+                SummaryAction::Continue { records, filter } => {
+                    self.brilliant_summary = None;
+                    self.ask_great_moves(ctx, source, records, *filter);
                 }
                 SummaryAction::Open { record, ply } => {
                     self.brilliant_summary = None;
@@ -2241,6 +2241,9 @@ impl App {
                     });
                     self.library.choose_only(&source, record as usize);
                     self.open_game(ctx, source, record as usize, at);
+                    if let Some(g) = self.game.as_mut() {
+                        g.show_report();
+                    }
                 }
             }
         }
@@ -3554,6 +3557,7 @@ impl App {
             Some(
                 crate::engine_offer::Pending::GameAnalysis { .. }
                     | crate::engine_offer::Pending::OpeningErrors { .. }
+                    | crate::engine_offer::Pending::GreatMoves
             )
         );
         if !own_search || self.settings.active_engine().is_none() {
@@ -3651,6 +3655,11 @@ impl App {
                         GameAction::Toast(m) => self.toast(ctx, m),
                         _ => {}
                     }
+                }
+            }
+            Some(crate::engine_offer::Pending::GreatMoves) => {
+                if let Some(dialog) = self.brilliant_waiting.take() {
+                    self.start_great_moves(ctx, dialog);
                 }
             }
             Some(crate::engine_offer::Pending::OpeningErrors { prep }) => {
@@ -4642,6 +4651,12 @@ impl eframe::App for App {
                     LibraryAction::OpenGame { path, index, at } => {
                         self.open_game(&ctx, path, index, at)
                     }
+                    LibraryAction::OpenGameReport { path, index, at } => {
+                        self.open_game(&ctx, path, index, at);
+                        if let Some(g) = self.game.as_mut() {
+                            g.show_report();
+                        }
+                    }
                     LibraryAction::Sound(s) => self.play(s),
                     LibraryAction::CopyText(text, msg) => {
                         ctx.copy_text(text);
@@ -5053,6 +5068,8 @@ fn still_waiting(
         Pending::GameAnalysis { game: g, .. } => Some(*g) == game,
         Pending::OpeningErrors { prep: p } => Some(*p) == prep,
         Pending::LiveAnalysis => false,
+        // The app keeps its question (`brilliant_waiting`) until it starts.
+        Pending::GreatMoves => true,
     }
 }
 

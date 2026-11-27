@@ -144,6 +144,23 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// The entry with only the marks of the sides that count (the filter's player): the
+    /// row's sign and hint show only them.
+    pub fn for_sides(&self, white: bool, black: bool) -> Entry {
+        let keep = |on: bool, s: &SideMarks| if on { *s } else { SideMarks::default() };
+        Entry {
+            white: keep(white, &self.white),
+            black: keep(black, &self.black),
+            found: self
+                .found
+                .iter()
+                .filter(|f| if f.white { white } else { black })
+                .cloned()
+                .collect(),
+            ..self.clone()
+        }
+    }
+
     /// The !! and ! of the sides that count.
     pub fn of_sides(&self, white: bool, black: bool) -> Counts {
         let mut c = Counts::default();
@@ -289,12 +306,13 @@ impl Index {
 
     /// Where a record goes when the table is sorted by its marks: !! first, then !,
     /// analysed without them, not analysable, not analysed.
-    pub fn rank(&self, record: u32) -> u8 {
+    pub fn rank(&self, record: u32, sides: &Sides) -> u8 {
         match self.records.get(&record) {
             None => 4,
             Some(e) if e.skip.is_some() => 3,
             Some(e) => {
-                let c = e.of_sides(true, true);
+                let (w, b) = sides.of(record);
+                let c = e.of_sides(w, b);
                 if c.brilliant > 0 {
                     0
                 } else if c.great > 0 {
@@ -515,7 +533,8 @@ pub struct Sides {
 }
 
 impl Sides {
-    fn of(&self, record: u32) -> (bool, bool) {
+    /// Whether White's and Black's moves of `record` count.
+    pub fn of(&self, record: u32) -> (bool, bool) {
         match &self.player {
             None => (true, true),
             Some((w, b)) => (
