@@ -372,8 +372,10 @@ mod tests {
     /// A database made in the background goes to the end; opening it brings it first.
     #[test]
     fn a_copied_database_goes_to_the_end_of_the_shelf() {
-        let mut s = Settings::default();
-        s.databases = vec![PathBuf::from("/a.pgn"), PathBuf::from("/b.pgn")];
+        let mut s = Settings {
+            databases: vec![PathBuf::from("/a.pgn"), PathBuf::from("/b.pgn")],
+            ..Default::default()
+        };
         s.add_database_last(Path::new("/new.pgn"));
         s.add_database_last(Path::new("/a.pgn"));
         assert_eq!(
