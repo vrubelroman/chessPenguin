@@ -83,6 +83,17 @@ pub enum LibraryAction {
         path: PathBuf,
         index: usize,
     },
+    /// «New database from selected…»: the chosen records (by number) of `path`, the
+    /// table's order, how many of them the filter hides (task 42).
+    CopySelection {
+        path: PathBuf,
+        records: Vec<u32>,
+        sort: chess_import::chessbase::base::SortKey,
+        ascending: bool,
+        hidden: usize,
+    },
+    /// A short message (a toast).
+    Notice(String),
     EditGameData {
         path: PathBuf,
         index: usize,
@@ -266,6 +277,35 @@ pub struct Library {
     pub aside: Option<crate::adjourned::Card>,
     /// The games of the databases not opened, for their cards.
     counts: crate::db_counts::Counts,
+    /// Chosen records being copied into a new database (one copy at a time).
+    batch: Option<BatchJob>,
+}
+
+/// A copy of chosen records into a new database, written in the background.
+struct BatchJob {
+    source: PathBuf,
+    target: PathBuf,
+    total: usize,
+    work: crate::board_search::Background<
+        Result<crate::batch_copy::CopyReport, crate::batch_copy::CopyError>,
+    >,
+    cancelling: bool,
+}
+
+/// How a copy of chosen records ended.
+pub enum BatchEnd {
+    Done {
+        target: PathBuf,
+        report: crate::batch_copy::CopyReport,
+    },
+    Cancelled {
+        target: PathBuf,
+    },
+    Failed {
+        source: PathBuf,
+        target: PathBuf,
+        error: crate::batch_copy::CopyError,
+    },
 }
 
 impl Library {
@@ -286,7 +326,116 @@ impl Library {
             update: None,
             aside: None,
             counts: crate::db_counts::Counts::new(ctx),
+            batch: None,
         }
+    }
+
+    /// Starts copying `records` of `source` into the new file `target` (none while
+    /// another copy is written). `false`: the source is not read or the thread did not
+    /// start.
+    pub fn start_batch(
+        &mut self,
+        ctx: &egui::Context,
+        source: &Path,
+        records: Vec<u32>,
+        sort: chess_import::chessbase::base::SortKey,
+        ascending: bool,
+        target: PathBuf,
+    ) -> bool {
+        if self.batch.is_some() {
+            return false;
+        }
+        let Some(db) = self.database(source) else {
+            return false;
+        };
+        let total = records.len();
+        let req = crate::batch_copy::CopyRequest {
+            records,
+            sort,
+            ascending,
+            target: target.clone(),
+            slow: std::env::var_os("CP_BATCH_SLOW").is_some(),
+        };
+        let now = ctx.input(|i| i.time);
+        let Some(work) = crate::board_search::Background::spawn(ctx, now, move |p, c| {
+            crate::batch_copy::copy_into_new(&db, &req, p, c)
+        }) else {
+            return false;
+        };
+        self.batch = Some(BatchJob {
+            source: source.to_path_buf(),
+            target,
+            total,
+            work,
+            cancelling: false,
+        });
+        true
+    }
+
+    /// The chosen records of `path` let go (their numbers no longer mean the same games).
+    pub fn clear_selection(&mut self, path: &Path) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.clear_marks();
+        }
+    }
+
+    /// Asks the copy being written to stop.
+    pub fn cancel_batch(&mut self) {
+        if let Some(job) = &mut self.batch {
+            job.work.cancel();
+            job.cancelling = true;
+        }
+    }
+
+    /// Stops the copy being written and waits a little for it to clean up (closing the
+    /// program): its temporary file goes, no new database appears.
+    pub fn stop_batch(&mut self) {
+        if let Some(job) = self.batch.take() {
+            job.work.cancel();
+            job.work.wait(std::time::Duration::from_secs(3));
+        }
+    }
+
+    /// The end of the copy being written, once it came (called every frame, whatever is
+    /// on the screen); while it runs the source's conditions line shows it.
+    pub fn poll_batch(&mut self, ctx: &egui::Context) -> Option<BatchEnd> {
+        let job = self.batch.as_ref()?;
+        let Some(result) = job.work.poll() else {
+            let status = large_db::BatchStatus {
+                name: crate::own_db::base_name(&job.target),
+                done: job.work.progress(),
+                total: job.total,
+                cancelling: job.cancelling,
+            };
+            let source = job.source.clone();
+            let mut cancel = false;
+            if let Some(view) = self.large.get_mut(&source) {
+                cancel = std::mem::take(&mut view.cancel_batch);
+                view.batch = Some(status);
+            }
+            if cancel {
+                self.cancel_batch();
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            return None;
+        };
+        let job = self.batch.take()?;
+        if let Some(view) = self.large.get_mut(&job.source) {
+            view.batch = None;
+            view.cancel_batch = false;
+        }
+        Some(match result {
+            None => BatchEnd::Cancelled { target: job.target },
+            Some(Ok(report)) => BatchEnd::Done {
+                target: job.target,
+                report,
+            },
+            Some(Err(error)) => BatchEnd::Failed {
+                source: job.source,
+                target: job.target,
+                error,
+            },
+        })
     }
 
     /// Starts loading `path` in the background (no-op if already loaded/loading).

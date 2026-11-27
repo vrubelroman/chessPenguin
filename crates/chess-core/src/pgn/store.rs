@@ -232,44 +232,66 @@ pub fn write_utf8_copy(db: &PgnDatabase, dest: &Path) -> io::Result<()> {
     write_atomic(dest, &out)
 }
 
+/// What makes two records the same game for [`find_same_game`]: the players (without
+/// case) and the date, the start position and the moves of the main line.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SameGame {
+    white: String,
+    black: String,
+    date: String,
+    fen: Option<String>,
+    moves: Vec<String>,
+}
+
+fn same_name(v: Option<&str>) -> String {
+    v.unwrap_or("?").trim().to_lowercase()
+}
+
+fn same_date(v: Option<&str>) -> String {
+    // An unknown date in any spelling is one value.
+    match v.map(str::trim) {
+        None | Some("" | "?") => "????.??.??".to_owned(),
+        Some(d) => d.to_owned(),
+    }
+}
+
+/// The identity of `game` for finding the same game (see [`SameGame`]).
+pub fn same_game(game: &crate::Game) -> SameGame {
+    SameGame {
+        white: same_name(game.tag("White")),
+        black: same_name(game.tag("Black")),
+        date: same_date(game.tag("Date")),
+        fen: game.tag("FEN").map(str::to_owned),
+        moves: game
+            .mainline()
+            .iter()
+            .filter_map(|id| game.game_move(*id).map(|m| m.san.clone()))
+            .collect(),
+    }
+}
+
+/// The bytes an append writes for `record` into a file that holds only records written
+/// so (starting empty): a new database filled in one go has the same bytes as one
+/// filled by [`append`] record after record.
+pub fn record_for_new_file(record: &str) -> Vec<u8> {
+    record_bytes(record, "\n")
+}
+
 /// The record of `db` that is the same game as `game`: the same players and date, and
 /// the same moves of the main line. `None` when there is none.
 pub fn find_same_game(db: &PgnDatabase, game: &crate::Game) -> Option<usize> {
-    // Names compared without case; an unknown date in any spelling is one value.
-    let name = |v: Option<&str>| v.unwrap_or("?").trim().to_lowercase();
-    let date = |v: Option<&str>| match v.map(str::trim) {
-        None | Some("" | "?") => "????.??.??".to_owned(),
-        Some(d) => d.to_owned(),
-    };
-    let (white, black, when) = (
-        name(game.tag("White")),
-        name(game.tag("Black")),
-        date(game.tag("Date")),
-    );
-    let sans: Vec<&str> = game
-        .mainline()
-        .iter()
-        .filter_map(|id| game.game_move(*id).map(|m| m.san.as_str()))
-        .collect();
+    let key = same_game(game);
     (0..db.len()).find(|&i| {
         let e = &db.entries()[i];
-        if name(e.white()) != white || name(e.black()) != black || date(e.date()) != when {
+        if same_name(e.white()) != key.white
+            || same_name(e.black()) != key.black
+            || same_date(e.date()) != key.date
+        {
             return false;
         }
-        let Some(parsed) = db.load_game(i) else {
-            return false;
-        };
         // Two studies from different positions are different games.
-        if parsed.game.tag("FEN") != game.tag("FEN") {
-            return false;
-        }
-        let other: Vec<String> = parsed
-            .game
-            .mainline()
-            .iter()
-            .filter_map(|id| parsed.game.game_move(*id).map(|m| m.san.clone()))
-            .collect();
-        other.len() == sans.len() && other.iter().zip(&sans).all(|(a, b)| a == b)
+        db.load_game(i)
+            .is_some_and(|parsed| same_game(&parsed.game) == key)
     })
 }
 

@@ -840,6 +840,7 @@ dependencies = [
  "skrifa",
  "sys-locale",
  "tar",
+ "thiserror 2.0.21",
  "trainer",
  "uci",
  "ureq",

@@ -15,6 +15,7 @@ mod adjourned;
 mod analysis;
 mod app;
 mod assets;
+mod batch_copy;
 mod board;
 mod board_search;
 mod chatgpt;

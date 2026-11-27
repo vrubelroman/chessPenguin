@@ -299,6 +299,8 @@ pub struct App {
     repertoire: Option<crate::repertoire_ui::RepertoireUi>,
     #[cfg(not(web))]
     toast_repertoire: Option<(trainer::repertoire::RepertoireId, String)>,
+    /// The database a copy of chosen games made: the toast's «Open».
+    toast_open_db: Option<PathBuf>,
     applied_dark: Option<bool>,
     debug: DebugStartup,
 }
@@ -547,6 +549,7 @@ impl App {
             repertoire: None,
             #[cfg(not(web))]
             toast_repertoire: None,
+            toast_open_db: None,
             applied_dark: None,
             debug: DebugStartup::from_env(),
         }
@@ -1240,6 +1243,7 @@ impl App {
         {
             self.toast_repertoire = None;
         }
+        self.toast_open_db = None;
         self.toast = Some(Toast {
             text: msg.into(),
             until: ctx.input(|i| i.time) + secs,
@@ -1448,10 +1452,7 @@ impl App {
     /// The PGN text of record `index` of a database, as `current_pgn` would give it.
     fn record_pgn(&self, from: &std::path::Path, index: usize) -> Option<String> {
         let db = self.library.database(from)?;
-        match db.as_pgn() {
-            Some(pgn) if !pgn.repair_letters_enabled() => db.raw_text(index),
-            _ => db.load_game(index).map(|p| p.game.to_pgn()),
-        }
+        crate::batch_copy::record_text(&db, index)
     }
 
     fn append_current(&mut self, ctx: &egui::Context, target: PathBuf) {
@@ -1912,6 +1913,80 @@ impl App {
     fn new_base_dialog(&mut self, after: own_db::AfterCreate) {
         let dir = own_db::default_base_dir(self.settings.new_database_dir.as_deref());
         self.own.new_base = Some(own_db::NewBaseDialog::new(dir, after));
+    }
+
+    /// Starts the copy of the chosen records of the new-database dialog into `path`
+    /// (task 42): the file appears only when the copy is whole; the user stays in the
+    /// source database.
+    fn start_copy(&mut self, ctx: &egui::Context, path: PathBuf) -> Result<(), String> {
+        let Some(own_db::AfterCreate::CopySelection {
+            path: from,
+            records,
+            sort,
+            ascending,
+            ..
+        }) = self.own.new_base.as_ref().map(|d| d.after.clone())
+        else {
+            return Ok(());
+        };
+        if path.exists() {
+            return Err(tr("A file with this name is already there.").to_owned());
+        }
+        if self
+            .library
+            .start_batch(ctx, &from, records, sort, ascending, path)
+        {
+            Ok(())
+        } else {
+            Err(tr("Another copy is being written: wait until it finishes").to_owned())
+        }
+    }
+
+    /// The end of a copy of chosen records: a toast, and the new database on the shelf.
+    fn batch_ended(&mut self, ctx: &egui::Context, end: crate::library::BatchEnd) {
+        use crate::library::BatchEnd;
+        match end {
+            BatchEnd::Done { target, report } => {
+                let name = own_db::base_name(&target);
+                self.settings.touch_database(&target);
+                self.settings_dirty = true;
+                self.toast_for(ctx, crate::batch_copy::summary(&name, &report), 8.0);
+                self.toast_open_db = Some(target);
+            }
+            BatchEnd::Cancelled { target } => {
+                let name = own_db::base_name(&target);
+                self.toast(
+                    ctx,
+                    trf(
+                        "Copying cancelled: «{name}» was not created",
+                        &[("name", &name)],
+                    ),
+                );
+            }
+            BatchEnd::Failed {
+                source,
+                target,
+                error,
+            } => {
+                let text = match error {
+                    crate::batch_copy::CopyError::SourceChanged => {
+                        self.library.clear_selection(&source);
+                        trf(
+                            "«{src}» changed while copying. Nothing was written",
+                            &[("src", &own_db::base_name(&source))],
+                        )
+                    }
+                    e => trf(
+                        "Could not write «{name}»: {reason}. Nothing was written",
+                        &[
+                            ("name", &own_db::base_name(&target)),
+                            ("reason", &e.reason()),
+                        ],
+                    ),
+                };
+                self.toast_for(ctx, text, 8.0);
+            }
+        }
     }
 
     /// Makes the empty file and puts it on the shelf, selected and as the database the
@@ -2660,7 +2735,13 @@ impl App {
                         NewBaseOutcome::AddExisting(p) => (false, p),
                         _ => unreachable!(),
                     };
-                    let made = if create {
+                    let copy = matches!(
+                        self.own.new_base.as_ref().map(|d| &d.after),
+                        Some(own_db::AfterCreate::CopySelection { .. })
+                    );
+                    let made = if copy {
+                        self.start_copy(ctx, path.clone())
+                    } else if create {
                         self.create_base(ctx, path.clone())
                     } else {
                         self.settings.touch_database(&path);
@@ -2692,6 +2773,8 @@ impl App {
                                     };
                                     self.wait_for(ctx, &path, step)
                                 }
+                                // Started by `start_copy`; its end is a toast.
+                                own_db::AfterCreate::CopySelection { .. } => {}
                             }
                         }
                     }
@@ -4277,6 +4360,40 @@ impl eframe::App for App {
                         self.own.then_close = None;
                         self.open_chooser(&ctx, ChooserFor::Record { path, index });
                     }
+                    LibraryAction::CopySelection {
+                        path,
+                        records,
+                        sort,
+                        ascending,
+                        hidden,
+                    } => {
+                        self.own.then_close = None;
+                        self.new_base_dialog(own_db::AfterCreate::CopySelection {
+                            path,
+                            records,
+                            sort,
+                            ascending,
+                            hidden,
+                        });
+                        // `CP_BATCH=new:<name>`: the dialog answered at once.
+                        if let Some(name) = std::env::var("CP_BATCH")
+                            .ok()
+                            .and_then(|b| b.strip_prefix("new:").map(str::to_owned))
+                            && let Some(d) = self.own.new_base.as_mut()
+                        {
+                            d.name = name;
+                            let target = d.path();
+                            match self.start_copy(&ctx, target) {
+                                Ok(()) => self.own.new_base = None,
+                                Err(e) => {
+                                    if let Some(d) = self.own.new_base.as_mut() {
+                                        d.error = Some(e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    LibraryAction::Notice(text) => self.toast(&ctx, text),
                     LibraryAction::EditGameData { path, index } => {
                         self.open_game(&ctx, path, index, None);
                         self.edit_game_data();
@@ -4404,6 +4521,10 @@ impl eframe::App for App {
                 self.start_play(&ctx, start);
             }
         }
+        // A copy of chosen games ends whatever is on the screen.
+        if let Some(end) = self.library.poll_batch(&ctx) {
+            self.batch_ended(&ctx, end);
+        }
         // Ctrl+Z on the library while the deleted game can still come back.
         if self.game.is_none()
             && self.own.undo.is_some()
@@ -4416,6 +4537,7 @@ impl eframe::App for App {
         }
 
         let mut undo_clicked = false;
+        let mut open_copy: Option<PathBuf> = None;
         #[cfg(not(web))]
         let mut open_repertoire = None;
         if let Some(t) = &self.toast {
@@ -4431,10 +4553,11 @@ impl eframe::App for App {
                 let (msg, undo) = (t.text.clone(), t.undo && self.own.undo.is_some());
                 #[cfg(not(web))]
                 let repertoire_link = self.toast_repertoire.clone();
+                let open_db = self.toast_open_db.clone();
                 #[cfg(not(web))]
-                let has_action = undo || repertoire_link.is_some();
+                let has_action = undo || repertoire_link.is_some() || open_db.is_some();
                 #[cfg(web)]
-                let has_action = undo;
+                let has_action = undo || open_db.is_some();
                 let area = egui::Area::new(egui::Id::new(TOAST))
                     .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -24.0))
                     .order(egui::Order::Foreground)
@@ -4453,6 +4576,9 @@ impl eframe::App for App {
                                 if repertoire_link.is_some() && ui.button(tr("Open")).clicked() {
                                     open_repertoire = repertoire_link.clone();
                                 }
+                                if open_db.is_some() && ui.button(tr("Open")).clicked() {
+                                    open_copy = open_db.clone();
+                                }
                             });
                         });
                     });
@@ -4469,6 +4595,11 @@ impl eframe::App for App {
         if undo_clicked {
             self.toast = None;
             self.undo_delete(&ctx);
+        }
+        if let Some(path) = open_copy {
+            self.toast = None;
+            self.toast_open_db = None;
+            self.library.select_db(&path, &ctx);
         }
         #[cfg(not(web))]
         if let Some((id, title)) = open_repertoire {
@@ -4490,6 +4621,7 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self) {
+        self.library.stop_batch();
         self.analysis.stop();
         crate::review_engine::shutdown();
         if let Some(p) = self.prep.as_mut() {

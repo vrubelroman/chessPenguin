@@ -82,7 +82,19 @@ pub enum AfterCreate {
     AddGame,
     /// Add a copy of a record of a table to it.
     AddRecord { path: PathBuf, index: usize },
+    /// Copy the chosen records of a table into it, in the table's order (task 42): the
+    /// file is made by the copy, only when whole.
+    CopySelection {
+        path: PathBuf,
+        records: Vec<u32>,
+        sort: chess_import::chessbase::base::SortKey,
+        ascending: bool,
+        hidden: usize,
+    },
 }
+
+/// From this many chosen games on, the dialog says the copy may take a while.
+const MANY_GAMES: usize = 50_000;
 
 pub struct NewBaseDialog {
     pub name: String,
@@ -121,7 +133,7 @@ impl NewBaseDialog {
         }
     }
 
-    fn path(&self) -> PathBuf {
+    pub fn path(&self) -> PathBuf {
         self.dir.join(format!("{}.pgn", self.stem()))
     }
 
@@ -143,6 +155,41 @@ impl NewBaseDialog {
         egui::Modal::new(egui::Id::new("new_base")).show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading(tr("New database"));
+            let copy = matches!(self.after, AfterCreate::CopySelection { .. });
+            if let AfterCreate::CopySelection {
+                path,
+                records,
+                hidden,
+                ..
+            } = &self.after
+            {
+                let weak = |ui: &mut egui::Ui, text: String| {
+                    ui.add(egui::Label::new(RichText::new(text).weak()).truncate());
+                };
+                weak(
+                    ui,
+                    trf(
+                        "From the selection: {games} from «{src}»",
+                        &[
+                            ("games", &crate::i18n::games(records.len())),
+                            ("src", &base_name(path)),
+                        ],
+                    ),
+                );
+                if *hidden > 0 {
+                    weak(
+                        ui,
+                        trf("{k} of them are hidden by the filter now", &[("k", hidden)]),
+                    );
+                }
+                if records.len() >= MANY_GAMES {
+                    weak(
+                        ui,
+                        tr("Many games: writing may take a few minutes; you can cancel it")
+                            .to_owned(),
+                    );
+                }
+            }
             ui.add_space(8.0);
             ui.label(tr("Title"));
             let check = self.check();
@@ -195,9 +242,20 @@ impl NewBaseDialog {
                     let enter = ui.input(|i| i.key_pressed(Key::Enter));
                     match &check {
                         Ok(false) => {
-                            if crate::widgets::primary(ui, tr("Create")).clicked() || enter {
+                            let label = if copy {
+                                tr("Create and copy")
+                            } else {
+                                tr("Create")
+                            };
+                            if crate::widgets::primary(ui, label).clicked() || enter {
                                 out = Some(NewBaseOutcome::Create(self.path()));
                             }
+                        }
+                        // The copy goes into a new file only: the one there is not touched.
+                        Ok(true) if copy => {
+                            ui.add_enabled_ui(false, |ui| {
+                                crate::widgets::primary(ui, tr("Create and copy"))
+                            });
                         }
                         Ok(true) => {
                             if crate::widgets::primary(ui, tr("Put it on the shelf")).clicked()
@@ -209,9 +267,12 @@ impl NewBaseDialog {
                         // The same main button, only disabled: the row does not jump
                         // when the first letter is typed.
                         Err(_) => {
-                            ui.add_enabled_ui(false, |ui| {
-                                crate::widgets::primary(ui, tr("Create"))
-                            });
+                            let label = if copy {
+                                tr("Create and copy")
+                            } else {
+                                tr("Create")
+                            };
+                            ui.add_enabled_ui(false, |ui| crate::widgets::primary(ui, label));
                         }
                     }
                     if ui.button(tr("Cancel")).clicked() {
