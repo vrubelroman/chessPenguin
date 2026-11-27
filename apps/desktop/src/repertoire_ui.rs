@@ -1582,25 +1582,24 @@ impl RepertoireUi {
                         // The colour gives way first: down to the king, the words on
                         // hover; only then is the name cut.
                         let gap = ui.spacing().item_spacing.x;
-                        let full = format!("{} {}", layout::king(side), layout::you_play(side));
+                        let words = layout::you_play(side);
                         let name_w = style_width(ui, &name, egui::TextStyle::Heading);
-                        let full_w = style_width(ui, &full, egui::TextStyle::Body) + gap;
+                        let king_w = layout::KING + gap;
+                        let full_w = king_w + style_width(ui, words, egui::TextStyle::Body) + gap;
                         let short = name_w + full_w > width;
-                        let you = if short {
-                            layout::king(side).to_owned()
-                        } else {
-                            full
-                        };
-                        let you_w = style_width(ui, &you, egui::TextStyle::Body) + gap;
+                        let you_w = if short { king_w } else { full_w };
                         ui.allocate_ui_with_layout(
                             vec2((width - you_w - gap).max(0.0), 26.0),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| layout::line(ui, RichText::new(&name).heading()),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let label = ui.label(RichText::new(you).weak());
+                            if !short {
+                                ui.label(RichText::new(words).weak());
+                            }
+                            let king = ui.add(layout::king(side).sense(egui::Sense::hover()));
                             if short {
-                                label.on_hover_text(layout::you_play(side));
+                                king.on_hover_text(words);
                             }
                         });
                     });
@@ -1800,7 +1799,7 @@ impl RepertoireUi {
                         layout::line(ui, repertoire.name.as_str());
                     });
                     row.col(|ui| {
-                        ui.label(layout::king(side))
+                        ui.add(layout::king(side).sense(egui::Sense::hover()))
                             .on_hover_text(layout::you_play(side));
                     });
                     let has_moves = self.index.get(id).is_none_or(|row| row.has_moves);
@@ -2773,14 +2772,17 @@ fn side_choice(ui: &mut Ui, side: &mut LearningSide) {
     ui.add_space(2.0);
     ui.horizontal(|ui| {
         for (value, label) in [
-            (LearningSide::White, tr("♔ White")),
-            (LearningSide::Black, tr("♚ Black")),
+            (LearningSide::White, tr("White")),
+            (LearningSide::Black, tr("Black")),
         ] {
             if ui
                 .add_sized(
                     [222.0, 34.0],
-                    egui::Button::selectable(*side == value, RichText::new(label).size(14.0))
-                        .frame_when_inactive(true),
+                    egui::Button::selectable(
+                        *side == value,
+                        (layout::king(value), RichText::new(label).size(14.0)),
+                    )
+                    .frame_when_inactive(true),
                 )
                 .clicked()
             {

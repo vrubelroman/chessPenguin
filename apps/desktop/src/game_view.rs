@@ -4367,17 +4367,18 @@ impl GameView {
                     .size(15.0),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (short, long) = match pos.turn() {
-                        Color::White => ("♔", tr("♔ White to move")),
-                        Color::Black => ("♚", tr("♚ Black to move")),
+                    let white = pos.turn() == Color::White;
+                    let long = if white {
+                        tr("White to move")
+                    } else {
+                        tr("Black to move")
                     };
                     // In a narrow panel the king alone says who moves.
-                    let text = if ui.available_width() < 110.0 {
-                        short
-                    } else {
-                        long
-                    };
-                    ui.label(RichText::new(text).strong().size(15.0))
+                    let narrow = ui.available_width() < 110.0;
+                    if !narrow {
+                        ui.label(RichText::new(long).strong().size(15.0));
+                    }
+                    ui.add(crate::widgets::side_king(white, 17.0).sense(egui::Sense::hover()))
                         .on_hover_text(long);
                 });
             });

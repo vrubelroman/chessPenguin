@@ -210,12 +210,12 @@ pub(crate) fn set_side(settings: &mut Settings, id: &RepertoireId, side: Learnin
     );
 }
 
-pub(crate) fn king(side: LearningSide) -> &'static str {
-    match side {
-        LearningSide::White => "♔",
-        LearningSide::Black => "♚",
-    }
+pub(crate) fn king(side: LearningSide) -> egui::Image<'static> {
+    crate::widgets::side_king(side == LearningSide::White, KING)
 }
+
+/// The side of the king of [`king`] (as a 14-point ♔ took).
+pub(crate) const KING: f32 = 16.0;
 
 pub(crate) fn you_play(side: LearningSide) -> &'static str {
     tr(match side {

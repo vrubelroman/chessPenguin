@@ -151,6 +151,23 @@ pub fn primary(ui: &mut egui::Ui, label: &str) -> egui::Response {
     primary_wide(ui, label, 0.0)
 }
 
+/// The king of a side, `size` points square: White's light with a dark outline,
+/// Black's dark with a light one, the same in both themes (task 45; a font's ♔/♚ read
+/// the other way round on a dark background). From the classic set, whatever the board's.
+pub fn side_king(white: bool, size: f32) -> egui::Image<'static> {
+    let color = if white {
+        shakmaty::Color::White
+    } else {
+        shakmaty::Color::Black
+    };
+    crate::assets::PieceSet::Cburnett
+        .image(shakmaty::Piece {
+            color,
+            role: shakmaty::Role::King,
+        })
+        .fit_to_exact_size(egui::vec2(size, size))
+}
+
 /// `primary()` at least `width` wide (a button whose label changes keeps its place).
 pub fn primary_wide(ui: &mut egui::Ui, label: &str, width: f32) -> egui::Response {
     ui.add(

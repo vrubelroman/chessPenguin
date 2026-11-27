@@ -1557,11 +1557,34 @@ impl Dialog {
             section(ui, tr("Your colour"));
             ui.horizontal(|ui| {
                 for (c, label) in [
-                    (ColorChoice::White, tr("♔ White")),
+                    (ColorChoice::White, tr("White")),
                     (ColorChoice::Random, tr("Random")),
-                    (ColorChoice::Black, tr("♚ Black")),
+                    (ColorChoice::Black, tr("Black")),
                 ] {
-                    if choice(ui, self.prefs.color == c, label, [(W - 2.0 * GAP) / 3.0, TILE_H]).clicked() {
+                    let size = [(W - 2.0 * GAP) / 3.0, TILE_H];
+                    let on = self.prefs.color == c;
+                    let king = match c {
+                        ColorChoice::White => Some(true),
+                        ColorChoice::Black => Some(false),
+                        ColorChoice::Random => None,
+                    };
+                    let clicked = match king {
+                        Some(white) => ui
+                            .add_sized(
+                                size,
+                                egui::Button::selectable(
+                                    on,
+                                    (
+                                        crate::widgets::side_king(white, 16.0),
+                                        RichText::new(label).size(14.0),
+                                    ),
+                                )
+                                .frame_when_inactive(true),
+                            )
+                            .clicked(),
+                        None => choice(ui, on, label, size).clicked(),
+                    };
+                    if clicked {
                         self.prefs.color = c;
                     }
                 }
