@@ -301,6 +301,11 @@ pub struct App {
     toast_repertoire: Option<(trainer::repertoire::RepertoireId, String)>,
     /// The database a copy of chosen games made: the toast's «Open».
     toast_open_db: Option<PathBuf>,
+    /// The search for great moves (task 27): its question, the list and conditions of
+    /// the pass under way, and its summary.
+    brilliant_start: Option<crate::brilliant_ui::StartDialog>,
+    brilliant_pass: Option<crate::brilliant::PassMeta>,
+    brilliant_summary: Option<crate::brilliant_ui::Summary>,
     applied_dark: Option<bool>,
     debug: DebugStartup,
 }
@@ -572,6 +577,9 @@ impl App {
             #[cfg(not(web))]
             toast_repertoire: None,
             toast_open_db: None,
+            brilliant_start: None,
+            brilliant_pass: None,
+            brilliant_summary: None,
             applied_dark: None,
             debug: DebugStartup::from_env(),
         }
@@ -1948,6 +1956,296 @@ impl App {
         self.own.new_base = Some(own_db::NewBaseDialog::new(dir, after));
     }
 
+    /// Why the engine cannot take the search for great moves now, if it cannot (one engine
+    /// job in the program, task 27 §4.5).
+    fn engine_job_busy(&self) -> Option<String> {
+        if self.prep.as_ref().is_some_and(|p| p.running()) {
+            return Some(
+                tr("The engine is busy searching opening errors in a preparation: wait or stop it")
+                    .to_owned(),
+            );
+        }
+        if let Some(g) = self.game.as_ref().filter(|g| g.review_running()) {
+            return Some(trf(
+                "The engine is busy reviewing {game}",
+                &[("game", &g.title())],
+            ));
+        }
+        None
+    }
+
+    /// While the search for great moves runs, what cannot start says why.
+    fn pass_busy(&self) -> Option<String> {
+        let job = self.library.pass.as_ref()?;
+        Some(trf(
+            "Searching for great moves in «{db}»: {i} of {n}. Stop it in the library",
+            &[
+                ("db", &own_db::base_name(&job.source)),
+                ("i", &job.done()),
+                ("n", &job.records.len()),
+            ],
+        ))
+    }
+
+    /// «!! Find great moves»: the question first (or the summary, when every game is
+    /// analysed already).
+    fn ask_great_moves(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+        records: Vec<u32>,
+        filter: chess_import::chessbase::base::Filter,
+    ) {
+        if self.library.pass.is_some() {
+            return;
+        }
+        if let Some(why) = self.engine_job_busy() {
+            self.toast(ctx, why);
+            return;
+        }
+        let (Some(db), Some(cache)) = (self.library.database(&path), crate::review::cache_dir())
+        else {
+            return;
+        };
+        let about = if filter == chess_import::chessbase::base::Filter::default() {
+            tr("all games").to_owned()
+        } else {
+            tr("matching the conditions").to_owned()
+        };
+        let mut dialog =
+            crate::brilliant_ui::StartDialog::new(ctx, path, db, records, filter, about, cache);
+        // `CP_BRILLIANT_RUN=1`: no question.
+        if std::env::var_os("CP_BRILLIANT_RUN").is_some() {
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            if let (Some(db), Some(cache)) = (
+                self.library.database(&dialog.source),
+                crate::review::cache_dir(),
+            ) {
+                dialog.counted = Some(crate::brilliant_ui::count(
+                    &db,
+                    &dialog.records,
+                    &dialog.filter,
+                    &cache,
+                    &cancel,
+                ));
+            }
+            self.start_great_moves(ctx, dialog);
+            return;
+        }
+        self.brilliant_start = Some(dialog);
+    }
+
+    /// Starts the pass of `dialog` over its games not analysed yet.
+    fn start_great_moves(&mut self, ctx: &egui::Context, dialog: crate::brilliant_ui::StartDialog) {
+        let mut dialog = dialog;
+        let Some(counted) = dialog.counted.take() else {
+            return;
+        };
+        let Some(crate::engines::EngineLocation::Program(engine)) = crate::review_engine::engine()
+        else {
+            self.toast(
+                ctx,
+                tr("The search needs Stockfish 19: start «Analyse game» once to get it"),
+            );
+            return;
+        };
+        let (Some(db), Some(cache)) = (
+            self.library.database(&dialog.source),
+            crate::review::cache_dir(),
+        ) else {
+            return;
+        };
+        // One engine job: the live analysis stops.
+        if self.analysis.is_on() {
+            self.analysis.stop();
+            self.live_paused = false;
+        }
+        let path = engine.clone();
+        let engine = crate::brilliant::Engine {
+            config: crate::review::engine_config(&engine),
+            settings: game_review::JobSettings::new(crate::review::processes(), None),
+            fits: Box::new(move |name| crate::review_engine::name_fits(&path, name)),
+            pause: if std::env::var_os("CP_BRILLIANT_SLOW").is_some() {
+                std::time::Duration::from_millis(1500)
+            } else {
+                std::time::Duration::ZERO
+            },
+        };
+        let index = self.library.marks(&dialog.source);
+        // The list in the table's order: the analysed ones are taken first (at once).
+        let mut list = counted.reviewed.clone();
+        list.extend(&counted.left);
+        let order: std::collections::HashMap<u32, usize> = dialog
+            .records
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (*r, i))
+            .collect();
+        list.sort_by_key(|r| order.get(r).copied().unwrap_or(usize::MAX));
+        match crate::brilliant::PassJob::start(
+            ctx,
+            dialog.source.clone(),
+            db,
+            list,
+            dialog.filter.clone(),
+            index,
+            cache,
+            engine,
+        ) {
+            Ok(job) => {
+                self.library.set_pass_error(&dialog.source, None);
+                self.library.pass = Some(job);
+                self.brilliant_pass =
+                    Some((dialog.filter.clone(), dialog.about.clone(), counted.skipped));
+            }
+            Err(e) => self.toast(ctx, e.to_string()),
+        }
+    }
+
+    /// The summary of `records` of `source`.
+    #[allow(clippy::too_many_arguments)]
+    fn great_moves_summary(
+        &mut self,
+        source: &std::path::Path,
+        records: &[u32],
+        sides: &crate::brilliant::Sides,
+        filter: &chess_import::chessbase::base::Filter,
+        about: String,
+        stopped: Option<(usize, usize)>,
+        skipped: Vec<(u32, crate::brilliant::Skip)>,
+    ) {
+        let Some(db) = self.library.database(source) else {
+            return;
+        };
+        let index = self.library.marks(source);
+        let Ok(index) = index.lock() else {
+            return;
+        };
+        self.brilliant_summary = Some(crate::brilliant_ui::Summary::new(
+            source, &db, &index, records, sides, filter, about, stopped, skipped,
+        ));
+    }
+
+    /// Every frame: the pass's state in the conditions lines, its end, the question and
+    /// the summary; and the engine taken by the pass for everything else.
+    fn great_moves_frame(&mut self, ctx: &egui::Context) {
+        let busy = self.engine_job_busy();
+        self.library.set_engine_busy(busy);
+        let pass_busy = self.pass_busy();
+        if let Some(p) = self.prep.as_mut() {
+            p.engine_blocked = pass_busy;
+        }
+        let estimate = |rest: &[u32]| rest.len() as f64 * 60.0 / crate::review::processes() as f64;
+        self.library.show_pass(estimate);
+        if let Some(job) = self.library.pass.as_ref()
+            && let Some((end, sides)) = job.poll()
+        {
+            let job = self.library.pass.take().expect("pass");
+            let (filter, about, mut skipped) = self.brilliant_pass.take().unwrap_or_default();
+            skipped.extend(end.skipped.iter().copied());
+            skipped.sort_unstable_by_key(|(r, _)| *r);
+            skipped.dedup();
+            let reviewed = end.reviewed.len();
+            let total = job.records.len();
+            match &end.outcome {
+                crate::brilliant::Outcome::Finished => self.great_moves_summary(
+                    &job.source,
+                    &job.records,
+                    &sides,
+                    &filter,
+                    about,
+                    None,
+                    skipped,
+                ),
+                crate::brilliant::Outcome::Stopped if reviewed == 0 => {
+                    self.toast(ctx, tr("Search stopped: no game was reviewed"));
+                }
+                crate::brilliant::Outcome::Stopped => self.great_moves_summary(
+                    &job.source,
+                    &job.records,
+                    &sides,
+                    &filter,
+                    about,
+                    Some((reviewed, total)),
+                    skipped,
+                ),
+                crate::brilliant::Outcome::EngineFailed(why) => {
+                    let text = trf(
+                        "The engine failed: {reason}. {i} of {n} reviewed",
+                        &[("reason", why), ("i", &reviewed), ("n", &total)],
+                    );
+                    self.library.set_pass_error(&job.source, Some(text));
+                }
+                crate::brilliant::Outcome::SourceChanged => {
+                    let text = trf(
+                        "«{db}» changed; the search stopped. {i} of {n} reviewed",
+                        &[
+                            ("db", &own_db::base_name(&job.source)),
+                            ("i", &reviewed),
+                            ("n", &total),
+                        ],
+                    );
+                    self.library.set_pass_error(&job.source, Some(text));
+                }
+            }
+        }
+        if let Some(dialog) = self.brilliant_start.as_mut()
+            && let Some(outcome) = dialog.show(ctx)
+        {
+            let dialog = self.brilliant_start.take().expect("dialog");
+            match outcome {
+                crate::brilliant_ui::StartOutcome::Cancel => {}
+                crate::brilliant_ui::StartOutcome::Start => self.start_great_moves(ctx, dialog),
+                crate::brilliant_ui::StartOutcome::Summary => {
+                    if let Some(c) = &dialog.counted {
+                        let reviewed = c.reviewed.clone();
+                        self.great_moves_summary(
+                            &dialog.source,
+                            &reviewed,
+                            &c.sides,
+                            &dialog.filter,
+                            dialog.about.clone(),
+                            None,
+                            c.skipped.clone(),
+                        );
+                    }
+                }
+            }
+        }
+        if self.game.is_none()
+            && let Some(summary) = self.brilliant_summary.as_mut()
+            && let Some(action) = summary.show(ctx)
+        {
+            let source = summary.source.clone();
+            use crate::brilliant_ui::SummaryAction;
+            match action {
+                SummaryAction::Close => self.brilliant_summary = None,
+                SummaryAction::Select(record) => {
+                    self.library.choose_only(&source, record as usize);
+                }
+                SummaryAction::Sort => self.library.sort_by_marks(&source),
+                SummaryAction::Continue(rest) => {
+                    let filter = self
+                        .brilliant_summary
+                        .take()
+                        .map(|_| chess_import::chessbase::base::Filter::default())
+                        .unwrap_or_default();
+                    self.ask_great_moves(ctx, source, rest, filter);
+                }
+                SummaryAction::Open { record, ply } => {
+                    self.brilliant_summary = None;
+                    let at = self.library.database(&source).and_then(|db| {
+                        let game = db.load_game(record as usize)?.game;
+                        let node = *game.mainline().get(ply as usize)?;
+                        Some(game.node(node)?.position().clone())
+                    });
+                    self.library.choose_only(&source, record as usize);
+                    self.open_game(ctx, source, record as usize, at);
+                }
+            }
+        }
+    }
+
     /// Starts the copy of the chosen records of the new-database dialog into `path`
     /// (task 42): the file appears only when the copy is whole; the user stays in the
     /// source database.
@@ -2476,6 +2774,12 @@ impl App {
     /// A new game against Maia. Her model missing (a rematch, a game from a position):
     /// the dialog with the same choices, to download it.
     fn start_play(&mut self, ctx: &egui::Context, start: crate::play::Start) {
+        // No game against the engine while the search for great moves runs (the owner's
+        // decision, task 27).
+        if let Some(why) = self.pass_busy() {
+            self.toast(ctx, why);
+            return;
+        }
         let Some(maia) = crate::play::engine_for(&start) else {
             self.play_dialog = Some(crate::play::Dialog::for_start(&self.settings, &start));
             return;
@@ -3200,6 +3504,13 @@ impl App {
 
     fn toggle_engine(&mut self, ctx: &egui::Context) {
         self.live_paused = false;
+        // The search for great moves has the engine (task 27 §4.5).
+        if !self.analysis.is_on()
+            && let Some(why) = self.pass_busy()
+        {
+            self.toast(ctx, why);
+            return;
+        }
         if self.prep.as_ref().is_some_and(|p| p.running()) && !self.analysis.is_on() {
             self.toast(
                 ctx,
@@ -4068,6 +4379,7 @@ impl eframe::App for App {
         // dropped before the game is drawn (its header names the target).
         let _ = self.current_target();
         let shelf = self.shelf_dbs();
+        let pass_busy = self.pass_busy();
         if repertoire_visible {
             #[cfg(not(web))]
             self.show_repertoire(ui, &ctx);
@@ -4078,7 +4390,9 @@ impl eframe::App for App {
             self.library.poll();
             self.reference.dbs = shelf;
             // The preparation's engine goes on under the game; no game analysis meanwhile.
-            game.engine_busy = self.prep.as_ref().is_some_and(|p| p.running());
+            game.engine_busy =
+                self.prep.as_ref().is_some_and(|p| p.running()) || self.library.pass.is_some();
+            game.engine_busy_why = pass_busy.clone();
             if let Some(p) = self.prep.as_mut() {
                 p.poll_quietly(&ctx, &self.settings);
             }
@@ -4265,6 +4579,15 @@ impl eframe::App for App {
                         self.settings_ui.tab = Tab::Translation;
                     }
                     GameAction::Toast(m) => self.toast(&ctx, m),
+                    GameAction::Reviewed { path, index, entry } => {
+                        let marks = self.library.marks(&path);
+                        if let Ok(mut marks) = marks.lock() {
+                            marks.set(index as u32, entry);
+                            if let Err(e) = marks.save() {
+                                eprintln!("marks: {e}");
+                            }
+                        }
+                    }
                     GameAction::HintsChanged => self.settings_dirty = true,
                     GameAction::PauseLive => {
                         if self.analysis.is_on() {
@@ -4431,6 +4754,11 @@ impl eframe::App for App {
                         }
                     }
                     LibraryAction::Notice(text) => self.toast(&ctx, text),
+                    LibraryAction::FindGreatMoves {
+                        path,
+                        records,
+                        filter,
+                    } => self.ask_great_moves(&ctx, path, records, filter),
                     LibraryAction::EditGameData { path, index } => {
                         self.open_game(&ctx, path, index, None);
                         self.edit_game_data();
@@ -4559,6 +4887,7 @@ impl eframe::App for App {
             }
         }
         // A copy of chosen games ends whatever is on the screen.
+        self.great_moves_frame(&ctx);
         if let Some(end) = self.library.poll_batch(&ctx) {
             self.batch_ended(&ctx, end);
         }
@@ -4661,6 +4990,9 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         self.library.stop_batch();
+        if let Some(job) = self.library.pass.as_mut() {
+            job.shutdown(std::time::Duration::from_secs(3));
+        }
         self.analysis.stop();
         crate::review_engine::shutdown();
         if let Some(p) = self.prep.as_mut() {

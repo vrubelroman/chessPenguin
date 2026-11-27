@@ -18,6 +18,8 @@ mod assets;
 mod batch_copy;
 mod board;
 mod board_search;
+mod brilliant;
+mod brilliant_ui;
 mod chatgpt;
 mod db_counts;
 mod engine_download;

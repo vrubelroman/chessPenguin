@@ -94,6 +94,13 @@ pub enum LibraryAction {
     },
     /// A short message (a toast).
     Notice(String),
+    /// «!! Find great moves» over the list `records` of `path` (in the table's order),
+    /// found by `filter` (task 27).
+    FindGreatMoves {
+        path: PathBuf,
+        records: Vec<u32>,
+        filter: chess_import::chessbase::base::Filter,
+    },
     EditGameData {
         path: PathBuf,
         index: usize,
@@ -279,6 +286,10 @@ pub struct Library {
     counts: crate::db_counts::Counts,
     /// Chosen records being copied into a new database (one copy at a time).
     batch: Option<BatchJob>,
+    /// The marks of great moves of each database (task 27), read once per session.
+    marks: HashMap<PathBuf, Arc<Mutex<crate::brilliant::Index>>>,
+    /// The search for great moves under way (one engine job in the program).
+    pub pass: Option<crate::brilliant::PassJob>,
 }
 
 /// A copy of chosen records into a new database, written in the background.
@@ -327,6 +338,68 @@ impl Library {
             aside: None,
             counts: crate::db_counts::Counts::new(ctx),
             batch: None,
+            marks: HashMap::new(),
+            pass: None,
+        }
+    }
+
+    /// The marks of great moves of the database at `path`.
+    pub fn marks(&mut self, path: &Path) -> Arc<Mutex<crate::brilliant::Index>> {
+        self.marks
+            .entry(path.to_path_buf())
+            .or_insert_with(|| Arc::new(Mutex::new(crate::brilliant::Index::of(path))))
+            .clone()
+    }
+
+    /// The search under way, as each database's conditions line shows it; «Stop» of
+    /// any of them stops it. Called every frame.
+    pub fn show_pass(&mut self, estimate: impl Fn(&[u32]) -> f64) {
+        let status = self.pass.as_ref().map(|job| {
+            (
+                job.source.clone(),
+                crate::own_db::base_name(&job.source),
+                job.done(),
+                job.records.len(),
+                job.current(),
+                job.left_secs(&estimate),
+                job.stopping,
+            )
+        });
+        let mut stop = false;
+        for (path, view) in self.large.iter_mut() {
+            view.pass =
+                status
+                    .as_ref()
+                    .map(|(source, name, done, total, current, left, stopping)| {
+                        large_db::PassStatus {
+                            here: source == path,
+                            name: name.clone(),
+                            done: *done,
+                            total: *total,
+                            current: *current,
+                            left_secs: *left,
+                            stopping: *stopping,
+                        }
+                    });
+            stop |= std::mem::take(&mut view.stop_pass);
+        }
+        if stop && let Some(job) = self.pass.as_mut() {
+            job.stop();
+        }
+    }
+
+    /// Why the search may not start now (the engine is busy elsewhere), for every
+    /// database's button.
+    pub fn set_engine_busy(&mut self, why: Option<String>) {
+        for view in self.large.values_mut() {
+            view.engine_busy = why.clone();
+        }
+    }
+
+    /// Why the last search in `path` stopped with an error, where its progress was.
+    pub fn set_pass_error(&mut self, path: &Path, text: Option<String>) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.pass_error = text;
         }
     }
 
@@ -513,6 +586,21 @@ impl Library {
         self.load(path, ctx);
         if self.selected_db.as_deref() != Some(path) {
             self.selected_db = Some(path.to_path_buf());
+        }
+    }
+
+    /// Chooses the row of `index` alone (any choice of several let go) and scrolls to it.
+    pub fn choose_only(&mut self, path: &Path, index: usize) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.clear_marks();
+            view.reveal(index);
+        }
+    }
+
+    /// Sorts the table of `path` by its «!!» column.
+    pub fn sort_by_marks(&mut self, path: &Path) {
+        if let Some(view) = self.large.get_mut(path) {
+            view.sort_marks_on();
         }
     }
 
@@ -1625,6 +1713,14 @@ impl Library {
             .entry(path.clone())
             .or_insert_with(|| LargeView::for_database(&db, online));
         let notes = self.info.get(&path).map_or(0, |i| i.notes.len());
+        if view.marks.is_none() {
+            let marks = self
+                .marks
+                .entry(path.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(crate::brilliant::Index::of(&path))))
+                .clone();
+            view.marks = Some(marks);
+        }
         if view.table(
             ui,
             &path,

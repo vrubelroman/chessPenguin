@@ -106,6 +106,9 @@ pub struct GameView {
     /// The engine is busy with the opponent preparation: no game analysis meanwhile
     /// (one engine job for the whole program, opponent-prep.md §4.3).
     pub engine_busy: bool,
+    /// Why, when another job than the search for opening errors has it (the search for
+    /// great moves, task 27).
+    pub engine_busy_why: Option<String>,
     /// The game's data were asked once (on its first add); not again.
     pub data_asked: bool,
     /// A newer version to offer (its number), next to Settings.
@@ -182,6 +185,13 @@ pub enum GameAction {
     OpenEngineSettings,
     OpenSettings,
     Toast(String),
+    /// The analysis of a game of a database ended: its marks go into that database's
+    /// index (task 27), so its row shows them.
+    Reviewed {
+        path: PathBuf,
+        index: usize,
+        entry: crate::brilliant::Entry,
+    },
     /// A whole-game analysis started: pause the live engine (they would share the CPU).
     PauseLive,
     /// The whole-game analysis ended: resume the live engine if it was paused.
@@ -251,6 +261,7 @@ impl GameView {
             previous: None,
             previous_prep: false,
             engine_busy: false,
+            engine_busy_why: None,
             data_asked: false,
             target: None,
             update: None,
@@ -863,13 +874,26 @@ impl GameView {
     ) -> Vec<GameAction> {
         let mut actions = Vec::new();
         self.translation.update(ui.ctx(), &self.game, settings, hub);
-        if self.review.poll() {
+        let reviewed = self.review.poll();
+        if reviewed {
             actions.push(GameAction::ResumeLive);
             if let Some(e) = &self.review.error {
                 actions.push(GameAction::Toast(e.clone()));
             }
         }
         self.review.refresh(&self.game);
+        if reviewed
+            && self.review.error.is_none()
+            && !self.game.is_modified()
+            && self.review.missing() == 0
+            && let Some(src) = &self.source
+        {
+            actions.push(GameAction::Reviewed {
+                path: src.path.clone(),
+                index: src.index,
+                entry: crate::brilliant::entry_of(&self.review.analysis, &self.game),
+            });
+        }
         if analysis.status == Status::Running
             && let Some(e) = settings.active_engine()
         {
@@ -969,8 +993,10 @@ impl GameView {
         if std::mem::take(&mut self.review_asked) {
             if self.engine_busy {
                 actions.push(GameAction::Toast(
-                    tr("Opening errors are being searched — wait or stop it in the report")
-                        .to_owned(),
+                    self.engine_busy_why.clone().unwrap_or_else(|| {
+                        tr("Opening errors are being searched — wait or stop it in the report")
+                            .to_owned()
+                    }),
                 ));
             } else {
                 self.start_review(false, ui.ctx(), &mut actions);
@@ -1074,9 +1100,9 @@ impl GameView {
             tr("Analyse game: accuracy, inaccuracies, mistakes, blunders (Shift+A)"),
             self.review.estimate()
         ))
-        .on_disabled_hover_text(tr(
-            "Opening errors are being searched — wait or stop it in the report",
-        ))
+        .on_disabled_hover_text(self.engine_busy_why.clone().unwrap_or_else(|| {
+            tr("Opening errors are being searched — wait or stop it in the report").to_owned()
+        }))
         .clicked()
         {
             self.review_asked = true;
