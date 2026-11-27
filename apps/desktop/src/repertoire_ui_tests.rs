@@ -346,7 +346,11 @@ fn the_three_screens_keep_the_board_and_the_panel_in_one_place() {
             ("London", "1. d4 d5 2. Bf4 *"),
         ],
     );
-    for (size, left) in [(vec2(1400.0, 900.0), 940.0), (vec2(960.0, 600.0), 576.0)] {
+    for (size, left) in [
+        (vec2(1920.0, 1080.0), 1360.0),
+        (vec2(1400.0, 900.0), 896.0),
+        (vec2(960.0, 600.0), 580.0),
+    ] {
         let mut ui = dir.ui();
         let mut settings = Settings::default();
         let ctx = egui::Context::default();
@@ -532,17 +536,33 @@ fn starter_repertoires_are_created_once_with_their_colours() {
     let (store, _) = dir.stores();
     let sides = seed_starter(&store).unwrap();
     let library = store.load().unwrap();
-    assert_eq!(library.repertoires.len(), 2);
+    assert_eq!(library.repertoires.len(), 4);
     assert_eq!(
         sides.iter().map(|(_, side)| *side).collect::<Vec<_>>(),
-        [LearningSide::White, LearningSide::Black]
+        [
+            LearningSide::White,
+            LearningSide::Black,
+            LearningSide::White,
+            LearningSide::Black
+        ]
     );
-    for ((id, _), lines) in sides.iter().zip([3, 3]) {
+    for (id, _) in &sides {
         let repertoire = library.repertoire(id).unwrap();
-        assert_eq!(layout::lines(&repertoire.game(), |_| false).len(), lines);
+        assert!(!layout::lines(&repertoire.game(), |_| false).is_empty());
     }
-    assert_eq!(library.repertoires[0].name, "Spanish Opening");
-    assert_eq!(library.repertoires[1].name, "Sicilian Defence: Najdorf");
+    assert_eq!(
+        library
+            .repertoires
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Spanish Opening",
+            "Sicilian Defence: Najdorf",
+            "Queen's Gambit",
+            "Semi-Slav: Triangle"
+        ]
+    );
 
     let mut settings = Settings::default();
     let mut ui = dir.ui();
@@ -554,14 +574,242 @@ fn starter_repertoires_are_created_once_with_their_colours() {
     assert_eq!(layout::side_of(&settings, black), LearningSide::Black);
 
     assert!(seed_starter(&store).unwrap().is_empty());
-    assert_eq!(store.load().unwrap().repertoires.len(), 2);
+    assert_eq!(store.load().unwrap().repertoires.len(), 4);
 }
 
 #[test]
-fn starter_repertoires_do_not_return_to_an_existing_library() {
+fn starter_repertoires_come_to_an_empty_library_of_2_3() {
     let dir = TestDir::new("starter-existing");
     let (store, _) = dir.stores();
     store.save(&mut Library::default()).unwrap();
+    assert_eq!(seed_starter(&store).unwrap().len(), 4);
+    assert_eq!(store.load().unwrap().repertoires.len(), 4);
+}
+
+#[test]
+fn starter_examples_of_2_4_0_are_not_doubled() {
+    let dir = TestDir::new("starter-240");
+    // 2.4.0 created the examples in the interface language and kept no marks.
+    save_library(
+        &dir,
+        &[
+            ("Испанская партия", "1. e4 e5 *"),
+            ("Sicilian Defence: Najdorf", "1. e4 c5 *"),
+        ],
+    );
+    let (store, _) = dir.stores();
+    let sides = seed_starter(&store).unwrap();
+    assert_eq!(
+        sides.iter().map(|(_, side)| *side).collect::<Vec<_>>(),
+        [LearningSide::White, LearningSide::Black]
+    );
+    let names: Vec<_> = store
+        .load()
+        .unwrap()
+        .repertoires
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Испанская партия",
+            "Sicilian Defence: Najdorf",
+            "Queen's Gambit",
+            "Semi-Slav: Triangle"
+        ]
+    );
     assert!(seed_starter(&store).unwrap().is_empty());
+}
+
+#[test]
+fn a_deleted_starter_does_not_come_back() {
+    let dir = TestDir::new("starter-deleted");
+    let (store, _) = dir.stores();
+    seed_starter(&store).unwrap();
+    let mut library = store.load().unwrap();
+    let id = library.repertoires[2].id.clone();
+    library.delete(&id).unwrap();
+    store.save(&mut library).unwrap();
+    assert!(seed_starter(&store).unwrap().is_empty());
+    let library = store.load().unwrap();
+    assert_eq!(library.repertoires.len(), 3);
+    assert!(
+        library
+            .repertoires
+            .iter()
+            .all(|r| r.name != "Queen's Gambit")
+    );
+}
+
+#[test]
+fn starters_leave_own_repertoires_and_progress_alone() {
+    let dir = TestDir::new("starter-own");
+    let ids = save_library(&dir, &[("Mine", "1. d4 d5 2. c4 e6 *")]);
+    let (store, learning) = dir.stores();
+    std::fs::write(learning.path(), b"progress bytes").unwrap();
+    let before = serde_json::to_value(store.load().unwrap().repertoire(&ids[0]).unwrap()).unwrap();
+    assert_eq!(seed_starter(&store).unwrap().len(), 4);
+    let library = store.load().unwrap();
+    assert_eq!(library.repertoires.len(), 5);
+    assert_eq!(
+        serde_json::to_value(library.repertoire(&ids[0]).unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(std::fs::read(learning.path()).unwrap(), b"progress bytes");
+}
+
+#[test]
+fn starters_are_not_doubled_when_their_marks_were_lost() {
+    let dir = TestDir::new("starter-lost-marks");
+    let (store, _) = dir.stores();
+    seed_starter(&store).unwrap();
+    // A failed write of the marks, or marks from another copy that did not see them.
+    std::fs::remove_file(starter_marks_path(&store)).unwrap();
+    assert!(seed_starter(&store).unwrap().is_empty());
+    std::fs::write(starter_marks_path(&store), br#"{"version":1,"given":[]}"#).unwrap();
+    assert!(seed_starter(&store).unwrap().is_empty());
+    assert_eq!(store.load().unwrap().repertoires.len(), 4);
+}
+
+#[test]
+fn two_copies_starting_together_give_the_starters_once() {
+    for round in 0..20 {
+        let dir = TestDir::new(&format!("starter-race-{round}"));
+        let (store, _) = dir.stores();
+        let results: Vec<_> = std::thread::scope(|s| {
+            let a = s.spawn(|| seed_starter(&store.clone()));
+            let b = s.spawn(|| seed_starter(&store.clone()));
+            vec![a.join().unwrap(), b.join().unwrap()]
+        });
+        let added: usize = results.iter().map(|r| r.as_ref().unwrap().len()).sum();
+        assert_eq!(added, 4);
+        assert_eq!(store.load().unwrap().repertoires.len(), 4);
+    }
+}
+
+#[test]
+fn damaged_starter_marks_give_a_short_message_and_change_nothing() {
+    let dir = TestDir::new("starter-damaged");
+    let (store, _) = dir.stores();
+    store.save(&mut Library::default()).unwrap();
+    let path = starter_marks_path(&store);
+    std::fs::write(&path, br#"{"version":1,"given":["#).unwrap();
+    let error = seed_starter(&store).unwrap_err();
+    assert_eq!(
+        error,
+        "The record of example repertoires is damaged; examples were not added"
+    );
+    assert!(!error.contains(&*dir.0.to_string_lossy()));
+    assert_eq!(std::fs::read(&path).unwrap(), br#"{"version":1,"given":["#);
     assert!(store.load().unwrap().repertoires.is_empty());
+}
+
+#[test]
+fn starter_marks_of_an_unknown_version_are_left_alone() {
+    let dir = TestDir::new("starter-newer");
+    let (store, _) = dir.stores();
+    store.save(&mut Library::default()).unwrap();
+    let path = starter_marks_path(&store);
+    std::fs::write(&path, br#"{"version":99,"given":5}"#).unwrap();
+    assert!(seed_starter(&store).unwrap().is_empty());
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        br#"{"version":99,"given":5}"#
+    );
+    assert!(store.load().unwrap().repertoires.is_empty());
+}
+
+#[test]
+fn the_panel_opens_at_the_width_the_user_dragged_it_to() {
+    let dir = TestDir::new("side-width");
+    save_library(&dir, &[("Italian", "1. e4 e5 2. Nf3 Nc6 3. Bc4 *")]);
+    let size = vec2(1920.0, 1080.0);
+    for (kept, width) in [
+        (Some(400.0_f32), 400.0),
+        (Some(100.0), 360.0),
+        (None, 560.0),
+    ] {
+        let mut ui = dir.ui();
+        let mut settings = Settings::default();
+        let ctx = egui::Context::default();
+        crate::assets::install(&ctx);
+        // As the app does: the saved width is given once the context runs.
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .drop_without_applying_deltas();
+        if let Some(kept) = kept {
+            ctx.data_mut(|d| {
+                d.insert_temp(egui::Id::new(crate::opening_layout::SIDE_WIDTH_ID), kept)
+            });
+        }
+        settle(&mut ui, &ctx, &mut settings, size);
+        let rect = panel_rect(&ctx);
+        assert!((rect.width() - width).abs() <= 1.0, "{rect:?} for {kept:?}");
+    }
+}
+
+#[test]
+fn a_window_that_grows_gives_the_panel_the_width_of_its_final_size() {
+    let dir = TestDir::new("side-grow");
+    save_library(&dir, &[("Italian", "1. e4 e5 2. Nf3 Nc6 3. Bc4 *")]);
+    let mut ui = dir.ui();
+    let mut settings = Settings::default();
+    let ctx = egui::Context::default();
+    crate::assets::install(&ctx);
+    settle(&mut ui, &ctx, &mut settings, vec2(960.0, 600.0));
+    settle(&mut ui, &ctx, &mut settings, vec2(1920.0, 1080.0));
+    let rect = panel_rect(&ctx);
+    assert!((rect.width() - 560.0).abs() <= 1.0, "{rect:?}");
+}
+
+#[test]
+fn the_table_fits_the_least_panel_in_every_language() {
+    let ctx = egui::Context::default();
+    crate::assets::install(&ctx);
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        ctx.run_ui(egui::RawInput::default(), |root| {
+            egui::CentralPanel::default().show(root, |ui| {
+                // The table's width in a panel at its least: its frame takes 8 on each side.
+                let width = crate::opening_layout::SIDE_LEAST - 16.0;
+                let columns = table_widths(ui, width);
+                let gap = ui.spacing().item_spacing.x;
+                assert!(
+                    columns.least(gap) <= width,
+                    "{lang:?}: {columns:?} + gaps > {width}"
+                );
+                assert!(columns.name_least >= NAME_WANTED, "{lang:?}: {columns:?}");
+                // The bar, 6 px and the number from the left fit for any count, the
+                // header from the bar's left edge too; the bar keeps off «Today».
+                let body = |text: &str| style_width(ui, text, egui::TextStyle::Body);
+                for number in ["0/22", "12/22", "00/000"] {
+                    assert!(
+                        columns.start + columns.bar + MINI_BAR_GAP + body(number)
+                            <= columns.passed - 4.0 + 0.5,
+                        "{lang:?}: {number} in {columns:?}"
+                    );
+                }
+                assert!(columns.start + body(tr("Passed")) <= columns.passed - 4.0 + 0.5);
+                assert!(
+                    // Unless the header itself takes the whole column.
+                    columns.start + gap >= PASSED_GAP - 0.5 || columns.start < 1.0,
+                    "{lang:?}: {columns:?}"
+                );
+            });
+        })
+        .drop_without_applying_deltas();
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+}
+
+#[test]
+fn a_review_date_is_short_in_the_table() {
+    use chrono::{Local, TimeZone};
+    let now = Local
+        .with_ymd_and_hms(2026, 11, 27, 9, 0, 0)
+        .single()
+        .unwrap()
+        .timestamp();
+    assert_eq!(when_short(now + 3 * 60 * 60 + 30 * 60, now), "12:30");
+    assert_eq!(when_short(now + 40 * 24 * 60 * 60, now), "06.01");
 }

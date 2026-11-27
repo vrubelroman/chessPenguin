@@ -1,0 +1,13 @@
+[Event "ChessPenguin: Semi-Slav Triangle for Black"]
+[White "?"]
+[Black "Repertoire"]
+[Result "*"]
+[ECO "D47"]
+
+{Semi-Slav (Triangle) for Black: the Meran main line, with answers to 5.Bg5, the Exchange Variation and the quiet 4.e3.}
+1. d4 d5 2. c4 c6 3. Nf3 e6 {The triangle c6-d5-e6 makes the centre very solid.}
+4. Nc3 (4. e3 Nf6 5. Bd3 Nbd7 6. O-O Bd6 7. Nbd2 O-O 8. e4 dxe4 9. Nxe4 Nxe4 10. Bxe4 e5 {Black frees the position with the central break.})
+(4. cxd5 exd5 5. Nc3 Nf6 6. Bg5 Be7 7. e3 Bf5 {Exchange Variation: the c8-bishop gets outside the pawn chain.})
+4... Nf6 5. e3 (5. Bg5 h6 6. Bh4 dxc4 7. e4 g5 8. Bg3 b5 {Moscow Variation: Black grabs the pawn and keeps it with ...b5.})
+5... Nbd7 6. Bd3 dxc4 7. Bxc4 b5 {The Meran: Black gains space on the queenside with tempo.}
+8. Bd3 Bb7 9. O-O a6 10. e4 c5 11. d5 Qc7 {Black attacks the centre and is ready to castle.} *

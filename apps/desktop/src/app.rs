@@ -3789,6 +3789,20 @@ impl eframe::App for App {
             });
             self.applied_dark = Some(self.settings.dark_mode);
         }
+        // The opening panel's dragged width: given to the panel, saved when dragged anew.
+        let side_width = egui::Id::new(crate::opening_layout::SIDE_WIDTH_ID);
+        match ctx.data(|d| d.get_temp::<f32>(side_width)) {
+            None => {
+                if let Some(width) = self.settings.opening_side_width {
+                    ctx.data_mut(|d| d.insert_temp(side_width, width));
+                }
+            }
+            Some(width) if self.settings.opening_side_width != Some(width) => {
+                self.settings.opening_side_width = Some(width);
+                let _ = self.settings.save();
+            }
+            Some(_) => {}
+        }
         // Quitting while the opening errors are searched: asked first (what was found
         // is kept either way).
         if ctx.input(|i| i.viewport().close_requested())

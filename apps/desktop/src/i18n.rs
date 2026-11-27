@@ -92,17 +92,27 @@ impl Lang {
     }
 }
 
+#[cfg(not(test))]
 static CURRENT: AtomicU8 = AtomicU8::new(0);
+// Tests run in parallel threads: a test that switches the language switches only its own.
+#[cfg(test)]
+thread_local! {
+    static CURRENT: AtomicU8 = const { AtomicU8::new(0) };
+}
 
 pub fn set_lang(lang: Lang) {
+    #[cfg(not(test))]
     CURRENT.store(lang as u8, Ordering::Relaxed);
+    #[cfg(test)]
+    CURRENT.with(|c| c.store(lang as u8, Ordering::Relaxed));
 }
 
 pub fn current() -> Lang {
-    Lang::ALL
-        .get(CURRENT.load(Ordering::Relaxed) as usize)
-        .copied()
-        .unwrap_or_default()
+    #[cfg(not(test))]
+    let index = CURRENT.load(Ordering::Relaxed);
+    #[cfg(test)]
+    let index = CURRENT.with(|c| c.load(Ordering::Relaxed));
+    Lang::ALL.get(index as usize).copied().unwrap_or_default()
 }
 
 fn table() -> &'static HashMap<&'static str, &'static [&'static str; 9]> {
@@ -17640,6 +17650,39 @@ const ROWS: &[[&str; 9]] = &[
         "Defesa Siciliana: Najdorf",
         "Sitsiliya himoyasi: Naydorf",
         "Сицилия қорғанысы: Найдорф",
+    ],
+    [
+        "The record of example repertoires is damaged; examples were not added",
+        "Запись о примерах репертуаров повреждена; примеры не добавлены",
+        "L’enregistrement des répertoires d’exemple est endommagé ; les exemples n’ont pas été ajoutés",
+        "Die Liste der Beispielrepertoires ist beschädigt; Beispiele wurden nicht hinzugefügt",
+        "El registro de repertorios de ejemplo está dañado; no se añadieron ejemplos",
+        "Il registro dei repertori di esempio è danneggiato; gli esempi non sono stati aggiunti",
+        "O registro dos repertórios de exemplo está danificado; os exemplos não foram adicionados",
+        "Namuna repertuarlar yozuvi buzilgan; namunalar qo‘shilmadi",
+        "Мысал репертуарлар жазбасы бүлінген; мысалдар қосылмады",
+    ],
+    [
+        "Queen's Gambit",
+        "Ферзевый гамбит",
+        "Gambit dame",
+        "Damengambit",
+        "Gambito de dama",
+        "Gambetto di donna",
+        "Gambito da Dama",
+        "Farzin gambiti",
+        "Ферзь гамбиті",
+    ],
+    [
+        "Semi-Slav: Triangle",
+        "Полуславянская защита: треугольник",
+        "Semi-slave : triangle",
+        "Halbslawisch: Dreieck",
+        "Semieslava: triángulo",
+        "Semi-Slava: triangolo",
+        "Semi-Eslava: triângulo",
+        "Yarim slavyan himoyasi: uchburchak",
+        "Жартылай славян қорғанысы: үшбұрыш",
     ],
     [
         "New repertoire",

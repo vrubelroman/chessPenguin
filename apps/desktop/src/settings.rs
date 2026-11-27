@@ -122,6 +122,9 @@ pub struct Settings {
     pub sound_set: SoundSet,
     pub volume: f32,
     pub dark_mode: bool,
+    /// The width of the opening-training panel dragged by the user, in points; `None`:
+    /// the default for the window.
+    pub opening_side_width: Option<f32>,
     pub language: Lang,
     pub engines: Vec<EngineConfig>,
     pub active_engine: Option<usize>,
@@ -221,6 +224,7 @@ impl Default for Settings {
             sound_set: SoundSet::default(),
             volume: 0.7,
             dark_mode: true,
+            opening_side_width: None,
             language: Lang::default(),
             engines: Vec::new(),
             active_engine: None,

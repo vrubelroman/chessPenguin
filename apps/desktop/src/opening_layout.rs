@@ -11,8 +11,11 @@ use crate::board::{Arrow, Badge};
 use crate::i18n::{tr, trf};
 use crate::settings::Settings;
 
-/// The panel's least width (the game's reference tab, `REF_MIN`).
-const SIDE_LEAST: f32 = 320.0;
+/// The panel's least width: the table of repertoires still shows its numbers whole.
+pub(crate) const SIDE_LEAST: f32 = 360.0;
+/// Where the width the user dragged the panel to is kept for the app to save
+/// (`Settings::opening_side_width`).
+pub(crate) const SIDE_WIDTH_ID: &str = "opening_side_width";
 /// Under a stacked board: the panel's least height (`STACK_BOTTOM_MIN`).
 const STACK_BOTTOM_MIN: f32 = 300.0;
 const BOARD_MIN: f32 = 220.0;
@@ -48,11 +51,37 @@ pub(crate) fn screen<T: ?Sized>(
         let board = height - 16.0;
         let most = (width - BOARD_MIN - 24.0).max(SIDE_LEAST);
         let room = (width - board - 24.0).clamp(SIDE_LEAST, most);
-        egui::Panel::right("opening_side")
+        let id = egui::Id::new(SIDE_WIDTH_ID);
+        let kept = ui.ctx().data(|d| d.get_temp::<f32>(id));
+        let default = kept.unwrap_or_else(|| side_default(width, room));
+        let handle = egui::Id::new("opening_side").with("__resize");
+        // Until the user drags it, the panel follows the window: a window that opens
+        // small and grows gets the width of its final size, not of its first frame.
+        let dragging = ui
+            .ctx()
+            .read_response(handle)
+            .is_some_and(|r| r.dragged() || r.drag_stopped());
+        if kept.is_none() && !dragging {
+            ui.ctx().data_mut(|d| {
+                d.remove::<egui::containers::panel::PanelState>(egui::Id::new("opening_side"))
+            });
+        }
+        let panel = egui::Panel::right("opening_side")
             .resizable(true)
-            .default_size((width * 0.4).clamp(260.0, 460.0).min(room))
+            .default_size(default.clamp(SIDE_LEAST, most))
             .size_range(SIDE_LEAST..=most)
-            .show(ui, |ui| side(this, ui))
+            .show(ui, |ui| side(this, ui));
+        // The width the user dragged to is kept; a window that squeezes the panel does
+        // not change it.
+        if ui
+            .ctx()
+            .read_response(handle)
+            .is_some_and(|r| r.drag_stopped())
+        {
+            let shown = panel.response.rect.width().round();
+            ui.ctx().data_mut(|d| d.insert_temp(id, shown));
+        }
+        panel
     };
     crate::widgets::check_panel("opening_side", &panel.response);
     egui::CentralPanel::default().show(ui, |ui| {
@@ -63,6 +92,12 @@ pub(crate) fn screen<T: ?Sized>(
         let rect = egui::Rect::from_min_size(egui::pos2(left, top), vec2(side, side));
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| board(this, ui));
     });
+}
+
+/// The panel's width before the user drags it: about a third of the window, the board
+/// keeping its room.
+pub(crate) fn side_default(width: f32, room: f32) -> f32 {
+    (width * 0.36).clamp(380.0, 560.0).min(room)
 }
 
 /// The frame of a state card (the player's card of a game against the computer).
