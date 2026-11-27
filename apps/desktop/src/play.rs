@@ -1854,6 +1854,7 @@ fn position_block(
                             circles: &[],
                             badge: None,
                             interactive: false,
+                            temporary_shapes: false,
                             show_coords: false,
                             theme: settings.board_theme.theme(),
                             pieces: settings.piece_set,

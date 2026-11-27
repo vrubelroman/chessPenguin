@@ -1652,6 +1652,7 @@ impl OpeningSessionUi {
             circles: &annotations.circles,
             badge: annotations.badge,
             interactive,
+            temporary_shapes: true,
             show_coords: settings.show_coords,
             theme: settings.board_theme.theme(),
             pieces: settings.piece_set,

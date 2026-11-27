@@ -4,6 +4,9 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+- Desktop play and opening training support multiple temporary right-button arrows and circles
+  until the position changes. They are never written to PGN; shapes drawn in ordinary game
+  analysis remain PGN annotations and are saved only with the game.
 - Desktop opening training rewritten to be simpler: one screen with repertoires and a clear daily session (reviews plus up to 10 new moves), new moves are shown before they are asked, mistakes show the right move and return in the same session, PGN comments and opening names are shown. Review all, train a branch and a lines view remain; modes, context parameters, the statistics dashboard and the both-colours mode are gone. Two example repertoires (Spanish for White, Najdorf for Black) are added on first use. Saved progress is kept.
 
 ## [2.3.0] — 2026-11-06

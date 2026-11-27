@@ -44,6 +44,9 @@ pub struct BoardState {
     shape_from: Option<Square>,
     /// A shape drawn this frame, for the game to take (`take_shape`).
     shape: Option<Drawn>,
+    /// Temporary shapes in play and training; never written to the PGN.
+    temporary_shapes: Vec<Drawn>,
+    temporary_position: Option<Chess>,
     /// The position drawn last: a different one next frame is animated from it.
     shown: Option<Board>,
     anim: Option<Anim>,
@@ -90,6 +93,32 @@ impl BoardState {
     /// The shape the user has just drawn, once.
     pub fn take_shape(&mut self) -> Option<Drawn> {
         self.shape.take()
+    }
+
+    pub fn draw_temporary(&mut self, drawn: Drawn, pos: &Chess) {
+        self.shape = None;
+        self.sync_temporary_position(pos);
+        let same = |shape: &Drawn| match (*shape, drawn) {
+            (Drawn::Arrow(_, af, at), Drawn::Arrow(_, bf, bt)) => af == bf && at == bt,
+            (Drawn::Circle(_, a), Drawn::Circle(_, b)) => a == b,
+            _ => false,
+        };
+        if let Some(index) = self.temporary_shapes.iter().position(same) {
+            if self.temporary_shapes[index] == drawn {
+                self.temporary_shapes.remove(index);
+            } else {
+                self.temporary_shapes[index] = drawn;
+            }
+        } else {
+            self.temporary_shapes.push(drawn);
+        }
+    }
+
+    fn sync_temporary_position(&mut self, pos: &Chess) {
+        if self.temporary_position.as_ref() != Some(pos) {
+            self.temporary_shapes.clear();
+            self.temporary_position = Some(pos.clone());
+        }
     }
 
     /// A piece is selected or dragged, or a promotion is being chosen.
@@ -176,6 +205,8 @@ pub struct BoardView<'a> {
     /// Move assessment shown on the destination square of the last move ("??" in red, …).
     pub badge: Option<Badge>,
     pub interactive: bool,
+    /// Right-button shapes stay until the position changes instead of becoming PGN comments.
+    pub temporary_shapes: bool,
     pub show_coords: bool,
     pub theme: BoardTheme,
     pub pieces: PieceSet,
@@ -215,6 +246,11 @@ impl BoardView<'_> {
         if !self.interactive && !premoving {
             state.selected = None;
             state.drag = None;
+        }
+        if self.temporary_shapes {
+            state.sync_temporary_position(self.pos);
+        } else {
+            state.temporary_shapes.clear();
         }
 
         // --- input -----------------------------------------------------------------------
@@ -274,10 +310,11 @@ impl BoardView<'_> {
                     .and_then(|p| geo.square_at(p));
                 let color = shape_color_for(ui.input(|i| i.modifiers));
                 if let Some(from) = state.shape_from.take() {
-                    state.shape = Some(match to {
+                    let drawn = match to {
                         Some(to) if to != from => Drawn::Arrow(color, from, to),
                         _ => Drawn::Circle(color, from),
-                    });
+                    };
+                    self.record_shape(state, drawn);
                 }
             }
             if response.secondary_clicked() {
@@ -285,7 +322,7 @@ impl BoardView<'_> {
                 state.premove = None;
                 if let Some(sq) = pointer.and_then(|p| geo.square_at(p)) {
                     let color = shape_color_for(ui.input(|i| i.modifiers));
-                    state.shape = Some(Drawn::Circle(color, sq));
+                    self.record_shape(state, Drawn::Circle(color, sq));
                 }
             }
         }
@@ -439,6 +476,31 @@ impl BoardView<'_> {
         for a in self.arrows {
             draw_arrow(&painter, &geo, a);
         }
+        for drawn in &state.temporary_shapes {
+            let color = shape_preview_color(match *drawn {
+                Drawn::Arrow(color, _, _) | Drawn::Circle(color, _) => color,
+            });
+            match *drawn {
+                Drawn::Arrow(_, from, to) => draw_arrow(
+                    &painter,
+                    &geo,
+                    &Arrow {
+                        from,
+                        to,
+                        color,
+                        weight: 0.9,
+                    },
+                ),
+                Drawn::Circle(_, square) => {
+                    let r = geo.square_rect(square);
+                    painter.circle_stroke(
+                        r.center(),
+                        sq_size * 0.46,
+                        Stroke::new(sq_size * 0.07, color),
+                    );
+                }
+            }
+        }
         if let Some(from) = state.shape_from
             && response.dragged_by(egui::PointerButton::Secondary)
         {
@@ -549,6 +611,14 @@ impl BoardView<'_> {
             state.clear();
         }
         result
+    }
+
+    fn record_shape(&self, state: &mut BoardState, drawn: Drawn) {
+        if self.temporary_shapes {
+            state.draw_temporary(drawn, self.pos);
+        } else {
+            state.shape = Some(drawn);
+        }
     }
 
     /// The side that moves on this board now: the side to move, or the premoving one.
@@ -943,5 +1013,186 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(fadings.is_empty());
+    }
+
+    fn board_frame(
+        ctx: &egui::Context,
+        state: &mut BoardState,
+        pos: &Chess,
+        time: f64,
+        events: Vec<egui::Event>,
+        temporary_shapes: bool,
+    ) {
+        let mut view = Some(BoardView {
+            pos,
+            orientation: Color::White,
+            last_move: None,
+            arrows: &[],
+            circles: &[],
+            badge: None,
+            interactive: true,
+            temporary_shapes,
+            show_coords: false,
+            theme: crate::assets::BoardThemeId::Brown.theme(),
+            pieces: PieceSet::Cburnett,
+            animation: 0.0,
+            premove: None,
+            auto_queen: false,
+            alert: None,
+        });
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 400.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                view.take().unwrap().show(ui, state);
+            },
+        )
+        .drop_without_applying_deltas();
+    }
+
+    fn right_click(at: egui::Pos2, modifiers: egui::Modifiers) -> Vec<egui::Event> {
+        vec![
+            egui::Event::ModifiersChanged(modifiers),
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers,
+            },
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers,
+            },
+        ]
+    }
+
+    #[test]
+    fn temporary_shapes_accept_mouse_input_toggle_and_clear() {
+        let ctx = egui::Context::default();
+        let pos = Chess::default();
+        let mut state = BoardState::default();
+        let sq = |s: &str| s.parse::<Square>().unwrap();
+        let from = egui::pos2(225.0, 325.0);
+        let to = egui::pos2(225.0, 225.0);
+        board_frame(&ctx, &mut state, &pos, 0.0, Vec::new(), true);
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.1,
+            vec![
+                egui::Event::PointerMoved(from),
+                egui::Event::PointerButton {
+                    pos: from,
+                    button: egui::PointerButton::Secondary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            true,
+        );
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.2,
+            vec![egui::Event::PointerMoved(to)],
+            true,
+        );
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.3,
+            vec![egui::Event::PointerButton {
+                pos: to,
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            true,
+        );
+        assert_eq!(
+            state.temporary_shapes,
+            vec![Drawn::Arrow(
+                chess_core::ShapeColor::Green,
+                sq("e2"),
+                sq("e4")
+            )]
+        );
+        assert!(state.shape.is_none());
+
+        let d5 = egui::pos2(175.0, 175.0);
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.4,
+            right_click(d5, egui::Modifiers::NONE),
+            true,
+        );
+        assert_eq!(state.temporary_shapes.len(), 2);
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.5,
+            right_click(d5, egui::Modifiers::SHIFT),
+            true,
+        );
+        assert_eq!(
+            state.temporary_shapes[1],
+            Drawn::Circle(chess_core::ShapeColor::Red, sq("d5"))
+        );
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.6,
+            right_click(d5, egui::Modifiers::SHIFT),
+            true,
+        );
+        assert_eq!(state.temporary_shapes.len(), 1);
+
+        let mut next = pos.clone();
+        next.play_unchecked("e4".parse::<San>().unwrap().to_move(&pos).unwrap());
+        board_frame(&ctx, &mut state, &next, 0.7, Vec::new(), true);
+        assert!(state.temporary_shapes.is_empty());
+    }
+
+    #[test]
+    fn analysis_shapes_remain_one_shot_events() {
+        let ctx = egui::Context::default();
+        let pos = Chess::default();
+        let mut state = BoardState::default();
+        let at = egui::pos2(175.0, 175.0);
+        board_frame(&ctx, &mut state, &pos, 0.0, Vec::new(), false);
+        board_frame(
+            &ctx,
+            &mut state,
+            &pos,
+            0.1,
+            right_click(at, egui::Modifiers::NONE),
+            false,
+        );
+        assert!(state.temporary_shapes.is_empty());
+        assert_eq!(
+            state.take_shape(),
+            Some(Drawn::Circle(
+                chess_core::ShapeColor::Green,
+                "d5".parse().unwrap()
+            ))
+        );
+        assert!(state.take_shape().is_none());
     }
 }

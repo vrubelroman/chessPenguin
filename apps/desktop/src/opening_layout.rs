@@ -440,6 +440,7 @@ pub(crate) fn still_board(
         circles: &annotations.circles,
         badge: annotations.badge,
         interactive: false,
+        temporary_shapes: false,
         show_coords: settings.show_coords,
         theme: settings.board_theme.theme(),
         pieces: settings.piece_set,
