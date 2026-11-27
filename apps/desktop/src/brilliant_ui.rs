@@ -156,7 +156,7 @@ impl StartDialog {
             .show(ctx, |ui| {
                 ui.set_width(520.0);
                 let about = format!(
-                    "{name} · {} {}",
+                    "{name} · {} · {}",
                     crate::i18n::games(self.records.len()),
                     self.about
                 );
@@ -164,7 +164,7 @@ impl StartDialog {
                     .on_hover_text(&about);
                 ui.add_space(8.0);
                 // Two lines kept for the counts: the window does not jump when they come.
-                ui.allocate_ui(egui::vec2(520.0, 40.0), |ui| match &self.counted {
+                ui.allocate_ui(egui::vec2(520.0, 60.0), |ui| match &self.counted {
                     None => {
                         ui.horizontal(|ui| {
                             ui.spinner();
@@ -191,6 +191,20 @@ impl StartDialog {
                             };
                             ui.label(trf(key, &[("games", &crate::i18n::games(c.reviewed.len()))]));
                         }
+                        // Why the list here is shorter than the table's.
+                        if !c.skipped.is_empty() {
+                            let mut reasons: Vec<&str> =
+                                c.skipped.iter().map(|(_, s)| s.reason()).collect();
+                            reasons.sort_unstable();
+                            reasons.dedup();
+                            ui.label(
+                                RichText::new(trf(
+                                    "{k} cannot be reviewed ({reason})",
+                                    &[("k", &c.skipped.len()), ("reason", &reasons.join(", "))],
+                                ))
+                                .weak(),
+                            );
+                        }
                     }
                 });
                 ui.add_space(6.0);
@@ -199,7 +213,9 @@ impl StartDialog {
                     &[("p", &crate::review::processes())],
                 ));
                 ui.add_space(8.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Its own height, not the window's: the buttons sit under the text.
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let ready = self.counted.is_some();
                     let start = ui.add_enabled(ready, egui::Button::new(tr("Start")));
                     if start.clicked() || (ready && ui.input(|i| i.key_pressed(Key::Enter))) {
@@ -219,6 +235,7 @@ impl StartDialog {
                     {
                         out = Some(StartOutcome::Summary);
                     }
+                    });
                 });
             });
         if out.is_none() && ctx.input(|i| i.key_pressed(Key::Escape)) {
@@ -386,6 +403,9 @@ impl Summary {
         let width = (ctx.content_rect().width() - 40.0).min(600.0);
         egui::Window::new(title)
             .id(egui::Id::new("brilliant_summary"))
+            // In the middle: the «!!» column it sums up stays in sight.
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -637,7 +657,9 @@ impl Summary {
                     }
                 }
                 ui.add_space(6.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Its own height, not the window's: the buttons sit under the text.
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(tr("Close")).clicked() {
                         out = Some(SummaryAction::Close);
                     }
@@ -663,6 +685,7 @@ impl Summary {
                             filter: Box::new(self.filter.clone()),
                         });
                     }
+                    });
                 });
             });
         if !open || (out.is_none() && ctx.input(|i| i.key_pressed(Key::Escape))) {

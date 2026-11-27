@@ -20800,6 +20800,17 @@ const ROWS: &[[&str; 9]] = &[
         "Qidiruv to‘xtatildi · tahlil qilindi: {n} dan {i}",
         "Іздеу тоқтатылды · талданды: {n} ішінен {i}",
     ],
+    [
+        "{k} cannot be reviewed ({reason})",
+        "{k} нельзя разобрать ({reason})",
+        "{k} ne peuvent pas être analysées ({reason})",
+        "{k} können nicht analysiert werden ({reason})",
+        "{k} no se pueden analizar ({reason})",
+        "{k} non si possono analizzare ({reason})",
+        "{k} não podem ser analisadas ({reason})",
+        "{k} tasini tahlil qilib bo‘lmaydi ({reason})",
+        "{k} талдауға болмайды ({reason})",
+    ],
 ];
 
 #[cfg(test)]

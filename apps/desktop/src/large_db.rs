@@ -1897,10 +1897,11 @@ impl LargeView {
                             body.clone()
                         };
                         job.append("!! ", 0.0, egui::TextFormat::simple(bold, teal));
+                        // The button's own text colour (it lightens under the pointer).
                         job.append(
                             rest,
                             0.0,
-                            egui::TextFormat::simple(body.clone(), ui.visuals().text_color()),
+                            egui::TextFormat::simple(body.clone(), Color32::PLACEHOLDER),
                         );
                         let enabled = blocked.is_none();
                         let r = ui.add_enabled(enabled, egui::Button::new(job).small());
@@ -3534,7 +3535,7 @@ fn marks_cell(ui: &mut Ui, entry: Option<crate::brilliant::Entry>, running: bool
                 }
             } else {
                 (
-                    "·",
+                    "•",
                     ui.visuals().weak_text_color(),
                     tr("Reviewed: no brilliant or great moves").to_owned(),
                 )
@@ -3548,7 +3549,14 @@ fn marks_cell(ui: &mut Ui, entry: Option<crate::brilliant::Entry>, running: bool
             } else {
                 color
             };
-            ui.add(egui::Label::new(RichText::new(text).strong().color(color)).selectable(false))
+            // Ubuntu-B, as the other signs of moves.
+            let bold = egui::FontId::new(13.0, egui::FontFamily::Name("bold".into()));
+            let font = if ui.fonts_mut(|f| f.families().contains(&bold.family)) {
+                bold
+            } else {
+                egui::FontId::proportional(13.0)
+            };
+            ui.add(egui::Label::new(RichText::new(text).font(font).color(color)).selectable(false))
                 .on_hover_text(hint);
         },
     );
