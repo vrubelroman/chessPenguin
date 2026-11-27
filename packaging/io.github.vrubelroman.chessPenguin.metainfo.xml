@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.5.1" date="2026-11-28">
+      <description>
+        <p>Find great moves in up to 100 games you select, including selected games hidden by the current filter. Clear the selection to analyse the filtered games instead.</p>
+      </description>
+    </release>
     <release version="2.5.0" date="2026-11-27">
       <description>
         <p>Find great moves in up to 100 filtered games with a summary of brilliant, great and bad moves. Several games can be selected and copied into a new database. A hint shows that arrows and circles drawn with the right mouse button are saved in PGN. Opening training has four example repertoires, a wider panel and clearer side kings.</p>

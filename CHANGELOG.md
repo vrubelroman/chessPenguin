@@ -4,6 +4,13 @@ All notable changes are listed here. Versions follow [Semantic Versioning](https
 
 ## [Unreleased]
 
+## [2.5.1] — 2026-11-28
+
+- Desktop: select 1–100 games in a database and use «Find great moves» to analyse just those games.
+  The confirmation shows how many selected games are hidden by the current filter; those games are
+  included. Changing the selection after starting does not change the batch. Clear the selection to
+  analyse the filtered games instead.
+
 ## [2.5.0] — 2026-11-27
 
 - Desktop: find great moves in the filtered games of a database (up to 100). The «!! Find great moves»
