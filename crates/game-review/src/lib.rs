@@ -585,6 +585,12 @@ impl GameAnalysis {
     // ----- cache -----------------------------------------------------------------
 
     /// The name of the cache file of this main line.
+    /// The name of this main line's file in the cache: equal for equal main lines (the
+    /// same positions), whatever the rest of the game.
+    pub fn cache_key(&self) -> String {
+        self.cache_name()
+    }
+
     fn cache_name(&self) -> String {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for k in &self.keys {

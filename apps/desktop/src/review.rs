@@ -194,13 +194,13 @@ pub struct Review {
 }
 
 /// The folder of the cached analyses.
-fn cache_dir() -> Option<PathBuf> {
+pub fn cache_dir() -> Option<PathBuf> {
     Settings::cache_dir().map(|d| d.join("analysis"))
 }
 
 /// The cached analyses in the program's files (the platform's: a folder of the disk, or
 /// the browser's storage).
-struct Cache(PathBuf);
+pub struct Cache(pub PathBuf);
 
 impl game_review::CacheStore for Cache {
     fn read(&self, name: &str) -> Option<Vec<u8>> {
@@ -870,7 +870,7 @@ pub const DEFAULT_NPS: f64 = 700_000.0;
 /// ChessPenguin's Stockfish at `path` for an analysis job: below the program (nice 10),
 /// so that the program stays smooth while every CPU works.
 #[cfg(not(web))]
-fn engine_config(path: &Path) -> uci::EngineConfig {
+pub fn engine_config(path: &Path) -> uci::EngineConfig {
     uci::EngineConfig {
         nice: 10,
         ..uci::EngineConfig::new(path)
@@ -936,7 +936,7 @@ pub fn judgement_name(j: Judgement) -> &'static str {
     }
 }
 
-fn judgement_plural(j: Judgement) -> &'static str {
+pub fn judgement_plural(j: Judgement) -> &'static str {
     match j {
         Judgement::Inaccuracy => tr("Inaccuracies"),
         Judgement::Mistake => tr("Mistakes"),
@@ -947,7 +947,7 @@ fn judgement_plural(j: Judgement) -> &'static str {
 }
 
 /// Accuracy in the colors of the move marks: green, blue, orange, red.
-fn accuracy_color(a: f64, dark: bool) -> Color32 {
+pub fn accuracy_color(a: f64, dark: bool) -> Color32 {
     let j = if a >= 85.0 {
         Judgement::Great
     } else if a >= 70.0 {
