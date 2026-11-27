@@ -3577,6 +3577,7 @@ impl PrepScreen {
             circles: &[],
             badge: None,
             interactive: false,
+            temporary_shapes: false,
             show_coords: settings.show_coords,
             theme: settings.board_theme.theme(),
             pieces: settings.piece_set,

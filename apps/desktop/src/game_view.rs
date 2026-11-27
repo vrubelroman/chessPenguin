@@ -1425,6 +1425,7 @@ impl GameView {
                                 && t.flash.is_none()
                                 && self.cursor == self.game.line_end(NodeId::ROOT)
                         }),
+                    temporary_shapes: self.play.is_some() || self.train.is_some(),
                     show_coords: settings.show_coords,
                     theme: settings.board_theme.theme(),
                     pieces: settings.piece_set,
@@ -3881,6 +3882,21 @@ impl GameView {
 
     /// Dev hook (`CP_SHAPE=Ge2e4,Rd5`): shapes drawn on the board at the current move.
     pub fn debug_shapes(&mut self, spec: &str) {
+        let temporary = self.play.is_some() || self.train.is_some();
+        let position = if temporary {
+            self.game.position(self.cursor).cloned()
+        } else {
+            None
+        };
+        let mut record = |drawn| {
+            if temporary {
+                if let Some(pos) = &position {
+                    self.board.draw_temporary(drawn, pos);
+                }
+            } else {
+                self.apply_shape(drawn);
+            }
+        };
         for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             let parsed = chess_core::parse_comment(&if item.len() > 3 {
                 format!("[%cal {item}]")
@@ -3891,12 +3907,12 @@ impl GameView {
                 match p {
                     CommentPart::Annotation(Annotation::Arrows(list)) => {
                         for (c, a, b) in list {
-                            self.apply_shape(board::Drawn::Arrow(c, a, b));
+                            record(board::Drawn::Arrow(c, a, b));
                         }
                     }
                     CommentPart::Annotation(Annotation::Squares(list)) => {
                         for (c, sq) in list {
-                            self.apply_shape(board::Drawn::Circle(c, sq));
+                            record(board::Drawn::Circle(c, sq));
                         }
                     }
                     _ => {}

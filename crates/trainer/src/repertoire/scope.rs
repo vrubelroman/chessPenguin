@@ -16,33 +16,6 @@ impl TrainingScope {
         Self::default()
     }
 
-    pub fn from_prefix(prefix: Vec<String>) -> Self {
-        Self {
-            prefix,
-            ..Self::default()
-        }
-    }
-
-    pub fn between(prefix: Vec<String>, end_prefix: Vec<String>) -> Self {
-        Self {
-            prefix,
-            end_prefix: Some(end_prefix),
-            ..Self::default()
-        }
-    }
-
-    pub fn with_context(mut self, include_context: bool) -> Self {
-        self.include_context = include_context;
-        self
-    }
-
-    pub fn key(&self) -> TrainingScopeKey {
-        TrainingScopeKey {
-            prefix: self.prefix.clone(),
-            end_prefix: self.end_prefix.clone(),
-        }
-    }
-
     pub(crate) fn parent_prefix(&self) -> &[String] {
         self.prefix
             .get(..self.prefix.len().saturating_sub(1))

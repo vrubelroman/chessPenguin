@@ -30,16 +30,6 @@ mod game_view;
 mod graphics;
 mod i18n;
 mod large_db;
-#[cfg(not(web))]
-mod learning_branches;
-#[cfg(not(web))]
-mod learning_charts;
-#[cfg(not(web))]
-mod learning_context_controls;
-#[cfg(not(web))]
-mod learning_dashboard;
-#[cfg(not(web))]
-mod learning_training;
 mod library;
 mod maia_download;
 #[cfg(web)]
@@ -48,6 +38,12 @@ mod notation;
 mod online;
 #[cfg(not(web))]
 mod online_ui;
+#[cfg(not(web))]
+mod opening_layout;
+#[cfg(not(web))]
+mod opening_lines;
+#[cfg(not(web))]
+mod opening_session;
 mod own_db;
 pub mod platform;
 mod play;
@@ -55,10 +51,6 @@ mod player_games;
 mod prep_saved;
 mod prep_ui;
 mod reference;
-#[cfg(not(web))]
-mod repertoire_editor;
-#[cfg(not(web))]
-mod repertoire_training;
 #[cfg(not(web))]
 mod repertoire_ui;
 mod review;

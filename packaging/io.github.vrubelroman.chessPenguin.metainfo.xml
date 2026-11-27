@@ -43,6 +43,11 @@
     <category>BoardGame</category>
   </categories>
   <releases>
+    <release version="2.4.0" date="2026-11-27">
+      <description>
+        <p>Desktop opening training is rewritten to be simpler: one screen of repertoires with clear progress, a daily session of reviews plus up to ten new moves, new moves are shown before they are asked, mistakes show the right move and return in the same session. Two example repertoires are included. Temporary arrows and circles can be drawn in play and training.</p>
+      </description>
+    </release>
     <release version="2.3.0" date="2026-11-06">
       <description>
         <p>Desktop opening training shows PGN move badges, arrows and marked squares during user moves and automatic playback. All enabled variations can be trained. Automatic context avoids repeated PGN parsing and redundant progress writes.</p>

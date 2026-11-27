@@ -2503,6 +2503,7 @@ fn chip(ui: &mut Ui, c: &Condition) -> (bool, bool) {
                         circles: &[],
                         badge: None,
                         interactive: false,
+                        temporary_shapes: false,
                         show_coords: false,
                         theme: theme.theme(),
                         pieces: *pieces,
