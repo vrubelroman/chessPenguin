@@ -855,6 +855,17 @@ const ROWS: &[[&str; 9]] = &[
         "Үйренілген {x}, үйренілуде {z}, барлығы {y} жүріс. Жүріс кеңессіз қатарынан үш дұрыс жауаптан кейін үйренілген саналады — әдетте бірнеше күндік қайталауда.",
     ],
     [
+        "Progress",
+        "Прогресс",
+        "Progression",
+        "Fortschritt",
+        "Progreso",
+        "Progressi",
+        "Progresso",
+        "Taraqqiyot",
+        "Ілгерілеу",
+    ],
+    [
         "New moves left",
         "Новых ходов осталось",
         "Nouveaux coups restants",

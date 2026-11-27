@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use chess_core::shakmaty::{Chess, Color, Position, Square};
 use chess_core::{Game, NodeId, PgnDatabase, Severity};
-use egui::{Key, Modifiers, RichText, Ui, vec2};
+use egui::{Color32, Key, Modifiers, RichText, Ui, vec2};
 use trainer::repertoire::{
     LearningData, LearningItemKey, LearningSide, LearningStore, LearningStoreData, Library,
     LibraryStore, MergeReport, RepertoireId, ResetImpactProjection, SrsSettings, StatsScope,
@@ -1691,7 +1691,7 @@ impl RepertoireUi {
                     ui.add(egui::Label::new(RichText::new(tr("Name")).strong()).truncate());
                 });
                 header.col(|_| {});
-                for key in ["Today", "Learned"] {
+                for key in ["Today", "Progress"] {
                     header.col(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add(egui::Label::new(RichText::new(tr(key)).strong()).truncate());
@@ -1729,6 +1729,17 @@ impl RepertoireUi {
                                         &[("n", &stats.due), ("m", &stats.new_today())],
                                     ));
                                 }
+                                // Nothing today: when the next review is.
+                                Some(Ok(RowStats {
+                                    next: Some((at, _)),
+                                    ..
+                                })) => {
+                                    let when = layout::when(*at, layout::now());
+                                    ui.add(
+                                        egui::Label::new(RichText::new(&when).weak()).truncate(),
+                                    )
+                                    .on_hover_text(format!("{}: {when}", tr("Next review")));
+                                }
                                 Some(_) => {
                                     ui.label(RichText::new("—").weak());
                                 }
@@ -1750,8 +1761,17 @@ impl RepertoireUi {
                                 }
                                 Some(Ok(stats)) if stats.total > 0 => {
                                     let hint = learned_hint(stats);
-                                    ui.label(format!("{}/{}", stats.learnt, stats.total))
-                                        .on_hover_text(&hint);
+                                    // «0/17» reads as «nothing done»: name what is under way.
+                                    let text = if stats.learnt == 0 && stats.learning > 0 {
+                                        RichText::new(trf(
+                                            "learning {k}",
+                                            &[("k", &stats.learning)],
+                                        ))
+                                        .weak()
+                                    } else {
+                                        RichText::new(format!("{}/{}", stats.learnt, stats.total))
+                                    };
+                                    ui.label(text).on_hover_text(&hint);
                                     let room = ui.available_width() - ui.spacing().item_spacing.x;
                                     if room >= 16.0 {
                                         let (bar, response) = ui.allocate_exact_size(
@@ -2487,35 +2507,45 @@ fn learned_hint(stats: &RowStats) -> String {
 }
 
 /// The two segments: learned, then learning (paler).
-/// On a selected table row the selection colour is the row's own: the segments take
-/// the colour of the text on the selection instead.
+/// Learned — the green of a correct move; learning — the accent blue; the track stands
+/// out from the row. On a selected dark row: white, half-white and a dark track.
 fn progress_bar(ui: &Ui, bar: egui::Rect, stats: Option<&RowStats>, selected: bool) {
-    let painter = ui.painter();
-    // In the light theme the extreme colour is the rows' white: the track is a button's grey.
-    let track = if ui.visuals().dark_mode {
-        ui.visuals().extreme_bg_color
+    let visuals = ui.visuals();
+    let (track, learnt_fill, learning_fill) = if selected && visuals.dark_mode {
+        (
+            Color32::from_black_alpha(90),
+            Color32::WHITE,
+            Color32::from_white_alpha(128),
+        )
+    } else if selected {
+        // The light selection is pale: white would vanish, the selection's text colour shows.
+        let ink = visuals.selection.stroke.color;
+        (Color32::from_white_alpha(170), ink, ink.gamma_multiply(0.5))
     } else {
-        ui.visuals().widgets.inactive.bg_fill
+        let green = crate::notation::assessment_text_color(chess_core::Nag(1), visuals.dark_mode)
+            .unwrap_or(visuals.selection.bg_fill);
+        let track = if visuals.dark_mode {
+            visuals.widgets.inactive.bg_fill
+        } else {
+            visuals.widgets.inactive.bg_fill.gamma_multiply(0.9)
+        };
+        (track, green, visuals.hyperlink_color)
     };
+    let painter = ui.painter();
     painter.rect_filled(bar, 2.0, track);
     if let Some(stats) = stats.filter(|stats| stats.total > 0) {
         let total = stats.total as f32;
         let learnt = bar.width() * stats.learnt as f32 / total;
         let learning = bar.width() * stats.learning as f32 / total;
-        let fill = if selected {
-            ui.visuals().selection.stroke.color
-        } else {
-            ui.visuals().selection.bg_fill
-        };
         painter.rect_filled(
             egui::Rect::from_min_size(bar.min, vec2(learnt, bar.height())),
             2.0,
-            fill,
+            learnt_fill,
         );
         painter.rect_filled(
             egui::Rect::from_min_size(bar.min + vec2(learnt, 0.0), vec2(learning, bar.height())),
             0.0,
-            fill.gamma_multiply(0.45),
+            learning_fill,
         );
     }
 }
