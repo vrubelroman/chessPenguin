@@ -559,6 +559,13 @@ fn board_tab(ui: &mut Ui, s: &mut Settings, changed: &mut bool) {
             }
         }
     });
+    // The hint above the notation goes away; what it told stays here.
+    ui.label(
+        RichText::new(tr(
+            "Arrows and circles: right mouse button on the board; Shift — red, Alt — blue, Shift+Alt — yellow. Saved in the move's comment ([%cal], [%csl]).",
+        ))
+        .weak(),
+    );
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label(tr("Piece animation"));

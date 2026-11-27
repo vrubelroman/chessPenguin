@@ -443,6 +443,10 @@ impl App {
             if let Ok(dark) = std::env::var("CP_DARK") {
                 settings.dark_mode = dark != "0";
             }
+            // Dev hook (screenshots, tests): `CP_HINT_RESET=1` shows the one-time hints anew.
+            if std::env::var("CP_HINT_RESET").as_deref() == Ok("1") {
+                settings.hints = Default::default();
+            }
         }
         // Before the samples, which are named in this language.
         crate::i18n::set_lang(settings.language);
@@ -4146,6 +4150,7 @@ impl eframe::App for App {
                         self.settings_ui.tab = Tab::Translation;
                     }
                     GameAction::Toast(m) => self.toast(&ctx, m),
+                    GameAction::HintsChanged => self.settings_dirty = true,
                     GameAction::PauseLive => {
                         if self.analysis.is_on() {
                             self.analysis.stop();

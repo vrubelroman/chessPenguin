@@ -15,10 +15,12 @@ use crate::analysis::{self, Analysis, PvLine, Status};
 use crate::assets::Sound;
 use crate::board::{self, Arrow, BoardState, BoardView};
 use crate::notation::{
-    CommentEditor, EditorOutcome, MOVE_NAGS, Notation, NotationCommand, Slot, toggle_nag,
+    CommentEditor, EditorOutcome, MOVE_NAGS, Notation, NotationCommand, ShapeCount, Slot,
+    toggle_nag,
 };
 use crate::review::{ReportAction, Review};
 use crate::settings::Settings;
+use std::collections::HashMap;
 
 /// Where an opened game came from (to return to the same library row, to save into).
 #[derive(Clone, Debug)]
@@ -112,6 +114,14 @@ pub struct GameView {
     translation: crate::translate_ui::GameTranslation,
     /// "Translate comments" was chosen (menu, Ctrl+Shift+T): done once the settings are at hand.
     translate_now: bool,
+    /// The moves whose comments draw on the board, for the notation's sign; by the
+    /// revision of the game they were counted at.
+    shape_counts: Option<(u64, HashMap<NodeId, ShapeCount>)>,
+    /// The hint about drawing arrows above the notation: decided as the notation is
+    /// first drawn (`None`: not yet).
+    shapes_hint: Option<bool>,
+    /// An arrow or a circle went into the game on this frame (the hint has done its job).
+    shape_drawn: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -184,6 +194,8 @@ pub enum GameAction {
     DownloadPgn,
     /// Settings → Translation.
     OpenTranslationSettings,
+    /// A hint was shown or put away: the settings are to be written.
+    HintsChanged,
 }
 
 impl GameView {
@@ -231,6 +243,9 @@ impl GameView {
             update: None,
             translation: Default::default(),
             translate_now: false,
+            shape_counts: None,
+            shapes_hint: None,
+            shape_drawn: false,
         }
     }
 
@@ -665,7 +680,108 @@ impl GameView {
             }
         }
         let comments = chess_core::with_shapes(node.comments_after(), &arrows, &squares);
-        let _ = self.game.annotate(id, node.nags().to_vec(), comments);
+        if self
+            .game
+            .annotate(id, node.nags().to_vec(), comments)
+            .is_ok()
+        {
+            self.shape_drawn = true;
+        }
+    }
+
+    /// The moves with arrows or circles in their comments, counted again after an edit.
+    fn shape_counts(&mut self) -> &HashMap<NodeId, ShapeCount> {
+        let revision = self.game.revision();
+        if self
+            .shape_counts
+            .as_ref()
+            .is_none_or(|(r, _)| *r != revision)
+        {
+            self.shape_counts = Some((revision, crate::notation::shape_counts(&self.game)));
+        }
+        &self.shape_counts.get_or_insert_default().1
+    }
+
+    /// Who this game is among those opened in the session (a hint counts a game once).
+    fn session_key(&self) -> String {
+        match &self.source {
+            Some(s) => format!("{}#{}", s.path.display(), s.index),
+            None => format!("view#{}", self.serial),
+        }
+    }
+
+    /// Whether the hint about drawing on the board stands above the notation
+    /// (docs/design/tasks-42-43-2026-11-27.md §43.3). Decided once, as the notation is
+    /// first drawn: only where shapes go into the game, never with the translation strip
+    /// (then not counted either). Returns whether the hint's settings changed.
+    fn decide_shapes_hint(
+        &mut self,
+        hint: &mut crate::settings::Hint,
+        seen: &mut std::collections::HashSet<String>,
+        translating: bool,
+    ) -> bool {
+        if self.shapes_hint.is_some() {
+            return false;
+        }
+        let possible =
+            !translating && self.preview.is_none() && self.play.is_none() && self.train.is_none();
+        let key = self.session_key();
+        let fresh = !seen.contains(&key);
+        let show = possible && hint.offer(fresh);
+        if show {
+            seen.insert(key);
+        }
+        self.shapes_hint = Some(show);
+        show && fresh
+    }
+
+    /// The hint's strip: the translation strip's look, closed for good by its ×.
+    /// Returns whether the hint's settings changed.
+    fn shapes_hint_strip(&mut self, ui: &mut Ui, hint: &mut crate::settings::Hint) -> bool {
+        let mut closed = false;
+        egui::Frame::new()
+            .fill(ui.visuals().faint_bg_color)
+            .inner_margin(egui::Margin::symmetric(8, 4))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let row_h = ui.spacing().interact_size.y;
+                ui.horizontal_top(|ui| {
+                    let close_w = 22.0 + ui.spacing().item_spacing.x;
+                    ui.allocate_ui_with_layout(
+                        vec2((ui.available_width() - close_w).max(120.0), 0.0),
+                        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                        |ui| {
+                            ui.set_min_height(row_h);
+                            ui.add(
+                                egui::Label::new(RichText::new(tr(
+                                    "Arrows and circles: drag or click with the right mouse button on the board. They are saved in the game.",
+                                )).weak())
+                                .wrap(),
+                            )
+                            .on_hover_text(tr(
+                                "No key — green, Shift — red, Alt — blue, Shift+Alt — yellow. Draw the same one again to remove it. Ctrl+Z undoes.",
+                            ));
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        vec2(22.0, row_h),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            if crate::widgets::small_close_button(ui)
+                                .on_hover_text(tr("Don't show again"))
+                                .clicked()
+                            {
+                                closed = true;
+                            }
+                        },
+                    );
+                });
+            });
+        if closed {
+            hint.done = true;
+            self.shapes_hint = Some(false);
+        }
+        closed
     }
 
     /// Assessment of the move that led to the current position, for the board: the
@@ -813,6 +929,18 @@ impl GameView {
         egui::CentralPanel::default().show(ui, |ui| {
             self.board_area(ui, &*settings, analysis, hover, &mut actions)
         });
+        // Drawn on the board: the hint has done its job (gone after the button is let go).
+        if std::mem::take(&mut self.shape_drawn) {
+            let hint = &mut settings.hints.board_shapes;
+            if !hint.done {
+                hint.done = true;
+                actions.push(GameAction::HintsChanged);
+            }
+            if self.shapes_hint == Some(true) {
+                self.shapes_hint = Some(false);
+                ui.ctx().request_repaint();
+            }
+        }
         self.sync_analysis(analysis);
 
         // «Analyse»: at once — the search is the same for everyone, nothing to choose.
@@ -1552,11 +1680,25 @@ impl GameView {
                 }
                 return;
             }
+            let strip_top = ui.cursor().top();
             let strip = if crate::platform::CAPS.translation {
                 self.translation.strip(ui, settings, hub)
             } else {
                 None
             };
+            let translating = ui.cursor().top() > strip_top;
+            let seen_id = egui::Id::new("shapes_hint_games");
+            let mut seen: std::collections::HashSet<String> =
+                ui.data_mut(|d| d.get_temp(seen_id)).unwrap_or_default();
+            let mut hints_changed =
+                self.decide_shapes_hint(&mut settings.hints.board_shapes, &mut seen, translating);
+            ui.data_mut(|d| d.insert_temp(seen_id, seen));
+            if self.shapes_hint == Some(true) && !translating && self.preview.is_none() {
+                hints_changed |= self.shapes_hint_strip(ui, &mut settings.hints.board_shapes);
+            }
+            if hints_changed {
+                actions.push(GameAction::HintsChanged);
+            }
             match strip {
                 Some(crate::translate_ui::StripAction::OpenSettings) => {
                     actions.push(GameAction::OpenTranslationSettings)
@@ -1569,6 +1711,7 @@ impl GameView {
             if std::mem::take(&mut self.translate_now) {
                 self.translation.translate(ui.ctx(), settings, hub);
             }
+            self.shape_counts();
             egui::ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| {
@@ -1586,6 +1729,7 @@ impl GameView {
                         read_only: self.play.is_some(),
                         dim_until: None,
                         mistakes: None,
+                        shapes: self.shape_counts.as_ref().map(|(_, c)| c),
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
@@ -3418,6 +3562,7 @@ impl GameView {
                             .and_then(|s| self.game.node(s.floor))
                             .map(|n| n.ply()),
                         mistakes: None,
+                        shapes: None,
                     }
                     .show(ui);
                     if let Some(id) = resp.clicked {
@@ -4081,6 +4226,7 @@ impl GameView {
                         editor: None,
                         read_only: true,
                         dim_until: None,
+                        shapes: None,
                         mistakes: marks.as_ref(),
                     }
                     .show(ui);
@@ -5333,4 +5479,247 @@ fn paste_line_full(line: &[(u32, Color, String)]) -> String {
         .map(|(i, (n, side, san))| move_label(*n, *side, san, i == 0))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::Hint;
+    use std::collections::HashSet;
+
+    type Shapes = (Vec<(ShapeColor, Square, Square)>, Vec<(ShapeColor, Square)>);
+
+    fn view(pgn: &str) -> GameView {
+        let parsed = chess_core::parse_str(pgn);
+        GameView::new(parsed.game, None, parsed.diagnostics)
+    }
+
+    /// The node reached by these moves from the start, through any variation.
+    fn at(game: &Game, moves: &[&str]) -> NodeId {
+        moves.iter().fold(NodeId::ROOT, |node, san| {
+            *game
+                .children(node)
+                .iter()
+                .find(|c| game.game_move(**c).is_some_and(|m| m.san == *san))
+                .unwrap_or_else(|| panic!("no {san} after {node:?}"))
+        })
+    }
+
+    fn sq(s: &str) -> Square {
+        s.parse().unwrap()
+    }
+
+    fn arrow(color: ShapeColor, from: &str, to: &str) -> board::Drawn {
+        board::Drawn::Arrow(color, sq(from), sq(to))
+    }
+
+    fn shapes_at(game: &Game, id: NodeId) -> Shapes {
+        chess_core::shapes(game.node(id).unwrap().comments_after())
+    }
+
+    /// Written to PGN and read again: the shapes of the same node.
+    fn reread(game: &Game, moves: &[&str]) -> Shapes {
+        let text = chess_core::write_game(game, &Default::default());
+        let back = chess_core::parse_str(&text).game;
+        shapes_at(&back, at(&back, moves))
+    }
+
+    #[test]
+    fn a_shape_goes_into_the_current_move_and_back_out() {
+        let mut v = view("1. e4 e5 {Open game [%clk 0:05:00]} $1 2. Nf3 *");
+        let e5 = at(&v.game, &["e4", "e5"]);
+        v.goto(e5);
+        v.apply_shape(arrow(ShapeColor::Green, "g1", "f3"));
+        assert_eq!(
+            shapes_at(&v.game, e5),
+            (vec![(ShapeColor::Green, sq("g1"), sq("f3"))], vec![])
+        );
+        let node = v.game.node(e5).unwrap();
+        assert_eq!(node.nags(), &[Nag(1)]);
+        let text = node.comments_after().join(" ");
+        assert!(
+            text.contains("Open game") && text.contains("[%clk 0:05:00]"),
+            "{text}"
+        );
+        assert_eq!(
+            reread(&v.game, &["e4", "e5"]).0,
+            vec![(ShapeColor::Green, sq("g1"), sq("f3"))]
+        );
+
+        // Another colour repaints it, the same colour again takes it off.
+        v.apply_shape(arrow(ShapeColor::Red, "g1", "f3"));
+        assert_eq!(
+            shapes_at(&v.game, e5).0,
+            vec![(ShapeColor::Red, sq("g1"), sq("f3"))]
+        );
+        v.apply_shape(arrow(ShapeColor::Red, "g1", "f3"));
+        assert!(shapes_at(&v.game, e5).0.is_empty());
+
+        // One step of undo per shape.
+        v.game.undo();
+        assert_eq!(
+            shapes_at(&v.game, e5).0,
+            vec![(ShapeColor::Red, sq("g1"), sq("f3"))]
+        );
+        v.game.undo();
+        v.game.undo();
+        assert_eq!(shapes_at(&v.game, e5), (vec![], vec![]));
+        assert!(!v.game.is_modified());
+    }
+
+    #[test]
+    fn circles_toggle_and_recolour() {
+        let mut v = view("1. d4 *");
+        let d4 = at(&v.game, &["d4"]);
+        v.goto(d4);
+        v.apply_shape(board::Drawn::Circle(ShapeColor::Green, sq("d5")));
+        v.apply_shape(board::Drawn::Circle(ShapeColor::Blue, sq("e5")));
+        v.apply_shape(board::Drawn::Circle(ShapeColor::Yellow, sq("d5")));
+        assert_eq!(
+            shapes_at(&v.game, d4).1,
+            vec![(ShapeColor::Yellow, sq("d5")), (ShapeColor::Blue, sq("e5"))]
+        );
+        v.apply_shape(board::Drawn::Circle(ShapeColor::Blue, sq("e5")));
+        assert_eq!(
+            shapes_at(&v.game, d4).1,
+            vec![(ShapeColor::Yellow, sq("d5"))]
+        );
+    }
+
+    #[test]
+    fn a_shape_at_the_start_stays_with_the_start() {
+        let mut v = view("{Intro} 1. e4 e5 *");
+        v.apply_shape(arrow(ShapeColor::Blue, "e2", "e4"));
+        assert_eq!(
+            reread(&v.game, &[]).0,
+            vec![(ShapeColor::Blue, sq("e2"), sq("e4"))]
+        );
+        let text = chess_core::write_game(&v.game, &Default::default());
+        assert!(text.contains("Intro"), "{text}");
+        assert!(shapes_at(&v.game, at(&v.game, &["e4"])).0.is_empty());
+    }
+
+    #[test]
+    fn a_shape_in_a_nested_variation_stays_there() {
+        let mut v = view("1. e4 e5 (1... c5 2. Nf3 (2. c3 d5) 2... d6) 2. Nf3 *");
+        let path = ["e4", "c5", "c3", "d5"];
+        let d5 = at(&v.game, &path);
+        v.goto(d5);
+        v.apply_shape(arrow(ShapeColor::Green, "e4", "d5"));
+        assert_eq!(
+            reread(&v.game, &path).0,
+            vec![(ShapeColor::Green, sq("e4"), sq("d5"))]
+        );
+        assert!(reread(&v.game, &["e4", "e5"]).0.is_empty());
+    }
+
+    #[test]
+    fn a_shape_after_a_null_move_and_from_a_fen_with_move_zero() {
+        let mut v = view("1. e4 -- 2. d4 *");
+        let null = at(&v.game, &["e4", "--"]);
+        v.goto(null);
+        v.apply_shape(board::Drawn::Circle(ShapeColor::Red, sq("d4")));
+        assert_eq!(
+            reread(&v.game, &["e4", "--"]).1,
+            vec![(ShapeColor::Red, sq("d4"))]
+        );
+
+        let mut v =
+            view("[FEN \"4k3/8/8/8/8/8/8/4K3 b - - 0 0\"]\n[SetUp \"1\"]\n\n0... Kd7 1. Ke2 *");
+        let kd7 = at(&v.game, &["Kd7"]);
+        v.goto(kd7);
+        v.apply_shape(arrow(ShapeColor::Yellow, "e1", "e2"));
+        assert_eq!(
+            reread(&v.game, &["Kd7"]).0,
+            vec![(ShapeColor::Yellow, sq("e1"), sq("e2"))]
+        );
+    }
+
+    #[test]
+    fn a_shape_drawn_marks_the_hint_done_and_counts_for_the_notation() {
+        let mut v = view("1. e4 e5 {[%csl Gd5]} *");
+        assert_eq!(v.shape_counts().len(), 1);
+        let e4 = at(&v.game, &["e4"]);
+        v.goto(e4);
+        v.apply_shape(arrow(ShapeColor::Green, "g1", "f3"));
+        assert!(v.shape_drawn);
+        assert_eq!(
+            v.shape_counts().get(&e4),
+            Some(&ShapeCount {
+                arrows: 1,
+                circles: 0
+            })
+        );
+        assert_eq!(v.shape_counts().len(), 2);
+        v.game.undo();
+        assert_eq!(v.shape_counts().len(), 1);
+    }
+
+    #[test]
+    fn the_hint_is_decided_once_per_game_and_not_beside_the_translation() {
+        let mut hint = Hint::default();
+        let mut seen = HashSet::new();
+
+        // With the translation strip: not shown, not counted.
+        let mut v = view("1. e4 *");
+        assert!(!v.decide_shapes_hint(&mut hint, &mut seen, true));
+        assert_eq!(v.shapes_hint, Some(false));
+        assert_eq!(hint.shown, 0);
+        assert!(seen.is_empty());
+
+        // Decided on the first frame only.
+        let mut v = view("1. e4 *");
+        assert!(v.decide_shapes_hint(&mut hint, &mut seen, false));
+        assert!(!v.decide_shapes_hint(&mut hint, &mut seen, false));
+        assert_eq!((v.shapes_hint, hint.shown), (Some(true), 1));
+
+        // The same game opened again in the session: shown, not counted.
+        let source = |index| GameSource {
+            path: PathBuf::from("/tmp/a.pgn"),
+            index,
+            block: None,
+        };
+        let open = |index| {
+            let mut v = view("1. e4 *");
+            v.source = Some(source(index));
+            v
+        };
+        let mut a = open(0);
+        assert!(a.decide_shapes_hint(&mut hint, &mut seen, false));
+        let mut again = open(0);
+        assert!(!again.decide_shapes_hint(&mut hint, &mut seen, false));
+        assert_eq!((again.shapes_hint, hint.shown), (Some(true), 2));
+
+        let mut b = open(1);
+        b.decide_shapes_hint(&mut hint, &mut seen, false);
+        assert_eq!(hint.shown, 3);
+        // The fourth game: gone by itself.
+        let mut c = open(2);
+        assert!(!c.decide_shapes_hint(&mut hint, &mut seen, false));
+        assert_eq!(c.shapes_hint, Some(false));
+    }
+
+    #[test]
+    fn the_hint_is_not_shown_while_playing_or_after_it_is_done() {
+        let mut seen = HashSet::new();
+        let mut hint = Hint {
+            done: true,
+            shown: 0,
+        };
+        let mut v = view("1. e4 *");
+        v.decide_shapes_hint(&mut hint, &mut seen, false);
+        assert_eq!(v.shapes_hint, Some(false));
+
+        let mut hint = Hint::default();
+        let mut v = view("1. e4 *");
+        v.preview = Some(Preview {
+            base: NodeId::ROOT,
+            root: Chess::default(),
+            moves: Vec::new(),
+            san: Vec::new(),
+            shown: 0,
+        });
+        v.decide_shapes_hint(&mut hint, &mut seen, false);
+        assert_eq!((v.shapes_hint, hint.shown), (Some(false), 0));
+    }
 }
