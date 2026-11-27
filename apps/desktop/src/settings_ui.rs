@@ -86,7 +86,17 @@ impl SettingsWindow {
         let mut actions = Vec::new();
         let mut changed = false;
         let mut open = self.open;
-        egui::Window::new(tr("Settings"))
+        // A real, unpainted click target: the opening click belongs to its
+        // original widget, and the dismissing click never belongs to the board.
+        let backdrop = open.then(|| {
+            let rect = ctx.viewport_rect();
+            egui::Area::new(egui::Id::new("settings_backdrop"))
+                .fixed_pos(rect.min)
+                .sense(Sense::click())
+                .show(ctx, |ui| ui.set_min_size(rect.size()))
+                .response
+        });
+        let window = egui::Window::new(tr("Settings"))
             .open(&mut open)
             .default_size(vec2(560.0, 680.0))
             // Open at the right edge so the board stays visible for live preview.
@@ -197,6 +207,12 @@ impl SettingsWindow {
                     }
                 });
             });
+        if let (Some(backdrop), Some(window)) = (backdrop, window) {
+            ctx.set_sublayer(backdrop.layer_id, window.response.layer_id);
+            if backdrop.clicked_by(egui::PointerButton::Primary) {
+                open = false;
+            }
+        }
         self.open = open;
         (actions, changed)
     }
@@ -874,4 +890,136 @@ fn browser_data(ui: &mut Ui, actions: &mut Vec<SettingsAction>) {
         ))
         .weak(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, Modifiers, PointerButton, Pos2, Rect};
+
+    struct Screen {
+        ctx: egui::Context,
+        window: SettingsWindow,
+        settings: Settings,
+        opener: Rect,
+        clicks: usize,
+    }
+
+    impl Screen {
+        fn new() -> Self {
+            let mut screen = Self {
+                ctx: Default::default(),
+                window: SettingsWindow::new(),
+                settings: Settings {
+                    language: Lang::En,
+                    ..Default::default()
+                },
+                opener: Rect::NOTHING,
+                clicks: 0,
+            };
+            screen.window.tab = Tab::Sound;
+            screen.frame(vec![]);
+            screen.click(screen.opener.center());
+            screen.frame(vec![]);
+            assert!(screen.window.open);
+            assert_eq!(screen.clicks, 1);
+            screen
+        }
+
+        fn frame(&mut self, events: Vec<Event>) -> egui::FullOutput {
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let r = ui.button("Open settings");
+                    self.opener = r.rect;
+                    if r.clicked() {
+                        self.clicks += 1;
+                        self.window.open = true;
+                    }
+                    self.window
+                        .show(ui.ctx(), &mut self.settings, &mut Default::default());
+                },
+            );
+            output.textures_delta.clear();
+            output
+        }
+
+        fn pointer(&mut self, pos: Pos2, button: PointerButton, pressed: bool) {
+            self.frame(vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                },
+            ]);
+        }
+
+        fn click(&mut self, pos: Pos2) {
+            self.pointer(pos, PointerButton::Primary, true);
+            self.pointer(pos, PointerButton::Primary, false);
+        }
+
+        fn text(&mut self, label: &str) -> Pos2 {
+            self.frame(vec![])
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(t) if t.galley.text() == label => {
+                        Some(t.pos + 0.5 * t.galley.size())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing visible label: {label}"))
+        }
+    }
+
+    #[test]
+    fn only_an_outside_primary_click_dismisses_and_it_never_reaches_the_opener() {
+        let mut s = Screen::new();
+        let outside = s.opener.center();
+        s.pointer(outside, PointerButton::Secondary, true);
+        s.pointer(outside, PointerButton::Secondary, false);
+        assert!(s.window.open);
+
+        let inside = s.text(tr("Move sounds"));
+        s.pointer(inside, PointerButton::Primary, true);
+        s.frame(vec![Event::PointerMoved(outside)]);
+        s.pointer(outside, PointerButton::Primary, false);
+        assert!(s.window.open);
+        s.pointer(outside, PointerButton::Primary, true);
+        assert!(s.window.open);
+        s.pointer(outside, PointerButton::Primary, false);
+        assert!(!s.window.open);
+        assert_eq!(s.clicks, 1);
+    }
+
+    #[test]
+    fn settings_tabs_popup_items_and_titlebar_close_still_receive_clicks() {
+        let mut s = Screen::new();
+        let interface = s.text(tr("Interface"));
+        s.click(interface);
+        assert!(s.window.tab == Tab::Interface);
+        let combo = s.text(Lang::En.label());
+        let layer = s.ctx.layer_id_at(combo).unwrap();
+        let rect = s.ctx.memory(|m| m.area_rect(layer.id)).unwrap();
+        s.click(combo);
+        let choice = s.text(Lang::Kk.label());
+        assert!(!rect.contains(choice), "exercise the overhanging popup");
+        s.click(choice);
+        assert_eq!(s.settings.language, Lang::Kk);
+        assert!(s.window.open);
+
+        s.frame(vec![]);
+        let title = s.text(tr("Settings"));
+        let layer = s.ctx.layer_id_at(title).unwrap();
+        let rect = s.ctx.memory(|m| m.area_rect(layer.id)).unwrap();
+        s.click(egui::pos2(rect.right() - 15.0, title.y));
+        assert!(!s.window.open);
+    }
 }

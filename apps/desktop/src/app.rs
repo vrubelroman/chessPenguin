@@ -380,6 +380,9 @@ struct DebugStartup {
     screenshot_delay: f64,
     screenshot_requested: bool,
     open_settings: bool,
+    /// `CP_SETTINGS_CLICK=x,y`: one primary click in viewport points, after opening.
+    #[cfg(all(debug_assertions, not(web)))]
+    settings_click: Option<egui::Pos2>,
     /// `CP_OWN=new|chooser|data|save|delete`: that dialog of the own databases
     /// (own_db.rs) after a short delay; `delete` and `chooser` without a game: the
     /// record `CP_OPEN` (default 0) of the first database.
@@ -410,6 +413,11 @@ impl DebugStartup {
                 .unwrap_or(4.0),
             screenshot_requested: false,
             open_settings: false,
+            #[cfg(all(debug_assertions, not(web)))]
+            settings_click: std::env::var("CP_SETTINGS_CLICK").ok().and_then(|coords| {
+                let (x, y) = coords.split_once(',')?;
+                Some(egui::pos2(x.parse().ok()?, y.parse().ok()?))
+            }),
             own: std::env::var("CP_OWN").ok(),
             play: std::env::var("CP_PLAY").ok(),
             keys: std::env::var("CP_KEYS")
@@ -4266,6 +4274,24 @@ impl App {
 }
 
 impl eframe::App for App {
+    #[cfg(all(debug_assertions, not(web)))]
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.settings_ui.open
+            && ctx.input(|i| i.time) >= 3.0
+            && let Some(pos) = self.debug.settings_click.take()
+        {
+            input.events.push(egui::Event::PointerMoved(pos));
+            for pressed in [true, false] {
+                input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         crate::san::set(self.settings.move_notation);
         // The window has shown its first frame: this graphics mode works.
