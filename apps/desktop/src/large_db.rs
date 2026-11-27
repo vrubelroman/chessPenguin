@@ -2715,6 +2715,8 @@ impl LargeView {
                     }
                 }
             });
+            // Shift+A on an empty list still says why nothing can be searched.
+            self.handle_find(ui, path, actions);
             return open_notes;
         }
 
