@@ -2231,3 +2231,26 @@ fn the_summary_shows_learning_growth_when_nothing_is_learned_yet() {
     let summary = f.ui.summary.as_ref().unwrap();
     assert_eq!((summary.learnt_gain, summary.learning_gain), (0, 2));
 }
+
+#[test]
+fn the_line_shows_the_moves_to_the_board_without_the_asked_or_a_wrong_move() {
+    let mut f = Fixture::with(
+        "1. e4 e5 2. Nf3 Nc6 3. Bb5 *",
+        LearningSide::White,
+        &["e2e4", "g1f3", "f1b5"],
+        &[],
+        "path-line",
+        SessionKind::Daily,
+    );
+    let at = Instant::now();
+    tick_with_prime(&mut f.ui, at, Duration::ZERO, NOW);
+    assert_eq!(f.ui.path_text(), "");
+    answer_current(&mut f, at, NOW, "e4");
+    f.ui.debug_settle();
+    assert_eq!(f.ui.session.current_expected_uci(), Some("g1f3"));
+    assert_eq!(f.ui.path_text(), "1. e4 e5");
+    assert!(f.ui.play_uci_with_id_at("d2d4", "nf3-wrong".into(), at, NOW));
+    assert_eq!(f.ui.path_text(), "1. e4 e5");
+    tick_with_prime(&mut f.ui, at + WRONG_SHOWN, Duration::ZERO, NOW);
+    assert_eq!(f.ui.path_text(), "1. e4 e5");
+}

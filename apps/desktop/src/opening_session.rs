@@ -1458,6 +1458,17 @@ impl OpeningSessionUi {
         }
     }
 
+    /// «1. e4 e5 2. Nf3» up to the position on the board; the asked move is not in it.
+    /// A wrong move on the board is not either: the line stays at the asked position.
+    fn path_text(&self) -> String {
+        let node = self.shown_node().or_else(|| {
+            let (game, asked) = self.expected_node()?;
+            Some((game, game.parent(asked)?))
+        });
+        node.map(|(game, node)| layout::path_text(game, node))
+            .unwrap_or_default()
+    }
+
     /// The asked move's node in the PGN.
     fn expected_node(&self) -> Option<(&Game, NodeId)> {
         let target = self.session.current_target()?;
@@ -1976,6 +1987,7 @@ impl OpeningSessionUi {
             .shown_node()
             .map(|(game, node)| layout::opening_text(game, node))
             .unwrap_or_default();
+        let path = self.path_text();
         let (left, right) = match state {
             State::Summary => {
                 let more = self.more_new_count();
@@ -2015,6 +2027,7 @@ impl OpeningSessionUi {
             ui,
             |ui| self.state_card(ui, state),
             &opening,
+            &path,
             |ui| {
                 if *state == State::Summary {
                     self.summary_body(ui);
@@ -2238,6 +2251,7 @@ pub fn show_preparing(
                     )
                 },
                 "",
+                "",
                 |_| {},
                 Some((tr("Hint (H)").to_owned(), false)),
                 None,
@@ -2338,6 +2352,7 @@ fn side_panel(
     ui: &mut Ui,
     card: impl FnOnce(&mut Ui),
     opening: &str,
+    path: &str,
     body: impl FnOnce(&mut Ui),
     left: Option<(String, bool)>,
     right: Option<(String, bool)>,
@@ -2359,6 +2374,12 @@ fn side_panel(
         card(ui);
         layout::fixed_block(ui, LINE_H, |ui| {
             layout::line(ui, RichText::new(opening).weak());
+        });
+        // C: the moves to the position on the board, cut on the left.
+        layout::fixed_block(ui, LINE_H, |ui| {
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let shown = layout::cut_left(ui, path, &font, ui.available_width());
+            ui.add(egui::Label::new(RichText::new(shown).weak()).truncate());
         });
         let rest = (ui.available_height() - ROW_H - GAP).max(0.0);
         layout::fixed_block(ui, rest, body);
